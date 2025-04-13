@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use shadowquic_lib::{direct::DirectOut, shadowquic::{ShadowQuicClient, ShadowQuicServer}, socks::SocksServer, Inbound, Manager};
+use shadowquic_lib::{direct::DirectOut, shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient}, socks::inbound::SocksServer, Manager};
 use tracing::{level_filters::LevelFilter, trace, Level};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 

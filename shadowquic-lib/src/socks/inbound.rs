@@ -108,7 +108,7 @@ impl Inbound for SocksServer {
         let local_addr = stream.local_addr().unwrap();
 
         let (s, req, socket) = handle_socks(stream, local_addr).await?;
-        trace!("socks request accepted: {:?}", req.dst);
+        trace!("socks request accepted: {}", req.dst);
         match req.cmd {
             SOCKS5_CMD_TCP_CONNECT => Ok(ProxyRequest::Tcp(TcpSession {
                 stream: Box::new(s),
