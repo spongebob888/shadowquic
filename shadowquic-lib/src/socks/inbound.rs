@@ -37,7 +37,6 @@ async fn handle_socks<T: AsyncRead + AsyncWrite + Unpin>(
         version: SOCKS5_VERSION,
         method: SOCKS5_AUTH_METHOD_NONE,
     };
-    info!("Auth Req:{:?}", req);
     reply.encode(&mut s).await?;
     let req = socks5::CmdReq::decode(&mut s).await?;
 

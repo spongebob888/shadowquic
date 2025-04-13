@@ -7,7 +7,7 @@ pub enum SError {
     ProtocolViolation,
     #[error("Protocol Unimplemented")]
     ProtocolUnimpl,
-    #[error("IO Error")]
+    #[error("IO Error:{0}")]
     Io(#[from] io::Error),
     #[error("QUIC Connect Error")]
     QuicConnect(#[from] quinn::ConnectError),

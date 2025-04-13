@@ -28,7 +28,7 @@ use tokio::{
         mpsc::{self, Receiver, Sender, channel},
     },
 };
-use tracing::{Level, Span, debug, error, event, info};
+use tracing::{debug, debug_span, error, event, info, span, trace, Instrument, Level, Span};
 
 use crate::{
     Inbound, Outbound, ProxyRequest, TcpSession, TcpTrait, UdpSocketTrait,
@@ -104,7 +104,7 @@ impl ShadowQuicClient {
     async fn prepare_conn(&mut self) -> Result<(), SError> {
         self.quic_conn.take_if(|x| {
             x.close_reason().is_some_and(|x| {
-                info!("Quic connection closed due to {}", x);
+                info!("quic connection closed due to {}", x);
                 true
             })
         });
@@ -115,32 +115,31 @@ impl ShadowQuicClient {
                     Ok((x, accepted)) => {
                         let conn_clone = x.clone();
                         tokio::spawn(async move {
-                            debug!("zero rtt accepted:{}", accepted.await);
+                            debug!("zero rtt accepted: {}", accepted.await);
                             if conn_clone.is_jls() == Some(false) {
                                 error!("JLS hijacked or wrong pwd/iv");
                                 conn_clone.close(0u8.into(), b"");
                             }
                         });
+                        trace!("trying 0-rtt quic connection");
                         x
                     }
                     Err(e) => {
                         let x = e.await?;
-                        if x.is_jls() == Some(false) {
-                            error!("JLS hijacked or wrong pwd/iv");
-                            x.close(0u8.into(), b"");
-                        }
+                        trace!("1-rtt quic connection established");
                         x
                     }
                 };
                 conn
             } else {
                 let x = conn.await?;
-                if x.is_jls() == Some(false) {
-                    error!("JLS hijacked or wrong pwd/iv");
-                    x.close(0u8.into(), b"");
-                }
+                trace!("1-rtt quic connection established");
                 x
             };
+            if conn.is_jls() == Some(false) {
+                error!("JLS hijacked or wrong pwd/iv");
+                conn.close(0u8.into(), b"");
+            }
             self.quic_conn = Some(conn);
         }
         Ok(())
@@ -150,29 +149,39 @@ impl ShadowQuicClient {
 impl Outbound for ShadowQuicClient {
     async fn handle(&mut self, req: crate::ProxyRequest) -> Result<(), crate::error::SError> {
         self.prepare_conn().await?;
+
         let conn = self.quic_conn.as_mut().unwrap().clone();
+        let span = debug_span!("quic conn", id = conn.stable_id());
         let fut = async move {
             match req {
                 crate::ProxyRequest::Tcp(mut tcp_session) => {
+
                     let (mut send, mut recv) = conn.open_bi().await?;
+                    let _span = span!(Level::TRACE,"tcp", stream_id=(send.id().index()));
+                    trace!("bistream opened");
+                    let enter = _span.enter();
                     let req = SQReq {
                         cmd: SQCmd::Connect,
-                        dst: tcp_session.dst,
+                        dst: tcp_session.dst.clone(),
                     };
                     req.encode(&mut send).await?;
+                    trace!("req header sent");
 
                     tokio::io::copy_bidirectional(
                         &mut Unsplit { s: send, r: recv },
                         &mut tcp_session.stream,
                     )
                     .await?;
+                    trace!("request:{} finished",tcp_session.dst);
+                    drop(enter);
+
                 }
                 crate::ProxyRequest::Udp(udp_session) => todo!(),
             }
             Ok(()) as Result<(), SError>
         };
         tokio::spawn(async {
-            fut.await.map_err(|x|error!("{}", x));
+            let _ = fut.instrument(span).await.map_err(|x|error!("{}", x));
         });
         Ok(())
     }
