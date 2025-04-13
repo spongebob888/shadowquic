@@ -1,7 +1,5 @@
 use std::{
-    error::Error as StdError,
-    net::{IpAddr, SocketAddr, ToSocketAddrs},
-    vec,
+    error::Error as StdError, fmt, net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs}, vec
 };
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -143,9 +141,7 @@ impl CmdReq {
     pub async fn decode<T: AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
         let mut buf = [0u8; 3];
         s.read_exact(&mut buf).await?;
-        trace!("decode partial CmdReq:{:?}", buf);
         let dst = SocksAddr::decode(s).await?;
-        trace!("decode CmdReq dst:{:?}", dst);
         Ok(Self {
             version: buf[0],
             cmd: buf[1],
@@ -160,12 +156,34 @@ pub struct SocksAddr {
     pub addr: AddrOrDomain,
     pub port: u16,
 }
-
+impl fmt::Display for SocksAddr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // Write strictly the first element into the supplied output
+        // stream: `f`. Returns `fmt::Result` which indicates whether the
+        // operation succeeded or failed. Note that `write!` uses syntax which
+        // is very similar to `println!`.
+        write!(f, "{}:{}", self.addr, self.port)
+    }
+}
 #[derive(Clone, Debug)]
 pub enum AddrOrDomain {
     V4([u8; 4]),
     V6([u8; 16]),
     Domain(VarVec),
+}
+impl fmt::Display for AddrOrDomain {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // Write strictly the first element into the supplied output
+        // stream: `f`. Returns `fmt::Result` which indicates whether the
+        // operation succeeded or failed. Note that `write!` uses syntax which
+        // is very similar to `println!`.
+        match &self {
+            AddrOrDomain::V4(x) => write!(f, "{}", IpAddr::from(x.clone()))?,
+            AddrOrDomain::V6(x) => write!(f, "{}", IpAddr::from(x.clone()))?,
+            AddrOrDomain::Domain(var_vec) => write!(f, "{}", String::from_utf8(var_vec.contents.clone()).map_err(|_|fmt::Error)?)?,
+        }
+        Ok(())
+    }
 }
 impl SocksAddr {
     pub async fn encode<T: AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
@@ -182,14 +200,12 @@ impl SocksAddr {
     pub async fn decode<T: AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
         let mut buf = [0u8; 1];
         s.read_exact(&mut buf).await?;
-        trace!("Decode SocksAddr Atype:{}", buf[0]);
         let atype = buf[0];
         let mut buf2 = vec![0u8; 1];
         let addr = match buf[0] {
             consts::SOCKS5_ADDR_TYPE_IPV4 => {
                 buf2.resize(4, 0);
                 s.read_exact(&mut buf2).await?;
-                trace!("Decode SocksAddr Ipv4:{:?}", buf2);
                 AddrOrDomain::V4(buf2.try_into().unwrap())
             }
             consts::SOCKS5_ADDR_TYPE_IPV6 => {
@@ -209,7 +225,6 @@ impl SocksAddr {
         s.read_exact(&mut buf).await?;
 
         let port = u16::from_be_bytes(buf);
-        trace!("Decode SocksAddr port:{:?}", port);
         Ok(Self { atype, addr, port })
     }
 }

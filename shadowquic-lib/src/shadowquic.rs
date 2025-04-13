@@ -1,13 +1,43 @@
+use async_trait::async_trait;
 use bytes::Bytes;
-use std::{collections::{HashMap, HashSet}, net::SocketAddr, pin::Pin, sync::{ Arc}};
+use std::{
+    collections::{HashMap, HashSet},
+    net::SocketAddr,
+    pin::Pin,
+    sync::Arc,
+};
 
-use quinn::{congestion::{BbrConfig, CubicConfig, NewRenoConfig}, crypto::{self, rustls::QuicServerConfig}, Connection, Endpoint, Incoming, RecvStream, SendStream, ServerConfig, TransportConfig, VarInt};
-use rustls::ServerConfig as RustlsServerConfig;
+use quinn::{
+    ClientConfig, Connection, Endpoint, Incoming, RecvStream, SendStream, ServerConfig,
+    TransportConfig, VarInt,
+    congestion::{BbrConfig, CubicConfig, NewRenoConfig},
+    crypto::{
+        self,
+        rustls::{QuicClientConfig, QuicServerConfig},
+    },
+};
+use rustls::ClientConfig as RustlsClientConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
-use tokio::{io::{AsyncRead, AsyncWrite}, select, sync::{broadcast::error, mpsc::{self, channel, Receiver, Sender}, Notify}};
-use tracing::{debug, error, event, info, Level, Span};
+use rustls::{RootCertStore, ServerConfig as RustlsServerConfig};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    select,
+    sync::{
+        Notify,
+        broadcast::error,
+        mpsc::{self, Receiver, Sender, channel},
+    },
+};
+use tracing::{Level, Span, debug, error, event, info};
 
-use crate::{error::SError, msgs::{shadowquic::{SQCmd, SQReq}, socks5::{SDecode, SEncode, SocksAddr}}, Inbound, Outbound, ProxyRequest, TcpSession, UdpSocketTrait};
+use crate::{
+    Inbound, Outbound, ProxyRequest, TcpSession, TcpTrait, UdpSocketTrait,
+    error::SError,
+    msgs::{
+        shadowquic::{SQCmd, SQReq},
+        socks5::{SDecode, SEncode, SocksAddr},
+    },
+};
 
 pub struct ShadowQuicClient {
     quic_conn: Option<Connection>,
@@ -18,7 +48,58 @@ pub struct ShadowQuicClient {
     zero_rtt: bool,
 }
 impl ShadowQuicClient {
-    async fn prepare_conn(&mut self) -> Result<(),SError>{
+    pub fn new(
+        jls_pwd: String,
+        jls_iv: String,
+        dst_addr: SocketAddr,
+        server_name: String,
+        alpn: Vec<String>,
+        initial_mtu: u16,
+        congestion_controller: String,
+        zero_rtt: bool,
+    ) -> Self {
+        let root_store = RootCertStore {
+            roots: webpki_roots::TLS_SERVER_ROOTS.into(),
+        };
+        let mut crypto = rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+        crypto.alpn_protocols = alpn.iter().map(|x| x.to_owned().into_bytes()).collect();
+        crypto.enable_early_data = zero_rtt;
+        crypto.jls_config = rustls::JlsConfig::new(&jls_pwd, &jls_iv);
+        let mut tp_cfg = TransportConfig::default();
+
+        tp_cfg
+            .max_concurrent_bidi_streams(500u32.into())
+            .initial_mtu(initial_mtu);
+
+        match congestion_controller.as_str() {
+            "cubic" => tp_cfg.congestion_controller_factory(Arc::new(CubicConfig::default())),
+            "newreno" => tp_cfg.congestion_controller_factory(Arc::new(NewRenoConfig::default())),
+            "bbr" => tp_cfg.congestion_controller_factory(Arc::new(BbrConfig::default())),
+            _ => {
+                panic!("Unsupported congestion controller");
+            }
+        };
+        let mut config = ClientConfig::new(Arc::new(
+            QuicClientConfig::try_from(crypto).expect("rustls config can't created"),
+        ));
+
+        config.transport_config(Arc::new(tp_cfg));
+        let mut end =
+            Endpoint::client("[::]:0".parse().unwrap()).expect("Can't create quic endpoint");
+        end.set_default_client_config(config.clone());
+
+        Self {
+            quic_conn: None,
+            quic_config: config,
+            quic_end: end,
+            dst_addr,
+            server_name,
+            zero_rtt,
+        }
+    }
+    async fn prepare_conn(&mut self) -> Result<(), SError> {
         self.quic_conn.take_if(|x| {
             x.close_reason().is_some_and(|x| {
                 info!("Quic connection closed due to {}", x);
@@ -63,25 +144,40 @@ impl ShadowQuicClient {
         Ok(())
     }
 }
-impl<T: AsyncRead + AsyncWrite + Unpin, U: UdpSocketTrait> Outbound<T, U> for ShadowQuicClient {
-    async fn handle(&mut self, req: crate::ProxyRequest<T, U>) -> Result<(), crate::error::SError> {
+#[async_trait]
+impl Outbound for ShadowQuicClient {
+    async fn handle(&mut self, req: crate::ProxyRequest) -> Result<(), crate::error::SError> {
         self.prepare_conn().await?;
-        let conn = self.quic_conn.as_mut().unwrap();
-        match req {
-            crate::ProxyRequest::Tcp(mut tcp_session) => {
-                let (mut send,mut recv) = conn.open_bi().await?;
-                let req = SQReq {cmd: SQCmd::Connect, dst: tcp_session.dst };
-                req.encode(&mut send).await?;
+        let conn = self.quic_conn.as_mut().unwrap().clone();
+        let fut = async move {
+            match req {
+                crate::ProxyRequest::Tcp(mut tcp_session) => {
+                    let (mut send, mut recv) = conn.open_bi().await?;
+                    let req = SQReq {
+                        cmd: SQCmd::Connect,
+                        dst: tcp_session.dst,
+                    };
+                    req.encode(&mut send).await?;
 
-                tokio::io::copy_bidirectional(&mut Unsplit{s:send, r:recv}, &mut tcp_session.stream).await?;
+                    tokio::io::copy_bidirectional(
+                        &mut Unsplit { s: send, r: recv },
+                        &mut tcp_session.stream,
+                    )
+                    .await?;
+                }
+                crate::ProxyRequest::Udp(udp_session) => todo!(),
             }
-            crate::ProxyRequest::Udp(udp_session) => todo!(),
-        }
+            Ok(()) as Result<(), SError>
+        };
+        tokio::spawn(async {
+            fut.await.map_err(|x|error!("{}", x));
+        });
         Ok(())
     }
 }
 
 struct UdpMux(Receiver<Bytes>);
+#[async_trait]
 impl UdpSocketTrait for UdpMux {
     async fn recv_from(
         &mut self,
@@ -95,17 +191,19 @@ impl UdpSocketTrait for UdpMux {
     }
 }
 
-type ShadowTcp = Unsplit<SendStream,RecvStream>;
+pub type ShadowTcp = Unsplit<SendStream, RecvStream>;
+
 pub struct ShadowQuicServer {
     pub squic_conn: Vec<ShadowQuicConn>,
     pub quic_config: quinn::ServerConfig,
     pub bind_addr: SocketAddr,
     pub zero_rtt: bool,
-    pub request_sender: Sender<ProxyRequest<ShadowTcp, UdpMux>>,
-    pub request: Receiver<ProxyRequest<ShadowTcp, UdpMux>>,
+    pub request_sender: Sender<ProxyRequest>,
+    pub request: Receiver<ProxyRequest>,
 }
+
 impl ShadowQuicServer {
-    fn new(
+    pub fn new(
         bind_addr: SocketAddr,
         jls_pwd: String,
         jls_iv: String,
@@ -121,18 +219,11 @@ impl ShadowQuicServer {
         crypto = RustlsServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
             .with_no_client_auth()
             .with_single_cert(vec![cert_der], PrivateKeyDer::Pkcs8(priv_key))?;
-        crypto.alpn_protocols = alpn.iter()
-        .cloned()
-        .map(|alpn| alpn.into_bytes())
-        .collect();
-        crypto.max_early_data_size = if zero_rtt {u32::MAX} else {0};
+        crypto.alpn_protocols = alpn.iter().cloned().map(|alpn| alpn.into_bytes()).collect();
+        crypto.max_early_data_size = if zero_rtt { u32::MAX } else { 0 };
         crypto.send_half_rtt_data = zero_rtt;
 
-        crypto.jls_config = rustls::JlsServerConfig::new(
-            &jls_pwd,
-            &jls_iv,
-            &jls_upstream,
-        );
+        crypto.jls_config = rustls::JlsServerConfig::new(&jls_pwd, &jls_iv, &jls_upstream);
         let mut tp_cfg = TransportConfig::default();
         tp_cfg.max_concurrent_bidi_streams(1000u32.into());
         match cogestion_controller.as_str() {
@@ -156,93 +247,112 @@ impl ShadowQuicServer {
             QuicServerConfig::try_from(crypto).expect("rustls config can't created"),
         ));
         config.transport_config(Arc::new(tp_cfg));
-        
-        let(send,recv) = channel::<ProxyRequest<Unsplit<SendStream, RecvStream>, UdpMux>>(10);
 
-        Ok(Self { 
-            squic_conn: vec![], 
+        let (send, recv) = channel::<ProxyRequest>(10);
+
+        Ok(Self {
+            squic_conn: vec![],
             quic_config: config,
             zero_rtt,
             bind_addr,
             request_sender: send,
             request: recv,
-            })
+        })
+    }
+
+    async fn handle_incoming(
+        incom: Incoming,
+        zero_rtt: bool,
+        req_sender: Sender<ProxyRequest>,
+    ) -> Result<(), SError> {
+        event!(
+            Level::TRACE,
+            "Incomming from {} accepted",
+            incom.remote_address()
+        );
+        let conn = incom.accept()?;
+        let connection;
+        if zero_rtt {
+            connection = match conn.into_0rtt() {
+                Ok((conn, accepted)) => {
+                    let conn_clone = conn.clone();
+                    tokio::spawn(async move {
+                        debug!("zero rtt accepted:{}", accepted.await);
+                        if conn_clone.is_jls() == Some(false) {
+                            error!("JLS hijacked or wrong pwd/iv");
+                            conn_clone.close(0u8.into(), b"");
+                        }
+                    });
+                    conn
+                }
+                Err(conn) => conn.await?,
+            };
+        } else {
+            connection = conn.await?;
+        }
+        if connection.is_jls() == Some(false) {
+            error!("JLS hijacked or wrong pwd/iv");
+            connection.close(0u8.into(), b"");
+            return Err(SError::JlsAuthFailed);
+        }
+        let sq_conn = ShadowQuicConn {
+            quic_conn: connection,
+            sessions: Default::default(),
+            udp_dispatch_tab: Default::default(),
+        };
+        sq_conn.handle_connection(req_sender).await?;
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl Inbound for ShadowQuicServer {
+    async fn accept(&mut self) -> Result<crate::ProxyRequest, SError> {
+        let req = self
+            .request
+            .recv()
+            .await
+            .ok_or(SError::InboundUnavailable)?;
+        return Ok(req);
     }
     /// Init background job for accepting connection
-    async fn init(&self) -> Result<(),SError>{
-        let fut1 = async {
-            let endpoint = Endpoint::server(self.quic_config.clone(), self.bind_addr).expect("Failed listen on udp");
+    async fn init(&self) -> Result<(), SError> {
+        let quic_config = self.quic_config.clone();
+        let bind_addr = self.bind_addr.clone();
+        let zero_rtt = self.zero_rtt;
+        let request_sender = self.request_sender.clone();
+        let fut = async move {
+            let endpoint =
+                Endpoint::server(quic_config, bind_addr).expect("Failed to listening on udp");
             loop {
                 match endpoint.accept().await {
                     Some(conn) => {
-                        tokio::spawn(
-                            Self::handle_incoming(conn, self.zero_rtt, self.request_sender.clone())
-                        );
-                    },
+                        tokio::spawn(Self::handle_incoming(
+                            conn,
+                            zero_rtt,
+                            request_sender.clone(),
+                        ));
+                    }
                     None => {
                         error!("Quic endpoint closed");
-                    },
+                    }
                 }
             }
         };
+        tokio::spawn(fut);
         Ok(())
-    }
-    async fn handle_incoming(incom: Incoming, zero_rtt: bool, req_sender: Sender<ProxyRequest<ShadowTcp, UdpMux>>) -> Result<(),SError> {
-            event!(Level::TRACE, "Incomming from {} accepted",incom.remote_address());
-            let conn = incom.accept()?;
-            let connection;
-            if zero_rtt {
-                        connection = match conn.into_0rtt() {
-                            Ok((conn, accepted))  => {
-                                let conn_clone = conn.clone();
-                                tokio::spawn(async move {
-                                    debug!("zero rtt accepted:{}", accepted.await);
-                                    if conn_clone.is_jls() == Some(false) {
-                                        error!("JLS hijacked or wrong pwd/iv");
-                                        conn_clone.close(0u8.into(), b"");
-                                    }
-                                });
-                                conn
-                            },
-                            Err(conn) => {
-                                conn.await?
-                            }
-                    };
-            } else {
-                connection = conn.await?;
-            }
-            if connection.is_jls() == Some(false) {
-                error!("JLS hijacked or wrong pwd/iv");
-                connection.close(0u8.into(), b"");
-                return Err(SError::JlsAuthFailed);
-            }
-            let sq_conn = ShadowQuicConn {
-                quic_conn: connection,
-                sessions: Default::default(),
-                udp_dispatch_tab: Default::default(),
-            };
-            sq_conn.handle_connection(req_sender).await?;
-            
-        
-          Ok(())
-    }
-
-}
-impl Inbound<ShadowTcp, UdpMux> for ShadowQuicServer {
-    async fn accept(&mut self) -> Result<crate::ProxyRequest<ShadowTcp, UdpMux>, SError> {
-        let req = self.request.recv().await.ok_or(SError::InboundUnavailable)?;
-        return Ok(req);
     }
 }
 pub struct ShadowQuicConn {
     pub quic_conn: Connection,
-    pub sessions: HashMap<u16, Result<VarInt,Notify>>, // Stream ID one to one corespondance to remote client socks5 udp socket,
+    pub sessions: HashMap<u16, Result<VarInt, Notify>>, // Stream ID one to one corespondance to remote client socks5 udp socket,
     pub udp_dispatch_tab: HashMap<VarInt, Sender<Bytes>>,
 }
 impl ShadowQuicConn {
-    async fn handle_connection(self, req_send:Sender<ProxyRequest<ShadowTcp, UdpMux>>) -> Result<(),SError> {
+    async fn handle_connection(self, req_send: Sender<ProxyRequest>) -> Result<(), SError> {
         let conn = &self.quic_conn;
-        while(conn.close_reason().is_none()) {
+        while (conn.close_reason().is_none()) {
             select! {
                 bi = conn.accept_bi() => {
                     let (send, recv) = bi?;
@@ -255,33 +365,40 @@ impl ShadowQuicConn {
             }
         }
         Ok(())
-    } 
-    async fn handle_bistream(mut send: SendStream, mut recv: RecvStream, req_send:Sender<ProxyRequest<ShadowTcp, UdpMux>>) -> Result<(),SError> {
+    }
+    async fn handle_bistream(
+        mut send: SendStream,
+        mut recv: RecvStream,
+        req_send: Sender<ProxyRequest>,
+    ) -> Result<(), SError> {
         let req = SQReq::decode(&mut recv).await?;
         match req.cmd {
             SQCmd::Connect => {
-                let tcp = TcpSession {
-                    stream: Unsplit{s:send, r:recv},
+                let tcp: TcpSession = TcpSession {
+                    stream: Box::new(Unsplit { s: send, r: recv }),
                     dst: req.dst,
                 };
-                req_send.send(ProxyRequest::Tcp(tcp)).await.map_err(|_|SError::OutboundUnavailable)?;
-            },
+                req_send
+                    .send(ProxyRequest::Tcp(tcp))
+                    .await
+                    .map_err(|_| SError::OutboundUnavailable)?;
+            }
             SQCmd::AssociatOverDatagram => todo!(),
             SQCmd::AssociatOverStream => todo!(),
         }
         Ok(())
     }
-    async fn handle_datagram(s:Bytes, req_send:Sender<ProxyRequest<ShadowTcp, UdpMux>>) -> Result<(),SError> {
-
+    async fn handle_datagram(s: Bytes, req_send: Sender<ProxyRequest>) -> Result<(), SError> {
         Ok(())
     }
 }
-struct Unsplit<S,R> {
-    s:S,
-    r:R,
+pub struct Unsplit<S, R> {
+    s: S,
+    r: R,
 }
+impl TcpTrait for Unsplit<SendStream, RecvStream> {}
 
-impl<S:AsyncWrite + Unpin, R:AsyncRead + Unpin> AsyncRead for Unsplit<S,R> {
+impl<S: AsyncWrite + Unpin, R: AsyncRead + Unpin> AsyncRead for Unsplit<S, R> {
     fn poll_read(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -291,7 +408,7 @@ impl<S:AsyncWrite + Unpin, R:AsyncRead + Unpin> AsyncRead for Unsplit<S,R> {
     }
 }
 
-impl<S:AsyncWrite + Unpin, R:AsyncRead + Unpin> AsyncWrite for Unsplit<S,R> {
+impl<S: AsyncWrite + Unpin, R: AsyncRead + Unpin> AsyncWrite for Unsplit<S, R> {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -300,12 +417,17 @@ impl<S:AsyncWrite + Unpin, R:AsyncRead + Unpin> AsyncWrite for Unsplit<S,R> {
         Pin::new(&mut self.as_mut().s).poll_write(cx, buf)
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), std::io::Error>> {
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
         Pin::new(&mut self.as_mut().s).poll_flush(cx)
     }
 
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), std::io::Error>> {
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
         Pin::new(&mut self.as_mut().s).poll_shutdown(cx)
     }
 }
-

@@ -1,4 +1,5 @@
 use std::io::Cursor;
+use std::sync::Arc;
 use std::{error::Error, net::SocketAddr};
 
 use crate::error::SError;
@@ -8,6 +9,7 @@ use crate::msgs::socks5::{
     SOCKS5_REPLY_SUCCEEDED, SOCKS5_VERSION, SocksAddr,
 };
 use crate::{Inbound, ProxyRequest, TcpSession, UdpSocketTrait};
+use async_trait::async_trait;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 
@@ -36,12 +38,9 @@ async fn handle_socks<T: AsyncRead + AsyncWrite + Unpin>(
         method: SOCKS5_AUTH_METHOD_NONE,
     };
     info!("Auth Req:{:?}", req);
-
-    trace!("Auth Reply:{:?}", reply);
     reply.encode(&mut s).await?;
     let req = socks5::CmdReq::decode(&mut s).await?;
 
-    trace!("Cmd Req:{:?}", req);
     let addr = match req.dst.addr {
         AddrOrDomain::V4(_) | AddrOrDomain::Domain(_) => AddrOrDomain::V4([0u8, 0u8, 0u8, 0u8]),
         AddrOrDomain::V6(x) => AddrOrDomain::V6(x.map(|_| 0u8)),
@@ -78,12 +77,12 @@ async fn handle_socks<T: AsyncRead + AsyncWrite + Unpin>(
         }
     };
 
-    trace!("Cmd Reply:{:?}", reply);
     reply.encode(&mut s).await?;
     Ok((s, req, socket))
 }
 
 pub struct UdpSocksWrap(UdpSocket);
+#[async_trait]
 impl UdpSocketTrait for UdpSocksWrap {
     async fn recv_from(
         &mut self,
@@ -101,16 +100,18 @@ impl UdpSocketTrait for UdpSocksWrap {
         todo!()
     }
 }
-impl Inbound<TcpStream, UdpSocksWrap> for SocksServer {
-    async fn accept(&mut self) -> Result<ProxyRequest<TcpStream, UdpSocksWrap>, SError> {
+
+#[async_trait]
+impl Inbound for SocksServer {
+    async fn accept(&mut self) -> Result<ProxyRequest, SError> {
         let (stream, _) = self.listener.accept().await?;
         let local_addr = stream.local_addr().unwrap();
 
         let (s, req, socket) = handle_socks(stream, local_addr).await?;
-        trace!("socks request accepted{:?}", req);
+        trace!("socks request accepted: {:?}", req.dst);
         match req.cmd {
             SOCKS5_CMD_TCP_CONNECT => Ok(ProxyRequest::Tcp(TcpSession {
-                stream: s,
+                stream: Box::new(s),
                 dst: req.dst,
             })),
             SOCKS5_CMD_UDP_ASSOCIATE => {
