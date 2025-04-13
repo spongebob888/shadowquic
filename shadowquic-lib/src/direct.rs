@@ -5,10 +5,13 @@ use std::net::ToSocketAddrs;
 use tokio::{io::{AsyncRead, AsyncWrite}, net::TcpStream};
 
 use crate::{error::SError, Outbound, UdpSocketTrait};
+use async_trait::async_trait;
 
 pub struct DirectOut;
-impl<T: AsyncRead + AsyncWrite + Unpin, U: UdpSocketTrait> Outbound<T,U> for DirectOut {
-    async fn handle(&mut self, req: crate::ProxyRequest<T, U>) -> anyhow::Result<(), crate::error::SError> {
+
+#[async_trait]
+impl Outbound for DirectOut {
+    async fn handle(&mut self, req: crate::ProxyRequest) -> anyhow::Result<(), crate::error::SError> {
         match req {
             crate::ProxyRequest::Tcp(mut tcp_session) => {
                 let dst = tcp_session.dst.to_socket_addrs()?.next().ok_or(SError::DomainResolveFailed)?;
