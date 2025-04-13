@@ -77,10 +77,7 @@ impl Manager {
         let mut outbound = self.outbound;
         loop {
             let req = inbound.accept().await?;
-
                 outbound.handle(req).await.unwrap();
-
-
         } 
 
         Ok(())

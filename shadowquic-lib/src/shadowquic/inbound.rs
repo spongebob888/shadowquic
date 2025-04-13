@@ -28,7 +28,7 @@ use tokio::{
         mpsc::{self, Receiver, Sender, channel},
     },
 };
-use tracing::{Level, Span, debug, error, event, info};
+use tracing::{debug, error, event, info, span, trace, trace_span, Instrument, Level, Span};
 
 use crate::{
     Inbound, Outbound, ProxyRequest, TcpSession, TcpTrait, UdpSocketTrait,
@@ -165,7 +165,8 @@ impl ShadowQuicServer {
             sessions: Default::default(),
             udp_dispatch_tab: Default::default(),
         };
-        sq_conn.handle_connection(req_sender).await?;
+        let span = trace_span!("quic conn", id = sq_conn.quic_conn.stable_id());
+        sq_conn.handle_connection(req_sender).instrument(span).await?;
 
         Ok(())
     }
@@ -221,6 +222,7 @@ impl ShadowQuicConn {
             select! {
                 bi = conn.accept_bi() => {
                     let (send, recv) = bi?;
+                    trace!("bi stream accepted");
                     tokio::spawn(Self::handle_bistream(send, recv, req_send.clone()));
                 },
                 datagram = conn.read_datagram() => {
