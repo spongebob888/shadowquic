@@ -9,8 +9,8 @@ use msgs::socks5::{
     SOCKS5_AUTH_METHOD_NONE, SOCKS5_CMD_TCP_BIND, SOCKS5_CMD_TCP_CONNECT, SOCKS5_CMD_UDP_ASSOCIATE,
     SOCKS5_REPLY_SUCCEEDED, SOCKS5_VERSION, SocksAddr,
 };
-use shadowquic::ShadowQuicServer;
-use socks::SocksServer;
+use crate::shadowquic::inbound::ShadowQuicServer;
+use socks::inbound::SocksServer;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 
