@@ -33,8 +33,8 @@ pub trait UdpSocketTrait: Send + Sync + Unpin {
     async fn recv_from(
         &mut self,
         buf: &mut [u8],
-    ) -> Result<(usize, usize, SocketAddr, SocksAddr), SError>;
-    async fn send_to(&self, buf: &[u8], addr: SocketAddr) -> Result<usize, SError>;
+    ) -> Result<(usize, usize, SocksAddr), SError>;  // headsize, totalsize, proxy addr
+    async fn send_to(&self, buf: &[u8], addr: SocksAddr) -> Result<usize, SError>; // addr is proxy addr
 }
 pub struct TcpSession<IO=AnyTcp> {
     stream: IO,

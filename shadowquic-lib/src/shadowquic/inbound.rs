@@ -47,11 +47,11 @@ impl UdpSocketTrait for UdpMux {
     async fn recv_from(
         &mut self,
         buf: &mut [u8],
-    ) -> anyhow::Result<(usize, usize, SocketAddr, SocksAddr), SError> {
+    ) -> anyhow::Result<(usize, usize, SocksAddr), SError> {
         todo!()
     }
 
-    async fn send_to(&self, buf: &[u8], addr: SocketAddr) -> anyhow::Result<usize, SError> {
+    async fn send_to(&self, buf: &[u8], addr: SocksAddr) -> anyhow::Result<usize, SError> {
         todo!()
     }
 }

@@ -310,6 +310,14 @@ impl SDecode for UdpReqHeader {
         })
     }
 }
+impl SEncode for UdpReqHeader {
+    async fn encode<T: AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
+        self.rsv.encode(s).await?;
+        self.frag.encode(s).await?;
+        self.dst.encode(s).await?;
+        Ok(())
+    }
+}
 impl SDecode for u8 {
     async fn decode<T: AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
         let mut buf = [0u8];

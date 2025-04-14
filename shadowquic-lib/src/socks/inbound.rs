@@ -4,9 +4,7 @@ use std::{error::Error, net::SocketAddr};
 
 use crate::error::SError;
 use crate::msgs::socks5::{
-    self, AddrOrDomain, CmdReq, SDecode, SOCKS5_ADDR_TYPE_DOMAIN_NAME, SOCKS5_ADDR_TYPE_IPV4,
-    SOCKS5_AUTH_METHOD_NONE, SOCKS5_CMD_TCP_BIND, SOCKS5_CMD_TCP_CONNECT, SOCKS5_CMD_UDP_ASSOCIATE,
-    SOCKS5_REPLY_SUCCEEDED, SOCKS5_VERSION, SocksAddr,
+    self, AddrOrDomain, CmdReq, SDecode, SEncode, SocksAddr, UdpReqHeader, SOCKS5_ADDR_TYPE_DOMAIN_NAME, SOCKS5_ADDR_TYPE_IPV4, SOCKS5_AUTH_METHOD_NONE, SOCKS5_CMD_TCP_BIND, SOCKS5_CMD_TCP_CONNECT, SOCKS5_CMD_UDP_ASSOCIATE, SOCKS5_REPLY_SUCCEEDED, SOCKS5_VERSION
 };
 use crate::{Inbound, ProxyRequest, TcpSession, UdpSocketTrait};
 use async_trait::async_trait;
@@ -14,7 +12,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 
 use anyhow::Result;
-use tracing::{info, trace};
+use tracing::{error, info, trace};
 pub struct SocksServer {
     bind_addr: SocketAddr,
     listener: TcpListener,
@@ -80,23 +78,32 @@ async fn handle_socks<T: AsyncRead + AsyncWrite + Unpin>(
     Ok((s, req, socket))
 }
 
-pub struct UdpSocksWrap(UdpSocket);
+pub struct UdpSocksWrap(UdpSocket,Option<SocketAddr>); // remote addr
 #[async_trait]
 impl UdpSocketTrait for UdpSocksWrap {
     async fn recv_from(
         &mut self,
         buf: &mut [u8],
-    ) -> Result<(usize, usize, SocketAddr, SocksAddr), SError> {
+    ) -> Result<(usize, usize, SocksAddr), SError> {
         let result = self.0.recv_from(buf).await?;
         let mut cur = Cursor::new(buf);
         let req = socks5::UdpReqHeader::decode(&mut cur).await?;
+        if req.frag != 0 {
+            error!("dropping fragmented udp datagram ");
+            return Err(SError::ProtocolUnimpl);
+        }
         let headsize: usize = cur.position().try_into().unwrap();
-
-        Ok((headsize, result.0, result.1, req.dst))
+        self.1 = Some(result.1);
+        Ok((headsize, result.0, req.dst))
     }
 
-    async fn send_to(&self, buf: &[u8], addr: SocketAddr) -> Result<usize, SError> {
-        todo!()
+    async fn send_to(&self, buf: &[u8], addr: SocksAddr) -> Result<usize, SError> {
+        let reply = UdpReqHeader { rsv: 0, frag: 0, dst: addr };
+        let mut buf_new = Vec::new();
+        reply.encode(&mut buf_new).await?;
+        buf_new.extend_from_slice(&buf);
+
+        Ok(self.0.send_to(&buf, self.1.unwrap()).await?)
     }
 }
 
