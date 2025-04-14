@@ -26,6 +26,34 @@ async fn main() {
     let mut socks_server = SocksServer::new("127.0.0.1:1089".parse().unwrap())
         .await
         .unwrap();
+    let direct_client = DirectOut;
+    let server = Manager { inbound: Box::new(socks_server),
+        outbound: Box::new(direct_client) };
+
+    server.run().await.unwrap();
+}
+
+async fn test_shadowquic(){
+    let filter = tracing_subscriber::filter::Targets::new()
+    // Enable the `INFO` level for anything in `my_crate`
+    .with_target("shadowquic_lib", Level::TRACE)
+    .with_target("shadowquic_lib::msgs::socks", LevelFilter::OFF);
+
+    // Enable the `DEBUG` level for a specific module.
+
+    // Build a new subscriber with the `fmt` layer using the `Targets`
+    // filter we constructed above.
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(filter)
+        .init();
+
+    // env_logger::init();
+    trace!("Running");
+
+    let mut socks_server = SocksServer::new("127.0.0.1:1089".parse().unwrap())
+        .await
+        .unwrap();
     let sq_client = ShadowQuicClient::new(
         "123".into(),
         "123".into(),
