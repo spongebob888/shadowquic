@@ -1,5 +1,5 @@
 use std::io::Cursor;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, OnceLock};
 use std::{error::Error, net::SocketAddr};
 
 use crate::error::SError;
@@ -83,10 +83,10 @@ async fn handle_socks<T: AsyncRead + AsyncWrite + Unpin>(
     Ok((s, req, socket))
 }
 
-pub struct UdpSocksWrap(UdpSocket, Option<SocketAddr>); // remote addr
+pub struct UdpSocksWrap(UdpSocket, OnceLock<SocketAddr>); // remote addr
 #[async_trait]
 impl UdpSocketTrait for UdpSocksWrap {
-    async fn recv_from(&mut self, buf: &mut [u8]) -> Result<(usize, usize, SocksAddr), SError> {
+    async fn recv_from(&self, buf: &mut [u8]) -> Result<(usize, usize, SocksAddr), SError> {
         let result = self.0.recv_from(buf).await?;
         let mut cur = Cursor::new(buf);
         let req = socks5::UdpReqHeader::decode(&mut cur).await?;
@@ -95,7 +95,7 @@ impl UdpSocketTrait for UdpSocksWrap {
             return Err(SError::ProtocolUnimpl);
         }
         let headsize: usize = cur.position().try_into().unwrap();
-        self.1 = Some(result.1);
+        self.1.get_or_init(||result.1);
         Ok((headsize, result.0, req.dst))
     }
 
@@ -110,7 +110,7 @@ impl UdpSocketTrait for UdpSocksWrap {
         trace!("udp reply: {:?}", buf_new);
         buf_new.extend_from_slice(&buf);
 
-        Ok(self.0.send_to(&buf_new, self.1.unwrap()).await?)
+        Ok(self.0.send_to(&buf_new, self.1.get().unwrap()).await?)
     }
 }
 
@@ -137,7 +137,7 @@ impl Inbound for SocksServer {
                 //     _ => {},
                 // };
                 Ok(ProxyRequest::Udp(UdpSession {
-                    socket: Box::new(UdpSocksWrap(socket.unwrap(), None)),
+                    socket: Box::new(UdpSocksWrap(socket.unwrap(), Default::default())),
                     dst: req.dst,
                     stream: Some(Box::new(s)),
                 }))
