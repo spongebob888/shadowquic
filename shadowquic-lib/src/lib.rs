@@ -28,9 +28,11 @@ pub enum ProxyRequest<T = AnyTcp, U = AnyUdp> {
     Tcp(TcpSession<T>),
     Udp(UdpSession<U>),
 }
+/// Udp socket only use immutable reference to self
+/// So it can be safely wrapped by Arc and cloned to work in duplex way.
 #[async_trait]
 pub trait UdpSocketTrait: Send + Sync + Unpin {
-    async fn recv_from(&mut self, buf: &mut [u8]) -> Result<(usize, usize, SocksAddr), SError>; // headsize, totalsize, proxy addr
+    async fn recv_from(&self, buf: &mut [u8]) -> Result<(usize, usize, SocksAddr), SError>; // headsize, totalsize, proxy addr
     async fn send_to(&self, buf: &[u8], addr: SocksAddr) -> Result<usize, SError>; // addr is proxy addr
 }
 pub struct TcpSession<IO = AnyTcp> {

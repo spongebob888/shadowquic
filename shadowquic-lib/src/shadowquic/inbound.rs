@@ -43,7 +43,7 @@ struct UdpMux(Receiver<Bytes>);
 #[async_trait]
 impl UdpSocketTrait for UdpMux {
     async fn recv_from(
-        &mut self,
+        &self,
         buf: &mut [u8],
     ) -> anyhow::Result<(usize, usize, SocksAddr), SError> {
         todo!()
