@@ -95,7 +95,7 @@ impl UdpSocketTrait for UdpSocksWrap {
             return Err(SError::ProtocolUnimpl);
         }
         let headsize: usize = cur.position().try_into().unwrap();
-        self.1.get_or_init(||result.1);
+        self.1.get_or_init(|| result.1);
         Ok((headsize, result.0, req.dst))
     }
 
@@ -137,7 +137,7 @@ impl Inbound for SocksServer {
                 //     _ => {},
                 // };
                 Ok(ProxyRequest::Udp(UdpSession {
-                    socket: Box::new(UdpSocksWrap(socket.unwrap(), Default::default())),
+                    socket: Arc::new(UdpSocksWrap(socket.unwrap(), Default::default())),
                     dst: req.dst,
                     stream: Some(Box::new(s)),
                 }))
