@@ -1,22 +1,22 @@
 use async_trait::async_trait;
 use std::{
+    collections::{HashMap, HashSet},
     net::SocketAddr,
+    ops::Deref,
     sync::Arc,
 };
+use tokio::sync::Mutex;
 
 use quinn::{
-    ClientConfig, Connection, Endpoint,
-    TransportConfig,
+    ClientConfig, Connection, Endpoint, RecvStream, SendStream, TransportConfig,
     congestion::{BbrConfig, CubicConfig, NewRenoConfig},
-    crypto::{
-        rustls::QuicClientConfig,
-    },
+    crypto::rustls::QuicClientConfig,
 };
 use rustls::RootCertStore;
 use tracing::{Instrument, Level, debug, debug_span, error, info, span, trace};
 
 use crate::{
-    Outbound,
+    Outbound, UdpSession,
     error::SError,
     msgs::{
         shadowquic::{SQCmd, SQReq},
@@ -33,6 +33,7 @@ pub struct ShadowQuicClient {
     dst_addr: SocketAddr,
     server_name: String,
     zero_rtt: bool,
+    over_stream: bool,
 }
 impl ShadowQuicClient {
     pub fn new(
@@ -84,6 +85,7 @@ impl ShadowQuicClient {
             dst_addr,
             server_name,
             zero_rtt,
+            over_stream: false,
         }
     }
     async fn prepare_conn(&mut self) -> Result<(), SError> {
@@ -96,7 +98,6 @@ impl ShadowQuicClient {
         if self.quic_conn.is_none() {
             let conn = self.quic_end.connect(self.dst_addr, &self.server_name)?;
             let conn = if self.zero_rtt {
-                
                 match conn.into_0rtt() {
                     Ok((x, accepted)) => {
                         let conn_clone = x.clone();
@@ -137,6 +138,7 @@ impl Outbound for ShadowQuicClient {
 
         let conn = self.quic_conn.as_mut().unwrap().clone();
         let span = debug_span!("quic conn", id = conn.stable_id());
+        let over_stream = self.over_stream;
         let fut = async move {
             match req {
                 crate::ProxyRequest::Tcp(mut tcp_session) => {
@@ -157,9 +159,23 @@ impl Outbound for ShadowQuicClient {
                     )
                     .await?;
                     trace!("request:{} finished", tcp_session.dst);
-                    drop(enter);
                 }
-                crate::ProxyRequest::Udp(udp_session) => todo!(),
+                crate::ProxyRequest::Udp(udp_session) => {
+                    let (mut send, recv) = conn.open_bi().await?;
+                    let _span = span!(Level::TRACE, "udp", stream_id = (send.id().index()));
+                    trace!("bistream opened");
+                    let enter = _span.enter();
+                    let req = SQReq {
+                        cmd: if over_stream {
+                            SQCmd::AssociatOverStream
+                        } else {
+                            SQCmd::AssociatOverDatagram
+                        },
+                        dst: udp_session.dst.clone(),
+                    };
+                    req.encode(&mut send).await?;
+                    trace!("req header sent");
+                }
             }
             Ok(()) as Result<(), SError>
         };
@@ -167,5 +183,32 @@ impl Outbound for ShadowQuicClient {
             let _ = fut.instrument(span).await.map_err(|x| error!("{}", x));
         });
         Ok(())
+    }
+}
+
+async fn handle_udp_proxy(
+    send: SendStream,
+    recv: RecvStream,
+    udp_session: UdpSession,
+    is_store: SQConn,
+) -> Result<(),SError> {
+    let down_stream = udp_session.socket.clone();
+    let mut buf_down = vec![0u8; 1600];
+    let mut buf_up = vec![0u8; 1600];
+    loop {
+        //down_stream.recv_from(&mut buf).await?;
+    }
+}
+
+struct SQConn {
+    conn: Connection,
+    id_store: Arc<Mutex<HashSet<u16>>>,
+}
+
+impl Deref for SQConn {
+    type Target = Connection;
+
+    fn deref(&self) -> &Self::Target {
+        &self.conn
     }
 }

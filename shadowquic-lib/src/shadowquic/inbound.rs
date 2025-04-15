@@ -1,22 +1,14 @@
 use async_trait::async_trait;
 use bytes::Bytes;
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    pin::Pin,
-    sync::Arc,
-};
+use std::{collections::HashMap, net::SocketAddr, pin::Pin, sync::Arc};
 
 use quinn::{
-    Connection, Endpoint, Incoming, RecvStream, SendStream, ServerConfig,
-    TransportConfig, VarInt,
+    Connection, Endpoint, Incoming, RecvStream, SendStream, ServerConfig, TransportConfig, VarInt,
     congestion::{BbrConfig, CubicConfig, NewRenoConfig},
-    crypto::{
-        rustls::QuicServerConfig,
-    },
+    crypto::rustls::QuicServerConfig,
 };
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::ServerConfig as RustlsServerConfig;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     select,
@@ -39,11 +31,11 @@ use crate::{
 struct UdpMux(Receiver<Bytes>);
 #[async_trait]
 impl UdpSocketTrait for UdpMux {
-    async fn recv_from(&self, buf: &mut [u8]) -> anyhow::Result<(usize, usize, SocksAddr), SError> {
+    async fn recv_from(&self) -> Result<(Bytes, SocksAddr), SError> {
         todo!()
     }
 
-    async fn send_to(&self, buf: &[u8], addr: SocksAddr) -> anyhow::Result<usize, SError> {
+    async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
         todo!()
     }
 }

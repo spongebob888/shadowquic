@@ -1,6 +1,7 @@
 use std::io::Cursor;
-use std::sync::{Arc, OnceLock};
 use std::net::SocketAddr;
+use std::ops::Deref;
+use std::sync::{Arc, OnceLock};
 
 use crate::error::SError;
 use crate::msgs::socks5::{
@@ -10,6 +11,7 @@ use crate::msgs::socks5::{
 };
 use crate::{Inbound, ProxyRequest, TcpSession, UdpSession, UdpSocketTrait};
 use async_trait::async_trait;
+use bytes::{BufMut, Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, UdpSocket};
 
@@ -86,8 +88,11 @@ async fn handle_socks<T: AsyncRead + AsyncWrite + Unpin>(
 pub struct UdpSocksWrap(UdpSocket, OnceLock<SocketAddr>); // remote addr
 #[async_trait]
 impl UdpSocketTrait for UdpSocksWrap {
-    async fn recv_from(&self, buf: &mut [u8]) -> Result<(usize, usize, SocksAddr), SError> {
-        let result = self.0.recv_from(buf).await?;
+    async fn recv_from(&self) -> Result<(Bytes, SocksAddr), SError> {
+        let mut buf = BytesMut::new();
+        buf.resize(1600, 0);
+
+        let (len,dst) = self.0.recv_from(&mut buf).await?;
         let mut cur = Cursor::new(buf);
         let req = socks5::UdpReqHeader::decode(&mut cur).await?;
         if req.frag != 0 {
@@ -95,20 +100,28 @@ impl UdpSocketTrait for UdpSocksWrap {
             return Err(SError::ProtocolUnimpl);
         }
         let headsize: usize = cur.position().try_into().unwrap();
-        self.1.get_or_init(|| result.1);
-        Ok((headsize, result.0, req.dst))
+        trace!("headsize:{}",headsize);
+        let buf = cur.into_inner();
+        self.1.get_or_init(|| dst);
+        let buf = buf.freeze();
+
+        Ok((buf.slice(headsize..len), req.dst))
     }
 
-    async fn send_to(&self, buf: &[u8], addr: SocksAddr) -> Result<usize, SError> {
+    async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
         let reply = UdpReqHeader {
             rsv: 0,
             frag: 0,
             dst: addr,
         };
-        let mut buf_new = Vec::new();
-        reply.encode(&mut buf_new).await?;
+        let mut buf_new = BytesMut::with_capacity(1600);
+        let mut header = Vec::new();
+        let mut cur = Cursor::new(header);
+        reply.encode(&mut cur).await?;
+        let header = cur.into_inner();
         trace!("udp reply: {:?}", buf_new);
-        buf_new.extend_from_slice(buf);
+        buf_new.put(Bytes::from(header));
+        buf_new.put(buf);
 
         Ok(self.0.send_to(&buf_new, self.1.get().unwrap()).await?)
     }

@@ -1,9 +1,11 @@
+
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs},
     sync::Arc,
 };
 
+use bytes::{Bytes, BytesMut};
 use tokio::{
     net::{TcpStream, UdpSocket, lookup_host},
     sync::Mutex,
@@ -80,7 +82,6 @@ impl DnsResolve {
     }
     async fn inv_resolve(&self, addr: &SocketAddr) -> SocksAddr {
         if let Some(add) = self.0.lock().await.iter().find(|x| x.1 == addr) {
-            
             SocksAddr {
                 atype: SOCKS5_ADDR_TYPE_DOMAIN_NAME,
                 addr: AddrOrDomain::Domain(VarVec {
@@ -103,9 +104,10 @@ async fn resolve(socks: &SocksAddr) -> Result<SocketAddr, SError> {
         crate::msgs::socks5::AddrOrDomain::V6(x) => {
             SocketAddr::new(IpAddr::V6(Ipv6Addr::from(x)), 0)
         }
-        crate::msgs::socks5::AddrOrDomain::Domain(var_vec) => lookup_host(
-            (String::from_utf8(var_vec.contents).map_err(|_| SError::DomainResolveFailed)?,socks.port)
-        )
+        crate::msgs::socks5::AddrOrDomain::Domain(var_vec) => lookup_host((
+            String::from_utf8(var_vec.contents).map_err(|_| SError::DomainResolveFailed)?,
+            socks.port,
+        ))
         .await?
         .next()
         .ok_or(SError::DomainResolveFailed)?,
@@ -126,33 +128,34 @@ async fn handle_udp(udp_session: UdpSession) -> Result<(), SError> {
     let upstream = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
     let upstream_clone = upstream.clone();
     let downstream = udp_session.socket.clone();
-    let mut buf_recv = [0u8; 1024 * 10];
 
     let dns_cache = DnsResolve::default();
     let dns_cache_clone = dns_cache.clone();
     let fut1 = async move {
-        let mut buf_send = [0u8; 1024 * 10];
+
 
         loop {
-            let r = upstream.recv_from(&mut buf_send).await?;
-
-            let (len, dst) = r;
+            let mut buf_send = BytesMut::new();
+            buf_send.resize(1600,0);
+            trace!("recv upstream");
+            let (len, dst) = upstream.recv_from(&mut buf_send).await?;
+            trace!("udp request reply from :{}", dst);
             let dst = dns_cache_clone.inv_resolve(&dst).await;
             trace!("udp recv:{}", dst);
-            let len = udp_session.socket.send_to(&buf_send[..len], dst).await?;
+            let buf = buf_send.freeze();
+            let len = udp_session.socket.send_to(buf.slice(..len), dst).await?;
             trace!("udp recved:{} bytes", len);
         }
         Ok(()) as Result<(), SError>
     };
     tokio::spawn(fut1);
     loop {
-        let r = downstream.recv_from(&mut buf_recv).await?;
+        let (buf, dst) = downstream.recv_from().await?;
 
-        let (headlen, len, dst) = r;
         trace!("udp request to:{}", dst);
         let dst = dns_cache.resolve(dst).await?;
         trace!("udp resolve to:{}", dst);
-        upstream_clone.send_to(&buf_recv[headlen..len], dst).await?;
+        upstream_clone.send_to(&buf, dst).await?;
         trace!("udp request sent:{}", dst);
     }
 }
