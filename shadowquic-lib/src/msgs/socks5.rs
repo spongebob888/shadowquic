@@ -1,7 +1,7 @@
 use std::{
     error::Error as StdError,
     fmt,
-    net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs},
+    net::{IpAddr, SocketAddr, ToSocketAddrs},
     vec,
 };
 
@@ -36,7 +36,6 @@ pub mod consts {
 }
 
 pub use consts::*;
-use tracing::trace;
 
 use crate::error::SError;
 
@@ -65,7 +64,7 @@ impl SEncode for VarVec {
     async fn encode<T: AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
         let buf = vec![self.len];
         s.write_all(&buf).await?;
-        s.write_all(&&self.contents[0..self.len as usize]).await?;
+        s.write_all((&self.contents[0..self.len as usize])).await?;
         Ok(())
     }
 }
@@ -95,7 +94,7 @@ impl AuthReq {
         let methods = VarVec::decode(s).await?;
         Ok(Self {
             version: buf[0],
-            methods: methods,
+            methods,
         })
     }
 }
@@ -181,8 +180,8 @@ impl fmt::Display for AddrOrDomain {
         // operation succeeded or failed. Note that `write!` uses syntax which
         // is very similar to `println!`.
         match &self {
-            AddrOrDomain::V4(x) => write!(f, "{}", IpAddr::from(x.clone()))?,
-            AddrOrDomain::V6(x) => write!(f, "{}", IpAddr::from(x.clone()))?,
+            AddrOrDomain::V4(x) => write!(f, "{}", IpAddr::from(*x))?,
+            AddrOrDomain::V6(x) => write!(f, "{}", IpAddr::from(*x))?,
             AddrOrDomain::Domain(var_vec) => write!(
                 f,
                 "{}",

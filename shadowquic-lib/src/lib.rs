@@ -1,22 +1,14 @@
-use std::io::Cursor;
 use std::sync::Arc;
-use std::{error::Error, net::SocketAddr};
 
-use crate::shadowquic::inbound::ShadowQuicServer;
-use direct::DirectOut;
 use error::SError;
 use msgs::socks5::{
-    self, AddrOrDomain, CmdReq, SDecode, SOCKS5_ADDR_TYPE_DOMAIN_NAME, SOCKS5_ADDR_TYPE_IPV4,
-    SOCKS5_AUTH_METHOD_NONE, SOCKS5_CMD_TCP_BIND, SOCKS5_CMD_TCP_CONNECT, SOCKS5_CMD_UDP_ASSOCIATE,
-    SOCKS5_REPLY_SUCCEEDED, SOCKS5_VERSION, SocksAddr,
+    SocksAddr,
 };
-use socks::inbound::SocksServer;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::{TcpListener, TcpStream, UdpSocket};
+use tokio::net::TcpStream;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use tracing::{info, trace};
 
 pub mod direct;
 pub mod error;
@@ -70,7 +62,7 @@ pub struct Manager {
 }
 
 impl Manager {
-    pub async fn run(mut self) -> Result<(), SError> {
+    pub async fn run(self) -> Result<(), SError> {
         self.inbound.init().await?;
         let mut inbound = self.inbound;
         let mut outbound = self.outbound;

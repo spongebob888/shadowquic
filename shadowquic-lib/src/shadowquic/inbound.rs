@@ -1,41 +1,38 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     net::SocketAddr,
     pin::Pin,
     sync::Arc,
 };
 
 use quinn::{
-    ClientConfig, Connection, Endpoint, Incoming, RecvStream, SendStream, ServerConfig,
+    Connection, Endpoint, Incoming, RecvStream, SendStream, ServerConfig,
     TransportConfig, VarInt,
     congestion::{BbrConfig, CubicConfig, NewRenoConfig},
     crypto::{
-        self,
-        rustls::{QuicClientConfig, QuicServerConfig},
+        rustls::QuicServerConfig,
     },
 };
-use rustls::ClientConfig as RustlsClientConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
-use rustls::{RootCertStore, ServerConfig as RustlsServerConfig};
+use rustls::ServerConfig as RustlsServerConfig;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     select,
     sync::{
         Notify,
-        broadcast::error,
-        mpsc::{self, Receiver, Sender, channel},
+        mpsc::{Receiver, Sender, channel},
     },
 };
-use tracing::{Instrument, Level, Span, debug, error, event, info, span, trace, trace_span};
+use tracing::{Instrument, Level, debug, error, event, trace, trace_span};
 
 use crate::{
-    Inbound, Outbound, ProxyRequest, TcpSession, TcpTrait, UdpSocketTrait,
+    Inbound, ProxyRequest, TcpSession, TcpTrait, UdpSocketTrait,
     error::SError,
     msgs::{
         shadowquic::{SQCmd, SQReq},
-        socks5::{SDecode, SEncode, SocksAddr},
+        socks5::{SDecode, SocksAddr},
     },
 };
 
@@ -88,15 +85,15 @@ impl ShadowQuicServer {
         tp_cfg.max_concurrent_bidi_streams(1000u32.into());
         match cogestion_controller.as_str() {
             "bbr" => {
-                let mut bbr_config = BbrConfig::default();
+                let bbr_config = BbrConfig::default();
                 tp_cfg.congestion_controller_factory(Arc::new(bbr_config))
             }
             "cubic" => {
-                let mut cubic_config = CubicConfig::default();
+                let cubic_config = CubicConfig::default();
                 tp_cfg.congestion_controller_factory(Arc::new(cubic_config))
             }
             "newreno" => {
-                let mut new_reno = NewRenoConfig::default();
+                let new_reno = NewRenoConfig::default();
                 tp_cfg.congestion_controller_factory(Arc::new(new_reno))
             }
             _ => {
@@ -183,7 +180,7 @@ impl Inbound for ShadowQuicServer {
     /// Init background job for accepting connection
     async fn init(&self) -> Result<(), SError> {
         let quic_config = self.quic_config.clone();
-        let bind_addr = self.bind_addr.clone();
+        let bind_addr = self.bind_addr;
         let zero_rtt = self.zero_rtt;
         let request_sender = self.request_sender.clone();
         let fut = async move {
@@ -216,7 +213,7 @@ pub struct ShadowQuicConn {
 impl ShadowQuicConn {
     async fn handle_connection(self, req_send: Sender<ProxyRequest>) -> Result<(), SError> {
         let conn = &self.quic_conn;
-        while (conn.close_reason().is_none()) {
+        while conn.close_reason().is_none() {
             select! {
                 bi = conn.accept_bi() => {
                     let (send, recv) = bi?;
@@ -232,7 +229,7 @@ impl ShadowQuicConn {
         Ok(())
     }
     async fn handle_bistream(
-        mut send: SendStream,
+        send: SendStream,
         mut recv: RecvStream,
         req_send: Sender<ProxyRequest>,
     ) -> Result<(), SError> {
