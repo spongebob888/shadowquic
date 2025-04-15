@@ -1,5 +1,8 @@
 use std::{
-    error::Error as StdError, fmt, net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs}, vec
+    error::Error as StdError,
+    fmt,
+    net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs},
+    vec,
 };
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -180,7 +183,11 @@ impl fmt::Display for AddrOrDomain {
         match &self {
             AddrOrDomain::V4(x) => write!(f, "{}", IpAddr::from(x.clone()))?,
             AddrOrDomain::V6(x) => write!(f, "{}", IpAddr::from(x.clone()))?,
-            AddrOrDomain::Domain(var_vec) => write!(f, "{}", String::from_utf8(var_vec.contents.clone()).map_err(|_|fmt::Error)?)?,
+            AddrOrDomain::Domain(var_vec) => write!(
+                f,
+                "{}",
+                String::from_utf8(var_vec.contents.clone()).map_err(|_| fmt::Error)?
+            )?,
         }
         Ok(())
     }
@@ -296,7 +303,7 @@ impl CmdReply {
 }
 
 pub struct UdpReqHeader {
-    pub rsv: u8,
+    pub rsv: u16,
     pub frag: u8,
     pub dst: SocksAddr,
 }
@@ -304,7 +311,7 @@ pub struct UdpReqHeader {
 impl SDecode for UdpReqHeader {
     async fn decode<T: AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
         Ok(UdpReqHeader {
-            rsv: u8::decode(s).await?,
+            rsv: u16::decode(s).await?,
             frag: u8::decode(s).await?,
             dst: SocksAddr::decode(s).await?,
         })
@@ -330,6 +337,23 @@ impl SEncode for u8 {
     async fn encode<T: AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
         let buf = [self];
         s.write_all(&buf).await?;
+        Ok(())
+    }
+}
+
+impl SDecode for u16 {
+    async fn decode<T: AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
+        let mut buf = [0u8; 2];
+        s.read_exact(&mut buf).await?;
+
+        let val = u16::from_be_bytes(buf);
+        Ok(val)
+    }
+}
+
+impl SEncode for u16 {
+    async fn encode<T: AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
+        s.write_u16(self).await?;
         Ok(())
     }
 }
