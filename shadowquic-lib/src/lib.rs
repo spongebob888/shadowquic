@@ -47,7 +47,7 @@ pub struct UdpSession<IO = AnyUdp> {
 }
 
 pub type AnyTcp = Box<dyn TcpTrait>;
-pub type AnyUdp = Box<dyn UdpSocketTrait>;
+pub type AnyUdp = Arc<dyn UdpSocketTrait>;
 pub trait TcpTrait: AsyncRead + AsyncWrite + Unpin + Send + Sync {}
 impl TcpTrait for TcpStream {}
 

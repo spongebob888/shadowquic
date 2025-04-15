@@ -42,10 +42,7 @@ use crate::{
 struct UdpMux(Receiver<Bytes>);
 #[async_trait]
 impl UdpSocketTrait for UdpMux {
-    async fn recv_from(
-        &self,
-        buf: &mut [u8],
-    ) -> anyhow::Result<(usize, usize, SocksAddr), SError> {
+    async fn recv_from(&self, buf: &mut [u8]) -> anyhow::Result<(usize, usize, SocksAddr), SError> {
         todo!()
     }
 

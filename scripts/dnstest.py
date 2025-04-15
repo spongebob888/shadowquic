@@ -14,7 +14,7 @@ proxy_user = None  # Set this if your proxy requires authentication
 proxy_pass = None  # Set this if your proxy requires authentication
 
 # Target DNS server (can be any public DNS resolver)
-dns_server = '8.8.8.8'  # Google DNS
+dns_server = 'dns.google.com'  # Google DNS
 dns_port = 53  # DNS uses port 53 for queries
 
 # Create a SOCKS5 proxy connection
