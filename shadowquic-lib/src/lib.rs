@@ -34,7 +34,8 @@ pub struct TcpSession<IO = AnyTcp> {
 
 pub struct UdpSession<IO = AnyUdp> {
     socket: IO,
-    stream: Option<AnyTcp>,
+    /// Control stream, should be kept alive during session.
+    stream: Option<AnyTcp>,  
     dst: SocksAddr,
 }
 
