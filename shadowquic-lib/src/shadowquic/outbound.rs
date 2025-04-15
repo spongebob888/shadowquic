@@ -1,41 +1,26 @@
 use async_trait::async_trait;
-use bytes::Bytes;
 use std::{
-    collections::{HashMap, HashSet},
     net::SocketAddr,
-    pin::Pin,
     sync::Arc,
 };
 
 use quinn::{
-    ClientConfig, Connection, Endpoint, Incoming, RecvStream, SendStream, ServerConfig,
-    TransportConfig, VarInt,
+    ClientConfig, Connection, Endpoint,
+    TransportConfig,
     congestion::{BbrConfig, CubicConfig, NewRenoConfig},
     crypto::{
-        self,
-        rustls::{QuicClientConfig, QuicServerConfig},
+        rustls::QuicClientConfig,
     },
 };
-use rustls::ClientConfig as RustlsClientConfig;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
-use rustls::{RootCertStore, ServerConfig as RustlsServerConfig};
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    select,
-    sync::{
-        Notify,
-        broadcast::error,
-        mpsc::{self, Receiver, Sender, channel},
-    },
-};
-use tracing::{Instrument, Level, Span, debug, debug_span, error, event, info, span, trace};
+use rustls::RootCertStore;
+use tracing::{Instrument, Level, debug, debug_span, error, info, span, trace};
 
 use crate::{
-    Inbound, Outbound, ProxyRequest, TcpSession, TcpTrait, UdpSocketTrait,
+    Outbound,
     error::SError,
     msgs::{
         shadowquic::{SQCmd, SQReq},
-        socks5::{SDecode, SEncode, SocksAddr},
+        socks5::SEncode,
     },
 };
 
@@ -111,7 +96,8 @@ impl ShadowQuicClient {
         if self.quic_conn.is_none() {
             let conn = self.quic_end.connect(self.dst_addr, &self.server_name)?;
             let conn = if self.zero_rtt {
-                let conn = match conn.into_0rtt() {
+                
+                match conn.into_0rtt() {
                     Ok((x, accepted)) => {
                         let conn_clone = x.clone();
                         tokio::spawn(async move {
@@ -129,8 +115,7 @@ impl ShadowQuicClient {
                         trace!("1-rtt quic connection established");
                         x
                     }
-                };
-                conn
+                }
             } else {
                 let x = conn.await?;
                 trace!("1-rtt quic connection established");
@@ -155,7 +140,7 @@ impl Outbound for ShadowQuicClient {
         let fut = async move {
             match req {
                 crate::ProxyRequest::Tcp(mut tcp_session) => {
-                    let (mut send, mut recv) = conn.open_bi().await?;
+                    let (mut send, recv) = conn.open_bi().await?;
                     let _span = span!(Level::TRACE, "tcp", stream_id = (send.id().index()));
                     trace!("bistream opened");
                     let enter = _span.enter();

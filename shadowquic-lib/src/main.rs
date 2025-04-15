@@ -7,7 +7,7 @@ use shadowquic_lib::{
     socks::inbound::SocksServer,
 };
 use tracing::{Level, level_filters::LevelFilter, trace};
-use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() {
@@ -28,7 +28,7 @@ async fn main() {
     // env_logger::init();
     trace!("Running");
 
-    let mut socks_server = SocksServer::new("127.0.0.1:1089".parse().unwrap())
+    let socks_server = SocksServer::new("127.0.0.1:1089".parse().unwrap())
         .await
         .unwrap();
     let direct_client = DirectOut;
@@ -58,7 +58,7 @@ async fn test_shadowquic() {
     // env_logger::init();
     trace!("Running");
 
-    let mut socks_server = SocksServer::new("127.0.0.1:1089".parse().unwrap())
+    let socks_server = SocksServer::new("127.0.0.1:1089".parse().unwrap())
         .await
         .unwrap();
     let sq_client = ShadowQuicClient::new(

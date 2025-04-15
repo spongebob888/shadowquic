@@ -1,6 +1,6 @@
 use std::io::Cursor;
-use std::sync::{Arc, LazyLock, OnceLock};
-use std::{error::Error, net::SocketAddr};
+use std::sync::{Arc, OnceLock};
+use std::net::SocketAddr;
 
 use crate::error::SError;
 use crate::msgs::socks5::{
@@ -11,10 +11,10 @@ use crate::msgs::socks5::{
 use crate::{Inbound, ProxyRequest, TcpSession, UdpSession, UdpSocketTrait};
 use async_trait::async_trait;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::{TcpListener, TcpStream, UdpSocket};
+use tokio::net::{TcpListener, UdpSocket};
 
 use anyhow::Result;
-use tracing::{error, info, trace};
+use tracing::{error, trace};
 pub struct SocksServer {
     bind_addr: SocketAddr,
     listener: TcpListener,
@@ -22,7 +22,7 @@ pub struct SocksServer {
 impl SocksServer {
     pub async fn new(bind_addr: SocketAddr) -> Result<Self, SError> {
         Ok(Self {
-            bind_addr: bind_addr,
+            bind_addr,
             listener: TcpListener::bind(bind_addr).await?,
         })
     }
@@ -54,8 +54,8 @@ async fn handle_socks<T: AsyncRead + AsyncWrite + Unpin>(
         rep: SOCKS5_REPLY_SUCCEEDED,
         rsv: 0u8,
         bind_addr: socks5::SocksAddr {
-            atype: atype,
-            addr: addr,
+            atype,
+            addr,
             port: 0u16,
         },
     };
@@ -108,7 +108,7 @@ impl UdpSocketTrait for UdpSocksWrap {
         let mut buf_new = Vec::new();
         reply.encode(&mut buf_new).await?;
         trace!("udp reply: {:?}", buf_new);
-        buf_new.extend_from_slice(&buf);
+        buf_new.extend_from_slice(buf);
 
         Ok(self.0.send_to(&buf_new, self.1.get().unwrap()).await?)
     }
@@ -128,7 +128,7 @@ impl Inbound for SocksServer {
                 dst: req.dst,
             })),
             SOCKS5_CMD_UDP_ASSOCIATE => {
-                let mut req = req;
+                let req = req;
                 // // Not sure here
                 // match req.dst.addr {
                 //     AddrOrDomain::V4([0u8,0u8,0u8,0u8])=>{req.dst.port=0},

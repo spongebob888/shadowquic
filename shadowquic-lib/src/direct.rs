@@ -5,17 +5,15 @@ use std::{
 };
 
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
     net::{TcpStream, UdpSocket, lookup_host},
-    spawn,
     sync::Mutex,
 };
-use tracing::{Instrument, error, span, trace, trace_span};
+use tracing::{Instrument, error, trace, trace_span};
 
 use crate::{
     Outbound, UdpSession, UdpSocketTrait,
     error::SError,
-    msgs::socks5::{self, AddrOrDomain, SOCKS5_ADDR_TYPE_DOMAIN_NAME, SocksAddr, VarVec},
+    msgs::socks5::{AddrOrDomain, SOCKS5_ADDR_TYPE_DOMAIN_NAME, SocksAddr, VarVec},
 };
 use async_trait::async_trait;
 
@@ -46,7 +44,7 @@ impl Outbound for DirectOut {
                     )
                     .await?;
                 }
-                crate::ProxyRequest::Udp(mut udp_session) => {
+                crate::ProxyRequest::Udp(udp_session) => {
                     handle_udp(udp_session).await?;
                 }
             }
@@ -70,7 +68,7 @@ impl DnsResolve {
     async fn resolve(&self, socks: SocksAddr) -> Result<SocketAddr, SError> {
         if let AddrOrDomain::Domain(x) = &socks.addr {
             if let Some(v) = self.0.lock().await.get(&x.contents) {
-                Ok(v.clone())
+                Ok(*v)
             } else {
                 let s = resolve(&socks).await?;
                 self.0.lock().await.insert(x.contents.clone(), s);
@@ -82,17 +80,17 @@ impl DnsResolve {
     }
     async fn inv_resolve(&self, addr: &SocketAddr) -> SocksAddr {
         if let Some(add) = self.0.lock().await.iter().find(|x| x.1 == addr) {
-            let socks = SocksAddr {
+            
+            SocksAddr {
                 atype: SOCKS5_ADDR_TYPE_DOMAIN_NAME,
                 addr: AddrOrDomain::Domain(VarVec {
                     len: add.0.len() as u8,
                     contents: add.0.clone(),
                 }),
                 port: addr.port(),
-            };
-            socks
+            }
         } else {
-            addr.clone().into()
+            (*addr).into()
         }
     }
 }
