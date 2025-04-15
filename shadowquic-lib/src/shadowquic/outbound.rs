@@ -28,7 +28,7 @@ use tokio::{
         mpsc::{self, Receiver, Sender, channel},
     },
 };
-use tracing::{debug, debug_span, error, event, info, span, trace, Instrument, Level, Span};
+use tracing::{Instrument, Level, Span, debug, debug_span, error, event, info, span, trace};
 
 use crate::{
     Inbound, Outbound, ProxyRequest, TcpSession, TcpTrait, UdpSocketTrait,
@@ -155,9 +155,8 @@ impl Outbound for ShadowQuicClient {
         let fut = async move {
             match req {
                 crate::ProxyRequest::Tcp(mut tcp_session) => {
-
                     let (mut send, mut recv) = conn.open_bi().await?;
-                    let _span = span!(Level::TRACE,"tcp", stream_id=(send.id().index()));
+                    let _span = span!(Level::TRACE, "tcp", stream_id = (send.id().index()));
                     trace!("bistream opened");
                     let enter = _span.enter();
                     let req = SQReq {
@@ -172,16 +171,15 @@ impl Outbound for ShadowQuicClient {
                         &mut tcp_session.stream,
                     )
                     .await?;
-                    trace!("request:{} finished",tcp_session.dst);
+                    trace!("request:{} finished", tcp_session.dst);
                     drop(enter);
-
                 }
                 crate::ProxyRequest::Udp(udp_session) => todo!(),
             }
             Ok(()) as Result<(), SError>
         };
         tokio::spawn(async {
-            let _ = fut.instrument(span).await.map_err(|x|error!("{}", x));
+            let _ = fut.instrument(span).await.map_err(|x| error!("{}", x));
         });
         Ok(())
     }

@@ -16,10 +16,9 @@
           libclang
         ];
         pythonEnv = pkgs.python3.withPackages (ps: with ps; [
-            jupyter
-            ipython
-	    pycurl
-            pygobject3
+	          pycurl
+            pysocks
+            dnspython
           ]);
 
 

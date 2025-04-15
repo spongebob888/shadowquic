@@ -28,7 +28,7 @@ use tokio::{
         mpsc::{self, Receiver, Sender, channel},
     },
 };
-use tracing::{debug, error, event, info, span, trace, trace_span, Instrument, Level, Span};
+use tracing::{Instrument, Level, Span, debug, error, event, info, span, trace, trace_span};
 
 use crate::{
     Inbound, Outbound, ProxyRequest, TcpSession, TcpTrait, UdpSocketTrait,
@@ -38,8 +38,6 @@ use crate::{
         socks5::{SDecode, SEncode, SocksAddr},
     },
 };
-
-
 
 struct UdpMux(Receiver<Bytes>);
 #[async_trait]
@@ -166,7 +164,10 @@ impl ShadowQuicServer {
             udp_dispatch_tab: Default::default(),
         };
         let span = trace_span!("quic conn", id = sq_conn.quic_conn.stable_id());
-        sq_conn.handle_connection(req_sender).instrument(span).await?;
+        sq_conn
+            .handle_connection(req_sender)
+            .instrument(span)
+            .await?;
 
         Ok(())
     }

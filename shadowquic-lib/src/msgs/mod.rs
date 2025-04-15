@@ -1,2 +1,2 @@
-pub mod socks5;
 pub mod shadowquic;
+pub mod socks5;

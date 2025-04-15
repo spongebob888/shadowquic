@@ -2,6 +2,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 use std::{error::Error, net::SocketAddr};
 
+use crate::shadowquic::inbound::ShadowQuicServer;
 use direct::DirectOut;
 use error::SError;
 use msgs::socks5::{
@@ -9,47 +10,43 @@ use msgs::socks5::{
     SOCKS5_AUTH_METHOD_NONE, SOCKS5_CMD_TCP_BIND, SOCKS5_CMD_TCP_CONNECT, SOCKS5_CMD_UDP_ASSOCIATE,
     SOCKS5_REPLY_SUCCEEDED, SOCKS5_VERSION, SocksAddr,
 };
-use crate::shadowquic::inbound::ShadowQuicServer;
 use socks::inbound::SocksServer;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 
 use anyhow::Result;
-use tracing::{info, trace};
 use async_trait::async_trait;
+use tracing::{info, trace};
 
+pub mod direct;
 pub mod error;
 pub mod msgs;
 pub mod shadowquic;
 pub mod socks;
-pub mod direct;
 
-pub enum ProxyRequest<T = AnyTcp,U = AnyUdp> {
+pub enum ProxyRequest<T = AnyTcp, U = AnyUdp> {
     Tcp(TcpSession<T>),
     Udp(UdpSession<U>),
 }
 #[async_trait]
 pub trait UdpSocketTrait: Send + Sync + Unpin {
-    async fn recv_from(
-        &mut self,
-        buf: &mut [u8],
-    ) -> Result<(usize, usize, SocksAddr), SError>;  // headsize, totalsize, proxy addr
+    async fn recv_from(&mut self, buf: &mut [u8]) -> Result<(usize, usize, SocksAddr), SError>; // headsize, totalsize, proxy addr
     async fn send_to(&self, buf: &[u8], addr: SocksAddr) -> Result<usize, SError>; // addr is proxy addr
 }
-pub struct TcpSession<IO=AnyTcp> {
+pub struct TcpSession<IO = AnyTcp> {
     stream: IO,
     dst: SocksAddr,
 }
 
-pub struct UdpSession<IO=AnyUdp> {
+pub struct UdpSession<IO = AnyUdp> {
     socket: IO,
+    stream: Option<AnyTcp>,
     dst: SocksAddr,
 }
 
-
 pub type AnyTcp = Box<dyn TcpTrait>;
 pub type AnyUdp = Box<dyn UdpSocketTrait>;
-pub trait TcpTrait: AsyncRead + AsyncWrite + Unpin + Send + Sync{}
+pub trait TcpTrait: AsyncRead + AsyncWrite + Unpin + Send + Sync {}
 impl TcpTrait for TcpStream {}
 
 #[async_trait]
@@ -67,7 +64,7 @@ pub trait Outbound<T = AnyTcp, U = AnyUdp>: Send + Sync + Unpin {
 
 pub struct Manager {
     pub inbound: Box<dyn Inbound>,
-    pub outbound: Box<dyn Outbound> ,
+    pub outbound: Box<dyn Outbound>,
 }
 
 impl Manager {
@@ -77,10 +74,9 @@ impl Manager {
         let mut outbound = self.outbound;
         loop {
             let req = inbound.accept().await?;
-                outbound.handle(req).await.unwrap();
-        } 
+            outbound.handle(req).await.unwrap();
+        }
 
         Ok(())
-
     }
 }
