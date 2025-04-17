@@ -26,7 +26,7 @@ use crate::{
             SQCmd, SQPacketDatagramHeader, SQPacketStreamHeader, SQReq, SQUdpControlHeader,
         },
         socks5::{SDecode, SEncode},
-    }, Outbound, UdpSession
+    }, AnyUdp, Outbound, UdpSession
 };
 
 use super::{AssociateSendSession, SQConn, inbound::Unsplit};
@@ -94,12 +94,14 @@ impl ShadowQuicClient {
         }
     }
     async fn prepare_conn(&mut self) -> Result<(), SError> {
+        // delete connection if closed.
         self.quic_conn.take_if(|x| {
             x.close_reason().is_some_and(|x| {
                 info!("quic connection closed due to {}", x);
                 true
             })
         });
+        // Creating new connectin
         if self.quic_conn.is_none() {
             let conn = self.quic_end.connect(self.dst_addr, &self.server_name)?;
             let conn = if self.zero_rtt {
@@ -210,6 +212,7 @@ async fn handle_udp_send_overdatagram(
     let session = AssociateSendSession {
         id_store: conn.id_store.clone(),
         dst_map: Default::default(),
+        unistream_map: Default::default(),
     };
     let quic_conn = conn.conn.clone();
     let fut1 = async move {
@@ -249,14 +252,16 @@ async fn handle_udp_send_overdatagram(
 
 async fn handle_udp_recv_overdatagram(
     mut recv: RecvStream,
-    udp_session: UdpSession,
+    udp_socket: AnyUdp,
     conn: SQConn,
     over_stream: bool,
 )  -> Result<(), SError>
 {
     loop {
         let SQUdpControlHeader{id,dst} = SQUdpControlHeader::decode(&mut recv).await?;
-        let recv = conn.id_store.get_recv_or_insert(id).await;
-        
+        let send = conn.id_store.get_send_or_insert(id).await;
+        if let Some(s) = send {
+            s.send(udp_socket.clone()).await;
+        }
     }
 }
