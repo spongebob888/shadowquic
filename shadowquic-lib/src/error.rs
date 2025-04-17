@@ -23,4 +23,6 @@ pub enum SError {
     InboundUnavailable,
     #[error("hostname can't be resolved")]
     DomainResolveFailed,
+    #[error("mpsc channel error: {0}")]
+    ChannelError(String)
 }

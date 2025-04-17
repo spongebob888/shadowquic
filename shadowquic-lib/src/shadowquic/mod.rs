@@ -7,7 +7,7 @@ use tokio::sync::{
     mpsc::{Receiver, Sender, channel},
 };
 
-use crate::{msgs::socks5::SocksAddr, AnyUdp, UdpSocketTrait};
+use crate::{error::SError, msgs::socks5::SocksAddr, AnyUdp, UdpSocketTrait};
 
 pub mod inbound;
 pub mod outbound;
@@ -80,24 +80,36 @@ impl Drop for AssociateSendSession {
     }
 }
 
-struct AssociateRecvSession {
+struct AssociateRecvSession<T> {
     id_store: IDStore,
-    id_map: HashMap<u16, SocksAddr>,
+    id_map: HashMap<u16, T>,
 }
-impl AssociateRecvSession {
+impl<T> AssociateRecvSession<T> {
 
-    pub fn get_addr(&self, id: &u16) -> Option<&SocksAddr> {
+    pub fn get_addr(&self, id: &u16) -> Option<&T> {
         self.id_map.get(id)
     }
-    pub fn get_addr_or_insert(&self, id: &u16) -> &SocksAddr {
+    pub fn get_addr_or_insert(&self, id: &u16) -> &T {
         if let Some(addr) = self.id_map.get(id) {
             addr
         } else {
             todo!()
         }
     }
+    pub async fn try_send_socket(&mut self, id: &u16,  dst: T, udp_socket: AnyUdp) -> Result<(),SError> {
+        if self.id_map.contains_key(id) {
+           return Ok(()); 
+        } else {
+            self.id_map.insert(id.clone(), dst);
+            if let Some(s) = self.id_store.get_send_or_insert(id.clone()).await {
+                s.send(udp_socket).await
+                .map_err(|x|SError::ChannelError("can't send udp socket to driver".into()))?;
+            }
+        }
+        Ok(())
+    }
 }
-impl Drop for AssociateRecvSession {
+impl<T> Drop for AssociateRecvSession<T> {
     fn drop(&mut self) {
         todo!()
     }
