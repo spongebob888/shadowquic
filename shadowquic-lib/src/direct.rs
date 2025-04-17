@@ -1,4 +1,3 @@
-
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs},
@@ -132,11 +131,9 @@ async fn handle_udp(udp_session: UdpSession) -> Result<(), SError> {
     let dns_cache = DnsResolve::default();
     let dns_cache_clone = dns_cache.clone();
     let fut1 = async move {
-
-
         loop {
             let mut buf_send = BytesMut::new();
-            buf_send.resize(1600,0);
+            buf_send.resize(1600, 0);
             trace!("recv upstream");
             let (len, dst) = upstream.recv_from(&mut buf_send).await?;
             trace!("udp request reply from :{}", dst);

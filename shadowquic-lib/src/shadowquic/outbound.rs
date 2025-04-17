@@ -1,11 +1,16 @@
 use async_trait::async_trait;
+use bytes::{BufMut, Bytes, BytesMut};
 use std::{
     collections::{HashMap, HashSet},
+    io::Cursor,
     net::SocketAddr,
     ops::Deref,
     sync::Arc,
 };
-use tokio::sync::Mutex;
+use tokio::sync::{
+    Mutex,
+    mpsc::{Receiver, Sender},
+};
 
 use quinn::{
     ClientConfig, Connection, Endpoint, RecvStream, SendStream, TransportConfig,
@@ -16,18 +21,18 @@ use rustls::RootCertStore;
 use tracing::{Instrument, Level, debug, debug_span, error, info, span, trace};
 
 use crate::{
-    Outbound, UdpSession,
-    error::SError,
-    msgs::{
-        shadowquic::{SQCmd, SQReq},
-        socks5::SEncode,
-    },
+    error::SError, msgs::{
+        shadowquic::{
+            SQCmd, SQPacketDatagramHeader, SQPacketStreamHeader, SQReq, SQUdpControlHeader,
+        },
+        socks5::{SDecode, SEncode},
+    }, Outbound, UdpSession
 };
 
-use super::inbound::Unsplit;
+use super::{AssociateSendSession, SQConn, inbound::Unsplit};
 
 pub struct ShadowQuicClient {
-    quic_conn: Option<Connection>,
+    quic_conn: Option<SQConn>,
     quic_config: quinn::ClientConfig,
     quic_end: Endpoint,
     dst_addr: SocketAddr,
@@ -126,7 +131,10 @@ impl ShadowQuicClient {
                 error!("JLS hijacked or wrong pwd/iv");
                 conn.close(0u8.into(), b"");
             }
-            self.quic_conn = Some(conn);
+            self.quic_conn = Some(SQConn {
+                conn,
+                id_store: Default::default(),
+            });
         }
         Ok(())
     }
@@ -174,6 +182,8 @@ impl Outbound for ShadowQuicClient {
                         dst: udp_session.dst.clone(),
                     };
                     req.encode(&mut send).await?;
+                    handle_udp_send_overdatagram(send, recv, udp_session, conn, over_stream)
+                        .await?;
                     trace!("req header sent");
                 }
             }
@@ -186,29 +196,67 @@ impl Outbound for ShadowQuicClient {
     }
 }
 
-async fn handle_udp_proxy(
-    send: SendStream,
+async fn handle_udp_send_overdatagram(
+    mut send: SendStream,
     recv: RecvStream,
     udp_session: UdpSession,
-    is_store: SQConn,
-) -> Result<(),SError> {
+    conn: SQConn,
+    over_stream: bool,
+) -> Result<(), SError> {
     let down_stream = udp_session.socket.clone();
+    let down_stream_clone = udp_session.socket;
     let mut buf_down = vec![0u8; 1600];
-    let mut buf_up = vec![0u8; 1600];
+    let mut buf_up: Vec<u8> = vec![0u8; 1600];
+    let session = AssociateSendSession {
+        id_store: conn.id_store.clone(),
+        dst_map: Default::default(),
+    };
+    let quic_conn = conn.conn.clone();
+    let fut1 = async move {
+        loop {
+            let (bytes, dst) = down_stream.recv_from().await?;
+            let id = session.get_id_or_insert(&dst);
+            let ctl_header = SQUdpControlHeader { dst, id };
+            let dg_header = SQPacketDatagramHeader { id };
+            let fut1 = async {
+                let r = ctl_header
+                    .encode(&mut send)
+                    .await
+                    .map_err(|x| error!("{}", x));
+            };
+            let fut2 = async {
+                let mut content = BytesMut::with_capacity(1600);
+                let head = Vec::<u8>::new();
+                let mut cur = Cursor::new(head);
+                let r = dg_header
+                    .encode(&mut cur)
+                    .await
+                    .map_err(|x| error!("{}", x));
+                let head = cur.into_inner();
+                content.put(Bytes::from(head));
+                content.put(bytes);
+                let content = content.freeze();
+                let r = quic_conn.send_datagram(content);
+            };
+            tokio::join!(fut1, fut2);
+        }
+        Ok(()) as Result<(),SError>
+    };
+    tokio::spawn(fut1);
+
+    Ok(())
+}
+
+async fn handle_udp_recv_overdatagram(
+    mut recv: RecvStream,
+    udp_session: UdpSession,
+    conn: SQConn,
+    over_stream: bool,
+)  -> Result<(), SError>
+{
     loop {
-        //down_stream.recv_from(&mut buf).await?;
-    }
-}
-
-struct SQConn {
-    conn: Connection,
-    id_store: Arc<Mutex<HashSet<u16>>>,
-}
-
-impl Deref for SQConn {
-    type Target = Connection;
-
-    fn deref(&self) -> &Self::Target {
-        &self.conn
+        let SQUdpControlHeader{id,dst} = SQUdpControlHeader::decode(&mut recv).await?;
+        let recv = conn.id_store.get_recv_or_insert(id).await;
+        
     }
 }

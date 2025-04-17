@@ -51,11 +51,44 @@ impl SEncode for SQReq {
     }
 }
 
-pub struct SQStreamPacketHeader {
-    pub dst: SocksAddr,
-    pub len: u16, // datagram size
-}
-pub struct SQDatagramPacketHeader {
+pub struct SQUdpControlHeader {
     pub dst: SocksAddr,
     pub id: u16, // id is one to one coresponance a udpsocket and proxy dst
+}
+pub struct SQPacketStreamHeader {
+    pub id: u16, // id is one to one coresponance a udpsocket and proxy dst
+    pub len: u16,
+}
+pub struct SQPacketDatagramHeader {
+    pub id: u16, // id is one to one coresponance a udpsocket and proxy dst
+}
+
+impl SDecode for SQUdpControlHeader {
+    async fn decode<T: tokio::io::AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
+        Ok(Self {
+            dst: SocksAddr::decode(s).await?,
+            id: u16::decode(s).await?,
+        })
+    }
+}
+impl SEncode for SQUdpControlHeader {
+    async fn encode<T: tokio::io::AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
+        self.dst.encode(s).await?;
+        self.id.encode(s).await?;
+        Ok(())
+    }
+}
+
+impl SDecode for SQPacketDatagramHeader {
+    async fn decode<T: tokio::io::AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
+        Ok(Self {
+            id: u16::decode(s).await?,
+        })
+    }
+}
+impl SEncode for SQPacketDatagramHeader {
+    async fn encode<T: tokio::io::AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
+        self.id.encode(s).await?;
+        Ok(())
+    }
 }

@@ -92,7 +92,7 @@ impl UdpSocketTrait for UdpSocksWrap {
         let mut buf = BytesMut::new();
         buf.resize(1600, 0);
 
-        let (len,dst) = self.0.recv_from(&mut buf).await?;
+        let (len, dst) = self.0.recv_from(&mut buf).await?;
         let mut cur = Cursor::new(buf);
         let req = socks5::UdpReqHeader::decode(&mut cur).await?;
         if req.frag != 0 {
@@ -100,7 +100,7 @@ impl UdpSocketTrait for UdpSocksWrap {
             return Err(SError::ProtocolUnimpl);
         }
         let headsize: usize = cur.position().try_into().unwrap();
-        trace!("headsize:{}",headsize);
+        trace!("headsize:{}", headsize);
         let buf = cur.into_inner();
         self.1.get_or_init(|| dst);
         let buf = buf.freeze();
@@ -142,13 +142,6 @@ impl Inbound for SocksServer {
             })),
             SOCKS5_CMD_UDP_ASSOCIATE => {
                 let req = req;
-                // // Not sure here
-                // match req.dst.addr {
-                //     AddrOrDomain::V4([0u8,0u8,0u8,0u8])=>{req.dst.port=0},
-                //     AddrOrDomain::V6([0u8,0u8,0u8,0u8,0u8,0u8,0u8,0u8,
-                //         0u8,0u8,0u8,0u8,0u8,0u8,0u8,0u8,]) => {req.dst.port=0},
-                //     _ => {},
-                // };
                 Ok(ProxyRequest::Udp(UdpSession {
                     socket: Arc::new(UdpSocksWrap(socket.unwrap(), Default::default())),
                     dst: req.dst,
