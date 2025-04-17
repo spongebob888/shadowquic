@@ -37,6 +37,10 @@ pub struct UdpSession<IO = AnyUdp> {
     stream: Option<AnyTcp>,
     dst: SocksAddr,
 }
+pub struct DatagramMsg {
+    pub header: Vec<u8>,
+    pub payload: Bytes,
+}
 
 pub type AnyTcp = Box<dyn TcpTrait>;
 pub type AnyUdp = Arc<dyn UdpSocketTrait>;

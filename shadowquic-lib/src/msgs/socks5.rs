@@ -55,7 +55,7 @@ pub struct AuthReq {
     pub methods: VarVec,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct VarVec {
     pub len: u8,
     pub contents: Vec<u8>,
@@ -152,7 +152,7 @@ impl CmdReq {
         })
     }
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct SocksAddr {
     pub atype: u8,
     pub addr: AddrOrDomain,
@@ -167,7 +167,7 @@ impl fmt::Display for SocksAddr {
         write!(f, "{}:{}", self.addr, self.port)
     }
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum AddrOrDomain {
     V4([u8; 4]),
     V6([u8; 16]),
