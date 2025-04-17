@@ -1,13 +1,13 @@
-use std::{collections::HashMap, ops::Deref, sync::{ Arc}};
+use std::{any::Any, collections::HashMap, ops::Deref, sync::Arc};
 
 use bytes::Bytes;
-use quinn::Connection;
+use quinn::{Connection, SendStream};
 use tokio::sync::{
     Mutex,
     mpsc::{Receiver, Sender, channel},
 };
 
-use crate::msgs::socks5::SocksAddr;
+use crate::{msgs::socks5::SocksAddr, AnyUdp, UdpSocketTrait};
 
 pub mod inbound;
 pub mod outbound;
@@ -26,20 +26,32 @@ impl Deref for SQConn {
     }
 }
 
-#[derive(Clone)]
-struct IDStore(Arc<Mutex<HashMap<u16, (Option<Sender<Bytes>>, Option<Receiver<Bytes>>)>>>);
+#[derive(Clone, Default)]
+struct IDStore(Arc<Mutex<HashMap<u16, (Option<Sender<AnyUdp>>, Option<Receiver<AnyUdp>>)>>>);
 
 impl IDStore {
-    async fn get_recv_or_insert(&self, id: u16) -> Option<Receiver<Bytes>>{
+    async fn get_recv_or_insert(&self, id: u16) -> Option<Receiver<AnyUdp>>{
         let mut h = self.0.lock().await;
         let r = h.get_mut(&id);
         if let Some((_, x)) = r {
             let out = x.take();
             out
         } else {
-            let (s,r)  = channel::<Bytes>(10);
+            let (s,r)  = channel::<AnyUdp>(10);
             h.insert(id, (Some(s),None));
             Some(r)
+        }
+    }
+    async fn get_send_or_insert(&self, id: u16) -> Option<Sender<AnyUdp>>{
+        let mut h = self.0.lock().await;
+        let r = h.get_mut(&id);
+        if let Some((x,_)) = r {
+            let out = x.take();
+            out
+        } else {
+            let (s,r)  = channel::<AnyUdp>(10);
+            h.insert(id, (None,Some(r)));
+            Some(s)
         }
     }
 }
@@ -47,6 +59,7 @@ impl IDStore {
 struct AssociateSendSession {
     id_store: IDStore,
     dst_map: HashMap<SocksAddr, u16>,
+    unistream_map: Option<HashMap<SocksAddr, SendStream>>,
 }
 impl AssociateSendSession {
     pub fn get_id(&self, addr: &SocksAddr) -> Option<u16> {
