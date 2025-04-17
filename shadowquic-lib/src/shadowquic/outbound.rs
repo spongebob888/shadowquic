@@ -25,11 +25,11 @@ use crate::{
         shadowquic::{
             SQCmd, SQPacketDatagramHeader, SQPacketStreamHeader, SQReq, SQUdpControlHeader,
         },
-        socks5::{SDecode, SEncode},
+        socks5::{SDecode, SEncode, SocksAddr},
     }, AnyUdp, Outbound, UdpSession
 };
 
-use super::{AssociateSendSession, SQConn, inbound::Unsplit};
+use super::{inbound::Unsplit, AssociateRecvSession, AssociateSendSession, SQConn};
 
 pub struct ShadowQuicClient {
     quic_conn: Option<SQConn>,
@@ -184,8 +184,10 @@ impl Outbound for ShadowQuicClient {
                         dst: udp_session.dst.clone(),
                     };
                     req.encode(&mut send).await?;
-                    handle_udp_send_overdatagram(send, recv, udp_session, conn, over_stream)
-                        .await?;
+                    let fut2 = handle_udp_recv_overdatagram(recv, udp_session.socket.clone(), conn.clone(), over_stream);
+                    let fut1 = handle_udp_send_overdatagram(send, udp_session, conn, over_stream);
+
+                    tokio::try_join!(fut1, fut2)?;
                     trace!("req header sent");
                 }
             }
@@ -200,7 +202,6 @@ impl Outbound for ShadowQuicClient {
 
 async fn handle_udp_send_overdatagram(
     mut send: SendStream,
-    recv: RecvStream,
     udp_session: UdpSession,
     conn: SQConn,
     over_stream: bool,
@@ -215,7 +216,6 @@ async fn handle_udp_send_overdatagram(
         unistream_map: Default::default(),
     };
     let quic_conn = conn.conn.clone();
-    let fut1 = async move {
         loop {
             let (bytes, dst) = down_stream.recv_from().await?;
             let id = session.get_id_or_insert(&dst);
@@ -243,9 +243,6 @@ async fn handle_udp_send_overdatagram(
             };
             tokio::join!(fut1, fut2);
         }
-        Ok(()) as Result<(),SError>
-    };
-    tokio::spawn(fut1);
 
     Ok(())
 }
@@ -257,11 +254,29 @@ async fn handle_udp_recv_overdatagram(
     over_stream: bool,
 )  -> Result<(), SError>
 {
+    let mut session = AssociateRecvSession::<SocksAddr> {
+        id_store: conn.id_store.clone(),
+        id_map: Default::default(),
+    };
     loop {
         let SQUdpControlHeader{id,dst} = SQUdpControlHeader::decode(&mut recv).await?;
-        let send = conn.id_store.get_send_or_insert(id).await;
-        if let Some(s) = send {
-            s.send(udp_socket.clone()).await;
-        }
+        session.try_send_socket(&id, dst, udp_socket.clone()).await?;
     }
+    Ok(())
 }
+
+async fn handle_udp_packet_recv(    
+    conn: SQConn,
+    over_stream: bool) -> Result<(), SError> {
+        if over_stream == false {
+            loop {
+                if let Ok(b) = conn.read_datagram().await {
+                    let mut b = BytesMut::from(b);
+                    let mut cur = Cursor::new(b);
+                    SQUdpControlHeader::decode(&mut cur).await?;
+                }
+            }
+        }
+        
+        Ok(())
+    }
