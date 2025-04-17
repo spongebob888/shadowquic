@@ -29,7 +29,7 @@ use crate::{
     }, AnyUdp, Outbound, UdpSession
 };
 
-use super::{inbound::Unsplit, AssociateRecvSession, AssociateSendSession, SQConn};
+use super::{inbound::Unsplit, AssociateRecvSession, AssociateSendSession, IDStore, SQConn};
 
 pub struct ShadowQuicClient {
     quic_conn: Option<SQConn>,
@@ -268,6 +268,10 @@ async fn handle_udp_recv_overdatagram(
 async fn handle_udp_packet_recv(    
     conn: SQConn,
     over_stream: bool) -> Result<(), SError> {
+        let mut session = AssociateRecvSession::<SocksAddr> {
+            id_store: conn.id_store.clone(),
+            id_map: Default::default(),
+        };
         if over_stream == false {
             loop {
                 if let Ok(b) = conn.read_datagram().await {
