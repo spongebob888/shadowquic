@@ -108,7 +108,21 @@ impl<T> AssociateRecvSession<T> {
         }
         Ok(())
     }
+    pub async fn get_socket(&mut self, id: &u16) -> Result<AnyUdp,SError> {
+        if self.id_map.contains_key(id) {
+           return Ok(()); 
+        } else {
+            self.id_map.insert(id.clone(), dst);
+            if let Some(s) = self.id_store.get_send_or_insert(id.clone()).await {
+                s.send(udp_socket).await
+                .map_err(|x|SError::ChannelError("can't send udp socket to driver".into()))?;
+            }
+        }
+        Ok(())
+    }
 }
+
+impl<AnyUdp> 
 impl<T> Drop for AssociateRecvSession<T> {
     fn drop(&mut self) {
         todo!()
