@@ -259,7 +259,7 @@ pub async fn handle_udp_recv_overdatagram(
     over_stream: bool,
 )  -> Result<(), SError>
 {
-    let mut session = AssociateRecvSession::<SocksAddr> {
+    let mut session = AssociateRecvSession {
         id_store: conn.id_store.clone(),
         id_map: Default::default(),
     };
@@ -272,41 +272,44 @@ pub async fn handle_udp_recv_overdatagram(
 
 pub async fn handle_udp_packet_recv(    
     conn: SQConn) -> Result<(), SError> {
-        let mut session = AssociateRecvSession::<SocksAddr> {
-            id_store: conn.id_store.clone(),
-            id_map: Default::default(),
-        };
-        let mut id_map = HashMap::<u16, (SocksAddr, AnyUdpSend)>::new();
-        let (send,recv) = channel(10);
+        let id_store = conn.id_store.clone();
+
+        let mut id_map = HashMap::<u16, (AnyUdpSend,SocksAddr)>::new();
+        let (send,mut recv) = channel(10);
         let over_stream = false;
         if over_stream == false {
             loop {
-                if let Ok(b) = conn.read_datagram().await {
+                tokio::select! {
+                Ok(b) = conn.read_datagram() => {
                     trace!("datagram accepted");
                     let mut b = BytesMut::from(b);
                     let mut cur = Cursor::new(b);
                     let SQPacketDatagramHeader{id} = SQPacketDatagramHeader::decode(&mut cur).await?;
                     // To be fixed, may block here
-                    if let Some((addr,sock)) = id_map.get(&id) {
+                    if let Some((udp,addr)) = id_map.get(&id) {
                         let pos = cur.position() as usize;
                         let b = cur.into_inner().freeze();
-                        sock.send_to(b.slice(pos..b.len()), addr.clone()).await?;
+                        udp.send_to(b.slice(pos..b.len()), addr.clone()).await?;
                     } else {
-                        
-                        let id_store = session.id_store.clone();
+                        let id_store = id_store.clone();
                         let sender = send.clone();
                         tokio::spawn(async move {
-                            let recv = id_store.get_socket(id).await.unwrap();
+                            let (udp,addr) = id_store.get_socket(id).await.unwrap();
                             let pos = cur.position() as usize;
                             let b = cur.into_inner().freeze();
-                            sock.clone().send_to(b.slice(pos..b.len()), addr.clone()).await?;
-                            let _ = sender.send(recv).await.map_err(|e|SError::ChannelError("can't open send udp trait".into()));
+                            let _ = udp.clone().send_to(b.slice(pos..b.len()), addr.clone()).await
+                            .map_err(|x|error!("{}",x));
+                            let _ = sender.send((id, udp,addr)).await.map_err(|e|SError::ChannelError("can't open send udp trait".into()));
                         });
-
                     }
 
-                    
+
+
+                }   
+                Some((id, udp, addr)) = recv.recv() => { 
+                    id_map.insert(id, (udp,addr));
                 }
+            }
             }
         }
         
