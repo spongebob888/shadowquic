@@ -212,7 +212,7 @@ async fn handle_udp_send_overdatagram(
     let down_stream_clone = udp_session.socket;
     let mut buf_down = vec![0u8; 1600];
     let mut buf_up: Vec<u8> = vec![0u8; 1600];
-    let session = AssociateSendSession {
+    let mut session = AssociateSendSession {
         id_store: conn.id_store.clone(),
         dst_map: Default::default(),
         unistream_map: Default::default(),
@@ -220,7 +220,7 @@ async fn handle_udp_send_overdatagram(
     let quic_conn = conn.conn.clone();
         loop {
             let (bytes, dst) = down_stream.recv_from().await?;
-            let id = session.get_id_or_insert(&dst);
+            let id = session.get_id_or_insert(&dst, down_stream.clone()).await;
             let ctl_header = SQUdpControlHeader { dst, id };
             let dg_header = SQPacketDatagramHeader { id };
             let fut1 = async {
