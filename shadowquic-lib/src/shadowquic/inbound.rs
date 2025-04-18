@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use bytes::Bytes;
-use std::{collections::HashMap, net::SocketAddr, pin::Pin, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, pin::Pin, sync::{ Arc}};
 
 use quinn::{
     Connection, Endpoint, Incoming, RecvStream, SendStream, ServerConfig, TransportConfig, VarInt,
@@ -23,10 +23,10 @@ use crate::{
     error::SError, msgs::{
         shadowquic::{SQCmd, SQReq},
         socks5::{SDecode, SocksAddr},
-    }, Inbound, ProxyRequest, TcpSession, TcpTrait, UdpRecv, UdpSend,
+    }, AnyTcp, AnyUdpRecv, AnyUdpSend, Inbound, ProxyRequest, TcpSession, TcpTrait, UdpRecv, UdpSend, UdpSession
 };
 
-use super::SQConn;
+use super::{outbound::{handle_udp_packet_recv, handle_udp_recv_overdatagram, handle_udp_send_overdatagram}, SQConn};
 
 struct UdpMux(Receiver<(Bytes,SocksAddr)>);
 #[async_trait]
@@ -198,26 +198,28 @@ impl Inbound for ShadowQuicServer {
         Ok(())
     }
 }
+
+#[derive(Clone)]
 pub struct SQServerConn(SQConn);
 impl SQServerConn {
     async fn handle_connection(self, req_send: Sender<ProxyRequest>) -> Result<(), SError> {
         let conn = &self.0;
+
+        tokio::spawn(handle_udp_packet_recv(self.0.clone())); 
+
         while conn.close_reason().is_none() {
             select! {
                 bi = conn.accept_bi() => {
                     let (send, recv) = bi?;
                     trace!("bi stream accepted");
-                    tokio::spawn(Self::handle_bistream(send, recv, req_send.clone()));
-                },
-                datagram = conn.read_datagram() => {
-                    let datagram = datagram?;
-                    tokio::spawn(Self::handle_datagram(datagram, req_send.clone()));
+                    tokio::spawn(self.clone().handle_bistream(send, recv, req_send.clone()));
                 },
             }
         }
         Ok(())
     }
     async fn handle_bistream(
+        self,
         send: SendStream,
         mut recv: RecvStream,
         req_send: Sender<ProxyRequest>,
@@ -234,7 +236,31 @@ impl SQServerConn {
                     .await
                     .map_err(|_| SError::OutboundUnavailable)?;
             }
-            SQCmd::AssociatOverDatagram => todo!(),
+            SQCmd::AssociatOverDatagram => {
+                let (local_send,udp_recv) = channel::<(Bytes,SocksAddr)>(10);
+                let (udp_send,local_recv) = channel::<(Bytes,SocksAddr)>(10);
+                let udp: UdpSession = UdpSession {
+                    send: Arc::new(udp_send),
+                    recv: Box::new(udp_recv),
+                    stream: None,
+                    dst: req.dst,
+                };
+                let local_send = Arc::new(local_send);
+                req_send
+                    .send(ProxyRequest::Udp(udp))
+                    .await
+                    .map_err(|_| SError::OutboundUnavailable)?;
+                let fut1 = handle_udp_send_overdatagram(
+                    send,
+                    local_send.clone(),
+                    Box::new(local_recv),
+                    self.0.clone(),
+                    false,
+
+                );
+                let fut2 = handle_udp_recv_overdatagram(recv, local_send, self.0, false);
+                tokio::try_join!(fut1, fut2)?;
+            },
             SQCmd::AssociatOverStream => todo!(),
         }
         Ok(())
