@@ -26,7 +26,7 @@ use crate::{
     }, AnyTcp, AnyUdpRecv, AnyUdpSend, Inbound, ProxyRequest, TcpSession, TcpTrait, UdpRecv, UdpSend, UdpSession
 };
 
-use super::{outbound::{handle_udp_packet_recv, handle_udp_recv_overdatagram, handle_udp_send_overdatagram}, SQConn};
+use super::{{handle_udp_packet_recv, handle_udp_recv_overdatagram, handle_udp_send_overdatagram}, SQConn};
 
 struct UdpMux(Receiver<(Bytes,SocksAddr)>);
 #[async_trait]

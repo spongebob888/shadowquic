@@ -81,7 +81,6 @@ async fn handle_socks<T: AsyncRead + AsyncWrite + Unpin>(
         }
     };
 
-    trace!("reply:{:?}", reply);
     reply.encode(&mut s).await?;
     Ok((s, req, socket))
 }
@@ -101,7 +100,6 @@ impl UdpRecv for UdpSocksWrap {
             return Err(SError::ProtocolUnimpl);
         }
         let headsize: usize = cur.position().try_into().unwrap();
-        trace!("headsize:{}", headsize);
         let buf = cur.into_inner();
         self.1.get_or_init(|| async {
             let _ = self.0.connect(dst).await;
