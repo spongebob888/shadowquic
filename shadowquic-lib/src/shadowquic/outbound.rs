@@ -5,7 +5,7 @@ use std::{
     io::Cursor,
     net::SocketAddr,
     ops::Deref,
-    sync::Arc,
+    sync::{mpsc::channel, Arc}, thread::spawn,
 };
 use tokio::sync::{
     Mutex,
@@ -137,6 +137,8 @@ impl ShadowQuicClient {
                 conn,
                 id_store: Default::default(),
             });
+            let conn = self.quic_conn.as_ref().unwrap().clone();
+            tokio::spawn(handle_udp_packet_recv(conn));
         }
         Ok(())
     }
@@ -260,24 +262,41 @@ async fn handle_udp_recv_overdatagram(
     };
     loop {
         let SQUdpControlHeader{id,dst} = SQUdpControlHeader::decode(&mut recv).await?;
-        session.try_send_socket(&id, dst, udp_socket.clone()).await?;
+        session.store_socket(&id, dst, udp_socket.clone()).await;
     }
     Ok(())
 }
 
 async fn handle_udp_packet_recv(    
-    conn: SQConn,
-    over_stream: bool) -> Result<(), SError> {
+    conn: SQConn) -> Result<(), SError> {
         let mut session = AssociateRecvSession::<SocksAddr> {
             id_store: conn.id_store.clone(),
             id_map: Default::default(),
         };
+        let mut id_map = HashMap::<u16, (SocksAddr, AnyUdp)>::new();
+        let (send,recv) = channel::<(SocksAddr, AnyUdp)>();
+        let over_stream = false;
         if over_stream == false {
             loop {
                 if let Ok(b) = conn.read_datagram().await {
                     let mut b = BytesMut::from(b);
                     let mut cur = Cursor::new(b);
-                    SQUdpControlHeader::decode(&mut cur).await?;
+                    let SQPacketDatagramHeader{id} = SQPacketDatagramHeader::decode(&mut cur).await?;
+                    // To be fixed, may block here
+                    if let Some((addr,sock)) = id_map.get(&id) {
+                        let pos = cur.position() as usize;
+                        let b = cur.into_inner().freeze();
+                        sock.send_to(b.slice(pos..b.len()), addr.clone()).await?;
+                    } else {
+                        let id_store = session.id_store.clone();
+                        tokio::spawn(async move {
+                            let recv = id_store.get_socket(id).await.unwrap();
+
+                        });
+
+                    }
+
+                    
                 }
             }
         }
