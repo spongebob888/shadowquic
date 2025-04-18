@@ -3,7 +3,7 @@ use std::{any::Any, collections::HashMap, mem::replace, ops::Deref, sync::{atomi
 use bytes::Bytes;
 use quinn::{Connection, SendStream};
 use tokio::sync::{
-    mpsc::{channel, Receiver, Sender}, Mutex, Notify
+    mpsc::{channel, Receiver, Sender}, Mutex, Notify, RwLock
 };
 
 use crate::{error::SError, msgs::socks5::SocksAddr, AnyUdp, UdpSocketTrait};
@@ -28,29 +28,29 @@ impl Deref for SQConn {
 #[derive(Clone, Default)]
 struct IDStore {
     id_counter: Arc<AtomicU16>,
-    inner: Arc<Mutex<HashMap<u16, Result<AnyUdp,Arc<Notify>>>>>
+    inner: Arc<RwLock<HashMap<u16, Result<AnyUdp,Arc<Notify>>>>>
 }
 
 impl IDStore {
     async fn get_socket(&self, id: u16) -> Result<AnyUdp,Arc<Notify>>{
-        let mut h = self.inner.lock().await;
+        let mut h = self.inner.write().await;
         if let Some(r) = h.get_mut(&id){
             r.clone()
         } else {
             let notify = Arc::new(Notify::new());
-            self.inner.lock().await.insert(id, Err(notify.clone()));
+            h.insert(id, Err(notify.clone()));
             Err(notify)
         }
     }
     async fn store_socket(&self, id: u16, socket: AnyUdp) {
-        let mut h = self.inner.lock().await;
+        let mut h = self.inner.write().await;
         let r = h.get_mut(&id);
         if let Some(s) = r {
             match s {
                 Ok(_) => {}
                 Err(_) => {
                     let notify = replace(s, Result::<AnyUdp,Arc<Notify>>::Ok(socket));
-                    notify.map_err(|x|x.notify_one());
+                    let _ = notify.map_err(|x|x.notify_one());
                 }
             }
         } else {
@@ -58,7 +58,7 @@ impl IDStore {
         }
     }
     async fn fetch_new_id(&self, socket: AnyUdp) -> u16{
-        let mut inner = self.inner.lock().await;
+        let mut inner = self.inner.write().await;
         let mut r;
         loop {
             r = self.id_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
