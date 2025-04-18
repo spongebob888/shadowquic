@@ -93,7 +93,12 @@ impl AssociateSendSession {
 
 impl Drop for AssociateSendSession {
     fn drop(&mut self) {
-        // TODO
+        let id_store = self.id_store.inner.clone();
+        let id_remove = self.dst_map.clone();
+        tokio::spawn(async move {
+            let mut id_store = id_store.write().await;
+            let _ = id_remove.iter().map(|(_,k)|id_store.remove(k));
+        });
     }
 }
 // There are two usages for id_map
@@ -126,6 +131,11 @@ impl AssociateRecvSession {
 
 impl Drop for AssociateRecvSession {
     fn drop(&mut self) {
-        //TODO
+        let id_store = self.id_store.inner.clone();
+        let id_remove = self.id_map.clone();
+        tokio::spawn(async move {
+            let mut id_store = id_store.write().await;
+            let _ = id_remove.iter().map(|(k,_)|id_store.remove(k));
+        });
     }
 }

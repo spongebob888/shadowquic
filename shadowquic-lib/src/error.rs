@@ -9,9 +9,9 @@ pub enum SError {
     ProtocolUnimpl,
     #[error("IO Error:{0}")]
     Io(#[from] io::Error),
-    #[error("QUIC Connect Error")]
+    #[error("QUIC Connect Error:{0}")]
     QuicConnect(#[from] quinn::ConnectError),
-    #[error("QUIC Connection Error")]
+    #[error("QUIC Connection Error:{0}")]
     QuicConnection(#[from] quinn::ConnectionError),
     #[error("JLS Authentication failed")]
     JlsAuthFailed,
