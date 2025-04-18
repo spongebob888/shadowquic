@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use tokio::{
     net::{TcpStream, UdpSocket, lookup_host},
     sync::Mutex,

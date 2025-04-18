@@ -1,6 +1,6 @@
 
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use fast_socks5::{client::Socks5Datagram, Result};
 use shadowquic_lib::{direct::DirectOut, socks::inbound::SocksServer, Manager};

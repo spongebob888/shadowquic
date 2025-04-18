@@ -1,36 +1,28 @@
 use async_trait::async_trait;
-use bytes::{BufMut, Bytes, BytesMut};
 use std::{
-    collections::{HashMap, HashSet},
-    io::Cursor,
     net::SocketAddr,
-    ops::Deref,
-    sync::{ Arc}, thread::spawn,
-};
-use tokio::sync::{
-    mpsc::{channel, Receiver, Sender}, Mutex
+    sync::{ Arc},
 };
 
 use quinn::{
-    ClientConfig, Connection, Endpoint, RecvStream, SendStream, TransportConfig,
+    ClientConfig, Endpoint, TransportConfig,
     congestion::{BbrConfig, CubicConfig, NewRenoConfig},
     crypto::rustls::QuicClientConfig,
 };
 use rustls::RootCertStore;
-use tracing::{debug, debug_span, error, event, info, span, trace, trace_span, Instrument, Level};
+use tracing::{debug, debug_span, error, info, span, trace, Instrument, Level};
 
-use bytes::{Buf,buf::Reader, buf::Writer};
 
 use crate::{
     error::SError, msgs::{
         shadowquic::{
-            SQCmd, SQPacketDatagramHeader, SQPacketStreamHeader, SQReq, SQUdpControlHeader,
+            SQCmd, SQReq,
         },
-        socks5::{SDecode, SEncode, SocksAddr},
-    }, shadowquic::{handle_udp_recv_overdatagram, handle_udp_send_overdatagram}, AnyUdpRecv, AnyUdpSend, Outbound, UdpSession
+        socks5::SEncode,
+    }, shadowquic::{handle_udp_recv_overdatagram, handle_udp_send_overdatagram}, Outbound
 };
 
-use super::{handle_udp_packet_recv, inbound::Unsplit, AssociateRecvSession, AssociateSendSession, IDStore, SQConn};
+use super::{handle_udp_packet_recv, inbound::Unsplit, SQConn};
 
 pub struct ShadowQuicClient {
     quic_conn: Option<SQConn>,

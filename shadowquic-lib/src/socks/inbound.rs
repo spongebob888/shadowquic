@@ -1,6 +1,5 @@
 use std::io::Cursor;
 use std::net::SocketAddr;
-use std::ops::Deref;
 use std::sync::{Arc};
 use tokio::sync::OnceCell;
 
@@ -118,7 +117,7 @@ impl UdpSend for UdpSocksWrap {
             dst: addr,
         };
         let mut buf_new = BytesMut::with_capacity(1600);
-        let mut header = Vec::new();
+        let header = Vec::new();
         let mut cur = Cursor::new(header);
         reply.encode(&mut cur).await?;
         let header = cur.into_inner();

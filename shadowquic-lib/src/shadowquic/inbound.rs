@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use bytes::Bytes;
-use std::{collections::HashMap, net::SocketAddr, pin::Pin, sync::{ Arc}};
+use std::{net::SocketAddr, pin::Pin, sync::{ Arc}};
 
 use quinn::{
-    Connection, Endpoint, Incoming, RecvStream, SendStream, ServerConfig, TransportConfig, VarInt,
+    Endpoint, Incoming, RecvStream, SendStream, ServerConfig, TransportConfig,
     congestion::{BbrConfig, CubicConfig, NewRenoConfig},
     crypto::rustls::QuicServerConfig,
 };
@@ -12,10 +12,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     select,
-    sync::{
-        Notify,
-        mpsc::{Receiver, Sender, channel},
-    },
+    sync::mpsc::{Receiver, Sender, channel},
 };
 use tracing::{Instrument, Level, debug, error, event, trace, trace_span};
 
@@ -23,7 +20,7 @@ use crate::{
     error::SError, msgs::{
         shadowquic::{SQCmd, SQReq},
         socks5::{SDecode, SocksAddr},
-    }, AnyTcp, AnyUdpRecv, AnyUdpSend, Inbound, ProxyRequest, TcpSession, TcpTrait, UdpRecv, UdpSend, UdpSession
+    }, Inbound, ProxyRequest, TcpSession, TcpTrait, UdpRecv, UdpSend, UdpSession
 };
 
 use super::{{handle_udp_packet_recv, handle_udp_recv_overdatagram, handle_udp_send_overdatagram}, SQConn};

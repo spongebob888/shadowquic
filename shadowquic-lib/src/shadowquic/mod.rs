@@ -1,9 +1,9 @@
-use std::{any::Any, collections::HashMap, io::Cursor, mem::replace, ops::Deref, sync::{atomic::{AtomicI16, AtomicI64, AtomicU16}, Arc}};
+use std::{collections::HashMap, io::Cursor, mem::replace, ops::Deref, sync::{atomic::AtomicU16, Arc}};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use quinn::{Connection, RecvStream, SendStream};
 use tokio::sync::{
-    mpsc::{channel, Receiver, Sender}, Mutex, Notify, RwLock
+    mpsc::channel, Notify, RwLock
 };
 use tracing::{error, trace, trace_span};
 
@@ -63,8 +63,8 @@ impl IDStore {
         let mut r;
         loop {
             r = self.id_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            if !inner.contains_key(&r) {
-                inner.insert(r, Ok((socket.clone(),dst)));
+            if let std::collections::hash_map::Entry::Vacant(e) = inner.entry(r) {
+                e.insert(Ok((socket.clone(),dst)));
                 break;
             }
         }
@@ -83,7 +83,7 @@ impl AssociateSendSession {
     }
     pub async fn get_id_or_insert(&mut self, addr: &SocksAddr, socket: AnyUdpSend) -> u16 {
         if let Some(id) = self.dst_map.get(addr) {
-            id.clone()
+            *id
         } else {
             let id = self.id_store.fetch_new_id(socket, addr.clone()).await;
             self.dst_map.insert( addr.clone(), id);
@@ -98,7 +98,7 @@ impl Drop for AssociateSendSession {
         let id_remove = self.dst_map.clone();
         tokio::spawn(async move {
             let mut id_store = id_store.write().await;
-            let _ = id_remove.iter().map(|(_,k)|id_store.remove(k));
+            let _ = id_remove.values().map(|k| id_store.remove(k));
         });
     }
 }
@@ -122,9 +122,8 @@ impl AssociateRecvSession {
     }
     pub async fn store_socket(&mut self, id: &u16, dst: SocksAddr, socks: AnyUdpSend) {
         if self.id_map.contains_key(id) {
-            return;
         } else {
-            self.id_store.store_socket(id.clone(), socks, dst.clone()).await;
+            self.id_store.store_socket(*id, socks, dst.clone()).await;
             self.id_map.insert(*id,dst);
         }
     }
@@ -136,7 +135,7 @@ impl Drop for AssociateRecvSession {
         let id_remove = self.id_map.clone();
         tokio::spawn(async move {
             let mut id_store = id_store.write().await;
-            let _ = id_remove.iter().map(|(k,_)|id_store.remove(k));
+            let _ = id_remove.keys().map(|k| id_store.remove(k));
         });
     }
 }
@@ -150,8 +149,8 @@ pub async fn handle_udp_send_overdatagram(
     over_stream: bool,
 ) -> Result<(), SError> {
     let mut down_stream = udp_recv;
-    let mut buf_down = vec![0u8; 1600];
-    let mut buf_up: Vec<u8> = vec![0u8; 1600];
+    let buf_down = vec![0u8; 1600];
+    let buf_up: Vec<u8> = vec![0u8; 1600];
     let mut session = AssociateSendSession {
         id_store: conn.id_store.clone(),
         dst_map: Default::default(),
@@ -216,12 +215,12 @@ pub async fn handle_udp_packet_recv(
         let mut id_map = HashMap::<u16, (AnyUdpSend,SocksAddr)>::new();
         let (send,mut recv) = channel(10);
         let over_stream = false;
-        if over_stream == false {
+        if !over_stream {
             loop {
                 tokio::select! {
                 Ok(b) = conn.read_datagram() => {
                     trace!("datagram accepted");
-                    let mut b = BytesMut::from(b);
+                    let b = BytesMut::from(b);
                     let mut cur = Cursor::new(b);
                     let SQPacketDatagramHeader{id} = SQPacketDatagramHeader::decode(&mut cur).await?;
                     // To be fixed, may block here
