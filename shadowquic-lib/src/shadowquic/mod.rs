@@ -1,4 +1,4 @@
-use std::{any::Any, collections::HashMap, mem::replace, ops::Deref, sync::Arc};
+use std::{any::Any, collections::HashMap, mem::replace, ops::Deref, sync::{atomic::{AtomicI16, AtomicI64, AtomicU16}, Arc}};
 
 use bytes::Bytes;
 use quinn::{Connection, SendStream};
@@ -26,21 +26,24 @@ impl Deref for SQConn {
 }
 
 #[derive(Clone, Default)]
-struct IDStore(Arc<Mutex<HashMap<u16, Result<AnyUdp,Arc<Notify>>>>>);
+struct IDStore {
+    id_counter: Arc<AtomicU16>,
+    inner: Arc<Mutex<HashMap<u16, Result<AnyUdp,Arc<Notify>>>>>
+}
 
 impl IDStore {
     async fn get_socket(&self, id: u16) -> Result<AnyUdp,Arc<Notify>>{
-        let mut h = self.0.lock().await;
+        let mut h = self.inner.lock().await;
         if let Some(r) = h.get_mut(&id){
             r.clone()
         } else {
             let notify = Arc::new(Notify::new());
-            self.0.lock().await.insert(id, Err(notify.clone()));
+            self.inner.lock().await.insert(id, Err(notify.clone()));
             Err(notify)
         }
     }
     async fn store_socket(&self, id: u16, socket: AnyUdp) {
-        let mut h = self.0.lock().await;
+        let mut h = self.inner.lock().await;
         let r = h.get_mut(&id);
         if let Some(s) = r {
             match s {
@@ -53,8 +56,18 @@ impl IDStore {
         } else {
             h.insert(id, Result::<AnyUdp,Arc<Notify>>::Ok(socket));
         }
-
-
+    }
+    async fn fetch_new_id(&self, socket: AnyUdp) -> u16{
+        let mut inner = self.inner.lock().await;
+        let mut r;
+        loop {
+            r = self.id_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if !inner.contains_key(&r) {
+                inner.insert(r, Ok(socket.clone()));
+                break;
+            }
+        }
+        r
     }
 }
 
@@ -67,11 +80,13 @@ impl AssociateSendSession {
     pub fn get_id(&self, addr: &SocksAddr) -> Option<u16> {
         self.dst_map.get(addr).copied()
     }
-    pub fn get_id_or_insert(&self, addr: &SocksAddr) -> u16 {
+    pub async fn get_id_or_insert(&mut self, addr: &SocksAddr, socket: AnyUdp) -> u16 {
         if let Some(id) = self.dst_map.get(addr) {
             id.clone()
         } else {
-            todo!()
+            let id = self.id_store.fetch_new_id(socket).await;
+            self.dst_map.insert( addr.clone(), id);
+            id
         }
     }
 }
