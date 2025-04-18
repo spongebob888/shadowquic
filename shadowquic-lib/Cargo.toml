@@ -16,3 +16,7 @@ bytes = "1.10.1"
 async-trait = "0.1.88"
 webpki-roots = "0.26.8"
 
+[dev-dependencies]
+fast-socks5 = "0.10.0"
+
+
