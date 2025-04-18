@@ -1,8 +1,5 @@
 use async_trait::async_trait;
-use std::{
-    net::SocketAddr,
-    sync::{ Arc},
-};
+use std::{net::SocketAddr, sync::Arc};
 
 use quinn::{
     ClientConfig, Endpoint, TransportConfig,
@@ -10,19 +7,19 @@ use quinn::{
     crypto::rustls::QuicClientConfig,
 };
 use rustls::RootCertStore;
-use tracing::{debug, debug_span, error, info, span, trace, Instrument, Level};
-
+use tracing::{Instrument, Level, debug, debug_span, error, info, span, trace};
 
 use crate::{
-    error::SError, msgs::{
-        shadowquic::{
-            SQCmd, SQReq,
-        },
+    Outbound,
+    error::SError,
+    msgs::{
+        shadowquic::{SQCmd, SQReq},
         socks5::SEncode,
-    }, shadowquic::{handle_udp_recv_overdatagram, handle_udp_send_overdatagram}, Outbound
+    },
+    shadowquic::{handle_udp_recv_overdatagram, handle_udp_send_overdatagram},
 };
 
-use super::{handle_udp_packet_recv, inbound::Unsplit, SQConn};
+use super::{SQConn, handle_udp_packet_recv, inbound::Unsplit};
 
 pub struct ShadowQuicClient {
     quic_conn: Option<SQConn>,
@@ -43,6 +40,7 @@ impl ShadowQuicClient {
         initial_mtu: u16,
         congestion_controller: String,
         zero_rtt: bool,
+        over_stream: bool,
     ) -> Self {
         let root_store = RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.into(),
@@ -83,7 +81,7 @@ impl ShadowQuicClient {
             dst_addr,
             server_name,
             zero_rtt,
-            over_stream: false,
+            over_stream: over_stream,
         }
     }
     async fn prepare_conn(&mut self) -> Result<(), SError> {
@@ -179,8 +177,19 @@ impl Outbound for ShadowQuicClient {
                         dst: udp_session.dst.clone(),
                     };
                     req.encode(&mut send).await?;
-                    let fut2 = handle_udp_recv_overdatagram(recv, udp_session.send.clone(), conn.clone(), over_stream);
-                    let fut1 = handle_udp_send_overdatagram(send, udp_session.send, udp_session.recv, conn, over_stream);
+                    let fut2 = handle_udp_recv_overdatagram(
+                        recv,
+                        udp_session.send.clone(),
+                        conn.clone(),
+                        over_stream,
+                    );
+                    let fut1 = handle_udp_send_overdatagram(
+                        send,
+                        udp_session.send,
+                        udp_session.recv,
+                        conn,
+                        over_stream,
+                    );
 
                     tokio::try_join!(fut1, fut2)?;
                     trace!("req header sent");

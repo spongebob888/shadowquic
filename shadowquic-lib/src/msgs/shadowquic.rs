@@ -92,3 +92,12 @@ impl SEncode for SQPacketDatagramHeader {
         Ok(())
     }
 }
+
+impl SDecode for SQPacketStreamHeader {
+    async fn decode<T: tokio::io::AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
+        Ok(Self {
+            id: u16::decode(s).await?,
+            len: u16::decode(s).await?,
+        })
+    }
+}

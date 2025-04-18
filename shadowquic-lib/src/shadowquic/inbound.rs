@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use bytes::Bytes;
-use std::{net::SocketAddr, pin::Pin, sync::{ Arc}};
+use std::{net::SocketAddr, pin::Pin, sync::Arc};
 
 use quinn::{
     Endpoint, Incoming, RecvStream, SendStream, ServerConfig, TransportConfig,
@@ -17,15 +17,19 @@ use tokio::{
 use tracing::{Instrument, Level, debug, error, event, trace, trace_span};
 
 use crate::{
-    error::SError, msgs::{
+    Inbound, ProxyRequest, TcpSession, TcpTrait, UdpRecv, UdpSend, UdpSession,
+    error::SError,
+    msgs::{
         shadowquic::{SQCmd, SQReq},
         socks5::{SDecode, SocksAddr},
-    }, Inbound, ProxyRequest, TcpSession, TcpTrait, UdpRecv, UdpSend, UdpSession
+    },
 };
 
-use super::{{handle_udp_packet_recv, handle_udp_recv_overdatagram, handle_udp_send_overdatagram}, SQConn};
+use super::{
+    SQConn, {handle_udp_packet_recv, handle_udp_recv_overdatagram, handle_udp_send_overdatagram},
+};
 
-struct UdpMux(Receiver<(Bytes,SocksAddr)>);
+struct UdpMux(Receiver<(Bytes, SocksAddr)>);
 #[async_trait]
 impl UdpRecv for UdpMux {
     async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr), SError> {
@@ -143,7 +147,7 @@ impl ShadowQuicServer {
             connection.close(0u8.into(), b"");
             return Err(SError::JlsAuthFailed);
         }
-        let sq_conn = SQServerConn(SQConn{
+        let sq_conn = SQServerConn(SQConn {
             conn: connection,
             id_store: Default::default(),
         });
@@ -180,11 +184,11 @@ impl Inbound for ShadowQuicServer {
                 match endpoint.accept().await {
                     Some(conn) => {
                         let request_sender = request_sender.clone();
-                        tokio::spawn(async move {Self::handle_incoming(
-                            conn,
-                            zero_rtt,
-                            request_sender,
-                        ).await.map_err(|x|error!("{}",x))});
+                        tokio::spawn(async move {
+                            Self::handle_incoming(conn, zero_rtt, request_sender)
+                                .await
+                                .map_err(|x| error!("{}", x))
+                        });
                     }
                     None => {
                         error!("Quic endpoint closed");
@@ -203,7 +207,7 @@ impl SQServerConn {
     async fn handle_connection(self, req_send: Sender<ProxyRequest>) -> Result<(), SError> {
         let conn = &self.0;
 
-        tokio::spawn(handle_udp_packet_recv(self.0.clone())); 
+        tokio::spawn(handle_udp_packet_recv(self.0.clone()));
 
         while conn.close_reason().is_none() {
             select! {
@@ -234,9 +238,9 @@ impl SQServerConn {
                     .await
                     .map_err(|_| SError::OutboundUnavailable)?;
             }
-            SQCmd::AssociatOverDatagram => {
-                let (local_send,udp_recv) = channel::<(Bytes,SocksAddr)>(10);
-                let (udp_send,local_recv) = channel::<(Bytes,SocksAddr)>(10);
+            SQCmd::AssociatOverDatagram | SQCmd::AssociatOverStream => {
+                let (local_send, udp_recv) = channel::<(Bytes, SocksAddr)>(10);
+                let (udp_send, local_recv) = channel::<(Bytes, SocksAddr)>(10);
                 let udp: UdpSession = UdpSession {
                     send: Arc::new(udp_send),
                     recv: Box::new(udp_recv),
@@ -254,12 +258,10 @@ impl SQServerConn {
                     Box::new(local_recv),
                     self.0.clone(),
                     false,
-
                 );
                 let fut2 = handle_udp_recv_overdatagram(recv, local_send, self.0, false);
                 tokio::try_join!(fut1, fut2)?;
-            },
-            SQCmd::AssociatOverStream => todo!(),
+            }
         }
         Ok(())
     }

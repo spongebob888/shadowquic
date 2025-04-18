@@ -1,6 +1,6 @@
 use std::io::Cursor;
 use std::net::SocketAddr;
-use std::sync::{Arc};
+use std::sync::Arc;
 use tokio::sync::OnceCell;
 
 use crate::error::SError;
@@ -100,9 +100,12 @@ impl UdpRecv for UdpSocksWrap {
         }
         let headsize: usize = cur.position().try_into().unwrap();
         let buf = cur.into_inner();
-        self.1.get_or_init(|| async {
-            let _ = self.0.connect(dst).await;
-            dst}).await;
+        self.1
+            .get_or_init(|| async {
+                let _ = self.0.connect(dst).await;
+                dst
+            })
+            .await;
         let buf = buf.freeze();
 
         Ok((buf.slice(headsize..len), req.dst))
