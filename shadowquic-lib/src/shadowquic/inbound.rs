@@ -20,21 +20,21 @@ use tokio::{
 use tracing::{Instrument, Level, debug, error, event, trace, trace_span};
 
 use crate::{
-    Inbound, ProxyRequest, TcpSession, TcpTrait, UdpSocketTrait,
-    error::SError,
-    msgs::{
+    error::SError, msgs::{
         shadowquic::{SQCmd, SQReq},
         socks5::{SDecode, SocksAddr},
-    },
+    }, Inbound, ProxyRequest, TcpSession, TcpTrait, UdpRecv, UdpSend,
 };
 
-struct UdpMux(Receiver<Bytes>);
+struct UdpMux(Receiver<(Bytes,SocksAddr)>);
 #[async_trait]
-impl UdpSocketTrait for UdpMux {
-    async fn recv_from(&self) -> Result<(Bytes, SocksAddr), SError> {
+impl UdpRecv for UdpMux {
+    async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr), SError> {
         todo!()
     }
-
+}
+#[async_trait]
+impl UdpSend for UdpMux {
     async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
         todo!()
     }
