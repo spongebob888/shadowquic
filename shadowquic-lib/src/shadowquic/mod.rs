@@ -12,7 +12,7 @@ pub mod inbound;
 pub mod outbound;
 
 #[derive(Clone)]
-struct SQConn {
+pub struct SQConn {
     conn: Connection,
     id_store: IDStore,
 }
@@ -93,7 +93,7 @@ impl AssociateSendSession {
 
 impl Drop for AssociateSendSession {
     fn drop(&mut self) {
-        todo!()
+        // TODO
     }
 }
 
@@ -125,6 +125,6 @@ impl<T> AssociateRecvSession<T> {
 
 impl<T> Drop for AssociateRecvSession<T> {
     fn drop(&mut self) {
-        todo!()
+        //TODO
     }
 }
