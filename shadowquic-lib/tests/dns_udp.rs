@@ -1,14 +1,12 @@
-
-
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
-use fast_socks5::{client::Socks5Datagram, Result};
-use shadowquic_lib::{direct::DirectOut, socks::inbound::SocksServer, Manager};
+use fast_socks5::{Result, client::Socks5Datagram};
+use shadowquic_lib::{Manager, direct::DirectOut, socks::inbound::SocksServer};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
 };
-use tracing::{debug, info, level_filters::LevelFilter, trace, Level};
+use tracing::{Level, debug, info, level_filters::LevelFilter, trace};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 /// # How to use it:
@@ -43,18 +41,18 @@ struct Opt {
 #[tokio::test]
 async fn main() -> Result<()> {
     let filter = tracing_subscriber::filter::Targets::new()
-    // Enable the `INFO` level for anything in `my_crate`
-    .with_target("shadowquic_lib", Level::TRACE)
-    .with_target("dns_udp", Level::TRACE)
-    .with_target("shadowquic_lib::msgs::socks", LevelFilter::OFF);
+        // Enable the `INFO` level for anything in `my_crate`
+        .with_target("shadowquic_lib", Level::TRACE)
+        .with_target("dns_udp", Level::TRACE)
+        .with_target("shadowquic_lib::msgs::socks", LevelFilter::OFF);
 
-// Enable the `DEBUG` level for a specific module.
+    // Enable the `DEBUG` level for a specific module.
 
-// Build a new subscriber with the `fmt` layer using the `Targets`
-// filter we constructed above.
-tracing_subscriber::registry()
-    .with(tracing_subscriber::fmt::layer())
-    .init();
+    // Build a new subscriber with the `fmt` layer using the `Targets`
+    // filter we constructed above.
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 
     spawn_socks_server().await;
     spawn_socks_client().await
@@ -106,20 +104,18 @@ async fn spawn_socks_client() -> Result<()> {
 }
 
 async fn spawn_socks_server() {
+    // env_logger::init();
+    trace!("Running");
 
-
-// env_logger::init();
-trace!("Running");
-
-let socks_server = SocksServer::new("127.0.0.1:1089".parse().unwrap())
-    .await
-    .unwrap();
-let direct_client = DirectOut;
-let server = Manager {
-    inbound: Box::new(socks_server),
-    outbound: Box::new(direct_client),
-};
-tokio::spawn(server.run());
+    let socks_server = SocksServer::new("127.0.0.1:1089".parse().unwrap())
+        .await
+        .unwrap();
+    let direct_client = DirectOut;
+    let server = Manager {
+        inbound: Box::new(socks_server),
+        outbound: Box::new(direct_client),
+    };
+    tokio::spawn(server.run());
 }
 /// Simple DNS request
 async fn dns_request<S: AsyncRead + AsyncWrite + Unpin>(
@@ -150,7 +146,11 @@ async fn dns_request<S: AsyncRead + AsyncWrite + Unpin>(
     let mut buf = [0u8; 256];
     let (len, adr) = socket.recv_from(&mut buf).await?;
     let msg = &buf[..len];
-    info!("response: {:?} from {:?}", String::from_utf8(msg.to_vec()), adr);
+    info!(
+        "response: {:?} from {:?}",
+        String::from_utf8(msg.to_vec()),
+        adr
+    );
 
     assert_eq!(msg[0], 0x13);
     assert_eq!(msg[1], 0x37);

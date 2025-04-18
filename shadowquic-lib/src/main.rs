@@ -44,6 +44,7 @@ async fn test_shadowquic() {
         1200,
         "bbr".into(),
         true,
+        true,
     );
 
     let client = Manager {

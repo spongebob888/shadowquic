@@ -13,6 +13,10 @@ pub enum SError {
     QuicConnect(#[from] quinn::ConnectError),
     #[error("QUIC Connection Error:{0}")]
     QuicConnection(#[from] quinn::ConnectionError),
+    #[error("QUIC Write Error:{0}")]
+    QuicWrite(#[from] quinn::WriteError),
+    #[error("QUIC ReadExact Error:{0}")]
+    QuicReadExactError(#[from] quinn::ReadExactError),
     #[error("JLS Authentication failed")]
     JlsAuthFailed,
     #[error("Rustls Error")]
@@ -24,5 +28,5 @@ pub enum SError {
     #[error("hostname can't be resolved")]
     DomainResolveFailed,
     #[error("mpsc channel error: {0}")]
-    ChannelError(String)
+    ChannelError(String),
 }

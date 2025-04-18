@@ -1,4 +1,3 @@
-
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -9,7 +8,7 @@ use tokio::net::TcpStream;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use tokio::sync::mpsc::{Sender,Receiver};
+use tokio::sync::mpsc::{Receiver, Sender};
 
 pub mod direct;
 pub mod error;
@@ -67,9 +66,8 @@ pub trait Outbound<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend>: Send + Sync + Un
     async fn handle(&mut self, req: ProxyRequest<T, I, O>) -> Result<(), SError>;
 }
 
-
 #[async_trait]
-impl UdpSend for Sender<(Bytes,SocksAddr)> {
+impl UdpSend for Sender<(Bytes, SocksAddr)> {
     async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
         let siz = buf.len();
         self.send((buf, addr)).await;
@@ -77,7 +75,7 @@ impl UdpSend for Sender<(Bytes,SocksAddr)> {
     }
 }
 #[async_trait]
-impl UdpRecv for Receiver<(Bytes,SocksAddr)> {
+impl UdpRecv for Receiver<(Bytes, SocksAddr)> {
     async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr), SError> {
         let r = self.recv().await.ok_or(SError::OutboundUnavailable)?;
         Ok(r)
