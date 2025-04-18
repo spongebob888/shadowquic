@@ -182,11 +182,12 @@ impl Inbound for ShadowQuicServer {
             loop {
                 match endpoint.accept().await {
                     Some(conn) => {
-                        tokio::spawn(Self::handle_incoming(
+                        let request_sender = request_sender.clone();
+                        tokio::spawn(async move {Self::handle_incoming(
                             conn,
                             zero_rtt,
-                            request_sender.clone(),
-                        ));
+                            request_sender,
+                        ).await.map_err(|x|error!("{}",x))});
                     }
                     None => {
                         error!("Quic endpoint closed");
