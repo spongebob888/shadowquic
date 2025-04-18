@@ -64,7 +64,7 @@ impl SEncode for VarVec {
     async fn encode<T: AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
         let buf = vec![self.len];
         s.write_all(&buf).await?;
-        s.write_all((&self.contents[0..self.len as usize])).await?;
+        s.write_all(&self.contents[0..self.len as usize]).await?;
         Ok(())
     }
 }
