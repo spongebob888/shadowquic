@@ -12,7 +12,7 @@ use tokio::{
 use tracing::{Instrument, error, trace, trace_span};
 
 use crate::{
-    Outbound, UdpSession, UdpSocketTrait,
+    Outbound, UdpSession,
     error::SError,
     msgs::socks5::{AddrOrDomain, SOCKS5_ADDR_TYPE_DOMAIN_NAME, SocksAddr, VarVec},
 };
@@ -126,7 +126,7 @@ async fn handle_udp(udp_session: UdpSession) -> Result<(), SError> {
     //let upstream = UdpSocket::bind(dst).await?;
     let upstream = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
     let upstream_clone = upstream.clone();
-    let downstream = udp_session.socket.clone();
+    let mut downstream = udp_session.recv;
 
     let dns_cache = DnsResolve::default();
     let dns_cache_clone = dns_cache.clone();
@@ -136,12 +136,12 @@ async fn handle_udp(udp_session: UdpSession) -> Result<(), SError> {
             buf_send.resize(1600, 0);
             trace!("recv upstream");
             let (len, dst) = upstream.recv_from(&mut buf_send).await?;
-            trace!("udp request reply from :{}", dst);
+            trace!("udp request reply from:{}", dst);
             let dst = dns_cache_clone.inv_resolve(&dst).await;
-            trace!("udp recv:{}", dst);
+            trace!("udp source inverse resolved to:{}", dst);
             let buf = buf_send.freeze();
-            let len = udp_session.socket.send_to(buf.slice(..len), dst).await?;
             trace!("udp recved:{} bytes", len);
+            let len = udp_session.send.send_to(buf.slice(..len), dst).await?;
         }
         Ok(()) as Result<(), SError>
     };
@@ -152,7 +152,7 @@ async fn handle_udp(udp_session: UdpSession) -> Result<(), SError> {
         trace!("udp request to:{}", dst);
         let dst = dns_cache.resolve(dst).await?;
         trace!("udp resolve to:{}", dst);
-        upstream_clone.send_to(&buf, dst).await?;
-        trace!("udp request sent:{}", dst);
+        let siz = upstream_clone.send_to(&buf, dst).await?;
+        trace!("udp request sent:{}bytes", siz);
     }
 }

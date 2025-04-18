@@ -6,7 +6,7 @@ use tokio::sync::{
     mpsc::{channel, Receiver, Sender}, Mutex, Notify, RwLock
 };
 
-use crate::{error::SError, msgs::socks5::SocksAddr, AnyUdp, UdpSocketTrait};
+use crate::{error::SError, msgs::socks5::SocksAddr, AnyUdpSend};
 
 pub mod inbound;
 pub mod outbound;
@@ -28,11 +28,11 @@ impl Deref for SQConn {
 #[derive(Clone, Default)]
 struct IDStore {
     id_counter: Arc<AtomicU16>,
-    inner: Arc<RwLock<HashMap<u16, Result<AnyUdp,Arc<Notify>>>>>
+    inner: Arc<RwLock<HashMap<u16, Result<AnyUdpSend,Arc<Notify>>>>>
 }
 
 impl IDStore {
-    async fn get_socket(&self, id: u16) -> Result<AnyUdp,Arc<Notify>>{
+    async fn get_socket(&self, id: u16) -> Result<AnyUdpSend,Arc<Notify>>{
         let mut h = self.inner.write().await;
         if let Some(r) = h.get_mut(&id){
             r.clone()
@@ -42,22 +42,22 @@ impl IDStore {
             Err(notify)
         }
     }
-    async fn store_socket(&self, id: u16, socket: AnyUdp) {
+    async fn store_socket(&self, id: u16, socket: AnyUdpSend) {
         let mut h = self.inner.write().await;
         let r = h.get_mut(&id);
         if let Some(s) = r {
             match s {
                 Ok(_) => {}
                 Err(_) => {
-                    let notify = replace(s, Result::<AnyUdp,Arc<Notify>>::Ok(socket));
+                    let notify = replace(s, Result::<AnyUdpSend,Arc<Notify>>::Ok(socket));
                     let _ = notify.map_err(|x|x.notify_one());
                 }
             }
         } else {
-            h.insert(id, Result::<AnyUdp,Arc<Notify>>::Ok(socket));
+            h.insert(id, Result::<AnyUdpSend,Arc<Notify>>::Ok(socket));
         }
     }
-    async fn fetch_new_id(&self, socket: AnyUdp) -> u16{
+    async fn fetch_new_id(&self, socket: AnyUdpSend) -> u16{
         let mut inner = self.inner.write().await;
         let mut r;
         loop {
@@ -80,7 +80,7 @@ impl AssociateSendSession {
     pub fn get_id(&self, addr: &SocksAddr) -> Option<u16> {
         self.dst_map.get(addr).copied()
     }
-    pub async fn get_id_or_insert(&mut self, addr: &SocksAddr, socket: AnyUdp) -> u16 {
+    pub async fn get_id_or_insert(&mut self, addr: &SocksAddr, socket: AnyUdpSend) -> u16 {
         if let Some(id) = self.dst_map.get(addr) {
             id.clone()
         } else {
@@ -113,7 +113,7 @@ impl<T> AssociateRecvSession<T> {
             todo!()
         }
     }
-    pub async fn store_socket(&mut self, id: &u16, dst: T, socks: AnyUdp) {
+    pub async fn store_socket(&mut self, id: &u16, dst: T, socks: AnyUdpSend) {
         if self.id_map.contains_key(id) {
             return;
         } else {

@@ -26,7 +26,7 @@ use crate::{
             SQCmd, SQPacketDatagramHeader, SQPacketStreamHeader, SQReq, SQUdpControlHeader,
         },
         socks5::{SDecode, SEncode, SocksAddr},
-    }, AnyUdp, Outbound, UdpSession
+    }, AnyUdpSend, Outbound, UdpSession
 };
 
 use super::{inbound::Unsplit, AssociateRecvSession, AssociateSendSession, IDStore, SQConn};
@@ -186,7 +186,7 @@ impl Outbound for ShadowQuicClient {
                         dst: udp_session.dst.clone(),
                     };
                     req.encode(&mut send).await?;
-                    let fut2 = handle_udp_recv_overdatagram(recv, udp_session.socket.clone(), conn.clone(), over_stream);
+                    let fut2 = handle_udp_recv_overdatagram(recv, udp_session.send.clone(), conn.clone(), over_stream);
                     let fut1 = handle_udp_send_overdatagram(send, udp_session, conn, over_stream);
 
                     tokio::try_join!(fut1, fut2)?;
@@ -208,8 +208,7 @@ async fn handle_udp_send_overdatagram(
     conn: SQConn,
     over_stream: bool,
 ) -> Result<(), SError> {
-    let down_stream = udp_session.socket.clone();
-    let down_stream_clone = udp_session.socket;
+    let mut down_stream = udp_session.recv;
     let mut buf_down = vec![0u8; 1600];
     let mut buf_up: Vec<u8> = vec![0u8; 1600];
     let mut session = AssociateSendSession {
@@ -220,7 +219,7 @@ async fn handle_udp_send_overdatagram(
     let quic_conn = conn.conn.clone();
         loop {
             let (bytes, dst) = down_stream.recv_from().await?;
-            let id = session.get_id_or_insert(&dst, down_stream.clone()).await;
+            let id = session.get_id_or_insert(&dst, udp_session.send.clone()).await;
             let ctl_header = SQUdpControlHeader { dst, id };
             let dg_header = SQPacketDatagramHeader { id };
             let fut1 = async {
@@ -251,7 +250,7 @@ async fn handle_udp_send_overdatagram(
 
 async fn handle_udp_recv_overdatagram(
     mut recv: RecvStream,
-    udp_socket: AnyUdp,
+    udp_socket: AnyUdpSend,
     conn: SQConn,
     over_stream: bool,
 )  -> Result<(), SError>
@@ -273,8 +272,8 @@ async fn handle_udp_packet_recv(
             id_store: conn.id_store.clone(),
             id_map: Default::default(),
         };
-        let mut id_map = HashMap::<u16, (SocksAddr, AnyUdp)>::new();
-        let (send,recv) = channel::<(SocksAddr, AnyUdp)>();
+        let mut id_map = HashMap::<u16, (SocksAddr, AnyUdpSend)>::new();
+        let (send,recv) = channel::<(SocksAddr, AnyUdpSend)>();
         let over_stream = false;
         if over_stream == false {
             loop {

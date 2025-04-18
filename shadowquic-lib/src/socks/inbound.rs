@@ -1,7 +1,8 @@
 use std::io::Cursor;
 use std::net::SocketAddr;
 use std::ops::Deref;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc};
+use tokio::sync::OnceCell;
 
 use crate::error::SError;
 use crate::msgs::socks5::{
@@ -9,7 +10,7 @@ use crate::msgs::socks5::{
     SOCKS5_ADDR_TYPE_IPV4, SOCKS5_AUTH_METHOD_NONE, SOCKS5_CMD_TCP_BIND, SOCKS5_CMD_TCP_CONNECT,
     SOCKS5_CMD_UDP_ASSOCIATE, SOCKS5_REPLY_SUCCEEDED, SOCKS5_VERSION, SocksAddr, UdpReqHeader,
 };
-use crate::{Inbound, ProxyRequest, TcpSession, UdpSession, UdpSocketTrait};
+use crate::{Inbound, ProxyRequest, TcpSession, UdpRecv, UdpSend, UdpSession};
 use async_trait::async_trait;
 use bytes::{BufMut, Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -85,10 +86,10 @@ async fn handle_socks<T: AsyncRead + AsyncWrite + Unpin>(
     Ok((s, req, socket))
 }
 
-pub struct UdpSocksWrap(UdpSocket, OnceLock<SocketAddr>); // remote addr
+pub struct UdpSocksWrap(Arc<UdpSocket>, OnceCell<SocketAddr>); // remote addr
 #[async_trait]
-impl UdpSocketTrait for UdpSocksWrap {
-    async fn recv_from(&self) -> Result<(Bytes, SocksAddr), SError> {
+impl UdpRecv for UdpSocksWrap {
+    async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr), SError> {
         let mut buf = BytesMut::new();
         buf.resize(1600, 0);
 
@@ -102,12 +103,16 @@ impl UdpSocketTrait for UdpSocksWrap {
         let headsize: usize = cur.position().try_into().unwrap();
         trace!("headsize:{}", headsize);
         let buf = cur.into_inner();
-        self.1.get_or_init(|| dst);
+        self.1.get_or_init(|| async {
+            let _ = self.0.connect(dst).await;
+            dst}).await;
         let buf = buf.freeze();
 
         Ok((buf.slice(headsize..len), req.dst))
     }
-
+}
+#[async_trait]
+impl UdpSend for UdpSocksWrap {
     async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
         let reply = UdpReqHeader {
             rsv: 0,
@@ -123,7 +128,7 @@ impl UdpSocketTrait for UdpSocksWrap {
         buf_new.put(Bytes::from(header));
         buf_new.put(buf);
 
-        Ok(self.0.send_to(&buf_new, self.1.get().unwrap()).await?)
+        Ok(self.0.send(&buf_new).await?)
     }
 }
 
@@ -142,8 +147,10 @@ impl Inbound for SocksServer {
             })),
             SOCKS5_CMD_UDP_ASSOCIATE => {
                 let req = req;
+                let socket = Arc::new(socket.unwrap());
                 Ok(ProxyRequest::Udp(UdpSession {
-                    socket: Arc::new(UdpSocksWrap(socket.unwrap(), Default::default())),
+                    send: Arc::new(UdpSocksWrap(socket.clone(), Default::default())),
+                    recv: Box::new(UdpSocksWrap(socket, Default::default())),
                     dst: req.dst,
                     stream: Some(Box::new(s)),
                 }))

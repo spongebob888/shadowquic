@@ -15,24 +15,28 @@ pub mod msgs;
 pub mod shadowquic;
 pub mod socks;
 
-pub enum ProxyRequest<T = AnyTcp, U = AnyUdp> {
+pub enum ProxyRequest<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend> {
     Tcp(TcpSession<T>),
-    Udp(UdpSession<U>),
+    Udp(UdpSession<I, O>),
 }
 /// Udp socket only use immutable reference to self
 /// So it can be safely wrapped by Arc and cloned to work in duplex way.
 #[async_trait]
-pub trait UdpSocketTrait: Send + Sync + Unpin {
-    async fn recv_from(&self) -> Result<(Bytes, SocksAddr), SError>; // headsize, totalsize, proxy addr
+pub trait UdpSend: Send + Sync + Unpin {
     async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError>; // addr is proxy addr
+}
+#[async_trait]
+pub trait UdpRecv: Send + Sync + Unpin {
+    async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr), SError>; // socksaddr is proxy addr
 }
 pub struct TcpSession<IO = AnyTcp> {
     stream: IO,
     dst: SocksAddr,
 }
 
-pub struct UdpSession<IO = AnyUdp> {
-    socket: IO,
+pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
+    recv: I,
+    send: O,
     /// Control stream, should be kept alive during session.
     stream: Option<AnyTcp>,
     dst: SocksAddr,
@@ -43,21 +47,22 @@ pub struct DatagramMsg {
 }
 
 pub type AnyTcp = Box<dyn TcpTrait>;
-pub type AnyUdp = Arc<dyn UdpSocketTrait>;
+pub type AnyUdpSend = Arc<dyn UdpSend>;
+pub type AnyUdpRecv = Box<dyn UdpRecv>;
 pub trait TcpTrait: AsyncRead + AsyncWrite + Unpin + Send + Sync {}
 impl TcpTrait for TcpStream {}
 
 #[async_trait]
-pub trait Inbound<T = AnyTcp, U = AnyUdp>: Send + Sync + Unpin {
-    async fn accept(&mut self) -> Result<ProxyRequest<T, U>, SError>;
+pub trait Inbound<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend>: Send + Sync + Unpin {
+    async fn accept(&mut self) -> Result<ProxyRequest<T, I, O>, SError>;
     async fn init(&self) -> Result<(), SError> {
         Ok(())
     }
 }
 
 #[async_trait]
-pub trait Outbound<T = AnyTcp, U = AnyUdp>: Send + Sync + Unpin {
-    async fn handle(&mut self, req: ProxyRequest<T, U>) -> Result<(), SError>;
+pub trait Outbound<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend>: Send + Sync + Unpin {
+    async fn handle(&mut self, req: ProxyRequest<T, I, O>) -> Result<(), SError>;
 }
 
 pub struct Manager {
