@@ -26,6 +26,8 @@ use crate::{
     }, Inbound, ProxyRequest, TcpSession, TcpTrait, UdpRecv, UdpSend,
 };
 
+use super::SQConn;
+
 struct UdpMux(Receiver<(Bytes,SocksAddr)>);
 #[async_trait]
 impl UdpRecv for UdpMux {
@@ -43,12 +45,12 @@ impl UdpSend for UdpMux {
 pub type ShadowTcp = Unsplit<SendStream, RecvStream>;
 
 pub struct ShadowQuicServer {
-    pub squic_conn: Vec<ShadowQuicConn>,
+    pub squic_conn: Vec<SQServerConn>,
     pub quic_config: quinn::ServerConfig,
     pub bind_addr: SocketAddr,
     pub zero_rtt: bool,
-    pub request_sender: Sender<ProxyRequest>,
-    pub request: Receiver<ProxyRequest>,
+    request_sender: Sender<ProxyRequest>,
+    request: Receiver<ProxyRequest>,
 }
 
 impl ShadowQuicServer {
@@ -144,12 +146,11 @@ impl ShadowQuicServer {
             connection.close(0u8.into(), b"");
             return Err(SError::JlsAuthFailed);
         }
-        let sq_conn = ShadowQuicConn {
-            quic_conn: connection,
-            sessions: Default::default(),
-            udp_dispatch_tab: Default::default(),
-        };
-        let span = trace_span!("quic conn", id = sq_conn.quic_conn.stable_id());
+        let sq_conn = SQServerConn(SQConn{
+            conn: connection,
+            id_store: Default::default(),
+        });
+        let span = trace_span!("quic conn", id = sq_conn.0.stable_id());
         sq_conn
             .handle_connection(req_sender)
             .instrument(span)
@@ -197,14 +198,10 @@ impl Inbound for ShadowQuicServer {
         Ok(())
     }
 }
-pub struct ShadowQuicConn {
-    pub quic_conn: Connection,
-    pub sessions: HashMap<u16, Result<VarInt, Notify>>, // Stream ID one to one corespondance to remote client socks5 udp socket,
-    pub udp_dispatch_tab: HashMap<VarInt, Sender<Bytes>>,
-}
-impl ShadowQuicConn {
+pub struct SQServerConn(SQConn);
+impl SQServerConn {
     async fn handle_connection(self, req_send: Sender<ProxyRequest>) -> Result<(), SError> {
-        let conn = &self.quic_conn;
+        let conn = &self.0;
         while conn.close_reason().is_none() {
             select! {
                 bi = conn.accept_bi() => {
