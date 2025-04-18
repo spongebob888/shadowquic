@@ -1,10 +1,9 @@
-use std::{any::Any, collections::HashMap, ops::Deref, sync::Arc};
+use std::{any::Any, collections::HashMap, mem::replace, ops::Deref, sync::Arc};
 
 use bytes::Bytes;
 use quinn::{Connection, SendStream};
 use tokio::sync::{
-    Mutex,
-    mpsc::{Receiver, Sender, channel},
+    mpsc::{channel, Receiver, Sender}, Mutex, Notify
 };
 
 use crate::{error::SError, msgs::socks5::SocksAddr, AnyUdp, UdpSocketTrait};
@@ -27,32 +26,35 @@ impl Deref for SQConn {
 }
 
 #[derive(Clone, Default)]
-struct IDStore(Arc<Mutex<HashMap<u16, (Option<Sender<AnyUdp>>, Option<Receiver<AnyUdp>>)>>>);
+struct IDStore(Arc<Mutex<HashMap<u16, Result<AnyUdp,Arc<Notify>>>>>);
 
 impl IDStore {
-    async fn get_recv_or_insert(&self, id: u16) -> Option<Receiver<AnyUdp>>{
+    async fn get_socket(&self, id: u16) -> Result<AnyUdp,Arc<Notify>>{
         let mut h = self.0.lock().await;
-        let r = h.get_mut(&id);
-        if let Some((_, x)) = r {
-            let out = x.take();
-            out
+        if let Some(r) = h.get_mut(&id){
+            r.clone()
         } else {
-            let (s,r)  = channel::<AnyUdp>(10);
-            h.insert(id, (Some(s),None));
-            Some(r)
+            let notify = Arc::new(Notify::new());
+            self.0.lock().await.insert(id, Err(notify.clone()));
+            Err(notify)
         }
     }
-    async fn get_send_or_insert(&self, id: u16) -> Option<Sender<AnyUdp>>{
+    async fn store_socket(&self, id: u16, socket: AnyUdp) {
         let mut h = self.0.lock().await;
         let r = h.get_mut(&id);
-        if let Some((x,_)) = r {
-            let out = x.take();
-            out
+        if let Some(s) = r {
+            match s {
+                Ok(_) => {}
+                Err(_) => {
+                    let notify = replace(s, Result::<AnyUdp,Arc<Notify>>::Ok(socket));
+                    notify.map_err(|x|x.notify_one());
+                }
+            }
         } else {
-            let (s,r)  = channel::<AnyUdp>(10);
-            h.insert(id, (None,Some(r)));
-            Some(s)
+            h.insert(id, Result::<AnyUdp,Arc<Notify>>::Ok(socket));
         }
+
+
     }
 }
 
@@ -96,33 +98,16 @@ impl<T> AssociateRecvSession<T> {
             todo!()
         }
     }
-    pub async fn try_send_socket(&mut self, id: &u16,  dst: T, udp_socket: AnyUdp) -> Result<(),SError> {
+    pub async fn store_socket(&mut self, id: &u16, dst: T, socks: AnyUdp) {
         if self.id_map.contains_key(id) {
-           return Ok(()); 
+            return;
         } else {
-            self.id_map.insert(id.clone(), dst);
-            if let Some(s) = self.id_store.get_send_or_insert(id.clone()).await {
-                s.send(udp_socket).await
-                .map_err(|x|SError::ChannelError("can't send udp socket to driver".into()))?;
-            }
+            self.id_store.store_socket(id.clone(), socks).await;
+            self.id_map.insert(*id,dst);
         }
-        Ok(())
-    }
-    pub async fn get_socket(&mut self, id: &u16) -> Result<AnyUdp,SError> {
-        if self.id_map.contains_key(id) {
-           return Ok(()); 
-        } else {
-            self.id_map.insert(id.clone(), dst);
-            if let Some(s) = self.id_store.get_send_or_insert(id.clone()).await {
-                s.send(udp_socket).await
-                .map_err(|x|SError::ChannelError("can't send udp socket to driver".into()))?;
-            }
-        }
-        Ok(())
     }
 }
 
-impl<AnyUdp> 
 impl<T> Drop for AssociateRecvSession<T> {
     fn drop(&mut self) {
         todo!()
