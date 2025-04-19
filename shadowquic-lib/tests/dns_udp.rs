@@ -1,7 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use fast_socks5::{Result, client::Socks5Datagram};
-use shadowquic_lib::{Manager, direct::DirectOut, socks::inbound::SocksServer};
+use shadowquic_lib::{Manager, direct::outbound::DirectOut, socks::inbound::SocksServer};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
