@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use std::{net::SocketAddr, sync::Arc};
+use std::sync::Arc;
 
 use quinn::{
     ClientConfig, Endpoint, TransportConfig,

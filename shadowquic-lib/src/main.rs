@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use quinn::congestion::Bbr;
 use shadowquic_lib::{
     Manager,
     config::{CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg},

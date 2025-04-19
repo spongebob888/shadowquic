@@ -1,6 +1,5 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn;
 
 #[proc_macro_derive(SEncode)]
 pub fn derive_encode(input: TokenStream) -> TokenStream {

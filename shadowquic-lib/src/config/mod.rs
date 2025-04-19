@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
 pub struct Config {
