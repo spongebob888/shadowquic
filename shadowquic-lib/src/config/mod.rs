@@ -3,9 +3,11 @@ use std::net::SocketAddr;
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct Config {
     pub inbound: InboundCfg,
     pub outbound: OutboundCfg,
+    pub log_level: LogLevel,
 }
 
 #[derive(Deserialize)]
@@ -51,10 +53,11 @@ pub struct ShadowQuicClientCfg {
     pub over_stream: bool,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 #[serde(untagged)]
 pub enum CongestionControl {
+    #[default]
     Bbr,
     Cubic,
     NewReno,
@@ -78,12 +81,13 @@ pub struct ShadowQuicServerCfg {
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
+#[serde(untagged)]
 pub enum LogLevel {
     Trace,
     Debug,
     #[default]
     Info,
-    Warning,
+    Warn,
     Error,
     #[serde(alias = "off")]
     Silent,
