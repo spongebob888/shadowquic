@@ -108,9 +108,8 @@ impl ShadowQuicServer {
             incom.remote_address()
         );
         let conn = incom.accept()?;
-        let connection;
-        if zero_rtt {
-            connection = match conn.into_0rtt() {
+        let connection = if zero_rtt {
+            match conn.into_0rtt() {
                 Ok((conn, accepted)) => {
                     let conn_clone = conn.clone();
                     tokio::spawn(async move {
@@ -122,11 +121,11 @@ impl ShadowQuicServer {
                     });
                     conn
                 }
-                Err(conn) => conn.await?,
-            };
+                Err(conn) => conn.await?
+            }
         } else {
-            connection = conn.await?;
-        }
+            conn.await?
+        };
         if connection.is_jls() == Some(false) {
             error!("JLS hijacked or wrong pwd/iv");
             connection.close(0u8.into(), b"");

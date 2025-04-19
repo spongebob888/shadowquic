@@ -37,10 +37,11 @@ impl Deref for SQConn {
     }
 }
 
+type IDStoreVal = Result<(AnyUdpSend, SocksAddr), Arc<Notify>>;
 #[derive(Clone, Default)]
 struct IDStore {
     id_counter: Arc<AtomicU16>,
-    inner: Arc<RwLock<HashMap<u16, Result<(AnyUdpSend, SocksAddr), Arc<Notify>>>>>,
+    inner: Arc<RwLock<HashMap<u16, IDStoreVal>>>,
 }
 
 impl IDStore {
@@ -173,12 +174,10 @@ pub async fn handle_udp_send(
             id,
         };
         let dg_header = SQPacketDatagramHeader { id };
-        if over_stream {
-            if session.unistream_map.get(&dst).is_none() {
-                session
-                    .unistream_map
-                    .insert(dst.clone(), conn.open_uni().await?);
-            }
+        if over_stream && !session.unistream_map.contains_key(&dst) {
+            session
+                .unistream_map
+                .insert(dst.clone(), conn.open_uni().await?);
         }
 
         let fut1 = async {
