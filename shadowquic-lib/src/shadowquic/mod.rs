@@ -182,14 +182,14 @@ pub async fn handle_udp_send(
         }
 
         let fut1 = async {
-            let _r = ctl_header.encode(&mut send).await?;
+            ctl_header.encode(&mut send).await?;
             trace!("udp control header sent");
             Ok(()) as Result<(), SError>
         };
         let fut2 = async {
             let mut content = BytesMut::with_capacity(1600);
             let mut head = Vec::<u8>::new();
-            let _r = dg_header.encode(&mut head).await?;
+            dg_header.encode(&mut head).await?;
             if over_stream {
                 (bytes.len() as u16).encode(&mut head).await?;
             }
@@ -209,7 +209,7 @@ pub async fn handle_udp_send(
         };
         tokio::try_join!(fut1, fut2)?;
     }
-
+    #[allow(unreachable_code)]
     Ok(())
 }
 
@@ -285,7 +285,7 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
                 tokio::spawn(async move {
                     loop {
                         let l = usize::from(len);
-                        let mut b = BytesMut::with_capacity(l as usize);
+                        let mut b = BytesMut::with_capacity(l);
                         b.resize(l,0);
                         uni_stream.read_exact(&mut b).await?;
                         udp.send_to(b.freeze(), addr.clone()).await?;

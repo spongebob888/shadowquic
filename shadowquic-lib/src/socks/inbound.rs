@@ -147,7 +147,6 @@ impl Inbound for SocksServer {
                 dst: req.dst,
             })),
             SOCKS5_CMD_UDP_ASSOCIATE => {
-                let req = req;
                 let socket = Arc::new(socket.unwrap());
                 Ok(ProxyRequest::Udp(UdpSession {
                     send: Arc::new(UdpSocksWrap(socket.clone(), Default::default())),
