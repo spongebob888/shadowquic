@@ -1,7 +1,7 @@
 use crate::error::SError;
 
 use super::socks5::{SDecode, SEncode, SocksAddr};
-use shadowquic_macros::SEncode;
+use shadowquic_macros::{SDecode, SEncode};
 
 #[repr(u8)]
 pub enum SQCmd {
@@ -34,76 +34,26 @@ impl SEncode for SQCmd {
     }
 }
 
+#[derive(SEncode,SDecode)]
 pub struct SQReq {
     pub cmd: SQCmd,
     pub dst: SocksAddr,
 }
-impl SDecode for SQReq {
-    async fn decode<T: tokio::io::AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
-        Ok(Self {
-            cmd: SQCmd::decode(s).await?,
-            dst: SocksAddr::decode(s).await?,
-        })
-    }
-}
-impl SEncode for SQReq {
-    async fn encode<T: tokio::io::AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
-        self.cmd.encode(s).await?;
-        self.dst.encode(s).await?;
-        Ok(())
-    }
-}
 
+
+#[derive(SEncode,SDecode)]
 pub struct SQUdpControlHeader {
     pub dst: SocksAddr,
     pub id: u16, // id is one to one coresponance a udpsocket and proxy dst
 }
 
-#[derive(SEncode)]
+#[derive(SEncode,SDecode)]
 pub struct SQPacketStreamHeader {
     pub id: u16, // id is one to one coresponance a udpsocket and proxy dst
     pub len: u16,
 }
+
+#[derive(SEncode,SDecode)]
 pub struct SQPacketDatagramHeader {
     pub id: u16, // id is one to one coresponance a udpsocket and proxy dst
-}
-
-
-impl SDecode for SQUdpControlHeader {
-    async fn decode<T: tokio::io::AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
-        Ok(Self {
-            dst: SocksAddr::decode(s).await?,
-            id: u16::decode(s).await?,
-        })
-    }
-}
-impl SEncode for SQUdpControlHeader {
-    async fn encode<T: tokio::io::AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
-        self.dst.encode(s).await?;
-        self.id.encode(s).await?;
-        Ok(())
-    }
-}
-
-impl SDecode for SQPacketDatagramHeader {
-    async fn decode<T: tokio::io::AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
-        Ok(Self {
-            id: u16::decode(s).await?,
-        })
-    }
-}
-impl SEncode for SQPacketDatagramHeader {
-    async fn encode<T: tokio::io::AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
-        self.id.encode(s).await?;
-        Ok(())
-    }
-}
-
-impl SDecode for SQPacketStreamHeader {
-    async fn decode<T: tokio::io::AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
-        Ok(Self {
-            id: u16::decode(s).await?,
-            len: u16::decode(s).await?,
-        })
-    }
 }

@@ -5,7 +5,8 @@ use std::{
     vec,
 };
 
-use async_trait::async_trait;
+use shadowquic_macros::{SDecode, SEncode};
+
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 #[rustfmt::skip]
@@ -50,7 +51,7 @@ where
     async fn decode<T: AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError>;
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, SDecode, SEncode)]
 pub struct AuthReq {
     pub version: u8,
     pub methods: VarVec,
@@ -82,48 +83,13 @@ impl SDecode for VarVec {
     }
 }
 
-impl AuthReq {
-    pub async fn encode<T: AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
-        let buf = vec![self.version];
-        s.write_all(&buf).await?;
-        self.methods.encode(s).await?;
-        Ok(())
-    }
-    pub async fn decode<T: AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
-        let mut buf = [0u8; 1];
-        s.read_exact(&mut buf).await?;
-        let methods = VarVec::decode(s).await?;
-        Ok(Self {
-            version: buf[0],
-            methods,
-        })
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, SDecode, SEncode)]
 pub struct AuthReply {
     pub version: u8,
     pub method: u8,
 }
-impl AuthReply {
-    pub async fn encode<T: AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
-        let buf = vec![self.version, self.method];
-        s.write_all(&buf).await?;
-        Ok(())
-    }
-    pub async fn decode<T: AsyncRead + Unpin>(
-        s: &mut T,
-    ) -> Result<Self, Box<dyn StdError + Send + Sync + 'static>> {
-        let mut buf = [0u8; 2];
-        s.read_exact(&mut buf).await?;
-        Ok(Self {
-            version: buf[0],
-            method: buf[1],
-        })
-    }
-}
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, SDecode, SEncode)]
 pub struct CmdReq {
     pub version: u8,
     pub cmd: u8,
@@ -131,28 +97,6 @@ pub struct CmdReq {
     pub dst: SocksAddr,
 }
 
-impl CmdReq {
-    pub async fn encode<T: AsyncWrite + Unpin>(
-        self,
-        s: &mut T,
-    ) -> Result<(), Box<dyn StdError + Send + Sync + 'static>> {
-        let buf = vec![self.version, self.cmd, self.rsv];
-        s.write_all(&buf).await?;
-        self.dst.encode(s).await?;
-        Ok(())
-    }
-    pub async fn decode<T: AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
-        let mut buf = [0u8; 3];
-        s.read_exact(&mut buf).await?;
-        let dst = SocksAddr::decode(s).await?;
-        Ok(Self {
-            version: buf[0],
-            cmd: buf[1],
-            rsv: buf[2],
-            dst,
-        })
-    }
-}
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct SocksAddr {
     pub atype: u8,
@@ -272,7 +216,7 @@ impl ToSocketAddrs for SocksAddr {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, SEncode, SDecode)]
 pub struct CmdReply {
     pub version: u8,
     pub rep: u8,
@@ -280,51 +224,14 @@ pub struct CmdReply {
     pub bind_addr: SocksAddr,
 }
 
-impl CmdReply {
-    pub async fn encode<T: AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
-        let buf = vec![self.version, self.rep, self.rsv];
-        s.write_all(&buf).await?;
-        self.bind_addr.encode(s).await?;
-        Ok(())
-    }
-    pub async fn decode<T: AsyncRead + Unpin>(
-        s: &mut T,
-    ) -> Result<Self, Box<dyn StdError + Send + Sync + 'static>> {
-        let mut buf = [0u8; 3];
-        s.read_exact(&mut buf).await?;
-        let dst = SocksAddr::decode(s).await?;
-        Ok(Self {
-            version: buf[0],
-            rep: buf[1],
-            rsv: buf[2],
-            bind_addr: dst,
-        })
-    }
-}
 
+#[derive(SEncode, SDecode)]
 pub struct UdpReqHeader {
     pub rsv: u16,
     pub frag: u8,
     pub dst: SocksAddr,
 }
 
-impl SDecode for UdpReqHeader {
-    async fn decode<T: AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
-        Ok(UdpReqHeader {
-            rsv: u16::decode(s).await?,
-            frag: u8::decode(s).await?,
-            dst: SocksAddr::decode(s).await?,
-        })
-    }
-}
-impl SEncode for UdpReqHeader {
-    async fn encode<T: AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
-        self.rsv.encode(s).await?;
-        self.frag.encode(s).await?;
-        self.dst.encode(s).await?;
-        Ok(())
-    }
-}
 impl SDecode for u8 {
     async fn decode<T: AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
         let mut buf = [0u8];

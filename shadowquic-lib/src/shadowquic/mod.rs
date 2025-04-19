@@ -209,7 +209,7 @@ pub async fn handle_udp_send(
         };
         tokio::try_join!(fut1, fut2)?;
     }
-    #[allow(unreachable_code)]
+
     Ok(())
 }
 
