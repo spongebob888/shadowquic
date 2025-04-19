@@ -1,5 +1,4 @@
 use std::{
-    error::Error as StdError,
     fmt,
     net::{IpAddr, SocketAddr, ToSocketAddrs},
     vec,
@@ -41,10 +40,10 @@ pub use consts::*;
 
 use crate::error::SError;
 
-pub trait SEncode {
+pub(crate) trait SEncode {
     async fn encode<T: AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError>;
 }
-pub trait SDecode
+pub(crate) trait SDecode
 where
     Self: Sized,
 {
@@ -120,10 +119,6 @@ pub enum AddrOrDomain {
 }
 impl fmt::Display for AddrOrDomain {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // Write strictly the first element into the supplied output
-        // stream: `f`. Returns `fmt::Result` which indicates whether the
-        // operation succeeded or failed. Note that `write!` uses syntax which
-        // is very similar to `println!`.
         match &self {
             AddrOrDomain::V4(x) => write!(f, "{}", IpAddr::from(*x))?,
             AddrOrDomain::V6(x) => write!(f, "{}", IpAddr::from(*x))?,
@@ -136,8 +131,8 @@ impl fmt::Display for AddrOrDomain {
         Ok(())
     }
 }
-impl SocksAddr {
-    pub async fn encode<T: AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
+impl SEncode for SocksAddr {
+    async fn encode<T: AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
         let buf = vec![self.atype];
         s.write_all(&buf).await?;
         match self.addr {
@@ -148,7 +143,9 @@ impl SocksAddr {
         s.write_u16(self.port).await?;
         Ok(())
     }
-    pub async fn decode<T: AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
+}
+impl SDecode for SocksAddr {
+    async fn decode<T: AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
         let mut buf = [0u8; 1];
         s.read_exact(&mut buf).await?;
         let atype = buf[0];
