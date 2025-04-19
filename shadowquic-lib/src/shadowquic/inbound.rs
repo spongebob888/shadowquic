@@ -17,12 +17,10 @@ use tokio::{
 use tracing::{Instrument, Level, debug, error, event, trace, trace_span};
 
 use crate::{
-    Inbound, ProxyRequest, TcpSession, TcpTrait, UdpSession,
-    error::SError,
-    msgs::{
+    config::{CongestionControl, ShadowQuicServerCfg}, error::SError, msgs::{
         shadowquic::{SQCmd, SQReq},
         socks5::{SDecode, SocksAddr},
-    },
+    }, Inbound, ProxyRequest, TcpSession, TcpTrait, UdpSession
 };
 
 use super::{
@@ -41,13 +39,7 @@ pub struct ShadowQuicServer {
 
 impl ShadowQuicServer {
     pub fn new(
-        bind_addr: SocketAddr,
-        jls_pwd: String,
-        jls_iv: String,
-        jls_upstream: String,
-        alpn: Vec<String>,
-        zero_rtt: bool,
-        cogestion_controller: String,
+        cfg: ShadowQuicServerCfg
     ) -> Result<Self, SError> {
         let mut crypto: RustlsServerConfig;
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
@@ -56,28 +48,25 @@ impl ShadowQuicServer {
         crypto = RustlsServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
             .with_no_client_auth()
             .with_single_cert(vec![cert_der], PrivateKeyDer::Pkcs8(priv_key))?;
-        crypto.alpn_protocols = alpn.iter().cloned().map(|alpn| alpn.into_bytes()).collect();
-        crypto.max_early_data_size = if zero_rtt { u32::MAX } else { 0 };
-        crypto.send_half_rtt_data = zero_rtt;
+        crypto.alpn_protocols = cfg.alpn.iter().cloned().map(|alpn| alpn.into_bytes()).collect();
+        crypto.max_early_data_size = if cfg.zero_rtt { u32::MAX } else { 0 };
+        crypto.send_half_rtt_data = cfg.zero_rtt;
 
-        crypto.jls_config = rustls::JlsServerConfig::new(&jls_pwd, &jls_iv, &jls_upstream);
+        crypto.jls_config = rustls::JlsServerConfig::new(&cfg.jls_pwd, &cfg.jls_iv, &cfg.jls_upstream);
         let mut tp_cfg = TransportConfig::default();
         tp_cfg.max_concurrent_bidi_streams(1000u32.into());
-        match cogestion_controller.as_str() {
-            "bbr" => {
+        match cfg.congestion_control {
+            CongestionControl::Bbr => {
                 let bbr_config = BbrConfig::default();
                 tp_cfg.congestion_controller_factory(Arc::new(bbr_config))
             }
-            "cubic" => {
+            CongestionControl::Cubic => {
                 let cubic_config = CubicConfig::default();
                 tp_cfg.congestion_controller_factory(Arc::new(cubic_config))
             }
-            "newreno" => {
+            CongestionControl::NewReno => {
                 let new_reno = NewRenoConfig::default();
                 tp_cfg.congestion_controller_factory(Arc::new(new_reno))
-            }
-            _ => {
-                panic!("Unsupported congestion controller");
             }
         };
         let mut config = ServerConfig::with_crypto(Arc::new(
@@ -90,8 +79,8 @@ impl ShadowQuicServer {
         Ok(Self {
             squic_conn: vec![],
             quic_config: config,
-            zero_rtt,
-            bind_addr,
+            zero_rtt: cfg.zero_rtt,
+            bind_addr: cfg.bind_addr,
             request_sender: send,
             request: recv,
         })

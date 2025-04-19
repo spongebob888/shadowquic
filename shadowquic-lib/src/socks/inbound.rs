@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 
+use crate::config::SocksServerCfg;
 use crate::error::SError;
 use crate::msgs::socks5::{
     self, AddrOrDomain, CmdReq, SDecode, SEncode, SOCKS5_ADDR_TYPE_DOMAIN_NAME,
@@ -23,10 +24,10 @@ pub struct SocksServer {
     listener: TcpListener,
 }
 impl SocksServer {
-    pub async fn new(bind_addr: SocketAddr) -> Result<Self, SError> {
+    pub async fn new(cfg: SocksServerCfg) -> Result<Self, SError> {
         Ok(Self {
-            bind_addr,
-            listener: TcpListener::bind(bind_addr).await?,
+            bind_addr: cfg.bind_addr,
+            listener: TcpListener::bind(cfg.bind_addr).await?,
         })
     }
 }
