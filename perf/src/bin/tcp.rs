@@ -5,7 +5,7 @@ use tokio::{net::TcpListener, time::Duration};
 
 use shadowquic_lib::{
     Manager,
-    direct::DirectOut,
+    direct::outbound::DirectOut,
     shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
     socks::inbound::SocksServer,
 };
