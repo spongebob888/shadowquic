@@ -10,13 +10,10 @@ use rustls::RootCertStore;
 use tracing::{Instrument, Level, debug, debug_span, error, info, span, trace};
 
 use crate::{
-    Outbound,
-    error::SError,
-    msgs::{
+    config::{CongestionControl, ShadowQuicClientCfg}, error::SError, msgs::{
         shadowquic::{SQCmd, SQReq},
         socks5::SEncode,
-    },
-    shadowquic::{handle_udp_recv_ctrl, handle_udp_send},
+    }, shadowquic::{handle_udp_recv_ctrl, handle_udp_send}, Outbound
 };
 
 use super::{SQConn, handle_udp_packet_recv, inbound::Unsplit};
@@ -26,22 +23,14 @@ pub struct ShadowQuicClient {
     #[allow(dead_code)]
     quic_config: quinn::ClientConfig,
     quic_end: Endpoint,
-    dst_addr: SocketAddr,
+    dst_addr: String,
     server_name: String,
     zero_rtt: bool,
     over_stream: bool,
 }
 impl ShadowQuicClient {
     pub fn new(
-        jls_pwd: String,
-        jls_iv: String,
-        dst_addr: SocketAddr,
-        server_name: String,
-        alpn: Vec<String>,
-        initial_mtu: u16,
-        congestion_controller: String,
-        zero_rtt: bool,
-        over_stream: bool,
+        cfg: ShadowQuicClientCfg
     ) -> Self {
         let root_store = RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.into(),
@@ -49,22 +38,19 @@ impl ShadowQuicClient {
         let mut crypto = rustls::ClientConfig::builder()
             .with_root_certificates(root_store)
             .with_no_client_auth();
-        crypto.alpn_protocols = alpn.iter().map(|x| x.to_owned().into_bytes()).collect();
-        crypto.enable_early_data = zero_rtt;
-        crypto.jls_config = rustls::JlsConfig::new(&jls_pwd, &jls_iv);
+        crypto.alpn_protocols = cfg.alpn.iter().map(|x| x.to_owned().into_bytes()).collect();
+        crypto.enable_early_data = cfg.zero_rtt;
+        crypto.jls_config = rustls::JlsConfig::new(&cfg.jls_pwd, &cfg.jls_iv);
         let mut tp_cfg = TransportConfig::default();
 
         tp_cfg
             .max_concurrent_bidi_streams(500u32.into())
-            .initial_mtu(initial_mtu);
+            .initial_mtu(cfg.initial_mtu);
 
-        match congestion_controller.as_str() {
-            "cubic" => tp_cfg.congestion_controller_factory(Arc::new(CubicConfig::default())),
-            "newreno" => tp_cfg.congestion_controller_factory(Arc::new(NewRenoConfig::default())),
-            "bbr" => tp_cfg.congestion_controller_factory(Arc::new(BbrConfig::default())),
-            _ => {
-                panic!("Unsupported congestion controller");
-            }
+        match cfg.congestion_control {
+            CongestionControl::Cubic => tp_cfg.congestion_controller_factory(Arc::new(CubicConfig::default())),
+            CongestionControl::NewReno => tp_cfg.congestion_controller_factory(Arc::new(NewRenoConfig::default())),
+            CongestionControl::Bbr => tp_cfg.congestion_controller_factory(Arc::new(BbrConfig::default())),
         };
         let mut config = ClientConfig::new(Arc::new(
             QuicClientConfig::try_from(crypto).expect("rustls config can't created"),
@@ -79,10 +65,10 @@ impl ShadowQuicClient {
             quic_conn: None,
             quic_config: config,
             quic_end: end,
-            dst_addr,
-            server_name,
-            zero_rtt,
-            over_stream,
+            dst_addr:cfg.addr,
+            server_name: cfg.server_name,
+            zero_rtt: cfg.zero_rtt,
+            over_stream: cfg.over_stream,
         }
     }
     async fn prepare_conn(&mut self) -> Result<(), SError> {
@@ -95,7 +81,8 @@ impl ShadowQuicClient {
         });
         // Creating new connectin
         if self.quic_conn.is_none() {
-            let conn = self.quic_end.connect(self.dst_addr, &self.server_name)?;
+            let conn = self.quic_end.connect(self.dst_addr.parse()
+            .expect("Wrong addr format"), &self.server_name)?;
             let conn = if self.zero_rtt {
                 match conn.into_0rtt() {
                     Ok((x, accepted)) => {

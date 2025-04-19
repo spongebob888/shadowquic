@@ -1,7 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use fast_socks5::{Result, client::Socks5Datagram};
-use shadowquic_lib::{Manager, direct::outbound::DirectOut, socks::inbound::SocksServer};
+use shadowquic_lib::{config::SocksServerCfg, direct::outbound::DirectOut, socks::inbound::SocksServer, Manager};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
@@ -107,7 +107,7 @@ async fn spawn_socks_server() {
     // env_logger::init();
     trace!("Running");
 
-    let socks_server = SocksServer::new("127.0.0.1:1089".parse().unwrap())
+    let socks_server = SocksServer::new(SocksServerCfg{bind_addr:"127.0.0.1:1089".parse().unwrap()})
         .await
         .unwrap();
     let direct_client = DirectOut;
