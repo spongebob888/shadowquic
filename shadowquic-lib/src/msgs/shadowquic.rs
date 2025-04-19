@@ -40,14 +40,13 @@ pub struct SQReq {
     pub dst: SocksAddr,
 }
 
-
 #[derive(SEncode, SDecode)]
 pub struct SQUdpControlHeader {
     pub dst: SocksAddr,
     pub id: u16, // id is one to one coresponance a udpsocket and proxy dst
 }
 
-#[derive(SEncode,SDecode)]
+#[derive(SEncode, SDecode)]
 pub struct SQPacketStreamHeader {
     pub id: u16, // id is one to one coresponance a udpsocket and proxy dst
     pub len: u16,

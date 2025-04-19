@@ -2,7 +2,11 @@ use std::time::Duration;
 
 use quinn::congestion::Bbr;
 use shadowquic_lib::{
-    config::{CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg}, direct::outbound::DirectOut, shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient}, socks::inbound::SocksServer, Manager
+    Manager,
+    config::{CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg},
+    direct::outbound::DirectOut,
+    shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
+    socks::inbound::SocksServer,
 };
 use tracing::{Level, level_filters::LevelFilter, trace};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -30,10 +34,12 @@ async fn test_shadowquic() {
     // env_logger::init();
     trace!("Running");
 
-    let socks_server = SocksServer::new(SocksServerCfg{bind_addr:"127.0.0.1:1089".parse().unwrap()})
-        .await
-        .unwrap();
-    let sq_client = ShadowQuicClient::new(ShadowQuicClientCfg{
+    let socks_server = SocksServer::new(SocksServerCfg {
+        bind_addr: "127.0.0.1:1089".parse().unwrap(),
+    })
+    .await
+    .unwrap();
+    let sq_client = ShadowQuicClient::new(ShadowQuicClientCfg {
         jls_pwd: "123".into(),
         jls_iv: "123".into(),
         addr: "127.0.0.1:4444".parse().unwrap(),
@@ -43,15 +49,14 @@ async fn test_shadowquic() {
         congestion_control: CongestionControl::Bbr,
         zero_rtt: true,
         over_stream: true,
-    }
-    );
+    });
 
     let client = Manager {
         inbound: Box::new(socks_server),
         outbound: Box::new(sq_client),
     };
 
-    let sq_server = ShadowQuicServer::new(ShadowQuicServerCfg{
+    let sq_server = ShadowQuicServer::new(ShadowQuicServerCfg {
         bind_addr: "127.0.0.1:4444".parse().unwrap(),
         jls_pwd: "123".into(),
         jls_iv: "123".into(),
@@ -59,8 +64,7 @@ async fn test_shadowquic() {
         alpn: vec!["h3".into()],
         zero_rtt: true,
         congestion_control: CongestionControl::Bbr,
-    }
-    )
+    })
     .unwrap();
     let direct_client = DirectOut;
     let server = Manager {

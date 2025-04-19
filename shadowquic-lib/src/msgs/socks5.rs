@@ -221,7 +221,6 @@ pub struct CmdReply {
     pub bind_addr: SocksAddr,
 }
 
-
 #[derive(SEncode, SDecode)]
 pub struct UdpReqHeader {
     pub rsv: u16,

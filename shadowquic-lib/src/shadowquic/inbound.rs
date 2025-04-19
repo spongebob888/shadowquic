@@ -17,16 +17,18 @@ use tokio::{
 use tracing::{Instrument, Level, debug, error, event, trace, trace_span};
 
 use crate::{
-    config::{CongestionControl, ShadowQuicServerCfg}, error::SError, msgs::{
+    Inbound, ProxyRequest, TcpSession, TcpTrait, UdpSession,
+    config::{CongestionControl, ShadowQuicServerCfg},
+    error::SError,
+    msgs::{
         shadowquic::{SQCmd, SQReq},
         socks5::{SDecode, SocksAddr},
-    }, Inbound, ProxyRequest, TcpSession, TcpTrait, UdpSession
+    },
 };
 
 use super::{
     SQConn, {handle_udp_packet_recv, handle_udp_recv_ctrl, handle_udp_send},
 };
-
 
 pub struct ShadowQuicServer {
     pub squic_conn: Vec<SQServerConn>,
@@ -38,9 +40,7 @@ pub struct ShadowQuicServer {
 }
 
 impl ShadowQuicServer {
-    pub fn new(
-        cfg: ShadowQuicServerCfg
-    ) -> Result<Self, SError> {
+    pub fn new(cfg: ShadowQuicServerCfg) -> Result<Self, SError> {
         let mut crypto: RustlsServerConfig;
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let cert_der = CertificateDer::from(cert.cert);
@@ -48,11 +48,17 @@ impl ShadowQuicServer {
         crypto = RustlsServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
             .with_no_client_auth()
             .with_single_cert(vec![cert_der], PrivateKeyDer::Pkcs8(priv_key))?;
-        crypto.alpn_protocols = cfg.alpn.iter().cloned().map(|alpn| alpn.into_bytes()).collect();
+        crypto.alpn_protocols = cfg
+            .alpn
+            .iter()
+            .cloned()
+            .map(|alpn| alpn.into_bytes())
+            .collect();
         crypto.max_early_data_size = if cfg.zero_rtt { u32::MAX } else { 0 };
         crypto.send_half_rtt_data = cfg.zero_rtt;
 
-        crypto.jls_config = rustls::JlsServerConfig::new(&cfg.jls_pwd, &cfg.jls_iv, &cfg.jls_upstream);
+        crypto.jls_config =
+            rustls::JlsServerConfig::new(&cfg.jls_pwd, &cfg.jls_iv, &cfg.jls_upstream);
         let mut tp_cfg = TransportConfig::default();
         tp_cfg.max_concurrent_bidi_streams(1000u32.into());
         match cfg.congestion_control {
@@ -110,7 +116,7 @@ impl ShadowQuicServer {
                     });
                     conn
                 }
-                Err(conn) => conn.await?
+                Err(conn) => conn.await?,
             }
         } else {
             conn.await?

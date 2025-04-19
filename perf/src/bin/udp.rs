@@ -2,7 +2,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use fast_socks5::client::{Config, Socks5Datagram};
-use fast_socks5::util::target_addr::{TargetAddr};
+use fast_socks5::util::target_addr::TargetAddr;
 
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::time::Duration;
@@ -44,7 +44,7 @@ async fn main() {
         let now = tokio::time::Instant::now();
         for ii in 0..ROUND {
             socks.send_to(&mut sendbuf, target_addr).await.unwrap();
-            if ii % 100 == 0{
+            if ii % 100 == 0 {
                 tokio::time::sleep(tokio::time::Duration::from_micros(1)).await;
             }
         }
@@ -180,7 +180,7 @@ async fn echo_tcp(port: u16) {
         let now = tokio::time::Instant::now();
         for ii in 0..ROUND {
             socks.send_to(&mut sendbuf, addr).await.unwrap();
-            if ii % 100 == 0{
+            if ii % 100 == 0 {
                 tokio::time::sleep(tokio::time::Duration::from_micros(1)).await;
             }
         }

@@ -2,15 +2,10 @@ use std::net::SocketAddr;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-
-
-
-
 #[derive(Deserialize)]
 pub struct Config {
     pub inbound: InboundCfg,
     pub outbound: OutboundCfg,
-
 }
 
 #[derive(Deserialize)]
@@ -32,19 +27,19 @@ pub enum OutboundCfg {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub struct  SocksServerCfg {
+pub struct SocksServerCfg {
     pub bind_addr: SocketAddr,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub struct  SocksClientCfg {
+pub struct SocksClientCfg {
     pub addr: String,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub struct  ShadowQuicClientCfg {
+pub struct ShadowQuicClientCfg {
     pub jls_pwd: String,
     pub jls_iv: String,
     pub addr: String,
@@ -94,7 +89,6 @@ pub enum LogLevel {
     Silent,
 }
 
-
 #[cfg(test)]
 mod test {
     use super::Config;
@@ -107,7 +101,6 @@ inbound:
 outbound:
     type: direct
 "###;
-        let cfg: Config =
-        serde_yaml::from_str(cfgstr).expect("yaml parsed failed");
+        let cfg: Config = serde_yaml::from_str(cfgstr).expect("yaml parsed failed");
     }
 }

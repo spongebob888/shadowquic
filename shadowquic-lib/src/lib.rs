@@ -11,12 +11,12 @@ use async_trait::async_trait;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::error;
 
+pub mod config;
 pub mod direct;
 pub mod error;
 pub mod msgs;
 pub mod shadowquic;
 pub mod socks;
-pub mod config;
 pub enum ProxyRequest<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend> {
     Tcp(TcpSession<T>),
     Udp(UdpSession<I, O>),
@@ -72,7 +72,9 @@ pub trait Outbound<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend>: Send + Sync + Un
 impl UdpSend for Sender<(Bytes, SocksAddr)> {
     async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
         let siz = buf.len();
-        self.send((buf, addr)).await.map_err(|_|SError::InboundUnavailable)?;
+        self.send((buf, addr))
+            .await
+            .map_err(|_| SError::InboundUnavailable)?;
         Ok(siz)
     }
 }
