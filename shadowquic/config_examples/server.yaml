@@ -9,7 +9,7 @@ inbound:
     zero-rtt: true
 outbound:
     type: direct
-#log-level: "trace"
+log-level: "trace"
 
 
 

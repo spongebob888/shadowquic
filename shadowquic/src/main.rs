@@ -1,7 +1,7 @@
 use std::{io::IsTerminal, path::PathBuf, time::Duration};
 
 use clap::Parser;
-use shadowquic_lib::{
+use shadowquic::{
     config::{self, Config, CongestionControl, LogLevel, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg}, direct::outbound::DirectOut, shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient}, socks::inbound::SocksServer, Manager
 };
 use tracing::{Level, level_filters::LevelFilter, trace};
@@ -38,8 +38,8 @@ async fn main() {
 fn setup_log(level: LogLevel) {
     let filter = tracing_subscriber::filter::Targets::new()
         // Enable the `INFO` level for anything in `my_crate`
-        .with_target("shadowquic_lib", level.as_tracing_level())
-        .with_target("shadowquic_lib::msgs::socks", LevelFilter::OFF);
+        .with_target("shadowquic", level.as_tracing_level())
+        .with_target("shadowquic::msgs::socks", LevelFilter::OFF);
     let timer = LocalTime::new(time::macros::format_description!(
         "[year repr:last_two]-[month]-[day] [hour]:[minute]:[second]"
     ));
