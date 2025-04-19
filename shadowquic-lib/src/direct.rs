@@ -124,7 +124,7 @@ async fn handle_udp(udp_session: UdpSession) -> Result<(), SError> {
         .ok_or(SError::DomainResolveFailed)?;
     trace!("resolved to {}", dst);
     //let upstream = UdpSocket::bind(dst).await?;
-    let upstream = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
+    let upstream = Arc::new(UdpSocket::bind(dst).await?);
     let upstream_clone = upstream.clone();
     let mut downstream = udp_session.recv;
 

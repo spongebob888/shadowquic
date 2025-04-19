@@ -1,12 +1,8 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
-use std::sync::Arc;
-
-use fast_socks5::client::{Config, Socks5Datagram, Socks5Stream};
-use fast_socks5::util::target_addr::{self, TargetAddr};
+use fast_socks5::client::{Config, Socks5Stream};
+use fast_socks5::util::target_addr;
 use shadowquic_lib::shadowquic::inbound::Unsplit;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, copy};
 
-use tokio::net::{TcpStream, UdpSocket};
 use tokio::{net::TcpListener, time::Duration};
 
 use shadowquic_lib::{
@@ -20,78 +16,62 @@ use tracing::info;
 use tracing::{Level, level_filters::LevelFilter, trace};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-const CHUNK_LEN: usize = 1000;
-const ROUND: usize = 100000; //1000*100;
+const CHUNK_LEN: usize = 10 * 1024 * 1024;
+const ROUND: usize = 100;
 #[tokio::main(flavor = "multi_thread", worker_threads = 8)]
 async fn main() {
     let socks_server = "127.0.0.1:1089";
-    let target_addr = ("127.0.0.1", 1445);
+    let target_addr = "127.0.0.1";
+    let target_port = 1445;
     let mut config = Config::default();
     config.set_skip_auth(false);
     test_shadowquic().await;
-    tokio::spawn(echo_tcp(1445));
+    tokio::spawn(tcp_peer(1445));
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let backing_socket = TcpStream::connect(socks_server).await.unwrap();
-    let socks = Socks5Datagram::bind(
-        backing_socket,
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
-    )
-    .await
-    .unwrap();
+    let mut s = Socks5Stream::connect(socks_server, target_addr.into(), target_port, config)
+        .await
+        .unwrap();
+
     let mut sendbuf = vec![0u8; CHUNK_LEN];
     let mut recvbuf = vec![0u8; CHUNK_LEN];
-
-    let fut_2 = async {
+    // let mut s1:TcpStream = s.get_socket();
+    let (mut r, mut w) = s.get_socket_mut().split();
+    let fut_1 = async move {
         let now = tokio::time::Instant::now();
         for ii in 0..ROUND {
-            socks.send_to(&mut sendbuf, target_addr).await.unwrap();
-            if ii % 100 == 0{
-                tokio::time::sleep(tokio::time::Duration::from_micros(1)).await;
-            }
+            r.read_exact(&mut recvbuf).await.unwrap();
         }
         let after = tokio::time::Instant::now();
         let dura = after - now;
-        info!(
-            "average local send speed:{} MB/s",
-            (ROUND * CHUNK_LEN) as f64 / dura.as_secs_f64() / 1024.0 / 1024.0
+        eprintln!(
+            "average download speed:{} MB/s",
+            (CHUNK_LEN * ROUND) as f64 / dura.as_secs_f64() / 1024.0 / 1024.0
         );
     };
-
-    fut_2.await;
-    // let mut s1:TcpStream = s.get_socket();
-    let fut_1 = async move {
+    let fut_2 = async move {
         let now = tokio::time::Instant::now();
-        let mut addr: TargetAddr =
-            TargetAddr::Ip(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0));
-        let mut total = 0;
-        let _ = tokio::time::timeout(Duration::from_millis(500), async {
-            let mut len;
-            for ii in 0..ROUND {
-                (len, addr) = socks.recv_from(&mut recvbuf).await.unwrap();
-                total += len;
-            }
-        })
-        .await;
+        for _ in 0..ROUND {
+            w.write_all(&mut sendbuf).await.unwrap();
+        }
+        w.flush().await.unwrap();
         let after = tokio::time::Instant::now();
         let dura = after - now;
-        info!(
-            "average local recv speed:{} MB/s",
-            (total) as f64 / dura.as_secs_f64() / 1024.0 / 1024.0
+        eprintln!(
+            "average upload speed:{} MB/s",
+            (CHUNK_LEN * ROUND) as f64 / dura.as_secs_f64() / 1024.0 / 1024.0
         );
-        addr
     };
 
     //tokio::join!(fut_1,fut_2);
-
     fut_1.await;
+    fut_2.await;
 }
 
 async fn test_shadowquic() {
     let filter = tracing_subscriber::filter::Targets::new()
         // Enable the `INFO` level for anything in `my_crate`
-        .with_target("udp", Level::TRACE)
-        .with_target("shadowquic_lib", Level::INFO)
+        .with_target("tcp", Level::TRACE)
         .with_target("shadowquic_lib::msgs::socks", LevelFilter::OFF);
 
     // Enable the `DEBUG` level for a specific module.
@@ -118,7 +98,7 @@ async fn test_shadowquic() {
         1200,
         "bbr".into(),
         true,
-        false,
+        true,
     );
 
     let client = Manager {
@@ -147,52 +127,35 @@ async fn test_shadowquic() {
     tokio::spawn(client.run());
     tokio::time::sleep(Duration::from_millis(100)).await;
 }
-async fn echo_tcp(port: u16) {
-    let socks = Arc::new(UdpSocket::bind(("0.0.0.0", port)).await.unwrap());
+async fn tcp_peer(port: u16) {
+    let lis = TcpListener::bind(("0.0.0.0", port)).await.unwrap();
+    let (mut s, addr) = lis.accept().await.unwrap();
+    info!("accepted");
+    let (mut r, mut w) = s.split();
 
     let mut sendbuf = vec![0u8; CHUNK_LEN];
     let mut recvbuf = vec![0u8; CHUNK_LEN];
     // let mut s1:TcpStream = s.get_socket();
 
-    let socks1 = socks.clone();
     let fut_1 = async move {
         let now = tokio::time::Instant::now();
-        let mut addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
-        let mut total = 0;
-
-        let _ = tokio::time::timeout(Duration::from_millis(500), async {
-            for ii in 0..ROUND {
-                let mut len;
-                (len, addr) = socks1.recv_from(&mut recvbuf).await.unwrap();
-                total += len;
-            }
-        })
-        .await;
-
-        let after = tokio::time::Instant::now();
-        let dura = after - now;
-        info!(
-            "average peer recv speed:{} MB/s",
-            (total) as f64 / dura.as_secs_f64() / 1024.0 / 1024.0
-        );
-        addr
-    };
-    let addr = fut_1.await;
-    let fut_2 = async move {
-        let now = tokio::time::Instant::now();
         for ii in 0..ROUND {
-            socks.send_to(&mut sendbuf, addr).await.unwrap();
-            if ii % 100 == 0{
-                tokio::time::sleep(tokio::time::Duration::from_micros(1)).await;
-            }
+            r.read_exact(&mut recvbuf).await.unwrap();
         }
         let after = tokio::time::Instant::now();
         let dura = after - now;
-        info!(
-            "average peer send speed:{} MB/s",
-            (CHUNK_LEN * ROUND) as f64 / dura.as_secs_f64() / 1024.0 / 1024.0
-        );
+        //info!("average download speed:{} MB/s",(len*round) as f64 / dura.as_secs_f64()/1024.0/1024.0);
+    };
+    let fut_2 = async move {
+        let now = tokio::time::Instant::now();
+        for _ in 0..ROUND {
+            w.write_all(&mut sendbuf).await.unwrap();
+        }
+        w.flush().await.unwrap();
+        let after = tokio::time::Instant::now();
+        let dura = after - now;
+        //info!("average upload speed:{} MB/s",(len*round) as f64 / dura.as_secs_f64()/1024.0/1024.0);
     };
 
-    fut_2.await;
+    tokio::join!(fut_1, fut_2);
 }

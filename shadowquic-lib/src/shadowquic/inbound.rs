@@ -262,6 +262,7 @@ impl SQServerConn {
                 let fut2 = handle_udp_recv_overdatagram(recv, local_send, self.0, false);
                 tokio::try_join!(fut1, fut2)?;
             }
+            _ => {}
         }
         Ok(())
     }
