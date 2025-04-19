@@ -4,7 +4,6 @@ use std::{
     mem::replace,
     ops::Deref,
     sync::{Arc, atomic::AtomicU16},
-    thread::spawn,
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
