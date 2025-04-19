@@ -15,7 +15,7 @@ Each proxy request is started with a command carried by a bistream.
 +-------+---------------+
 ```
 There are three types of command indicated by `CMD` field:
-- `0x01` : TCP Proxy
+- `0x01` : TCP Connect
 - `0x03` : UDP Association over datagram
 - `0x04` : UDP Association over stream
 
@@ -36,7 +36,7 @@ There are three types of command indicated by `CMD` field:
 -  PORT desired destination port in network octet
     order
 
-== TCP Proxy
+== TCP Connect
 TCP proxy task is directed followed by TCP Proxy command
 
 == UDP Association over stream

@@ -16,13 +16,14 @@ use crate::{
         shadowquic::{SQCmd, SQReq},
         socks5::SEncode,
     },
-    shadowquic::{handle_udp_recv_overdatagram, handle_udp_send_overdatagram},
+    shadowquic::{handle_udp_recv_ctrl, handle_udp_send},
 };
 
 use super::{SQConn, handle_udp_packet_recv, inbound::Unsplit};
 
 pub struct ShadowQuicClient {
     quic_conn: Option<SQConn>,
+    #[allow(dead_code)]
     quic_config: quinn::ClientConfig,
     quic_end: Endpoint,
     dst_addr: SocketAddr,
@@ -148,7 +149,7 @@ impl Outbound for ShadowQuicClient {
                     let (mut send, recv) = conn.open_bi().await?;
                     let _span = span!(Level::TRACE, "tcp", stream_id = (send.id().index()));
                     trace!("bistream opened");
-                    let enter = _span.enter();
+                    let _enter = _span.enter();
                     let req = SQReq {
                         cmd: SQCmd::Connect,
                         dst: tcp_session.dst.clone(),
@@ -167,7 +168,7 @@ impl Outbound for ShadowQuicClient {
                     let (mut send, recv) = conn.open_bi().await?;
                     let _span = span!(Level::TRACE, "udp", stream_id = (send.id().index()));
                     trace!("bistream opened");
-                    let enter = _span.enter();
+                    let _enter = _span.enter();
                     let req = SQReq {
                         cmd: if over_stream {
                             SQCmd::AssociatOverStream
@@ -177,13 +178,12 @@ impl Outbound for ShadowQuicClient {
                         dst: udp_session.dst.clone(),
                     };
                     req.encode(&mut send).await?;
-                    let fut2 = handle_udp_recv_overdatagram(
+                    let fut2 = handle_udp_recv_ctrl(
                         recv,
                         udp_session.send.clone(),
                         conn.clone(),
-                        over_stream,
                     );
-                    let fut1 = handle_udp_send_overdatagram(
+                    let fut1 = handle_udp_send(
                         send,
                         udp_session.send,
                         udp_session.recv,

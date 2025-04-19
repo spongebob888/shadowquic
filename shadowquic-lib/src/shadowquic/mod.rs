@@ -100,9 +100,6 @@ struct AssociateSendSession {
     unistream_map: HashMap<SocksAddr, SendStream>,
 }
 impl AssociateSendSession {
-    pub fn get_id(&self, addr: &SocksAddr) -> Option<u16> {
-        self.dst_map.get(addr).copied()
-    }
     pub async fn get_id_or_insert(&mut self, addr: &SocksAddr, socket: AnyUdpSend) -> u16 {
         if let Some(id) = self.dst_map.get(addr) {
             *id
@@ -111,9 +108,6 @@ impl AssociateSendSession {
             self.dst_map.insert(addr.clone(), id);
             id
         }
-    }
-    pub async fn get_unistream(&self, addr: &SocksAddr) -> Option<&SendStream> {
-        self.unistream_map.get(addr)
     }
 }
 
@@ -134,16 +128,7 @@ struct AssociateRecvSession {
     id_map: HashMap<u16, SocksAddr>,
 }
 impl AssociateRecvSession {
-    pub fn get_addr(&self, id: &u16) -> Option<&SocksAddr> {
-        self.id_map.get(id)
-    }
-    pub fn get_addr_or_insert(&self, id: &u16) -> &SocksAddr {
-        if let Some(addr) = self.id_map.get(id) {
-            addr
-        } else {
-            todo!()
-        }
-    }
+
     pub async fn store_socket(&mut self, id: &u16, dst: SocksAddr, socks: AnyUdpSend) {
         if self.id_map.contains_key(id) {
         } else {
@@ -164,7 +149,7 @@ impl Drop for AssociateRecvSession {
     }
 }
 
-pub async fn handle_udp_send_overdatagram(
+pub async fn handle_udp_send(
     mut send: SendStream,
     udp_send: AnyUdpSend,
     udp_recv: AnyUdpRecv,
@@ -172,8 +157,6 @@ pub async fn handle_udp_send_overdatagram(
     over_stream: bool,
 ) -> Result<(), SError> {
     let mut down_stream = udp_recv;
-    let buf_down = vec![0u8; 1600];
-    let buf_up: Vec<u8> = vec![0u8; 1600];
     let mut session = AssociateSendSession {
         id_store: conn.id_store.clone(),
         dst_map: Default::default(),
@@ -199,14 +182,14 @@ pub async fn handle_udp_send_overdatagram(
         }
 
         let fut1 = async {
-            let r = ctl_header.encode(&mut send).await?;
+            let _r = ctl_header.encode(&mut send).await?;
             trace!("udp control header sent");
             Ok(()) as Result<(), SError>
         };
         let fut2 = async {
             let mut content = BytesMut::with_capacity(1600);
             let mut head = Vec::<u8>::new();
-            let r = dg_header.encode(&mut head).await?;
+            let _r = dg_header.encode(&mut head).await?;
             if over_stream {
                 (bytes.len() as u16).encode(&mut head).await?;
             }
@@ -226,15 +209,14 @@ pub async fn handle_udp_send_overdatagram(
         };
         tokio::try_join!(fut1, fut2)?;
     }
-
+    #[allow(unreachable_code)]
     Ok(())
 }
 
-pub async fn handle_udp_recv_overdatagram(
+pub async fn handle_udp_recv_ctrl(
     mut recv: RecvStream,
     udp_socket: AnyUdpSend,
     conn: SQConn,
-    over_stream: bool,
 ) -> Result<(), SError> {
     let mut session = AssociateRecvSession {
         id_store: conn.id_store.clone(),
@@ -244,6 +226,7 @@ pub async fn handle_udp_recv_overdatagram(
         let SQUdpControlHeader { id, dst } = SQUdpControlHeader::decode(&mut recv).await?;
         session.store_socket(&id, dst, udp_socket.clone()).await;
     }
+    #[allow(unreachable_code)]
     Ok(())
 }
 
@@ -274,7 +257,7 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
                         let b = cur.into_inner().freeze();
                         let _ = udp.clone().send_to(b.slice(pos..b.len()), addr.clone()).await
                         .map_err(|x|error!("{}",x));
-                        let _ = sender.send((id, udp,addr)).await.map_err(|e|SError::ChannelError("can't open send udp trait".into()));
+                        let _ = sender.send((id, udp,addr)).await.map_err(|_e|SError::ChannelError("can't open send udp trait".into()));
                     });
                 }
             }
@@ -291,7 +274,7 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
                     None => {
                     let (udp,addr) = id_store.get_socket_or_wait(id).await;
 
-                let _ = send.send((id, udp.clone(),addr.clone())).await.map_err(|e|SError::ChannelError("can't open send udp trait".into()));
+                let _ = send.send((id, udp.clone(),addr.clone())).await.map_err(|_e|SError::ChannelError("can't open send udp trait".into()));
                 &(udp.to_owned(),addr.to_owned())
                 }};
 
@@ -308,12 +291,12 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
                         udp.send_to(b.freeze(), addr.clone()).await?;
                         SQPacketStreamHeader{id:_,len} = SQPacketStreamHeader::decode(&mut uni_stream).await?;
                     }
-
-                    Ok(()) as Result<(), SError>
+                    #[allow(unreachable_code)]
+                    (Ok(()) as Result<(), SError>)
                 });
             }
         }
     }
-
+    #[allow(unreachable_code)]
     Ok(())
 }

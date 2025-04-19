@@ -701,6 +701,7 @@ dependencies = [
  "quinn",
  "rcgen",
  "rustls",
+ "shadowquic-macros",
  "thiserror 2.0.12",
  "tokio",
  "tracing",

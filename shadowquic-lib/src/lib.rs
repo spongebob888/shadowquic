@@ -40,6 +40,7 @@ pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
     recv: I,
     send: O,
     /// Control stream, should be kept alive during session.
+    #[allow(dead_code)]
     stream: Option<AnyTcp>,
     dst: SocksAddr,
 }
@@ -71,7 +72,7 @@ pub trait Outbound<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend>: Send + Sync + Un
 impl UdpSend for Sender<(Bytes, SocksAddr)> {
     async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
         let siz = buf.len();
-        self.send((buf, addr)).await;
+        self.send((buf, addr)).await.map_err(|_|SError::InboundUnavailable)?;
         Ok(siz)
     }
 }
@@ -105,7 +106,7 @@ impl Manager {
                 }
             }
         }
-
+        #[allow(unreachable_code)]
         Ok(())
     }
 }
