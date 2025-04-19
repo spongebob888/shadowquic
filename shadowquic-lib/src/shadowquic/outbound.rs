@@ -10,10 +10,14 @@ use rustls::RootCertStore;
 use tracing::{Instrument, Level, debug, debug_span, error, info, span, trace};
 
 use crate::{
-    config::{CongestionControl, ShadowQuicClientCfg}, error::SError, msgs::{
+    Outbound,
+    config::{CongestionControl, ShadowQuicClientCfg},
+    error::SError,
+    msgs::{
         shadowquic::{SQCmd, SQReq},
         socks5::SEncode,
-    }, shadowquic::{handle_udp_recv_ctrl, handle_udp_send}, Outbound
+    },
+    shadowquic::{handle_udp_recv_ctrl, handle_udp_send},
 };
 
 use super::{SQConn, handle_udp_packet_recv, inbound::Unsplit};
@@ -29,9 +33,7 @@ pub struct ShadowQuicClient {
     over_stream: bool,
 }
 impl ShadowQuicClient {
-    pub fn new(
-        cfg: ShadowQuicClientCfg
-    ) -> Self {
+    pub fn new(cfg: ShadowQuicClientCfg) -> Self {
         let root_store = RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.into(),
         };
@@ -48,9 +50,15 @@ impl ShadowQuicClient {
             .initial_mtu(cfg.initial_mtu);
 
         match cfg.congestion_control {
-            CongestionControl::Cubic => tp_cfg.congestion_controller_factory(Arc::new(CubicConfig::default())),
-            CongestionControl::NewReno => tp_cfg.congestion_controller_factory(Arc::new(NewRenoConfig::default())),
-            CongestionControl::Bbr => tp_cfg.congestion_controller_factory(Arc::new(BbrConfig::default())),
+            CongestionControl::Cubic => {
+                tp_cfg.congestion_controller_factory(Arc::new(CubicConfig::default()))
+            }
+            CongestionControl::NewReno => {
+                tp_cfg.congestion_controller_factory(Arc::new(NewRenoConfig::default()))
+            }
+            CongestionControl::Bbr => {
+                tp_cfg.congestion_controller_factory(Arc::new(BbrConfig::default()))
+            }
         };
         let mut config = ClientConfig::new(Arc::new(
             QuicClientConfig::try_from(crypto).expect("rustls config can't created"),
@@ -65,7 +73,7 @@ impl ShadowQuicClient {
             quic_conn: None,
             quic_config: config,
             quic_end: end,
-            dst_addr:cfg.addr,
+            dst_addr: cfg.addr,
             server_name: cfg.server_name,
             zero_rtt: cfg.zero_rtt,
             over_stream: cfg.over_stream,
@@ -81,8 +89,10 @@ impl ShadowQuicClient {
         });
         // Creating new connectin
         if self.quic_conn.is_none() {
-            let conn = self.quic_end.connect(self.dst_addr.parse()
-            .expect("Wrong addr format"), &self.server_name)?;
+            let conn = self.quic_end.connect(
+                self.dst_addr.parse().expect("Wrong addr format"),
+                &self.server_name,
+            )?;
             let conn = if self.zero_rtt {
                 match conn.into_0rtt() {
                     Ok((x, accepted)) => {
@@ -165,11 +175,7 @@ impl Outbound for ShadowQuicClient {
                         dst: udp_session.dst.clone(),
                     };
                     req.encode(&mut send).await?;
-                    let fut2 = handle_udp_recv_ctrl(
-                        recv,
-                        udp_session.send.clone(),
-                        conn.clone(),
-                    );
+                    let fut2 = handle_udp_recv_ctrl(recv, udp_session.send.clone(), conn.clone());
                     let fut1 = handle_udp_send(
                         send,
                         udp_session.send,

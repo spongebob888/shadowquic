@@ -129,7 +129,6 @@ struct AssociateRecvSession {
     id_map: HashMap<u16, SocksAddr>,
 }
 impl AssociateRecvSession {
-
     pub async fn store_socket(&mut self, id: &u16, dst: SocksAddr, socks: AnyUdpSend) {
         if self.id_map.contains_key(id) {
         } else {
