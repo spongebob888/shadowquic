@@ -1,77 +1,61 @@
-use std::time::Duration;
+use std::{io::IsTerminal, path::PathBuf, time::Duration};
 
+use clap::Parser;
 use shadowquic_lib::{
-    Manager,
-    config::{CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg},
-    direct::outbound::DirectOut,
-    shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
-    socks::inbound::SocksServer,
+    config::{self, Config, CongestionControl, LogLevel, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg}, direct::outbound::DirectOut, shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient}, socks::inbound::SocksServer, Manager
 };
 use tracing::{Level, level_filters::LevelFilter, trace};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{fmt::time::{LocalTime}, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::prelude::*;
 
-#[tokio::main]
-async fn main() {
-    test_shadowquic().await
+#[derive(Parser)]
+#[clap(author, about, long_about = None)]
+struct Cli {
+    #[clap(
+        short,
+        long,
+        visible_short_aliases = ['c'], 
+        value_parser,
+        value_name = "FILE",
+        default_value = "config.yaml",
+        help = "configuration file"
+    )]
+    config: PathBuf,
 }
 
-async fn test_shadowquic() {
+
+#[tokio::main(flavor = "multi_thread", worker_threads = 8)]
+async fn main() {
+    let cli = Cli::parse();
+    let content = std::fs::read_to_string(cli.config).expect("can't open config yaml file");
+    let cfg: Config = serde_yaml::from_str(&content).expect("invalid yaml file content");
+    setup_log(cfg.log_level.clone());
+    let manager = cfg.build_manager().await.expect("creating inbound/outbound failed");
+
+    manager.run().await.expect("shadowquic stopped");
+}
+
+fn setup_log(level: LogLevel) {
     let filter = tracing_subscriber::filter::Targets::new()
         // Enable the `INFO` level for anything in `my_crate`
-        .with_target("shadowquic_lib", Level::TRACE)
+        .with_target("shadowquic_lib", level.as_tracing_level())
         .with_target("shadowquic_lib::msgs::socks", LevelFilter::OFF);
-
-    // Enable the `DEBUG` level for a specific module.
-
-    // Build a new subscriber with the `fmt` layer using the `Targets`
-    // filter we constructed above.
+    let timer = LocalTime::new(time::macros::format_description!(
+        "[year repr:last_two]-[month]-[day] [hour]:[minute]:[second]"
+    ));
+    let fmt =             tracing_subscriber::fmt::Layer::new()
+    .with_timer(timer)
+    .with_ansi(std::io::stdout().is_terminal())
+    .compact()
+    .with_target(cfg!(debug_assertions))
+    .with_file(true)
+    .with_line_number(true)
+    .with_level(true)
+    .with_writer(std::io::stdout)
+    ;
     tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer())
+        .with(fmt)
         .with(filter)
         .init();
-
-    // env_logger::init();
-    trace!("Running");
-
-    let socks_server = SocksServer::new(SocksServerCfg {
-        bind_addr: "127.0.0.1:1089".parse().unwrap(),
-    })
-    .await
-    .unwrap();
-    let sq_client = ShadowQuicClient::new(ShadowQuicClientCfg {
-        jls_pwd: "123".into(),
-        jls_iv: "123".into(),
-        addr: "127.0.0.1:4444".parse().unwrap(),
-        server_name: "localhost".into(),
-        alpn: vec!["h3".into()],
-        initial_mtu: 1200,
-        congestion_control: CongestionControl::Bbr,
-        zero_rtt: true,
-        over_stream: true,
-    });
-
-    let client = Manager {
-        inbound: Box::new(socks_server),
-        outbound: Box::new(sq_client),
-    };
-
-    let sq_server = ShadowQuicServer::new(ShadowQuicServerCfg {
-        bind_addr: "127.0.0.1:4444".parse().unwrap(),
-        jls_pwd: "123".into(),
-        jls_iv: "123".into(),
-        jls_upstream: "localhost:443".into(),
-        alpn: vec!["h3".into()],
-        zero_rtt: true,
-        congestion_control: CongestionControl::Bbr,
-    })
-    .unwrap();
-    let direct_client = DirectOut;
-    let server = Manager {
-        inbound: Box::new(sq_server),
-        outbound: Box::new(direct_client),
-    };
-
-    tokio::spawn(server.run());
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    client.run().await.unwrap();
 }
+

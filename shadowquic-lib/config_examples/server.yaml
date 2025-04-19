@@ -1,0 +1,15 @@
+inbound:
+    type: shadowquic
+    bind-addr: 0.0.0.0:1443
+    jls-pwd: "12345678"
+    jls-iv: "87654321"
+    jls-upstream: "codepen.io:443"
+    alpn: ["h3"]
+    congestion-control: bbr
+    zero-rtt: true
+outbound:
+    type: direct
+#log-level: "trace"
+
+
+

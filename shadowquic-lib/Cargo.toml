@@ -1,13 +1,18 @@
 [package]
 name = "shadowquic-lib"
-version = "0.1.0"
-edition = "2024"
+repository = { workspace = true }
+version = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+authors = { workspace = true }
+
 
 [dependencies]
 anyhow = "1.0.97"
 thiserror = "2.0.12"
 tokio = {version = "1.44.2", features = ["io-util", "net","rt","macros","rt-multi-thread"]}
 tracing = "0.1.41"
+time = { version = "=0.3.39", features = ["macros", "local-offset"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt", "ansi", "time", "local-time"]}
 quinn = { package = "quinn", git = "https://github.com/spongebob888/quinn-jls", branch = "jls-dev", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 rustls = { package = "rustls", git = "https://github.com/spongebob888/rustls-jls", branch = "jls-dev", default-features = false, features = ["std","ring"]}
@@ -19,6 +24,8 @@ shadowquic-macros = {path = "../shadowquic-macros"}
 yaml-rust2 = "0.10.1"
 serde = { version = "1.0.219", features = ["derive"]}
 serde_yaml = "0.9.34"
+clap = { version = "4", features = ["derive"] }
+educe = "0.6.0"
 
 [dev-dependencies]
 fast-socks5 = "0.10.0"

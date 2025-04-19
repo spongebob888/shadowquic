@@ -1,0 +1,18 @@
+inbound:
+    type: socks
+    bind-addr: 127.0.0.1:1089
+outbound:
+    type: shadowquic
+    addr: 127.0.0.1:1443
+    jls-pwd: "12345678"
+    jls-iv: "87654321"
+    server-name: "codepen.io"
+    alpn: ["h3"]
+    initial-mtu: 1400
+    congestion-control: bbr
+    zero-rtt: true
+    over-stream: false  # true for udp over stream, false for udp over datagram
+#log-level: "trace"
+
+
+

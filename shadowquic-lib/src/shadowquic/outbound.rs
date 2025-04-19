@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use std::sync::Arc;
+use std::{net::ToSocketAddrs, sync::Arc};
 
 use quinn::{
     ClientConfig, Endpoint, TransportConfig,
@@ -89,8 +89,11 @@ impl ShadowQuicClient {
         });
         // Creating new connectin
         if self.quic_conn.is_none() {
+            let addr = self.dst_addr.to_socket_addrs()
+            .expect(&format!("resolve quic addr faile: {}", self.dst_addr)).next()
+            .expect(&format!("resolve quic addr faile: {}", self.dst_addr));
             let conn = self.quic_end.connect(
-                self.dst_addr.parse().expect("Wrong addr format"),
+                addr,
                 &self.server_name,
             )?;
             let conn = if self.zero_rtt {
