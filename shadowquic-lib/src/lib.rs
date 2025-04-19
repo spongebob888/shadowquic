@@ -9,6 +9,7 @@ use tokio::net::TcpStream;
 use anyhow::Result;
 use async_trait::async_trait;
 use tokio::sync::mpsc::{Receiver, Sender};
+use tracing::error;
 
 pub mod direct;
 pub mod error;
@@ -92,8 +93,17 @@ impl Manager {
         let mut inbound = self.inbound;
         let mut outbound = self.outbound;
         loop {
-            let req = inbound.accept().await?;
-            outbound.handle(req).await.unwrap();
+            match inbound.accept().await {
+                Ok(req) => match outbound.handle(req).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!("error during handling request: {}", e)
+                    }
+                },
+                Err(e) => {
+                    error!("error during accepting request: {}", e)
+                }
+            }
         }
 
         Ok(())

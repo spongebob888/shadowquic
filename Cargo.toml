@@ -1,5 +1,5 @@
 [workspace]
-members = ["shadowquic-lib", "shadowquic-macros"]
+members = ["shadowquic-lib", "shadowquic-macros","perf"]
 default-members = ["shadowquic-lib"]
 
 [workspace.package]
