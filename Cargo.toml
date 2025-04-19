@@ -1,6 +1,7 @@
 [workspace]
 members = ["shadowquic-lib", "shadowquic-macros","perf"]
 default-members = ["shadowquic-lib"]
+resolver = "3"
 
 [workspace.package]
 name = "shadowquic"
