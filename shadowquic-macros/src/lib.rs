@@ -28,7 +28,7 @@ fn do_expand_encode(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStre
         }                                     
     };                                 
 
-    return Ok(ret);
+    Ok(ret)
 }
 
 
@@ -77,7 +77,7 @@ fn do_expand_decode(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStre
     let fields = get_fields_from_derive_input(st)?;
     let builder_struct_fields_def = generate_decode_fields(fields)?;
 
-    eprintln!("{:#?}",st);
+    //eprintln!("{:#?}",st);
     let ret = quote! {                                             
         impl SDecode for #struct_ident {                               
             async fn decode<T: tokio::io::AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
@@ -88,7 +88,7 @@ fn do_expand_decode(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStre
         }                            
     };                                   
 
-    return Ok(ret);
+    Ok(ret)
 }
 
 fn generate_decode_fields(fields: &StructFields) -> syn::Result<proc_macro2::TokenStream>{

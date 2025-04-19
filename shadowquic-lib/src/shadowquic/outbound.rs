@@ -82,7 +82,7 @@ impl ShadowQuicClient {
             dst_addr,
             server_name,
             zero_rtt,
-            over_stream: over_stream,
+            over_stream,
         }
     }
     async fn prepare_conn(&mut self) -> Result<(), SError> {
