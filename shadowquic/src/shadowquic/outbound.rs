@@ -140,16 +140,26 @@ impl Outbound for ShadowQuicClient {
     async fn handle(&mut self, req: crate::ProxyRequest) -> Result<(), crate::error::SError> {
         self.prepare_conn().await?;
 
+
+
         let conn = self.quic_conn.as_mut().unwrap().clone();
-        let span = debug_span!("quic conn", id = conn.stable_id());
+
+        let rate: f32 = (conn.stats().path.lost_packets as f32)
+        / ((conn.stats().path.sent_packets + 1) as f32);
+        info!(
+            "packet_loss_rate:{:.2}%, rtt:{:?}, mtu:{}",
+            rate * 100.0,
+            conn.rtt(),
+            conn.stats().path.current_mtu,
+        );
         let over_stream = self.over_stream;
         let fut = async move {
             match req {
                 crate::ProxyRequest::Tcp(mut tcp_session) => {
                     let (mut send, recv) = conn.open_bi().await?;
-                    let _span = span!(Level::TRACE, "tcp", stream_id = (send.id().index()));
-                    trace!("bistream opened");
-                    let _enter = _span.enter();
+                    //let _span = span!(Level::TRACE, "tcp", stream_id = (send.id().index()));
+                    info!("bistream opened for dst:{}",tcp_session.dst.clone());
+                    //let _enter = _span.enter();
                     let req = SQReq {
                         cmd: SQCmd::Connect,
                         dst: tcp_session.dst.clone(),
@@ -157,17 +167,17 @@ impl Outbound for ShadowQuicClient {
                     req.encode(&mut send).await?;
                     trace!("req header sent");
 
-                    tokio::io::copy_bidirectional(
+                    let u = tokio::io::copy_bidirectional(
                         &mut Unsplit { s: send, r: recv },
                         &mut tcp_session.stream,
                     )
                     .await?;
-                    trace!("request:{} finished", tcp_session.dst);
+                    info!("request:{} finished, upload:{}bytes,download:{}bytes", tcp_session.dst,u.1,u.0);
                 }
                 crate::ProxyRequest::Udp(udp_session) => {
                     let (mut send, recv) = conn.open_bi().await?;
                     let _span = span!(Level::TRACE, "udp", stream_id = (send.id().index()));
-                    trace!("bistream opened");
+                    info!("bistream opened for dst:{}", udp_session.dst.clone());
                     let _enter = _span.enter();
                     let req = SQReq {
                         cmd: if over_stream {
@@ -188,13 +198,13 @@ impl Outbound for ShadowQuicClient {
                     );
 
                     tokio::try_join!(fut1, fut2)?;
-                    trace!("req header sent");
+                    info!("udp association to {} ended", udp_session.dst.clone());
                 }
             }
             Ok(()) as Result<(), SError>
         };
         tokio::spawn(async {
-            let _ = fut.instrument(span).await.map_err(|x| error!("{}", x));
+            let _ = fut.await.map_err(|x| error!("{}", x));
         });
         Ok(())
     }

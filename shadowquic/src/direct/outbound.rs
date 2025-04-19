@@ -66,17 +66,17 @@ impl Outbound for DirectOut {
 #[derive(Default, Clone)]
 struct DnsResolve(Arc<Mutex<HashMap<Vec<u8>, SocketAddr>>>);
 impl DnsResolve {
-    async fn resolve(&self, socks: SocksAddr) -> Result<SocketAddr, SError> {
+    async fn resolve(&self, socks: SocksAddr, ipv4_only: bool) -> Result<SocketAddr, SError> {
         if let AddrOrDomain::Domain(x) = &socks.addr {
             if let Some(v) = self.0.lock().await.get(&x.contents) {
                 Ok(*v)
             } else {
-                let s = resolve(&socks).await?;
+                let s = resolve(&socks, ipv4_only).await?;
                 self.0.lock().await.insert(x.contents.clone(), s);
                 Ok(s)
             }
         } else {
-            Ok(resolve(&socks).await?)
+            Ok(resolve(&socks, ipv4_only).await?)
         }
     }
     async fn inv_resolve(&self, addr: &SocketAddr) -> SocksAddr {
@@ -95,7 +95,7 @@ impl DnsResolve {
     }
 }
 
-async fn resolve(socks: &SocksAddr) -> Result<SocketAddr, SError> {
+async fn resolve(socks: &SocksAddr, ipv4_only: bool) -> Result<SocketAddr, SError> {
     let mut s = match socks.addr.clone() {
         crate::msgs::socks5::AddrOrDomain::V4(x) => {
             SocketAddr::new(IpAddr::V4(Ipv4Addr::from(x)), 0)
@@ -103,13 +103,16 @@ async fn resolve(socks: &SocksAddr) -> Result<SocketAddr, SError> {
         crate::msgs::socks5::AddrOrDomain::V6(x) => {
             SocketAddr::new(IpAddr::V6(Ipv6Addr::from(x)), 0)
         }
-        crate::msgs::socks5::AddrOrDomain::Domain(var_vec) => lookup_host((
+        crate::msgs::socks5::AddrOrDomain::Domain(var_vec) => {
+            lookup_host((
             String::from_utf8(var_vec.contents).map_err(|_| SError::DomainResolveFailed)?,
             socks.port,
         ))
         .await?
+        .filter(|x|x.is_ipv4() || (!ipv4_only))
         .next()
-        .ok_or(SError::DomainResolveFailed)?,
+        .ok_or(SError::DomainResolveFailed)?
+    },
     };
     s.set_port(socks.port);
     Ok(s)
@@ -123,6 +126,7 @@ async fn handle_udp(udp_session: UdpSession) -> Result<(), SError> {
         .next()
         .ok_or(SError::DomainResolveFailed)?;
     trace!("resolved to {}", dst);
+    let ipv4_only = dst.is_ipv4();
     //let upstream = UdpSocket::bind(dst).await?;
     let upstream = Arc::new(UdpSocket::bind(dst).await?);
     let upstream_clone = upstream.clone();
@@ -151,7 +155,7 @@ async fn handle_udp(udp_session: UdpSession) -> Result<(), SError> {
         let (buf, dst) = downstream.recv_from().await?;
 
         trace!("udp request to:{}", dst);
-        let dst = dns_cache.resolve(dst).await?;
+        let dst = dns_cache.resolve(dst,ipv4_only).await?;
         trace!("udp resolve to:{}", dst);
         let siz = upstream_clone.send_to(&buf, dst).await?;
         trace!("udp request sent:{}bytes", siz);

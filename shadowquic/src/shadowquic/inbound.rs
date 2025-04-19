@@ -14,7 +14,7 @@ use tokio::{
     select,
     sync::mpsc::{Receiver, Sender, channel},
 };
-use tracing::{Instrument, Level, debug, error, event, trace, trace_span};
+use tracing::{debug, error, event, info, trace, trace_span, Instrument, Level};
 
 use crate::{
     Inbound, ProxyRequest, TcpSession, TcpTrait, UdpSession,
@@ -99,7 +99,7 @@ impl ShadowQuicServer {
     ) -> Result<(), SError> {
         event!(
             Level::TRACE,
-            "Incomming from {} accepted",
+            "incomming from {} accepted",
             incom.remote_address()
         );
         let conn = incom.accept()?;
@@ -130,7 +130,7 @@ impl ShadowQuicServer {
             conn: connection,
             id_store: Default::default(),
         });
-        let span = trace_span!("quic conn", id = sq_conn.0.stable_id());
+        let span = trace_span!("quic", id = sq_conn.0.stable_id());
         sq_conn
             .handle_connection(req_sender)
             .instrument(span)
@@ -192,7 +192,7 @@ impl SQServerConn {
             select! {
                 bi = conn.accept_bi() => {
                     let (send, recv) = bi?;
-                    trace!("bi stream accepted");
+                    trace!("bistream accepted");
                     tokio::spawn(self.clone().handle_bistream(send, recv, req_send.clone()));
                 },
             }
@@ -208,6 +208,7 @@ impl SQServerConn {
         let req = SQReq::decode(&mut recv).await?;
         match req.cmd {
             SQCmd::Connect => {
+                info!("connect request to {} accepted",req.dst.clone());
                 let tcp: TcpSession = TcpSession {
                     stream: Box::new(Unsplit { s: send, r: recv }),
                     dst: req.dst,
@@ -218,6 +219,7 @@ impl SQServerConn {
                     .map_err(|_| SError::OutboundUnavailable)?;
             }
             SQCmd::AssociatOverDatagram | SQCmd::AssociatOverStream => {
+                info!("association request to {} accepted",req.dst.clone());
                 let (local_send, udp_recv) = channel::<(Bytes, SocksAddr)>(10);
                 let (udp_send, local_recv) = channel::<(Bytes, SocksAddr)>(10);
                 let udp: UdpSession = UdpSession {

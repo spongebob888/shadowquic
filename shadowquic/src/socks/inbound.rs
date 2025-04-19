@@ -17,7 +17,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, UdpSocket};
 
 use anyhow::Result;
-use tracing::{error, trace};
+use tracing::{error, trace, warn};
 pub struct SocksServer {
     #[allow(dead_code)]
     bind_addr: SocketAddr,
@@ -97,7 +97,7 @@ impl UdpRecv for UdpSocksWrap {
         let mut cur = Cursor::new(buf);
         let req = socks5::UdpReqHeader::decode(&mut cur).await?;
         if req.frag != 0 {
-            error!("dropping fragmented udp datagram ");
+            warn!("dropping fragmented udp datagram ");
             return Err(SError::ProtocolUnimpl);
         }
         let headsize: usize = cur.position().try_into().unwrap();
@@ -126,7 +126,6 @@ impl UdpSend for UdpSocksWrap {
         let mut cur = Cursor::new(header);
         reply.encode(&mut cur).await?;
         let header = cur.into_inner();
-        trace!("udp reply: {:?}", buf_new);
         buf_new.put(Bytes::from(header));
         buf_new.put(buf);
 
