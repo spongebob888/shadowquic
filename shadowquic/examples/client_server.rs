@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use shadowquic_lib::{
+use shadowquic::{
     Manager,
     config::{CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg},
     direct::outbound::DirectOut,
@@ -18,8 +18,8 @@ async fn main() {
 async fn test_shadowquic() {
     let filter = tracing_subscriber::filter::Targets::new()
         // Enable the `INFO` level for anything in `my_crate`
-        .with_target("shadowquic_lib", Level::TRACE)
-        .with_target("shadowquic_lib::msgs::socks", LevelFilter::OFF);
+        .with_target("shadowquic", Level::TRACE)
+        .with_target("shadowquic::msgs::socks", LevelFilter::OFF);
 
     // Enable the `DEBUG` level for a specific module.
 

@@ -1,6 +1,6 @@
 [workspace]
-members = ["shadowquic-lib", "shadowquic-macros","perf"]
-default-members = ["shadowquic-lib"]
+members = ["shadowquic", "shadowquic-macros","perf"]
+default-members = ["shadowquic"]
 resolver = "3"
 
 

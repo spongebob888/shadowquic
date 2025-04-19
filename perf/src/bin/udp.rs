@@ -4,11 +4,11 @@ use std::sync::Arc;
 use fast_socks5::client::{Config, Socks5Datagram};
 use fast_socks5::util::target_addr::TargetAddr;
 
-use shadowquic_lib::config::{CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg};
+use shadowquic::config::{CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg};
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::time::Duration;
 
-use shadowquic_lib::{
+use shadowquic::{
     Manager,
     direct::outbound::DirectOut,
     shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
@@ -90,8 +90,8 @@ async fn test_shadowquic() {
     let filter = tracing_subscriber::filter::Targets::new()
         // Enable the `INFO` level for anything in `my_crate`
         .with_target("udp", Level::TRACE)
-        .with_target("shadowquic_lib", Level::INFO)
-        .with_target("shadowquic_lib::msgs::socks", LevelFilter::OFF);
+        .with_target("shadowquic", Level::INFO)
+        .with_target("shadowquic::msgs::socks", LevelFilter::OFF);
 
     // Enable the `DEBUG` level for a specific module.
 

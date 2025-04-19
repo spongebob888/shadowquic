@@ -12,7 +12,7 @@ outbound:
     congestion-control: bbr
     zero-rtt: true
     over-stream: false  # true for udp over stream, false for udp over datagram
-#log-level: "trace"
+log-level: "trace"
 
 
 

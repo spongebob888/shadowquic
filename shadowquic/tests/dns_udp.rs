@@ -1,7 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use fast_socks5::{Result, client::Socks5Datagram};
-use shadowquic_lib::{
+use shadowquic::{
     Manager, config::SocksServerCfg, direct::outbound::DirectOut, socks::inbound::SocksServer,
 };
 use tokio::{
@@ -44,9 +44,9 @@ struct Opt {
 async fn main() -> Result<()> {
     let filter = tracing_subscriber::filter::Targets::new()
         // Enable the `INFO` level for anything in `my_crate`
-        .with_target("shadowquic_lib", Level::TRACE)
+        .with_target("shadowquic", Level::TRACE)
         .with_target("dns_udp", Level::TRACE)
-        .with_target("shadowquic_lib::msgs::socks", LevelFilter::OFF);
+        .with_target("shadowquic::msgs::socks", LevelFilter::OFF);
 
     // Enable the `DEBUG` level for a specific module.
 
