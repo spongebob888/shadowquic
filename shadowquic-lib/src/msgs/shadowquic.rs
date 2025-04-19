@@ -5,6 +5,7 @@ use super::socks5::{SDecode, SEncode, SocksAddr};
 #[repr(u8)]
 pub enum SQCmd {
     Connect = 0x1,
+    Bind = 0x02,
     AssociatOverDatagram = 0x3,
     AssociatOverStream = 0x4,
 }
@@ -16,6 +17,7 @@ impl SDecode for SQCmd {
         let x: u8 = u8::decode(s).await?;
         let cmd = match x {
             0x1 => SQCmd::Connect,
+            0x02 => SQCmd::Bind,
             0x3 => SQCmd::AssociatOverDatagram,
             0x4 => SQCmd::AssociatOverStream,
             _ => return Err(SError::ProtocolViolation),
