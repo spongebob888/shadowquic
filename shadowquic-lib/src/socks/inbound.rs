@@ -18,6 +18,7 @@ use tokio::net::{TcpListener, UdpSocket};
 use anyhow::Result;
 use tracing::{error, trace};
 pub struct SocksServer {
+    #[allow(dead_code)]
     bind_addr: SocketAddr,
     listener: TcpListener,
 }
@@ -34,7 +35,7 @@ async fn handle_socks<T: AsyncRead + AsyncWrite + Unpin>(
     mut s: T,
     local_addr: SocketAddr,
 ) -> Result<(T, CmdReq, Option<UdpSocket>), SError> {
-    let req = socks5::AuthReq::decode(&mut s).await?;
+    let _req = socks5::AuthReq::decode(&mut s).await?;
     let reply = socks5::AuthReply {
         version: SOCKS5_VERSION,
         method: SOCKS5_AUTH_METHOD_NONE,

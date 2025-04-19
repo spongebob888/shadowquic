@@ -1,6 +1,7 @@
 use crate::error::SError;
 
 use super::socks5::{SDecode, SEncode, SocksAddr};
+use shadowquic_macros::SEncode;
 
 #[repr(u8)]
 pub enum SQCmd {
@@ -57,6 +58,8 @@ pub struct SQUdpControlHeader {
     pub dst: SocksAddr,
     pub id: u16, // id is one to one coresponance a udpsocket and proxy dst
 }
+
+#[derive(SEncode)]
 pub struct SQPacketStreamHeader {
     pub id: u16, // id is one to one coresponance a udpsocket and proxy dst
     pub len: u16,
@@ -64,6 +67,7 @@ pub struct SQPacketStreamHeader {
 pub struct SQPacketDatagramHeader {
     pub id: u16, // id is one to one coresponance a udpsocket and proxy dst
 }
+
 
 impl SDecode for SQUdpControlHeader {
     async fn decode<T: tokio::io::AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {

@@ -141,9 +141,10 @@ async fn handle_udp(udp_session: UdpSession) -> Result<(), SError> {
             trace!("udp source inverse resolved to:{}", dst);
             let buf = buf_send.freeze();
             trace!("udp recved:{} bytes", len);
-            let len = udp_session.send.send_to(buf.slice(..len), dst).await?;
+            let _ = udp_session.send.send_to(buf.slice(..len), dst).await?;
         }
-        Ok(()) as Result<(), SError>
+        #[allow(unreachable_code)]
+        (Ok(()) as Result<(), SError>)
     };
     tokio::spawn(fut1);
     loop {

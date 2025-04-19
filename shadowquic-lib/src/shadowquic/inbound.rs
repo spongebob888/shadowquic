@@ -17,7 +17,7 @@ use tokio::{
 use tracing::{Instrument, Level, debug, error, event, trace, trace_span};
 
 use crate::{
-    Inbound, ProxyRequest, TcpSession, TcpTrait, UdpRecv, UdpSend, UdpSession,
+    Inbound, ProxyRequest, TcpSession, TcpTrait, UdpSession,
     error::SError,
     msgs::{
         shadowquic::{SQCmd, SQReq},
@@ -26,24 +26,9 @@ use crate::{
 };
 
 use super::{
-    SQConn, {handle_udp_packet_recv, handle_udp_recv_overdatagram, handle_udp_send_overdatagram},
+    SQConn, {handle_udp_packet_recv, handle_udp_recv_ctrl, handle_udp_send},
 };
 
-struct UdpMux(Receiver<(Bytes, SocksAddr)>);
-#[async_trait]
-impl UdpRecv for UdpMux {
-    async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr), SError> {
-        todo!()
-    }
-}
-#[async_trait]
-impl UdpSend for UdpMux {
-    async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
-        todo!()
-    }
-}
-
-pub type ShadowTcp = Unsplit<SendStream, RecvStream>;
 
 pub struct ShadowQuicServer {
     pub squic_conn: Vec<SQServerConn>,
@@ -252,21 +237,18 @@ impl SQServerConn {
                     .send(ProxyRequest::Udp(udp))
                     .await
                     .map_err(|_| SError::OutboundUnavailable)?;
-                let fut1 = handle_udp_send_overdatagram(
+                let fut1 = handle_udp_send(
                     send,
                     local_send.clone(),
                     Box::new(local_recv),
                     self.0.clone(),
                     false,
                 );
-                let fut2 = handle_udp_recv_overdatagram(recv, local_send, self.0, false);
+                let fut2 = handle_udp_recv_ctrl(recv, local_send, self.0);
                 tokio::try_join!(fut1, fut2)?;
             }
             _ => {}
         }
-        Ok(())
-    }
-    async fn handle_datagram(s: Bytes, req_send: Sender<ProxyRequest>) -> Result<(), SError> {
         Ok(())
     }
 }
