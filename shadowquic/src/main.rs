@@ -41,15 +41,15 @@ fn setup_log(level: LogLevel) {
         .with_target("shadowquic", level.as_tracing_level())
         .with_target("shadowquic::msgs::socks", LevelFilter::OFF);
     let timer = LocalTime::new(time::macros::format_description!(
-        "[year repr:last_two]-[month]-[day] [hour]:[minute]:[second]"
+        "[year repr:last_two]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]"
     ));
     let fmt =             tracing_subscriber::fmt::Layer::new()
     .with_timer(timer)
     .with_ansi(std::io::stdout().is_terminal())
-    .compact()
+    //.compact()
     .with_target(cfg!(debug_assertions))
-    .with_file(true)
-    .with_line_number(true)
+    .with_file(false)
+    .with_line_number(false)
     .with_level(true)
     .with_writer(std::io::stdout)
     ;

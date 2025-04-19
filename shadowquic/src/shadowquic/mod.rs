@@ -9,7 +9,7 @@ use std::{
 use bytes::{BufMut, Bytes, BytesMut};
 use quinn::{Connection, RecvStream, SendStream};
 use tokio::sync::{Notify, RwLock, mpsc::channel};
-use tracing::{error, trace, trace_span};
+use tracing::{error, info, trace, trace_span};
 
 use crate::{
     AnyUdpRecv, AnyUdpSend,
@@ -201,8 +201,6 @@ pub async fn handle_udp_send(
             } else {
                 let _ = quic_conn.send_datagram(content);
             }
-
-            trace!("udp datagram sent");
             Ok(())
         };
         tokio::try_join!(fut1, fut2)?;
@@ -237,12 +235,12 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
     loop {
         tokio::select! {
             Ok(b) = conn.read_datagram() => {
-                trace!("datagram accepted");
                 let b = BytesMut::from(b);
                 let mut cur = Cursor::new(b);
                 let SQPacketDatagramHeader{id} = SQPacketDatagramHeader::decode(&mut cur).await?;
-                // To be fixed, may block here
+                
                 if let Some((udp,addr)) = id_map.get(&id) {
+                    info!("datagram accepted: id:{},dst:{}",id, addr);
                     let pos = cur.position() as usize;
                     let b = cur.into_inner().freeze();
                     udp.send_to(b.slice(pos..b.len()), addr.clone()).await?;
@@ -266,6 +264,7 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
 
             r = async {
                 let mut uni_stream = conn.accept_uni().await?;
+                trace!("unistream accepted");
                 let SQPacketStreamHeader{id,len} = SQPacketStreamHeader::decode(&mut uni_stream).await?;
                 let (udp,addr) = match id_map.get(&id){
                     Some(r) => r,
@@ -275,7 +274,7 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
                 let _ = send.send((id, udp.clone(),addr.clone())).await.map_err(|_e|SError::ChannelError("can't open send udp trait".into()));
                 &(udp.to_owned(),addr.to_owned())
                 }};
-
+                info!("unistream datagram accepted: id:{},dst:{}",id, addr);
                 Ok((uni_stream,udp.clone(),addr.clone(),len)) as Result<(RecvStream,AnyUdpSend,SocksAddr,u16),SError>
             } => {
                 let  (mut uni_stream,udp,addr,mut len) = r?;
