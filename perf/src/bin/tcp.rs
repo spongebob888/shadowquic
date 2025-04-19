@@ -1,4 +1,5 @@
 use fast_socks5::client::{Config, Socks5Stream};
+use shadowquic_lib::config::{CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use tokio::{net::TcpListener, time::Duration};
@@ -84,20 +85,21 @@ async fn test_shadowquic() {
     // env_logger::init();
     trace!("Running");
 
-    let socks_server = SocksServer::new("127.0.0.1:1089".parse().unwrap())
+    let socks_server = SocksServer::new(SocksServerCfg{bind_addr:"127.0.0.1:1089".parse().unwrap()})
         .await
         .unwrap();
     let sq_client = ShadowQuicClient::new(
-        "123".into(),
-        "123".into(),
-        "127.0.0.1:4444".parse().unwrap(),
-        "localhost".into(),
-        vec!["h3".into()],
-        1200,
-        "bbr".into(),
-        true,
-        true,
-    );
+        ShadowQuicClientCfg {
+            jls_pwd: "123".into(),
+            jls_iv: "123".into(),
+            addr: "127.0.0.1:4444".parse().unwrap(),
+            server_name: "localhost".into(),
+            alpn: vec!["h3".into()],
+            initial_mtu: 1200,
+            congestion_control: CongestionControl::Bbr,
+            zero_rtt: true,
+            over_stream: true,
+        });
 
     let client = Manager {
         inbound: Box::new(socks_server),
@@ -105,14 +107,15 @@ async fn test_shadowquic() {
     };
 
     let sq_server = ShadowQuicServer::new(
-        "127.0.0.1:4444".parse().unwrap(),
-        "123".into(),
-        "123".into(),
-        "localhost:443".into(),
-        vec!["h3".into()],
-        true,
-        "bbr".into(),
-    )
+        ShadowQuicServerCfg {
+            bind_addr: "127.0.0.1:4444".parse().unwrap(),
+            jls_pwd: "123".into(),
+            jls_iv: "123".into(),
+            jls_upstream: "localhost:443".into(),
+            alpn: vec!["h3".into()],
+            zero_rtt: true,
+            congestion_control: CongestionControl::Bbr,
+        })
     .unwrap();
     let direct_client = DirectOut;
     let server = Manager {
