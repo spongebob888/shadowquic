@@ -1,7 +1,5 @@
 use fast_socks5::client::{Config, Socks5Stream};
-use fast_socks5::util::target_addr;
-use shadowquic_lib::shadowquic::inbound::Unsplit;
-use tokio::io::{AsyncReadExt, AsyncWriteExt, copy};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use tokio::{net::TcpListener, time::Duration};
 

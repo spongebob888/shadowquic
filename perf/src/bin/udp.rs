@@ -1,13 +1,11 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
-use fast_socks5::client::{Config, Socks5Datagram, Socks5Stream};
-use fast_socks5::util::target_addr::{self, TargetAddr};
-use shadowquic_lib::shadowquic::inbound::Unsplit;
-use tokio::io::{AsyncReadExt, AsyncWriteExt, copy};
+use fast_socks5::client::{Config, Socks5Datagram};
+use fast_socks5::util::target_addr::{TargetAddr};
 
 use tokio::net::{TcpStream, UdpSocket};
-use tokio::{net::TcpListener, time::Duration};
+use tokio::time::Duration;
 
 use shadowquic_lib::{
     Manager,
@@ -162,7 +160,7 @@ async fn echo_tcp(port: u16) {
 
         let _ = tokio::time::timeout(Duration::from_millis(500), async {
             for ii in 0..ROUND {
-                let mut len;
+                let len;
                 (len, addr) = socks1.recv_from(&mut recvbuf).await.unwrap();
                 total += len;
             }
