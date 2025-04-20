@@ -1,4 +1,4 @@
-# ShadowQUIC
+![image](./logo.svg)
 
  A 0-RTT QUIC Proxy with SNI camouflage 
 
