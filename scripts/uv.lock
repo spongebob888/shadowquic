@@ -1,0 +1,47 @@
+version = 1
+revision = 1
+requires-python = ">=3.13"
+
+[[package]]
+name = "dnspython"
+version = "2.7.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b5/4a/263763cb2ba3816dd94b08ad3a33d5fdae34ecb856678773cc40a3605829/dnspython-2.7.0.tar.gz", hash = "sha256:ce9c432eda0dc91cf618a5cedf1a4e142651196bbcd2c80e89ed5a907e5cfaf1", size = 345197 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/68/1b/e0a87d256e40e8c888847551b20a017a6b98139178505dc7ffb96f04e954/dnspython-2.7.0-py3-none-any.whl", hash = "sha256:b4c34b7d10b51bcc3a5071e7b8dee77939f1e878477eeecc965e9835f63c6c86", size = 313632 },
+]
+
+[[package]]
+name = "pysocks"
+version = "1.7.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bd/11/293dd436aea955d45fc4e8a35b6ae7270f5b8e00b53cf6c024c83b657a11/PySocks-1.7.1.tar.gz", hash = "sha256:3f8804571ebe159c380ac6de37643bb4685970655d3bba243530d6558b799aa0", size = 284429 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8d/59/b4572118e098ac8e46e399a1dd0f2d85403ce8bbaad9ec79373ed6badaf9/PySocks-1.7.1-py3-none-any.whl", hash = "sha256:2725bd0a9925919b9b51739eea5f9e2bae91e83288108a9ad338b2e3a4435ee5", size = 16725 },
+]
+
+[[package]]
+name = "pystun3"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/31/00/a154d38357e2135d96bd633f10159d91f97feebdf54273a9d2e4e92dcc08/pystun3-2.0.0.tar.gz", hash = "sha256:99abfe83df69fd0f6278e9be1456827fafb9e4e25efed8074d15b754ac9b1fee", size = 6717 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c8/22/dd2f0a266f88d43bfbf619fd3189d22e9248f7bad8d0b14bd34e57c45f54/pystun3-2.0.0-py3-none-any.whl", hash = "sha256:4824c72d2c8c0297df92dbdf7cc57b346d6cf0de4e5a428c3be12d28a8bce0f3", size = 7423 },
+]
+
+[[package]]
+name = "scripts"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "dnspython" },
+    { name = "pysocks" },
+    { name = "pystun3" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dnspython", specifier = ">=2.7.0" },
+    { name = "pysocks", specifier = ">=1.7.1" },
+    { name = "pystun3", specifier = ">=2.0.0" },
+]

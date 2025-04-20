@@ -1,6 +1,6 @@
 #set par(justify: true)
 = Introduction
-*Shadowquic* is 0-RTT QUIC based proxy with SNI camouflage.
+*ShadowQUIC* is 0-RTT QUIC based proxy with SNI camouflage.
 
 Shadowquic doesn't provide any authentication layer.
 Authentication is provided by JLS protocol.
@@ -44,6 +44,9 @@ TCP Connect command is supported to proxy forward TCP connection.
 TCP proxy task is directed followed by TCP Connect command like _socks5_
 
 == UDP Proxy
+The UDP proxy scheme is greatly different from common protocol like TUIC/hysteria. The principle of design is to decrease datagram header size and reaches the *maximum MTU size*.
+
+The design has heavily considerred #link("https://www.rfc-editor.org/rfc/rfc9298.html")[RFC 9298] 
 ```plain
 +---------------+--------------+
 |   SOCKSADDR   |  CONTEXT ID  |
@@ -51,19 +54,20 @@ TCP proxy task is directed followed by TCP Connect command like _socks5_
 |   Variable    |      2       |
 +---------------+--------------+
 ```
-UDP Associate command is carried by bistream called *control stream*. For each datagram received from local socket or remote socket a control header 
+UDP Associate command is carried by bistream called *control stream*. For each datagram received from local socket or remote socket a control header consists of `SOCKSADDR` and `CONTEXT ID` is sent. If `CONTEXT ID` has been sent in the past which indicates the destination address has been cached, then this header could been skipped.
 
 *control stream* doesn't send payload. The payload is carried by unistream or datagram extension chosen by user. 
 Control stream *MUST* remain alive during udp association task.
 
 UDP Associate command associates a remote socket to local socket. For each 
-destination from a local socket the datagram will be asigned a `CONTEXT ID` which is in *one-one
+destination from a local socket the datagram will be asigned a `CONTEXT ID` which is in *one-to-one
 corespondance* to 4 tuple (local udp ip:port, destination udp ip:port).
 
-Each datagram will be prepended with a 2 bytes context ID. 
+Each datagram payload will be prepended with a 2 bytes context ID. 
 
 For each datagram from local socket or remote socket the `SOCKSADDR` and 
-`CONTEXT ID` will be sent in the control stream.
+`CONTEXT ID` pair will be sent in the control stream. And `SOCKSADDR` and 
+`CONTEXT ID` pair will be sent *at least once* for each new `CONTEXT ID`.
 
 === Associate Over Stream
 ```plain

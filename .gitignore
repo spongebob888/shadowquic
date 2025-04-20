@@ -1,3 +1,5 @@
 /target
 .vscode
 /client.yaml
+.venv
+.python-version
