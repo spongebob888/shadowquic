@@ -35,6 +35,9 @@
           protoc-gen-rust
 		      clang
           samply
+          iperf3
+          sing-box
+          killall
         ];
       in
       {

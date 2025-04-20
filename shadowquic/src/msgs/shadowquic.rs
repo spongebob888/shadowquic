@@ -4,6 +4,7 @@ use super::socks5::{SDecode, SEncode, SocksAddr};
 use shadowquic_macros::{SDecode, SEncode};
 
 #[repr(u8)]
+#[derive(PartialEq)]
 pub enum SQCmd {
     Connect = 0x1,
     Bind = 0x02,

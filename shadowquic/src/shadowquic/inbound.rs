@@ -1,11 +1,9 @@
 use async_trait::async_trait;
 use bytes::Bytes;
-use std::{net::SocketAddr, pin::Pin, sync::Arc};
+use std::{net::SocketAddr, pin::Pin, sync::Arc, time::Duration};
 
 use quinn::{
-    Endpoint, Incoming, RecvStream, SendStream, ServerConfig, TransportConfig,
-    congestion::{BbrConfig, CubicConfig, NewRenoConfig},
-    crypto::rustls::QuicServerConfig,
+    congestion::{BbrConfig, CubicConfig, NewRenoConfig}, crypto::rustls::QuicServerConfig, Endpoint, Incoming, MtuDiscoveryConfig, RecvStream, SendStream, ServerConfig, TransportConfig
 };
 use rustls::ServerConfig as RustlsServerConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
@@ -60,7 +58,15 @@ impl ShadowQuicServer {
         crypto.jls_config =
             rustls::JlsServerConfig::new(&cfg.jls_pwd, &cfg.jls_iv, &cfg.jls_upstream);
         let mut tp_cfg = TransportConfig::default();
-        tp_cfg.max_concurrent_bidi_streams(1000u32.into());
+       
+        let mut mtudis = MtuDiscoveryConfig::default();
+        mtudis.interval(Duration::from_secs(90));
+       
+        tp_cfg.max_concurrent_bidi_streams(1000u32.into())
+        .max_concurrent_uni_streams(1000u32.into())
+        .mtu_discovery_config(Some(mtudis))
+        .min_mtu(cfg.initial_mtu)
+        .initial_mtu(cfg.initial_mtu);
         match cfg.congestion_control {
             CongestionControl::Bbr => {
                 let bbr_config = BbrConfig::default();
@@ -206,6 +212,15 @@ impl SQServerConn {
         req_send: Sender<ProxyRequest>,
     ) -> Result<(), SError> {
         let req = SQReq::decode(&mut recv).await?;
+
+        let rate: f32 = (self.0.conn.stats().path.lost_packets as f32)
+        / ((self.0.conn.stats().path.sent_packets + 1) as f32);
+        info!(
+            "packet_loss_rate:{:.2}%, rtt:{:?}, mtu:{}",
+            rate * 100.0,
+            self.0.conn.rtt(),
+            self.0.conn.stats().path.current_mtu,
+        );
         match req.cmd {
             SQCmd::Connect => {
                 info!("connect request to {} accepted",req.dst.clone());
@@ -238,7 +253,7 @@ impl SQServerConn {
                     local_send.clone(),
                     Box::new(local_recv),
                     self.0.clone(),
-                    false,
+                    req.cmd == SQCmd::AssociatOverStream,
                 );
                 let fut2 = handle_udp_recv_ctrl(recv, local_send, self.0);
                 tokio::try_join!(fut1, fut2)?;

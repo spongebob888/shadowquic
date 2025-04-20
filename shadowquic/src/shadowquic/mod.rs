@@ -7,9 +7,9 @@ use std::{
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
-use quinn::{Connection, RecvStream, SendStream};
+use quinn::{Connection, RecvStream, SendDatagramError, SendStream};
 use tokio::sync::{Notify, RwLock, mpsc::channel};
-use tracing::{error, info, trace, trace_span};
+use tracing::{debug, error, event, info, trace, trace_span, warn, Instrument, Level};
 
 use crate::{
     AnyUdpRecv, AnyUdpSend,
@@ -119,6 +119,7 @@ impl Drop for AssociateSendSession {
         tokio::spawn(async move {
             let mut id_store = id_store.write().await;
             let _ = id_remove.values().map(|k| id_store.remove(k));
+            event!(Level::TRACE, "AssociateSendSession dropped");
         });
     }
 }
@@ -145,6 +146,7 @@ impl Drop for AssociateRecvSession {
         tokio::spawn(async move {
             let mut id_store = id_store.write().await;
             let _ = id_remove.keys().map(|k| id_store.remove(k));
+            event!(Level::TRACE, "AssociateRecvSession dropped");
         });
     }
 }
@@ -166,8 +168,7 @@ pub async fn handle_udp_send(
     loop {
         let (bytes, dst) = down_stream.recv_from().await?;
         let id = session.get_id_or_insert(&dst, udp_send.clone()).await;
-        let span = trace_span!("udp", id = id);
-        let _ = span.enter();
+        //let span = trace_span!("udp", id = id);
         let ctl_header = SQUdpControlHeader {
             dst: dst.clone(),
             id,
@@ -181,11 +182,11 @@ pub async fn handle_udp_send(
 
         let fut1 = async {
             ctl_header.encode(&mut send).await?;
-            trace!("udp control header sent");
+            //trace!("udp control header sent");
             Ok(()) as Result<(), SError>
         };
         let fut2 = async {
-            let mut content = BytesMut::with_capacity(1600);
+            let mut content = BytesMut::with_capacity(2000);
             let mut head = Vec::<u8>::new();
             dg_header.encode(&mut head).await?;
             if over_stream {
@@ -199,7 +200,12 @@ pub async fn handle_udp_send(
                     conn.write_all(&content).await?;
                 }
             } else {
-                let _ = quic_conn.send_datagram(content);
+                let len = content.len();
+                match quic_conn.send_datagram(content) {
+                    Ok(_) => (),
+                    Err(SendDatagramError::TooLarge) => warn!("datagram too large:{}>{}",len,quic_conn.max_datagram_size().unwrap()),
+                    e => e?
+                }
             }
             Ok(())
         };
@@ -240,15 +246,16 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
                 let SQPacketDatagramHeader{id} = SQPacketDatagramHeader::decode(&mut cur).await?;
                 
                 if let Some((udp,addr)) = id_map.get(&id) {
-                    info!("datagram accepted: id:{},dst:{}",id, addr);
                     let pos = cur.position() as usize;
                     let b = cur.into_inner().freeze();
                     udp.send_to(b.slice(pos..b.len()), addr.clone()).await?;
                 } else {
                     let id_store = id_store.clone();
                     let sender = send.clone();
+                    event!(Level::TRACE, "resolving datagram id:{}",id);
                     tokio::spawn(async move {
                         let (udp,addr) = id_store.get_socket_or_wait(id).await;
+                        debug!("datagram id resolve: id:{}:,dst:{}",id, addr);
                         let pos = cur.position() as usize;
                         let b = cur.into_inner().freeze();
                         let _ = udp.clone().send_to(b.slice(pos..b.len()), addr.clone()).await

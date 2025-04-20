@@ -47,7 +47,7 @@ async fn test_shadowquic() {
         initial_mtu: 1200,
         congestion_control: CongestionControl::Bbr,
         zero_rtt: true,
-        over_stream: true,
+        over_stream: false,
     });
 
     let client = Manager {

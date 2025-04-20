@@ -92,7 +92,7 @@ pub struct ShadowQuicClientCfg {
     #[serde(default = "default_over_stream")]
     pub over_stream: bool,
 }
-fn default_initial_mtu() -> u16 {1400}
+fn default_initial_mtu() -> u16 {1300}
 fn default_zero_rtt() -> bool {true}
 fn default_congestion_control() -> CongestionControl {CongestionControl::Bbr}
 fn default_over_stream() -> bool {false}
@@ -124,6 +124,8 @@ pub struct ShadowQuicServerCfg {
     pub zero_rtt: bool,
     #[serde(default = "default_congestion_control")]
     pub congestion_control: CongestionControl,
+    #[serde(default = "default_initial_mtu")]
+    pub initial_mtu: u16,
 }
 
 #[derive(Deserialize, Clone, Default)]
