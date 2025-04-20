@@ -1,4 +1,4 @@
-![image](./logo.svg)
+# ![image](./logo.svg)
 
  A 0-RTT QUIC Proxy with SNI camouflage 
 
@@ -27,7 +27,7 @@ Example config [server.yaml](./shadowquic/config_examples/server.yaml)
 ## Protocol
 [PROTOCOL](./PROTOCOL.pdf)
 
-## Acknowlegement
+## Acknowledgement
  * [JLS](https://github.com/JimmyHuang454/JLS)
  * [TUIC Protocol](https://github.com/tuic-protocol/tuic)
  * [TUIC Itsusinn fork](https://github.com/Itsusinn/tuic)
