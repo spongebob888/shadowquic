@@ -92,11 +92,11 @@ pub struct ShadowQuicClientCfg {
     #[serde(default = "default_over_stream")]
     pub over_stream: bool,
 }
-fn default_initial_mtu() -> u16 {1300}
-fn default_zero_rtt() -> bool {true}
-fn default_congestion_control() -> CongestionControl {CongestionControl::Bbr}
-fn default_over_stream() -> bool {false}
-fn default_alpn() -> Vec<String> {vec!["h3".into()]}
+pub fn default_initial_mtu() -> u16 {1300}
+pub fn default_zero_rtt() -> bool {true}
+pub fn default_congestion_control() -> CongestionControl {CongestionControl::Bbr}
+pub fn default_over_stream() -> bool {false}
+pub fn default_alpn() -> Vec<String> {vec!["h3".into()]}
 
 #[derive(Serialize, Deserialize, Default, Debug)]
 #[serde(rename_all = "kebab-case")]

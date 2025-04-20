@@ -1,11 +1,7 @@
 use std::time::Duration;
 
 use shadowquic::{
-    Manager,
-    config::{CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg},
-    direct::outbound::DirectOut,
-    shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
-    socks::inbound::SocksServer,
+    config::{default_initial_mtu, CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg}, direct::outbound::DirectOut, shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient}, socks::inbound::SocksServer, Manager
 };
 use tracing::{Level, level_filters::LevelFilter, trace};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -62,6 +58,7 @@ async fn test_shadowquic() {
         jls_upstream: "localhost:443".into(),
         alpn: vec!["h3".into()],
         zero_rtt: true,
+        initial_mtu: default_initial_mtu(),
         congestion_control: CongestionControl::Bbr,
     })
     .unwrap();

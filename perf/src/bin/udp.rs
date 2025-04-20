@@ -4,7 +4,7 @@ use std::sync::Arc;
 use fast_socks5::client::{Config, Socks5Datagram};
 use fast_socks5::util::target_addr::TargetAddr;
 
-use shadowquic::config::{CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg};
+use shadowquic::config::{default_initial_mtu, CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg};
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::time::Duration;
 
@@ -134,6 +134,7 @@ async fn test_shadowquic() {
             jls_upstream: "localhost:443".into(),
             alpn: vec!["h3".into()],
             zero_rtt: true,
+            initial_mtu: default_initial_mtu(),
             congestion_control: CongestionControl::Bbr,
         })
     .unwrap();
