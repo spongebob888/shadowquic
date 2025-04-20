@@ -42,55 +42,55 @@ jobs:
             target: x86_64-unknown-linux-gnu
             release-name: x86_64-linux
             tool: cross
-            extra-args: "--features jemallocator"
+            # extra-args: "--features jemallocator"
           - os: ubuntu-latest
             target: i686-unknown-linux-gnu
             release-name: i686-linux
             tool: cross
-            extra-args: "--features jemallocator"
+            # extra-args: "--features jemallocator"
           # Linux x86 musl
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             release-name: x86_64-linux-musl
             tool: cross
-            extra-args: "--features jemallocator"
+            # extra-args: "--features jemallocator"
           - os: ubuntu-latest
             target: i686-unknown-linux-musl
             release-name: i686-linux-musl
             tool: cross
-            extra-args: "--no-default-features --features ring"
+            # extra-args: "--no-default-features --features ring"
           # Linux arm
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             release-name: aarch64-linux
             tool: cross
-            extra-args: "--features jemallocator"
+            # extra-args: "--features jemallocator"
           - os: ubuntu-latest
             target: armv7-unknown-linux-gnueabi
             release-name: armv7-linux
             tool: cross
-            extra-args: "--no-default-features --features ring,jemallocator"
+            # extra-args: "--no-default-features --features ring"
           - os: ubuntu-latest
             target: armv7-unknown-linux-gnueabihf
             release-name: armv7-linux-hf
             tool: cross
-            extra-args: "--no-default-features --features ring,jemallocator"
+            # extra-args: "--no-default-features --features ring"
           # Linux arm musl
           - os: ubuntu-latest
             target: aarch64-unknown-linux-musl
             release-name: aarch64-linux-musl
             tool: cross
-            extra-args: "--features jemallocator"
+            # extra-args: "--features jemallocator"
           - os: ubuntu-latest
             target: armv7-unknown-linux-musleabi
             release-name: armv7-linux-musl
             tool: cross
-            extra-args: "--no-default-features --features ring"
+            # extra-args: "--no-default-features --features ring"
           - os: ubuntu-latest
             target: armv7-unknown-linux-musleabihf
             release-name: armv7-linux-muslhf
             tool: cross
-            extra-args: "--no-default-features --features ring"
+            # extra-args: "--no-default-features --features ring"
           # Windows
           - os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -100,7 +100,7 @@ jobs:
             target: i686-pc-windows-msvc
             release-name: i686-windows
             postfix: ".exe"
-            extra-args: "--no-default-features --features ring"
+            # extra-args: "--no-default-features --features ring"
           # Windows Arm
           - os: windows-latest
             target: aarch64-pc-windows-msvc
@@ -111,30 +111,30 @@ jobs:
           - os: macos-13
             target: x86_64-apple-darwin
             release-name: x86_64-darwin
-            extra-args: "--features jemallocator"
+            # extra-args: "--features jemallocator"
           - os: macos-14
             target: aarch64-apple-darwin
             release-name: aarch64-darwin
-            extra-args: "--features jemallocator"
+            # extra-args: "--features jemallocator"
           # FreeBSD
           - os: ubuntu-latest
             target: x86_64-unknown-freebsd
             release-name: x86_64-freebsd
             tool: cross
             skip-test: true
-            extra-args: "--no-default-features --features ring"
+            # extra-args: "--no-default-features --features ring"
           # RISC-V
           - os: ubuntu-latest
             target: riscv64gc-unknown-linux-gnu
             release-name: riscv64gc-linux
             tool: cross
-            extra-args: "--no-default-features --features ring,jemallocator"
+            # extra-args: "--no-default-features --features ring"
           # Loongarch64 ring problem
           - os: ubuntu-latest
             target: loongarch64-unknown-linux-gnu
             release-name: loongarch64-linux
             tool: cross
-            extra-args: "--no-default-features --features ring"
+            # extra-args: "--no-default-features --features ring"
 
           # Linux mips: tier-3, pity
           # Windows gnu: tokio dont work
