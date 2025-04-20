@@ -17,7 +17,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, UdpSocket};
 
 use anyhow::Result;
-use tracing::{error, trace, warn};
+use tracing::{trace, warn};
 pub struct SocksServer {
     #[allow(dead_code)]
     bind_addr: SocketAddr,

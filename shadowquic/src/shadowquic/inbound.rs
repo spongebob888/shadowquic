@@ -3,7 +3,9 @@ use bytes::Bytes;
 use std::{net::SocketAddr, pin::Pin, sync::Arc, time::Duration};
 
 use quinn::{
-    congestion::{BbrConfig, CubicConfig, NewRenoConfig}, crypto::rustls::QuicServerConfig, Endpoint, Incoming, MtuDiscoveryConfig, RecvStream, SendStream, ServerConfig, TransportConfig
+    Endpoint, Incoming, MtuDiscoveryConfig, RecvStream, SendStream, ServerConfig, TransportConfig,
+    congestion::{BbrConfig, CubicConfig, NewRenoConfig},
+    crypto::rustls::QuicServerConfig,
 };
 use rustls::ServerConfig as RustlsServerConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
@@ -12,7 +14,7 @@ use tokio::{
     select,
     sync::mpsc::{Receiver, Sender, channel},
 };
-use tracing::{debug, error, event, info, trace, trace_span, Instrument, Level};
+use tracing::{Instrument, Level, debug, error, event, info, trace, trace_span};
 
 use crate::{
     Inbound, ProxyRequest, TcpSession, TcpTrait, UdpSession,
@@ -58,14 +60,15 @@ impl ShadowQuicServer {
         crypto.jls_config =
             rustls::JlsServerConfig::new(&cfg.jls_pwd, &cfg.jls_iv, &cfg.jls_upstream);
         let mut tp_cfg = TransportConfig::default();
-       
+
         let mut mtudis = MtuDiscoveryConfig::default();
         mtudis.interval(Duration::from_secs(90));
-       
-        tp_cfg.max_concurrent_bidi_streams(1000u32.into())
-        .max_concurrent_uni_streams(1000u32.into())
-        .mtu_discovery_config(Some(mtudis))
-        .initial_mtu(cfg.initial_mtu);
+
+        tp_cfg
+            .max_concurrent_bidi_streams(1000u32.into())
+            .max_concurrent_uni_streams(1000u32.into())
+            .mtu_discovery_config(Some(mtudis))
+            .initial_mtu(cfg.initial_mtu);
         match cfg.congestion_control {
             CongestionControl::Bbr => {
                 let bbr_config = BbrConfig::default();
@@ -213,7 +216,7 @@ impl SQServerConn {
         let req = SQReq::decode(&mut recv).await?;
 
         let rate: f32 = (self.0.conn.stats().path.lost_packets as f32)
-        / ((self.0.conn.stats().path.sent_packets + 1) as f32);
+            / ((self.0.conn.stats().path.sent_packets + 1) as f32);
         info!(
             "packet_loss_rate:{:.2}%, rtt:{:?}, mtu:{}",
             rate * 100.0,
@@ -222,7 +225,7 @@ impl SQServerConn {
         );
         match req.cmd {
             SQCmd::Connect => {
-                info!("connect request to {} accepted",req.dst.clone());
+                info!("connect request to {} accepted", req.dst.clone());
                 let tcp: TcpSession = TcpSession {
                     stream: Box::new(Unsplit { s: send, r: recv }),
                     dst: req.dst,
@@ -233,7 +236,7 @@ impl SQServerConn {
                     .map_err(|_| SError::OutboundUnavailable)?;
             }
             SQCmd::AssociatOverDatagram | SQCmd::AssociatOverStream => {
-                info!("association request to {} accepted",req.dst.clone());
+                info!("association request to {} accepted", req.dst.clone());
                 let (local_send, udp_recv) = channel::<(Bytes, SocksAddr)>(10);
                 let (udp_send, local_recv) = channel::<(Bytes, SocksAddr)>(10);
                 let udp: UdpSession = UdpSession {

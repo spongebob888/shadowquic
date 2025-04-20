@@ -1,7 +1,14 @@
 use std::time::Duration;
 
 use shadowquic::{
-    config::{default_initial_mtu, CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg}, direct::outbound::DirectOut, shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient}, socks::inbound::SocksServer, Manager
+    Manager,
+    config::{
+        CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg,
+        default_initial_mtu,
+    },
+    direct::outbound::DirectOut,
+    shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
+    socks::inbound::SocksServer,
 };
 use tracing::{Level, level_filters::LevelFilter, trace};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};

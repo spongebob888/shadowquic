@@ -4,7 +4,10 @@ use std::sync::Arc;
 use fast_socks5::client::{Config, Socks5Datagram};
 use fast_socks5::util::target_addr::TargetAddr;
 
-use shadowquic::config::{default_initial_mtu, CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg};
+use shadowquic::config::{
+    CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg,
+    default_initial_mtu,
+};
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::time::Duration;
 
@@ -38,13 +41,13 @@ async fn main() {
     )
     .await
     .unwrap();
-    let mut sendbuf = vec![0u8; CHUNK_LEN];
+    let sendbuf = vec![0u8; CHUNK_LEN];
     let mut recvbuf = vec![0u8; CHUNK_LEN];
 
     let fut_2 = async {
         let now = tokio::time::Instant::now();
         for ii in 0..ROUND {
-            socks.send_to(&mut sendbuf, target_addr).await.unwrap();
+            socks.send_to(&sendbuf, target_addr).await.unwrap();
             if ii % 100 == 0 {
                 tokio::time::sleep(tokio::time::Duration::from_micros(1)).await;
             }
@@ -66,7 +69,7 @@ async fn main() {
         let mut total = 0;
         let _ = tokio::time::timeout(Duration::from_millis(500), async {
             let mut len;
-            for ii in 0..ROUND {
+            for _ii in 0..ROUND {
                 (len, addr) = socks.recv_from(&mut recvbuf).await.unwrap();
                 total += len;
             }
@@ -105,38 +108,38 @@ async fn test_shadowquic() {
     // env_logger::init();
     trace!("Running");
 
-    let socks_server = SocksServer::new(SocksServerCfg{bind_addr:"127.0.0.1:1089".parse().unwrap()})
-        .await
-        .unwrap();
-    let sq_client = ShadowQuicClient::new(
-        ShadowQuicClientCfg {
-            jls_pwd: "123".into(),
-            jls_iv: "123".into(),
-            addr: "127.0.0.1:4444".parse().unwrap(),
-            server_name: "localhost".into(),
-            alpn: vec!["h3".into()],
-            initial_mtu: 1200,
-            congestion_control: CongestionControl::Bbr,
-            zero_rtt: true,
-            over_stream: false,
-        });
+    let socks_server = SocksServer::new(SocksServerCfg {
+        bind_addr: "127.0.0.1:1089".parse().unwrap(),
+    })
+    .await
+    .unwrap();
+    let sq_client = ShadowQuicClient::new(ShadowQuicClientCfg {
+        jls_pwd: "123".into(),
+        jls_iv: "123".into(),
+        addr: "127.0.0.1:4444".parse().unwrap(),
+        server_name: "localhost".into(),
+        alpn: vec!["h3".into()],
+        initial_mtu: 1200,
+        congestion_control: CongestionControl::Bbr,
+        zero_rtt: true,
+        over_stream: false,
+    });
 
     let client = Manager {
         inbound: Box::new(socks_server),
         outbound: Box::new(sq_client),
     };
 
-    let sq_server = ShadowQuicServer::new(
-        ShadowQuicServerCfg {
-            bind_addr: "127.0.0.1:4444".parse().unwrap(),
-            jls_pwd: "123".into(),
-            jls_iv: "123".into(),
-            jls_upstream: "localhost:443".into(),
-            alpn: vec!["h3".into()],
-            zero_rtt: true,
-            initial_mtu: default_initial_mtu(),
-            congestion_control: CongestionControl::Bbr,
-        })
+    let sq_server = ShadowQuicServer::new(ShadowQuicServerCfg {
+        bind_addr: "127.0.0.1:4444".parse().unwrap(),
+        jls_pwd: "123".into(),
+        jls_iv: "123".into(),
+        jls_upstream: "localhost:443".into(),
+        alpn: vec!["h3".into()],
+        zero_rtt: true,
+        initial_mtu: default_initial_mtu(),
+        congestion_control: CongestionControl::Bbr,
+    })
     .unwrap();
     let direct_client = DirectOut;
     let server = Manager {
@@ -152,7 +155,7 @@ async fn test_shadowquic() {
 async fn echo_tcp(port: u16) {
     let socks = Arc::new(UdpSocket::bind(("0.0.0.0", port)).await.unwrap());
 
-    let mut sendbuf = vec![0u8; CHUNK_LEN];
+    let sendbuf = vec![0u8; CHUNK_LEN];
     let mut recvbuf = vec![0u8; CHUNK_LEN];
     // let mut s1:TcpStream = s.get_socket();
 
@@ -163,7 +166,7 @@ async fn echo_tcp(port: u16) {
         let mut total = 0;
 
         let _ = tokio::time::timeout(Duration::from_millis(500), async {
-            for ii in 0..ROUND {
+            for _ii in 0..ROUND {
                 let len;
                 (len, addr) = socks1.recv_from(&mut recvbuf).await.unwrap();
                 total += len;
@@ -183,7 +186,7 @@ async fn echo_tcp(port: u16) {
     let fut_2 = async move {
         let now = tokio::time::Instant::now();
         for ii in 0..ROUND {
-            socks.send_to(&mut sendbuf, addr).await.unwrap();
+            socks.send_to(&sendbuf, addr).await.unwrap();
             if ii % 100 == 0 {
                 tokio::time::sleep(tokio::time::Duration::from_micros(1)).await;
             }

@@ -1,5 +1,8 @@
 use fast_socks5::client::{Config, Socks5Stream};
-use shadowquic::config::{default_initial_mtu, CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg};
+use shadowquic::config::{
+    CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg,
+    default_initial_mtu,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use tokio::{net::TcpListener, time::Duration};
@@ -32,13 +35,13 @@ async fn main() {
         .await
         .unwrap();
 
-    let mut sendbuf = vec![0u8; CHUNK_LEN];
+    let sendbuf = vec![0u8; CHUNK_LEN];
     let mut recvbuf = vec![0u8; CHUNK_LEN];
     // let mut s1:TcpStream = s.get_socket();
     let (mut r, mut w) = s.get_socket_mut().split();
     let fut_1 = async move {
         let now = tokio::time::Instant::now();
-        for ii in 0..ROUND {
+        for _ii in 0..ROUND {
             r.read_exact(&mut recvbuf).await.unwrap();
         }
         let after = tokio::time::Instant::now();
@@ -51,7 +54,7 @@ async fn main() {
     let fut_2 = async move {
         let now = tokio::time::Instant::now();
         for _ in 0..ROUND {
-            w.write_all(&mut sendbuf).await.unwrap();
+            w.write_all(&sendbuf).await.unwrap();
         }
         w.flush().await.unwrap();
         let after = tokio::time::Instant::now();
@@ -85,38 +88,38 @@ async fn test_shadowquic() {
     // env_logger::init();
     trace!("Running");
 
-    let socks_server = SocksServer::new(SocksServerCfg{bind_addr:"127.0.0.1:1089".parse().unwrap()})
-        .await
-        .unwrap();
-    let sq_client = ShadowQuicClient::new(
-        ShadowQuicClientCfg {
-            jls_pwd: "123".into(),
-            jls_iv: "123".into(),
-            addr: "127.0.0.1:4444".parse().unwrap(),
-            server_name: "localhost".into(),
-            alpn: vec!["h3".into()],
-            initial_mtu: 1200,
-            congestion_control: CongestionControl::Bbr,
-            zero_rtt: true,
-            over_stream: true,
-        });
+    let socks_server = SocksServer::new(SocksServerCfg {
+        bind_addr: "127.0.0.1:1089".parse().unwrap(),
+    })
+    .await
+    .unwrap();
+    let sq_client = ShadowQuicClient::new(ShadowQuicClientCfg {
+        jls_pwd: "123".into(),
+        jls_iv: "123".into(),
+        addr: "127.0.0.1:4444".parse().unwrap(),
+        server_name: "localhost".into(),
+        alpn: vec!["h3".into()],
+        initial_mtu: 1200,
+        congestion_control: CongestionControl::Bbr,
+        zero_rtt: true,
+        over_stream: true,
+    });
 
     let client = Manager {
         inbound: Box::new(socks_server),
         outbound: Box::new(sq_client),
     };
 
-    let sq_server = ShadowQuicServer::new(
-        ShadowQuicServerCfg {
-            bind_addr: "127.0.0.1:4444".parse().unwrap(),
-            jls_pwd: "123".into(),
-            jls_iv: "123".into(),
-            jls_upstream: "localhost:443".into(),
-            alpn: vec!["h3".into()],
-            zero_rtt: true,
-            initial_mtu: default_initial_mtu(),
-            congestion_control: CongestionControl::Bbr,
-        })
+    let sq_server = ShadowQuicServer::new(ShadowQuicServerCfg {
+        bind_addr: "127.0.0.1:4444".parse().unwrap(),
+        jls_pwd: "123".into(),
+        jls_iv: "123".into(),
+        jls_upstream: "localhost:443".into(),
+        alpn: vec!["h3".into()],
+        zero_rtt: true,
+        initial_mtu: default_initial_mtu(),
+        congestion_control: CongestionControl::Bbr,
+    })
     .unwrap();
     let direct_client = DirectOut;
     let server = Manager {
@@ -131,31 +134,31 @@ async fn test_shadowquic() {
 }
 async fn tcp_peer(port: u16) {
     let lis = TcpListener::bind(("0.0.0.0", port)).await.unwrap();
-    let (mut s, addr) = lis.accept().await.unwrap();
+    let (mut s, _addr) = lis.accept().await.unwrap();
     info!("accepted");
     let (mut r, mut w) = s.split();
 
-    let mut sendbuf = vec![0u8; CHUNK_LEN];
+    let sendbuf = vec![0u8; CHUNK_LEN];
     let mut recvbuf = vec![0u8; CHUNK_LEN];
     // let mut s1:TcpStream = s.get_socket();
 
     let fut_1 = async move {
         let now = tokio::time::Instant::now();
-        for ii in 0..ROUND {
+        for _ii in 0..ROUND {
             r.read_exact(&mut recvbuf).await.unwrap();
         }
         let after = tokio::time::Instant::now();
-        let dura = after - now;
+        let _dura = after - now;
         //info!("average download speed:{} MB/s",(len*round) as f64 / dura.as_secs_f64()/1024.0/1024.0);
     };
     let fut_2 = async move {
         let now = tokio::time::Instant::now();
         for _ in 0..ROUND {
-            w.write_all(&mut sendbuf).await.unwrap();
+            w.write_all(&sendbuf).await.unwrap();
         }
         w.flush().await.unwrap();
         let after = tokio::time::Instant::now();
-        let dura = after - now;
+        let _dura = after - now;
         //info!("average upload speed:{} MB/s",(len*round) as f64 / dura.as_secs_f64()/1024.0/1024.0);
     };
 

@@ -2,9 +2,14 @@ use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
 use tracing::Level;
-use educe::Educe;
 
-use crate::{direct::outbound::DirectOut, error::SError, msgs::socks5::SEncode, shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient}, socks::inbound::SocksServer, Inbound, Manager, Outbound};
+use crate::{
+    Inbound, Manager, Outbound,
+    direct::outbound::DirectOut,
+    error::SError,
+    shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
+    socks::inbound::SocksServer,
+};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -15,7 +20,7 @@ pub struct Config {
     pub log_level: LogLevel,
 }
 impl Config {
-    pub async fn build_manager(self) -> Result<Manager,SError> {
+    pub async fn build_manager(self) -> Result<Manager, SError> {
         Ok(Manager {
             inbound: self.inbound.build_inbound().await?,
             outbound: self.outbound.build_outbound().await?,
@@ -32,7 +37,7 @@ pub enum InboundCfg {
     ShadowQuic(ShadowQuicServerCfg),
 }
 impl InboundCfg {
-    async fn build_inbound(self) -> Result<Box<dyn Inbound>, SError>{
+    async fn build_inbound(self) -> Result<Box<dyn Inbound>, SError> {
         let r: Box<dyn Inbound> = match self {
             InboundCfg::Socks(cfg) => Box::new(SocksServer::new(cfg).await?),
             InboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicServer::new(cfg)?),
@@ -52,11 +57,11 @@ pub enum OutboundCfg {
 }
 
 impl OutboundCfg {
-    async fn build_outbound(self) -> Result<Box<dyn Outbound>, SError>{
+    async fn build_outbound(self) -> Result<Box<dyn Outbound>, SError> {
         let r: Box<dyn Outbound> = match self {
-            OutboundCfg::Socks(cfg) => panic!("Not implemented yet"),
+            OutboundCfg::Socks(_cfg) => panic!("Not implemented yet"),
             OutboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicClient::new(cfg)),
-            OutboundCfg::Direct(direct_out_cfg) => Box::new(DirectOut),
+            OutboundCfg::Direct(_) => Box::new(DirectOut),
         };
         Ok(r)
     }
@@ -92,11 +97,21 @@ pub struct ShadowQuicClientCfg {
     #[serde(default = "default_over_stream")]
     pub over_stream: bool,
 }
-pub fn default_initial_mtu() -> u16 {1300}
-pub fn default_zero_rtt() -> bool {true}
-pub fn default_congestion_control() -> CongestionControl {CongestionControl::Bbr}
-pub fn default_over_stream() -> bool {false}
-pub fn default_alpn() -> Vec<String> {vec!["h3".into()]}
+pub fn default_initial_mtu() -> u16 {
+    1300
+}
+pub fn default_zero_rtt() -> bool {
+    true
+}
+pub fn default_congestion_control() -> CongestionControl {
+    CongestionControl::Bbr
+}
+pub fn default_over_stream() -> bool {
+    false
+}
+pub fn default_alpn() -> Vec<String> {
+    vec!["h3".into()]
+}
 
 #[derive(Serialize, Deserialize, Default, Debug)]
 #[serde(rename_all = "kebab-case")]

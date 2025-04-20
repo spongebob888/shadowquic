@@ -9,7 +9,7 @@ use std::{
 use bytes::{BufMut, Bytes, BytesMut};
 use quinn::{Connection, RecvStream, SendDatagramError, SendStream};
 use tokio::sync::{Notify, RwLock, mpsc::channel};
-use tracing::{debug, error, event, info, trace, trace_span, warn, Instrument, Level};
+use tracing::{Level, debug, error, event, info, trace, warn};
 
 use crate::{
     AnyUdpRecv, AnyUdpSend,
@@ -203,8 +203,12 @@ pub async fn handle_udp_send(
                 let len = content.len();
                 match quic_conn.send_datagram(content) {
                     Ok(_) => (),
-                    Err(SendDatagramError::TooLarge) => warn!("datagram too large:{}>{}",len,quic_conn.max_datagram_size().unwrap()),
-                    e => e?
+                    Err(SendDatagramError::TooLarge) => warn!(
+                        "datagram too large:{}>{}",
+                        len,
+                        quic_conn.max_datagram_size().unwrap()
+                    ),
+                    e => e?,
                 }
             }
             Ok(())
@@ -244,7 +248,7 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
                 let b = BytesMut::from(b);
                 let mut cur = Cursor::new(b);
                 let SQPacketDatagramHeader{id} = SQPacketDatagramHeader::decode(&mut cur).await?;
-                
+
                 if let Some((udp,addr)) = id_map.get(&id) {
                     let pos = cur.position() as usize;
                     let b = cur.into_inner().freeze();

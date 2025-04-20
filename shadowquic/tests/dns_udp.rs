@@ -42,7 +42,7 @@ struct Opt {
 
 #[tokio::test]
 async fn main() -> Result<()> {
-    let filter = tracing_subscriber::filter::Targets::new()
+    let _filter = tracing_subscriber::filter::Targets::new()
         // Enable the `INFO` level for anything in `my_crate`
         .with_target("shadowquic", Level::TRACE)
         .with_target("dns_udp", Level::TRACE)

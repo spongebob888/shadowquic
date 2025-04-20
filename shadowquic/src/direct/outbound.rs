@@ -103,16 +103,13 @@ async fn resolve(socks: &SocksAddr, ipv4_only: bool) -> Result<SocketAddr, SErro
         crate::msgs::socks5::AddrOrDomain::V6(x) => {
             SocketAddr::new(IpAddr::V6(Ipv6Addr::from(x)), 0)
         }
-        crate::msgs::socks5::AddrOrDomain::Domain(var_vec) => {
-            lookup_host((
+        crate::msgs::socks5::AddrOrDomain::Domain(var_vec) => lookup_host((
             String::from_utf8(var_vec.contents).map_err(|_| SError::DomainResolveFailed)?,
             socks.port,
         ))
         .await?
-        .filter(|x|x.is_ipv4() || (!ipv4_only))
-        .next()
-        .ok_or(SError::DomainResolveFailed)?
-    },
+        .find(|x| x.is_ipv4() || (!ipv4_only))
+        .ok_or(SError::DomainResolveFailed)?,
     };
     s.set_port(socks.port);
     Ok(s)
@@ -155,9 +152,9 @@ async fn handle_udp(udp_session: UdpSession) -> Result<(), SError> {
         let (buf, dst) = downstream.recv_from().await?;
 
         //trace!("udp request to:{}", dst);
-        let dst = dns_cache.resolve(dst,ipv4_only).await?;
+        let dst = dns_cache.resolve(dst, ipv4_only).await?;
         //trace!("udp resolve to:{}", dst);
-        let siz = upstream_clone.send_to(&buf, dst).await?;
+        let _siz = upstream_clone.send_to(&buf, dst).await?;
         //trace!("udp request sent:{}bytes", siz);
     }
 }
