@@ -50,8 +50,7 @@ impl ShadowQuicClient {
         tp_cfg
             .max_concurrent_bidi_streams(500u32.into())
             .max_concurrent_uni_streams(500u32.into())
-            .mtu_discovery_config(Some(mtudis))   
-            .min_mtu(cfg.initial_mtu)       
+            .mtu_discovery_config(Some(mtudis))          
             .initial_mtu(cfg.initial_mtu);
 
         match cfg.congestion_control {

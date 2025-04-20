@@ -647,7 +647,7 @@ dependencies = [
 [[package]]
 name = "quinn"
 version = "0.11.7"
-source = "git+https://github.com/spongebob888/quinn-jls?branch=jls-dev#069a4b1ff653e553f951b5efcc14345644f993bd"
+source = "git+https://github.com/spongebob888/quinn-jls?branch=jls-dev#419e72992b742e6649dcca7c4c0ca453ab2e756b"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -666,7 +666,7 @@ dependencies = [
 [[package]]
 name = "quinn-proto"
 version = "0.11.10"
-source = "git+https://github.com/spongebob888/quinn-jls?branch=jls-dev#069a4b1ff653e553f951b5efcc14345644f993bd"
+source = "git+https://github.com/spongebob888/quinn-jls?branch=jls-dev#419e72992b742e6649dcca7c4c0ca453ab2e756b"
 dependencies = [
  "bytes",
  "getrandom 0.3.2",
@@ -685,7 +685,7 @@ dependencies = [
 [[package]]
 name = "quinn-udp"
 version = "0.5.10"
-source = "git+https://github.com/spongebob888/quinn-jls?branch=jls-dev#069a4b1ff653e553f951b5efcc14345644f993bd"
+source = "git+https://github.com/spongebob888/quinn-jls?branch=jls-dev#419e72992b742e6649dcca7c4c0ca453ab2e756b"
 dependencies = [
  "cfg_aliases",
  "libc",
