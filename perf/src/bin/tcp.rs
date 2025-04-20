@@ -1,5 +1,5 @@
 use fast_socks5::client::{Config, Socks5Stream};
-use shadowquic::config::{CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg};
+use shadowquic::config::{default_initial_mtu, CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use tokio::{net::TcpListener, time::Duration};
@@ -114,6 +114,7 @@ async fn test_shadowquic() {
             jls_upstream: "localhost:443".into(),
             alpn: vec!["h3".into()],
             zero_rtt: true,
+            initial_mtu: default_initial_mtu(),
             congestion_control: CongestionControl::Bbr,
         })
     .unwrap();
