@@ -4,7 +4,7 @@ use clap::Parser;
 use shadowquic::{
     config::{self, Config, CongestionControl, LogLevel, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg}, direct::outbound::DirectOut, shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient}, socks::inbound::SocksServer, Manager
 };
-use tracing::{Level, level_filters::LevelFilter, trace};
+use tracing::{info, level_filters::LevelFilter, trace, Level};
 use tracing_subscriber::{fmt::time::{LocalTime}, layer::SubscriberExt, util::SubscriberInitExt};
 use tracing_subscriber::prelude::*;
 
@@ -32,14 +32,14 @@ async fn main() {
     setup_log(cfg.log_level.clone());
     let manager = cfg.build_manager().await.expect("creating inbound/outbound failed");
 
+    info!("shadowquic running");
     manager.run().await.expect("shadowquic stopped");
 }
 
 fn setup_log(level: LogLevel) {
     let filter = tracing_subscriber::filter::Targets::new()
         // Enable the `INFO` level for anything in `my_crate`
-        .with_target("shadowquic", level.as_tracing_level())
-        .with_target("shadowquic::msgs::socks", LevelFilter::OFF);
+        .with_target("shadowquic", level.as_tracing_level());
     let timer = LocalTime::new(time::macros::format_description!(
         "[year repr:last_two]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]"
     ));

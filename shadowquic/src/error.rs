@@ -17,6 +17,8 @@ pub enum SError {
     QuicWrite(#[from] quinn::WriteError),
     #[error("QUIC ReadExact Error:{0}")]
     QuicReadExactError(#[from] quinn::ReadExactError),
+    #[error("QUIC SendDatagramError:{0}")]
+    QuicSendDatagramError(#[from] quinn::SendDatagramError),
     #[error("JLS Authentication failed")]
     JlsAuthFailed,
     #[error("Rustls Error")]
@@ -29,4 +31,6 @@ pub enum SError {
     DomainResolveFailed,
     #[error("mpsc channel error: {0}")]
     ChannelError(String),
+    #[error("Socks UDP control stream closed")]
+    UDPCtrlStreamClosed,
 }

@@ -137,14 +137,14 @@ async fn handle_udp(udp_session: UdpSession) -> Result<(), SError> {
     let fut1 = async move {
         loop {
             let mut buf_send = BytesMut::new();
-            buf_send.resize(1600, 0);
-            trace!("recv upstream");
+            buf_send.resize(2000, 0);
+            //trace!("recv upstream");
             let (len, dst) = upstream.recv_from(&mut buf_send).await?;
-            trace!("udp request reply from:{}", dst);
+            //trace!("udp request reply from:{}", dst);
             let dst = dns_cache_clone.inv_resolve(&dst).await;
-            trace!("udp source inverse resolved to:{}", dst);
+            //trace!("udp source inverse resolved to:{}", dst);
             let buf = buf_send.freeze();
-            trace!("udp recved:{} bytes", len);
+            //trace!("udp recved:{} bytes", len);
             let _ = udp_session.send.send_to(buf.slice(..len), dst).await?;
         }
         #[allow(unreachable_code)]
@@ -154,10 +154,10 @@ async fn handle_udp(udp_session: UdpSession) -> Result<(), SError> {
     loop {
         let (buf, dst) = downstream.recv_from().await?;
 
-        trace!("udp request to:{}", dst);
+        //trace!("udp request to:{}", dst);
         let dst = dns_cache.resolve(dst,ipv4_only).await?;
-        trace!("udp resolve to:{}", dst);
+        //trace!("udp resolve to:{}", dst);
         let siz = upstream_clone.send_to(&buf, dst).await?;
-        trace!("udp request sent:{}bytes", siz);
+        //trace!("udp request sent:{}bytes", siz);
     }
 }
