@@ -5,7 +5,14 @@ use std::{
 
 use fast_socks5::{Result, client::Socks5Datagram};
 use shadowquic::{
-    Manager, config::SocksServerCfg, direct::outbound::DirectOut, socks::inbound::SocksServer,
+    Manager,
+    config::{
+        CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg,
+        default_initial_mtu,
+    },
+    direct::outbound::DirectOut,
+    shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
+    socks::inbound::SocksServer,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -44,7 +51,7 @@ struct Opt {
 }
 
 #[tokio::test]
-async fn main() -> Result<()> {
+async fn test_direct() -> Result<()> {
     let _filter = tracing_subscriber::filter::Targets::new()
         // Enable the `INFO` level for anything in `my_crate`
         .with_target("shadowquic", Level::TRACE)
@@ -55,20 +62,66 @@ async fn main() -> Result<()> {
 
     // Build a new subscriber with the `fmt` layer using the `Targets`
     // filter we constructed above.
-    tracing_subscriber::registry()
+    let _ = tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
-        .init();
+        .try_init();
 
     spawn_socks_server().await;
-    let _ = tokio::time::timeout(Duration::from_secs(60), spawn_socks_client())
+    let _ = tokio::time::timeout(Duration::from_secs(60), spawn_socks_client(1089))
         .await
         .unwrap();
     Ok(())
 }
 
-async fn spawn_socks_client() -> Result<()> {
+#[tokio::test]
+async fn test_shadowquic_overstream() -> Result<()> {
+    let _filter = tracing_subscriber::filter::Targets::new()
+        // Enable the `INFO` level for anything in `my_crate`
+        .with_target("shadowquic", Level::TRACE)
+        //.with_target("dns_udp", Level::TRACE)
+        .with_target("shadowquic::msgs::socks", LevelFilter::OFF);
+
+    // Enable the `DEBUG` level for a specific module.
+
+    // Build a new subscriber with the `fmt` layer using the `Targets`
+    // filter we constructed above.
+    let _ = tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .try_init();
+
+    shadowquic_client_server(true, 1090).await;
+    let _ = tokio::time::timeout(Duration::from_secs(60), spawn_socks_client(1090))
+        .await
+        .unwrap();
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_shadowquic_overdatagram() -> Result<()> {
+    let _filter = tracing_subscriber::filter::Targets::new()
+        // Enable the `INFO` level for anything in `my_crate`
+        .with_target("shadowquic", Level::TRACE)
+        //.with_target("dns_udp", Level::TRACE)
+        .with_target("shadowquic::msgs::socks", LevelFilter::OFF);
+
+    // Enable the `DEBUG` level for a specific module.
+
+    // Build a new subscriber with the `fmt` layer using the `Targets`
+    // filter we constructed above.
+    let _ = tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .try_init();
+
+    shadowquic_client_server(false, 1091).await;
+    let _ = tokio::time::timeout(Duration::from_secs(60), spawn_socks_client(1091))
+        .await
+        .unwrap();
+    Ok(())
+}
+
+async fn spawn_socks_client(socks_port: u16) -> Result<()> {
     let opt: Opt = Opt {
-        socks_server: "127.0.0.1:1089".parse().unwrap(),
+        socks_server: SocketAddr::new("127.0.0.1".parse().unwrap(), socks_port),
         target_server: String::from("dns.google.com"),
         target_port: None,
         query_domain: String::from("www.gstatic.com"),
@@ -126,6 +179,7 @@ async fn spawn_socks_server() {
         outbound: Box::new(direct_client),
     };
     tokio::spawn(server.run());
+    tokio::time::sleep(Duration::from_millis(200)).await;
 }
 /// Simple DNS request
 async fn dns_request<S: AsyncRead + AsyncWrite + Unpin>(
@@ -156,14 +210,73 @@ async fn dns_request<S: AsyncRead + AsyncWrite + Unpin>(
     let mut buf = [0u8; 256];
     let (len, adr) = socket.recv_from(&mut buf).await?;
     let msg = &buf[..len];
-    info!(
-        "response: {:?} from {:?}",
-        String::from_utf8(msg.to_vec()),
-        adr
-    );
+    info!("response: {:?} from {:?}", msg, adr);
 
     assert_eq!(msg[0], 0x13);
     assert_eq!(msg[1], 0x37);
 
     Ok(())
+}
+
+async fn shadowquic_client_server(over_stream: bool, port: u16) {
+    // let filter = tracing_subscriber::filter::Targets::new()
+    //     // Enable the `INFO` level for anything in `my_crate`
+    //     .with_target("shadowquic", Level::TRACE)
+    //     .with_target("shadowquic::msgs::socks", LevelFilter::OFF);
+
+    // Enable the `DEBUG` level for a specific module.
+
+    // Build a new subscriber with the `fmt` layer using the `Targets`
+    // filter we constructed above.
+    // let _ = tracing_subscriber::registry()
+    //     .with(tracing_subscriber::fmt::layer())
+    //     .with(filter)
+    //     .try_init();
+
+    // env_logger::init();
+    trace!("Running");
+
+    let socks_server = SocksServer::new(SocksServerCfg {
+        bind_addr: SocketAddr::new("127.0.0.1".parse().unwrap(), port),
+    })
+    .await
+    .unwrap();
+    let sq_client = ShadowQuicClient::new(ShadowQuicClientCfg {
+        jls_pwd: "123".into(),
+        jls_iv: "123".into(),
+        addr: format!("127.0.0.1:{}", port + 10),
+        server_name: "localhost".into(),
+        alpn: vec!["h3".into()],
+        initial_mtu: 1200,
+        congestion_control: CongestionControl::Bbr,
+        zero_rtt: true,
+        over_stream: over_stream,
+    });
+
+    let client = Manager {
+        inbound: Box::new(socks_server),
+        outbound: Box::new(sq_client),
+    };
+
+    let sq_server = ShadowQuicServer::new(ShadowQuicServerCfg {
+        bind_addr: format!("127.0.0.1:{}", port + 10).parse().unwrap(),
+        jls_pwd: "123".into(),
+        jls_iv: "123".into(),
+        jls_upstream: "localhost:443".into(),
+        alpn: vec!["h3".into()],
+        zero_rtt: true,
+        initial_mtu: default_initial_mtu(),
+        congestion_control: CongestionControl::Bbr,
+    })
+    .unwrap();
+    let direct_client = DirectOut;
+    let server = Manager {
+        inbound: Box::new(sq_server),
+        outbound: Box::new(direct_client),
+    };
+
+    tokio::spawn(server.run());
+
+    tokio::spawn(client.run());
+    tokio::time::sleep(Duration::from_millis(200)).await;
 }
