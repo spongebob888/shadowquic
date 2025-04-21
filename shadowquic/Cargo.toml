@@ -26,6 +26,7 @@ serde = { version = "1.0.219", features = ["derive"]}
 serde_yaml = "0.9.34"
 clap = { version = "4", features = ["derive"] }
 educe = "0.6.0"
+socket2 = "0.5.9"
 
 [dev-dependencies]
 fast-socks5 = "0.10.0"

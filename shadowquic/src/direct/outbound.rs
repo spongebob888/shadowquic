@@ -1,10 +1,13 @@
 use std::{
     collections::HashMap,
+    io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs},
+    ops::Deref,
     sync::Arc,
 };
 
 use bytes::BytesMut;
+use socket2::{Domain, Protocol, Socket, Type};
 use tokio::{
     net::{TcpStream, UdpSocket, lookup_host},
     sync::Mutex,
@@ -124,8 +127,10 @@ async fn handle_udp(udp_session: UdpSession) -> Result<(), SError> {
         .ok_or(SError::DomainResolveFailed)?;
     trace!("resolved to {}", dst);
     let ipv4_only = dst.is_ipv4();
-    //let upstream = UdpSocket::bind(dst).await?;
-    let upstream = Arc::new(UdpSocket::bind(dst).await?);
+
+    let socket = DualSocket::new_bind(dst, !ipv4_only)?;
+
+    let upstream = Arc::new(socket);
     let upstream_clone = upstream.clone();
     let mut downstream = udp_session.recv;
 
@@ -154,7 +159,66 @@ async fn handle_udp(udp_session: UdpSession) -> Result<(), SError> {
         //trace!("udp request to:{}", dst);
         let dst = dns_cache.resolve(dst, ipv4_only).await?;
         //trace!("udp resolve to:{}", dst);
-        let _siz = upstream_clone.send_to(&buf, dst).await?;
+        let _siz = upstream_clone.send_to(&buf, &dst).await?;
         //trace!("udp request sent:{}bytes", siz);
+    }
+}
+
+struct DualSocket {
+    inner: UdpSocket,
+    dual_stack: bool,
+}
+impl DualSocket {
+    fn new_bind(addr: SocketAddr, dual_stack: bool) -> io::Result<Self> {
+        //let upstream = UdpSocket::bind(dst).await?;
+        let socket = Socket::new(
+            // Use socket2 for dualstack for windows compact
+            if dual_stack {
+                Domain::IPV6
+            } else {
+                Domain::IPV4
+            },
+            Type::DGRAM,
+            Some(Protocol::UDP),
+        )?;
+        if dual_stack {
+            socket.set_only_v6(false)?;
+            // socket.set_reuse_address(true)?;
+        };
+        socket.set_nonblocking(true)?;
+        socket.bind(&addr.into())?;
+
+        let socket = UdpSocket::from_std(socket.into())?;
+
+        Ok(Self {
+            inner: socket,
+            dual_stack,
+        })
+    }
+    async fn send_to(&self, buf: &[u8], addr: &SocketAddr) -> io::Result<usize> {
+        let ip = match (self.dual_stack, addr.ip()) {
+            (true, IpAddr::V4(ipv4_addr)) => IpAddr::V6(ipv4_addr.to_ipv6_mapped()),
+            (_, ip) => ip,
+        };
+        self.inner.send_to(buf, (ip, addr.port())).await
+    }
+    async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+        let (len, addr) = self.inner.recv_from(buf).await?;
+        let ip = match (self.dual_stack, addr.ip()) {
+            (true, ip_addr @ IpAddr::V6(ipv6_addr)) => ipv6_addr
+                .to_ipv4_mapped()
+                .map(IpAddr::V4)
+                .unwrap_or(ip_addr),
+            (_, ip) => ip,
+        };
+        Ok((len, SocketAddr::new(ip, addr.port())))
+    }
+}
+
+impl Deref for DualSocket {
+    type Target = UdpSocket;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
     }
 }
