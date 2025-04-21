@@ -1,4 +1,7 @@
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::{
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    time::Duration,
+};
 
 use fast_socks5::{Result, client::Socks5Datagram};
 use shadowquic::{
@@ -57,7 +60,10 @@ async fn main() -> Result<()> {
         .init();
 
     spawn_socks_server().await;
-    spawn_socks_client().await
+    let _ = tokio::time::timeout(Duration::from_secs(60), spawn_socks_client())
+        .await
+        .unwrap();
+    Ok(())
 }
 
 async fn spawn_socks_client() -> Result<()> {

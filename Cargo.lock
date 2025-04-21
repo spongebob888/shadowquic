@@ -919,6 +919,7 @@ dependencies = [
  "serde",
  "serde_yaml",
  "shadowquic-macros",
+ "socket2",
  "thiserror 2.0.12",
  "time",
  "tokio",
