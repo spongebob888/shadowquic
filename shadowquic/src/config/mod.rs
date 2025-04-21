@@ -177,6 +177,6 @@ inbound:
 outbound:
     type: direct
 "###;
-        let cfg: Config = serde_yaml::from_str(cfgstr).expect("yaml parsed failed");
+        let _cfg: Config = serde_yaml::from_str(cfgstr).expect("yaml parsed failed");
     }
 }
