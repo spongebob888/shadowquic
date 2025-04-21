@@ -47,6 +47,7 @@ impl ShadowQuicClient {
         let mut tp_cfg = TransportConfig::default();
 
         let mut mtudis = MtuDiscoveryConfig::default();
+        mtudis.black_hole_cooldown(Duration::from_secs(120));
         mtudis.interval(Duration::from_secs(90));
 
         tp_cfg
