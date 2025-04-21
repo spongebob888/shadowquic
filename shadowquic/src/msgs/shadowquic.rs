@@ -53,7 +53,7 @@ pub struct SQPacketStreamHeader {
     pub len: u16,
 }
 
-#[derive(SEncode, SDecode)]
+#[derive(SEncode, SDecode, Clone)]
 pub struct SQPacketDatagramHeader {
     pub id: u16, // id is one to one coresponance a udpsocket and proxy dst
 }

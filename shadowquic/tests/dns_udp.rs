@@ -251,6 +251,7 @@ async fn shadowquic_client_server(over_stream: bool, port: u16) {
         congestion_control: CongestionControl::Bbr,
         zero_rtt: true,
         over_stream: over_stream,
+        ..Default::default()
     });
 
     let client = Manager {
@@ -267,6 +268,7 @@ async fn shadowquic_client_server(over_stream: bool, port: u16) {
         zero_rtt: true,
         initial_mtu: default_initial_mtu(),
         congestion_control: CongestionControl::Bbr,
+        ..Default::default()
     })
     .unwrap();
     let direct_client = DirectOut;

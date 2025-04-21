@@ -15,7 +15,7 @@ use crate::{
     AnyUdpRecv, AnyUdpSend,
     error::SError,
     msgs::{
-        shadowquic::{SQPacketDatagramHeader, SQPacketStreamHeader, SQUdpControlHeader},
+        shadowquic::{SQPacketDatagramHeader, SQUdpControlHeader},
         socks5::{SDecode, SEncode, SocksAddr},
     },
 };
@@ -175,9 +175,9 @@ pub async fn handle_udp_send(
         };
         let dg_header = SQPacketDatagramHeader { id };
         if over_stream && !session.unistream_map.contains_key(&dst) {
-            session
-                .unistream_map
-                .insert(dst.clone(), conn.open_uni().await?);
+            let mut uni = conn.open_uni().await?;
+            dg_header.clone().encode(&mut uni).await?;
+            session.unistream_map.insert(dst.clone(), uni);
         }
 
         let fut1 = async {
@@ -189,17 +189,18 @@ pub async fn handle_udp_send(
             let mut content = BytesMut::with_capacity(2000);
             let mut head = Vec::<u8>::new();
             dg_header.encode(&mut head).await?;
+
             if over_stream {
-                (bytes.len() as u16).encode(&mut head).await?;
-            }
-            content.put(Bytes::from(head));
-            content.put(bytes);
-            let content = content.freeze();
-            if over_stream {
-                if let Some(conn) = session.unistream_map.get_mut(&dst) {
-                    conn.write_all(&content).await?;
-                }
+                // Must be opened and inserted.
+                let conn = session.unistream_map.get_mut(&dst).unwrap();
+                let mut head_len = Vec::<u8>::new();
+                (bytes.len() as u16).encode(&mut head_len).await?;
+                conn.write_all(&head_len).await?;
+                conn.write_all(&bytes).await?;
             } else {
+                content.put(Bytes::from(head));
+                content.put(bytes);
+                let content = content.freeze();
                 let len = content.len();
                 match quic_conn.send_datagram(content) {
                     Ok(_) => (),
@@ -276,7 +277,7 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
             r = async {
                 let mut uni_stream = conn.accept_uni().await?;
                 trace!("unistream accepted");
-                let SQPacketStreamHeader{id,len} = SQPacketStreamHeader::decode(&mut uni_stream).await?;
+                let SQPacketDatagramHeader{id} = SQPacketDatagramHeader::decode(&mut uni_stream).await?;
                 let (udp,addr) = match id_map.get(&id){
                     Some(r) => r,
                     None => {
@@ -286,18 +287,17 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
                 &(udp.to_owned(),addr.to_owned())
                 }};
                 info!("unistream datagram accepted: id:{},dst:{}",id, addr);
-                Ok((uni_stream,udp.clone(),addr.clone(),len)) as Result<(RecvStream,AnyUdpSend,SocksAddr,u16),SError>
+                Ok((uni_stream,udp.clone(),addr.clone())) as Result<(RecvStream,AnyUdpSend,SocksAddr),SError>
             } => {
-                let  (mut uni_stream,udp,addr,mut len) = r?;
+                let  (mut uni_stream,udp,addr) = r?;
 
                 tokio::spawn(async move {
                     loop {
-                        let l = usize::from(len);
+                        let l: usize = u16::decode(&mut uni_stream).await? as usize;
                         let mut b = BytesMut::with_capacity(l);
                         b.resize(l,0);
                         uni_stream.read_exact(&mut b).await?;
                         udp.send_to(b.freeze(), addr.clone()).await?;
-                        SQPacketStreamHeader{id:_,len} = SQPacketStreamHeader::decode(&mut uni_stream).await?;
                     }
                     #[allow(unreachable_code)]
                     (Ok(()) as Result<(), SError>)

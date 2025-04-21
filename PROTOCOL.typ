@@ -71,14 +71,16 @@ For each datagram from local socket or remote socket the `SOCKSADDR` and
 
 === Associate Over Stream
 ```plain
-+---------------+--------------+--------------+
-|  CONTEXT ID   |     LEN      |    PAYLOAD   |
-+---------------+--------------+--------------+ 
-|      2        |      2       |   Variable   |
-+---------------+--------------+--------------+
++---------------+--------------+--------------+--------------+--------------+-----+
+|  CONTEXT ID   |     LEN      |    PAYLOAD   |     LEN      |    PAYLOAD   | ... |
++---------------+--------------+--------------+--------------+--------------+-----+ 
+|      2        |      2       |   Variable   |      2       |   Variable   | ... |
++---------------+--------------+--------------+--------------+--------------+-----+
 ```
 
-If the datagram is carried by QUIC unistream, a 2 byte length tag is prepended to the payload. For every the same context id, the unistream could be reused.
+If the datagram is carried by QUIC unistream, a 2 byte length tag is prepended to the payload. For the following datagram with the same context id, unistream could be reused, 
+and context id is not needed to be sent. Only LEN field and PAYLOAD will be sent.
+Namely for each unistream, CONTEXT ID is sent only once right after this stream is opened,
 
 === Associate Over Datagram
 ```plain
