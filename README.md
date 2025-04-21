@@ -6,9 +6,9 @@
  - Full Cone
  - QUIC based 0-RTT
  - SNI camouflage with any domain (powered by [JLS](https://github.com/JimmyHuang454/JLS))
- - Anti-hijack
- - Resisting active deteingction
- - Free of certificates
+    - Anti-hijack
+    - Resisting active detection
+    - Free of certificates
 
 ## Usage
 ### Client
