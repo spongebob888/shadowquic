@@ -79,7 +79,7 @@ pub struct SocksClientCfg {
     pub addr: String,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize)]
 #[serde(rename_all = "kebab-case", default)]
 pub struct ShadowQuicClientCfg {
     pub jls_pwd: String,
@@ -96,9 +96,32 @@ pub struct ShadowQuicClientCfg {
     pub zero_rtt: bool,
     #[serde(default = "default_over_stream")]
     pub over_stream: bool,
+    #[serde(default = "default_min_mtu")]
+    pub min_mtu: u16,
 }
+
+impl Default for ShadowQuicClientCfg {
+    fn default() -> Self {
+        Self {
+            jls_pwd: Default::default(),
+            jls_iv: Default::default(),
+            addr: Default::default(),
+            server_name: Default::default(),
+            alpn: Default::default(),
+            initial_mtu: default_initial_mtu(),
+            congestion_control: Default::default(),
+            zero_rtt: Default::default(),
+            over_stream: Default::default(),
+            min_mtu: default_min_mtu(),
+        }
+    }
+}
+
 pub fn default_initial_mtu() -> u16 {
     1300
+}
+pub fn default_min_mtu() -> u16 {
+    1280
 }
 pub fn default_zero_rtt() -> bool {
     true
@@ -141,8 +164,24 @@ pub struct ShadowQuicServerCfg {
     pub congestion_control: CongestionControl,
     #[serde(default = "default_initial_mtu")]
     pub initial_mtu: u16,
+    #[serde(default = "default_min_mtu")]
+    pub min_mtu: u16,
 }
-
+impl Default for ShadowQuicServerCfg {
+    fn default() -> Self {
+        Self {
+            bind_addr: "127.0.0.1:443".parse().unwrap(),
+            jls_pwd: Default::default(),
+            jls_iv: Default::default(),
+            jls_upstream: Default::default(),
+            alpn: Default::default(),
+            zero_rtt: Default::default(),
+            congestion_control: Default::default(),
+            initial_mtu: default_initial_mtu(),
+            min_mtu: default_min_mtu(),
+        }
+    }
+}
 #[derive(Deserialize, Clone, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {

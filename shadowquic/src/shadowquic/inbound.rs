@@ -69,6 +69,7 @@ impl ShadowQuicServer {
             .max_concurrent_bidi_streams(1000u32.into())
             .max_concurrent_uni_streams(1000u32.into())
             .mtu_discovery_config(Some(mtudis))
+            .min_mtu(cfg.min_mtu)
             .initial_mtu(cfg.initial_mtu);
         match cfg.congestion_control {
             CongestionControl::Bbr => {
