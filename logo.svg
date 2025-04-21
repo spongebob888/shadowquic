@@ -2,9 +2,9 @@
 <!-- Created with Inkscape (http://www.inkscape.org/) -->
 
 <svg
-   width="54.521336mm"
-   height="8.3123474mm"
-   viewBox="0 0 54.521336 8.3123474"
+   width="54.551498mm"
+   height="8.6148634mm"
+   viewBox="0 0 54.551499 8.6148634"
    version="1.1"
    id="svg1"
    inkscape:version="1.4 (e7c3feb100, 2024-10-09)"
@@ -24,9 +24,9 @@
      inkscape:deskcolor="#d1d1d1"
      inkscape:document-units="mm"
      showgrid="true"
-     inkscape:zoom="1.0503117"
-     inkscape:cx="133.29376"
-     inkscape:cy="193.27595"
+     inkscape:zoom="4.4409977"
+     inkscape:cx="189.59704"
+     inkscape:cy="-21.39159"
      inkscape:window-width="1440"
      inkscape:window-height="831"
      inkscape:window-x="0"
@@ -36,8 +36,8 @@
     <inkscape:grid
        id="grid2"
        units="mm"
-       originx="77.053052"
-       originy="-35.792821"
+       originx="77.016922"
+       originy="-35.45417"
        spacingx="0.26458333"
        spacingy="0.26458334"
        empcolor="#0099e5"
@@ -109,7 +109,7 @@
      inkscape:label="图层 1"
      inkscape:groupmode="layer"
      id="layer1"
-     transform="translate(77.053053,-35.792821)">
+     transform="translate(77.016922,-35.45417)">
     <text
        xml:space="preserve"
        transform="scale(0.26458333)"
@@ -122,7 +122,7 @@
        style="font-style:normal;font-variant:normal;font-weight:900;font-stretch:normal;font-size:32px;font-family:'Noto Sans';-inkscape-font-specification:'Noto Sans Heavy';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:start;writing-mode:lr-tb;direction:ltr;white-space:pre;shape-inside:url(#rect1-6-8);display:inline;fill:#9e9e9e;fill-opacity:1;stroke:#000000;stroke-width:2.51339;stroke-dasharray:none;stroke-opacity:1"><tspan
          x="231.56836"
          y="411.79374"
-         id="tspan1">QUIC</tspan></text>
+         id="tspan4">QUIC</tspan></text>
     <text
        xml:space="preserve"
        transform="matrix(0.26458333,0,0,0.26458333,-138.59992,-60.913409)"
@@ -130,8 +130,16 @@
        style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:32px;line-height:0;font-family:'Fira Code';-inkscape-font-specification:'Fira Code';text-align:start;writing-mode:lr-tb;direction:ltr;white-space:pre;shape-inside:url(#rect1-7-4-9);display:inline;fill:#4c4c4c;fill-opacity:1;stroke:#c6c6c6;stroke-width:1.37953;stroke-dasharray:none;stroke-opacity:1"><tspan
          x="231.56836"
          y="390.67773"
-         id="tspan3"><tspan
+         id="tspan6"><tspan
            style="font-weight:300;-inkscape-font-specification:'Fira Code Light'"
-           id="tspan2">Shadow</tspan></tspan></text>
+           id="tspan5">Shadow</tspan></tspan></text>
+    <rect
+       style="fill:none;stroke:none;stroke-width:0.490687"
+       id="rect3"
+       width="54.551498"
+       height="8.6148634"
+       x="-77.016922"
+       y="35.45417"
+       ry="0" />
   </g>
 </svg>
