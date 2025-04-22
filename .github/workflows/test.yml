@@ -36,6 +36,6 @@ jobs:
             cargo build --verbose
       - run: |
           nix develop --command \
-            cargo test --verbose
+            cargo test --release --verbose
 
   

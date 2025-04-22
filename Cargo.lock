@@ -914,6 +914,7 @@ dependencies = [
  "educe",
  "fast-socks5",
  "quinn",
+ "rand",
  "rcgen",
  "rustls",
  "serde",

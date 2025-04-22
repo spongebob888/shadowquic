@@ -250,7 +250,7 @@ async fn shadowquic_client_server(over_stream: bool, port: u16) {
         initial_mtu: 1200,
         congestion_control: CongestionControl::Bbr,
         zero_rtt: true,
-        over_stream: over_stream,
+        over_stream,
         ..Default::default()
     });
 
