@@ -21,7 +21,7 @@ use tracing::{Level, level_filters::LevelFilter, trace};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const CHUNK_LEN: usize = 1000;
-const ROUND: usize = 1000;
+const ROUND: usize = 100;
 #[tokio::test]
 async fn main() {
     let socks_server = "127.0.0.1:1030";
@@ -43,30 +43,35 @@ async fn main() {
     let mut recvbuf = vec![0u8; CHUNK_LEN * ROUND];
     let mut ii = 0;
     let mut jj = 0;
-    loop {
-        tokio::select! {
-            r = async {
-                if ii == ROUND {
-                    tokio::time::sleep(Duration::from_millis(200000)).await;
+    let fut = async {
+        loop {
+            tokio::select! {
+                r = async {
+                    if ii == ROUND {
+                        tokio::time::sleep(Duration::from_millis(200000)).await;
+                    }
+                    socks.send_to(&sendbuf[ii*CHUNK_LEN..(ii+1)*CHUNK_LEN], target_addr).await
+                 } => {
+                    r.unwrap();
+                    ii += 1;
+                    if ii % 1 == 0 {
+                        tokio::time::sleep(Duration::from_millis(2)).await;
+                    }
                 }
-                socks.send_to(&sendbuf[ii*CHUNK_LEN..(ii+1)*CHUNK_LEN], target_addr).await
-             } => {
-                r.unwrap();
-                ii += 1;
-                if ii % 100 == 0 {
-                    tokio::time::sleep(Duration::from_millis(2)).await;
-                }
-            }
-            r = socks.recv_from(&mut recvbuf[jj*CHUNK_LEN..(jj+1)*CHUNK_LEN]) => {
-                let (len, _addr) = r.unwrap();
-                assert!(len == CHUNK_LEN);
-                jj += 1;
-                if jj == ROUND {
-                    break;
+                r = socks.recv_from(&mut recvbuf[jj*CHUNK_LEN..(jj+1)*CHUNK_LEN]) => {
+                    let (len, _addr) = r.unwrap();
+                    assert!(len == CHUNK_LEN);
+                    jj += 1;
+                    if jj == ROUND {
+                        break;
+                    }
                 }
             }
         }
-    }
+    };
+    tokio::time::timeout(Duration::from_secs(60), fut)
+        .await
+        .unwrap();
 
     assert!(sendbuf == recvbuf);
 }

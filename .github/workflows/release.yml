@@ -190,7 +190,7 @@ jobs:
         with:
           tool: ${{ matrix.tool }}
           command: test
-          args: --all --target ${{ matrix.target }} ${{ matrix.extra-args }}
+          args: --all --release --target ${{ matrix.target }} ${{ matrix.extra-args }}
         env:
           CROSS_CONTAINER_OPTS: "--network host"
           RUSTFLAGS: ${{ matrix.rustflags }}
