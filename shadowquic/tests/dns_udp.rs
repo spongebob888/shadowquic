@@ -64,6 +64,7 @@ async fn test_direct() -> Result<()> {
     // filter we constructed above.
     let _ = tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
+        .with(_filter)
         .try_init();
 
     spawn_socks_server().await;
@@ -87,6 +88,7 @@ async fn test_shadowquic_overstream() -> Result<()> {
     // filter we constructed above.
     let _ = tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
+        .with(_filter)
         .try_init();
 
     shadowquic_client_server(true, 1090).await;
@@ -110,6 +112,7 @@ async fn test_shadowquic_overdatagram() -> Result<()> {
     // filter we constructed above.
     let _ = tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
+        .with(_filter)
         .try_init();
 
     shadowquic_client_server(false, 1091).await;

@@ -17,7 +17,8 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, UdpSocket};
 
 use anyhow::Result;
-use tracing::{trace, warn};
+use tracing::{Instrument, trace, trace_span, warn};
+
 pub struct SocksServer {
     #[allow(dead_code)]
     bind_addr: SocketAddr,
@@ -83,6 +84,7 @@ async fn handle_socks<T: AsyncRead + AsyncWrite + Unpin>(
     };
 
     reply.encode(&mut s).await?;
+    trace!("socks request accepted: {}", req.dst);
     Ok((s, req, socket))
 }
 
@@ -136,11 +138,11 @@ impl UdpSend for UdpSocksWrap {
 #[async_trait]
 impl Inbound for SocksServer {
     async fn accept(&mut self) -> Result<ProxyRequest, SError> {
-        let (stream, _) = self.listener.accept().await?;
+        let (stream, addr) = self.listener.accept().await?;
+        let span = trace_span!("socks", src = addr.to_string());
         let local_addr = stream.local_addr().unwrap();
 
-        let (s, req, socket) = handle_socks(stream, local_addr).await?;
-        trace!("socks request accepted: {}", req.dst);
+        let (s, req, socket) = handle_socks(stream, local_addr).instrument(span).await?;
         match req.cmd {
             SOCKS5_CMD_TCP_CONNECT => Ok(ProxyRequest::Tcp(TcpSession {
                 stream: Box::new(s),

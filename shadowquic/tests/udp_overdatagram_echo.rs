@@ -47,13 +47,13 @@ async fn main() {
         tokio::select! {
             r = async {
                 if ii == ROUND {
-                    tokio::time::sleep(Duration::from_millis(200000)).await;
+                    tokio::time::sleep(Duration::from_millis(2000000)).await;
                 }
                 socks.send_to(&sendbuf[ii*CHUNK_LEN..(ii+1)*CHUNK_LEN], target_addr).await
              } => {
                 r.unwrap();
                 ii += 1;
-                if ii % 100 == 0 {
+                if ii % 50 == 0 {
                     tokio::time::sleep(Duration::from_millis(2)).await;
                 }
             }

@@ -107,11 +107,6 @@ impl ShadowQuicServer {
         zero_rtt: bool,
         req_sender: Sender<ProxyRequest>,
     ) -> Result<(), SError> {
-        event!(
-            Level::TRACE,
-            "incomming from {} accepted",
-            incom.remote_address()
-        );
         let conn = incom.accept()?;
         let connection = if zero_rtt {
             match conn.into_0rtt() {
@@ -195,15 +190,19 @@ pub struct SQServerConn(SQConn);
 impl SQServerConn {
     async fn handle_connection(self, req_send: Sender<ProxyRequest>) -> Result<(), SError> {
         let conn = &self.0;
-
-        tokio::spawn(handle_udp_packet_recv(self.0.clone()));
+        event!(
+            Level::TRACE,
+            "incomming from {} accepted",
+            conn.remote_address()
+        );
+        tokio::spawn(handle_udp_packet_recv(self.0.clone()).in_current_span());
 
         while conn.close_reason().is_none() {
             select! {
                 bi = conn.accept_bi() => {
                     let (send, recv) = bi?;
                     trace!("bistream accepted");
-                    tokio::spawn(self.clone().handle_bistream(send, recv, req_send.clone()));
+                    tokio::spawn(self.clone().handle_bistream(send, recv, req_send.clone()).in_current_span());
                 },
             }
         }
