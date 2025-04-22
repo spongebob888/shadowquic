@@ -38,6 +38,8 @@
           iperf3
           sing-box
           killall
+          act
+          rustup
         ];
       in
       {
