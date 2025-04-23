@@ -101,13 +101,13 @@ struct AssociateSendSession {
     unistream_map: HashMap<SocksAddr, SendStream>,
 }
 impl AssociateSendSession {
-    pub async fn get_id_or_insert(&mut self, addr: &SocksAddr, socket: AnyUdpSend) -> u16 {
+    pub async fn get_id_or_insert(&mut self, addr: &SocksAddr, socket: AnyUdpSend) -> (u16, bool) {
         if let Some(id) = self.dst_map.get(addr) {
-            *id
+            (*id, false)
         } else {
             let id = self.id_store.fetch_new_id(socket, addr.clone()).await;
             self.dst_map.insert(addr.clone(), id);
-            id
+            (id, true)
         }
     }
 }
@@ -167,7 +167,7 @@ pub async fn handle_udp_send(
     let quic_conn = conn.conn.clone();
     loop {
         let (bytes, dst) = down_stream.recv_from().await?;
-        let id = session.get_id_or_insert(&dst, udp_send.clone()).await;
+        let (id, is_new) = session.get_id_or_insert(&dst, udp_send.clone()).await;
         //let span = trace_span!("udp", id = id);
         let ctl_header = SQUdpControlHeader {
             dst: dst.clone(),
@@ -175,27 +175,31 @@ pub async fn handle_udp_send(
         };
         let dg_header = SQPacketDatagramHeader { id };
         if over_stream && !session.unistream_map.contains_key(&dst) {
-            let mut uni = conn.open_uni().await?;
-            dg_header.clone().encode(&mut uni).await?;
+            let uni = conn.open_uni().await?;
             session.unistream_map.insert(dst.clone(), uni);
         }
 
         let fut1 = async {
-            ctl_header.encode(&mut send).await?;
+            if is_new {
+                ctl_header.encode(&mut send).await?;
+            }
             //trace!("udp control header sent");
             Ok(()) as Result<(), SError>
         };
         let fut2 = async {
             let mut content = BytesMut::with_capacity(2000);
             let mut head = Vec::<u8>::new();
-            dg_header.encode(&mut head).await?;
+            dg_header.clone().encode(&mut head).await?;
 
             if over_stream {
                 // Must be opened and inserted.
                 let conn = session.unistream_map.get_mut(&dst).unwrap();
-                let mut head_len = Vec::<u8>::new();
-                (bytes.len() as u16).encode(&mut head_len).await?;
-                conn.write_all(&head_len).await?;
+                let mut head = Vec::<u8>::new();
+                if is_new {
+                    dg_header.encode(&mut head).await?
+                }
+                (bytes.len() as u16).encode(&mut head).await?;
+                conn.write_all(&head).await?;
                 conn.write_all(&bytes).await?;
             } else {
                 content.put(Bytes::from(head));
