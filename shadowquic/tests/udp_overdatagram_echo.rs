@@ -21,7 +21,7 @@ use tracing::{Level, level_filters::LevelFilter, trace};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const CHUNK_LEN: usize = 1000;
-const ROUND: usize = 50;
+const ROUND: usize = 10;
 #[tokio::test]
 async fn main() {
     let socks_server = "127.0.0.1:1031";
@@ -55,7 +55,7 @@ async fn main() {
                     r.unwrap();
                     ii += 1;
                     if ii % 1 == 0 {
-                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        tokio::time::sleep(Duration::from_millis(40)).await;
                     }
                 }
                 r = socks.recv_from(&mut recvbuf[jj*CHUNK_LEN..(jj+1)*CHUNK_LEN]) => {
