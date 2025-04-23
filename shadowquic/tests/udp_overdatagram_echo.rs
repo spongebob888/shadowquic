@@ -55,7 +55,7 @@ async fn main() {
                     r.unwrap();
                     ii += 1;
                     if ii % 1 == 0 {
-                        tokio::time::sleep(Duration::from_millis(40)).await;
+                        tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                 }
                 r = socks.recv_from(&mut recvbuf[jj*CHUNK_LEN..(jj+1)*CHUNK_LEN]) => {
