@@ -121,7 +121,7 @@ pub fn default_initial_mtu() -> u16 {
     1300
 }
 pub fn default_min_mtu() -> u16 {
-    1280
+    1290
 }
 pub fn default_zero_rtt() -> bool {
     true
