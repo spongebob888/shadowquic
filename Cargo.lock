@@ -373,9 +373,9 @@ dependencies = [
 
 [[package]]
 name = "getrandom"
-version = "0.2.15"
+version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4567c8db10ae91089c99af84c68c38da3ec2f087c3f82960bcdbf3656b6f4d7"
+checksum = "335ff9f135e4384c8150d6f27c6daed433577f86b4750418338c01a1a2528592"
 dependencies = [
  "cfg-if",
  "js-sys",
@@ -591,9 +591,9 @@ dependencies = [
  "async-trait",
  "bytes",
  "fast-socks5",
- "quinn",
+ "quinn 0.11.7 (git+https://github.com/spongebob888/quinn-jls?branch=jls-dev)",
  "rcgen",
- "rustls",
+ "rustls 0.23.25 (git+https://github.com/spongebob888/rustls-jls?branch=jls-dev)",
  "shadowquic",
  "thiserror 2.0.12",
  "tokio",
@@ -652,10 +652,29 @@ dependencies = [
  "bytes",
  "cfg_aliases",
  "pin-project-lite",
- "quinn-proto",
- "quinn-udp",
+ "quinn-proto 0.11.10 (git+https://github.com/spongebob888/quinn-jls?branch=jls-dev)",
+ "quinn-udp 0.5.10 (git+https://github.com/spongebob888/quinn-jls?branch=jls-dev)",
  "rustc-hash",
- "rustls",
+ "rustls 0.23.25 (git+https://github.com/spongebob888/rustls-jls?branch=jls-dev)",
+ "socket2",
+ "thiserror 2.0.12",
+ "tokio",
+ "tracing",
+ "web-time",
+]
+
+[[package]]
+name = "quinn"
+version = "0.11.7"
+source = "git+https://github.com/spongebob888/quinn-jls#9646c4283b77d1b801d8b9df0ffebca2fd97605e"
+dependencies = [
+ "bytes",
+ "cfg_aliases",
+ "pin-project-lite",
+ "quinn-proto 0.11.10 (git+https://github.com/spongebob888/quinn-jls)",
+ "quinn-udp 0.5.10 (git+https://github.com/spongebob888/quinn-jls)",
+ "rustc-hash",
+ "rustls 0.23.25 (git+https://github.com/spongebob888/rustls-jls)",
  "socket2",
  "thiserror 2.0.12",
  "tokio",
@@ -673,7 +692,26 @@ dependencies = [
  "rand",
  "ring",
  "rustc-hash",
- "rustls",
+ "rustls 0.23.25 (git+https://github.com/spongebob888/rustls-jls?branch=jls-dev)",
+ "rustls-pki-types",
+ "slab",
+ "thiserror 2.0.12",
+ "tinyvec",
+ "tracing",
+ "web-time",
+]
+
+[[package]]
+name = "quinn-proto"
+version = "0.11.10"
+source = "git+https://github.com/spongebob888/quinn-jls#9646c4283b77d1b801d8b9df0ffebca2fd97605e"
+dependencies = [
+ "bytes",
+ "getrandom 0.3.2",
+ "rand",
+ "ring",
+ "rustc-hash",
+ "rustls 0.23.25 (git+https://github.com/spongebob888/rustls-jls)",
  "rustls-pki-types",
  "slab",
  "thiserror 2.0.12",
@@ -686,6 +724,19 @@ dependencies = [
 name = "quinn-udp"
 version = "0.5.10"
 source = "git+https://github.com/spongebob888/quinn-jls?branch=jls-dev#419e72992b742e6649dcca7c4c0ca453ab2e756b"
+dependencies = [
+ "cfg_aliases",
+ "libc",
+ "once_cell",
+ "socket2",
+ "tracing",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "quinn-udp"
+version = "0.5.10"
+source = "git+https://github.com/spongebob888/quinn-jls#9646c4283b77d1b801d8b9df0ffebca2fd97605e"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -736,7 +787,7 @@ version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
- "getrandom 0.2.15",
+ "getrandom 0.2.16",
 ]
 
 [[package]]
@@ -812,7 +863,7 @@ checksum = "a4689e6c2294d81e88dc6261c768b63bc4fcdb852be6d1352498b114f61383b7"
 dependencies = [
  "cc",
  "cfg-if",
- "getrandom 0.2.15",
+ "getrandom 0.2.16",
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
@@ -834,6 +885,20 @@ checksum = "357703d41365b4b27c590e3ed91eabb1b663f07c4c084095e60cbed4362dff0d"
 name = "rustls"
 version = "0.23.25"
 source = "git+https://github.com/spongebob888/rustls-jls?branch=jls-dev#7492120f056900478f522f2c51c2fb5a70245f4d"
+dependencies = [
+ "aes-gcm",
+ "once_cell",
+ "ring",
+ "rustls-pki-types",
+ "rustls-webpki",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
+name = "rustls"
+version = "0.23.25"
+source = "git+https://github.com/spongebob888/rustls-jls#7492120f056900478f522f2c51c2fb5a70245f4d"
 dependencies = [
  "aes-gcm",
  "once_cell",
@@ -905,7 +970,7 @@ dependencies = [
 
 [[package]]
 name = "shadowquic"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -913,10 +978,10 @@ dependencies = [
  "clap",
  "educe",
  "fast-socks5",
- "quinn",
+ "quinn 0.11.7 (git+https://github.com/spongebob888/quinn-jls)",
  "rand",
  "rcgen",
- "rustls",
+ "rustls 0.23.25 (git+https://github.com/spongebob888/rustls-jls)",
  "serde",
  "serde_yaml",
  "shadowquic-macros",
@@ -932,7 +997,7 @@ dependencies = [
 
 [[package]]
 name = "shadowquic-macros"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "proc-macro2",
  "quote",

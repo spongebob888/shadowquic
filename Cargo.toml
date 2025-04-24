@@ -5,9 +5,10 @@ resolver = "3"
 
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["spongebob888"]
+categories = ["proxy", "quic"]
 homepage = "https://github.com/spongebob888/shadowquic"
 repository = "https://github.com/spongebob888/shadowquic.git"
 
