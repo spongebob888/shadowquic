@@ -6,7 +6,7 @@ use tracing::info;
 use tracing_subscriber::{fmt::time::LocalTime, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser)]
-#[clap(author, about, long_about = None)]
+#[clap(author, about, long_about = None, version)]
 struct Cli {
     #[clap(
         short,
