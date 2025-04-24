@@ -9,8 +9,11 @@ version = "0.1.1"
 edition = "2024"
 authors = ["spongebob888"]
 categories = ["proxy", "quic"]
+keywords = ["quic", "sni"]
 homepage = "https://github.com/spongebob888/shadowquic"
 repository = "https://github.com/spongebob888/shadowquic.git"
+description = "A 0-RTT QUIC Proxy with SNI camouflage"
+license = "MIT"
 
 
 [workspace.dependencies]
