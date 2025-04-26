@@ -102,6 +102,18 @@ pub struct SocksAddr {
     pub addr: AddrOrDomain,
     pub port: u16,
 }
+impl SocksAddr {
+    pub fn from_domain(name: String, port: u16) -> Self {
+        SocksAddr {
+            atype: SOCKS5_ADDR_TYPE_DOMAIN_NAME,
+            addr: AddrOrDomain::Domain(VarVec {
+                len: name.len() as u8,
+                contents: name.into_bytes(),
+            }),
+            port,
+        }
+    }
+}
 impl fmt::Display for SocksAddr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // Write strictly the first element into the supplied output

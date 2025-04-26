@@ -274,6 +274,7 @@ impl SQServerConn {
         Ok(())
     }
 }
+#[derive(Debug)]
 pub struct Unsplit<S, R> {
     pub s: S,
     pub r: R,
