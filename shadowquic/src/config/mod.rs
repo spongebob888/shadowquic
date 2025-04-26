@@ -11,7 +11,7 @@ use crate::{
     socks::inbound::SocksServer,
 };
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct Config {
     pub inbound: InboundCfg,
@@ -28,7 +28,7 @@ impl Config {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case")]
 #[serde(tag = "type")]
 pub enum InboundCfg {
@@ -46,7 +46,7 @@ impl InboundCfg {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case")]
 #[serde(tag = "type")]
 pub enum OutboundCfg {
@@ -67,19 +67,19 @@ impl OutboundCfg {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct SocksServerCfg {
     pub bind_addr: SocketAddr,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct SocksClientCfg {
     pub addr: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", default)]
 pub struct ShadowQuicClientCfg {
     pub jls_pwd: String,
@@ -136,7 +136,7 @@ pub fn default_alpn() -> Vec<String> {
     vec!["h3".into()]
 }
 
-#[derive(Serialize, Deserialize, Default, Debug)]
+#[derive(Serialize, Deserialize, Default, Debug, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub enum CongestionControl {
     #[default]
@@ -145,11 +145,11 @@ pub enum CongestionControl {
     NewReno,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct DirectOutCfg;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct ShadowQuicServerCfg {
     pub bind_addr: SocketAddr,
@@ -182,7 +182,7 @@ impl Default for ShadowQuicServerCfg {
         }
     }
 }
-#[derive(Deserialize, Clone, Default)]
+#[derive(Deserialize, Clone, Default, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
     Trace,
