@@ -119,7 +119,7 @@ impl Drop for AssociateSendSession {
         let id_remove = self.dst_map.clone();
         tokio::spawn(async move {
             let mut id_store = id_store.write().await;
-            let _ = id_remove.values().for_each(|k| {
+            id_remove.values().for_each(|k| {
                 id_store.remove(k);
             });
             event!(Level::TRACE, "AssociateSendSession dropped");
@@ -148,7 +148,7 @@ impl Drop for AssociateRecvSession {
         let id_remove = self.id_map.clone();
         tokio::spawn(async move {
             let mut id_store = id_store.write().await;
-            let _ = id_remove.keys().for_each(|k| {
+            id_remove.keys().for_each(|k| {
                 id_store.remove(k);
             });
             event!(Level::TRACE, "AssociateRecvSession dropped");
