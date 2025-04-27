@@ -66,6 +66,7 @@ impl IDStore {
     }
     async fn store_socket(&self, id: u16, socket: AnyUdpSend, dst: SocksAddr) {
         let mut h = self.inner.write().await;
+        trace!("alive socket number: {}", h.len());
         let r = h.get_mut(&id);
         if let Some(s) = r {
             match s {
@@ -118,7 +119,9 @@ impl Drop for AssociateSendSession {
         let id_remove = self.dst_map.clone();
         tokio::spawn(async move {
             let mut id_store = id_store.write().await;
-            let _ = id_remove.values().map(|k| id_store.remove(k));
+            let _ = id_remove.values().for_each(|k| {
+                id_store.remove(k);
+            });
             event!(Level::TRACE, "AssociateSendSession dropped");
         });
     }
@@ -145,7 +148,9 @@ impl Drop for AssociateRecvSession {
         let id_remove = self.id_map.clone();
         tokio::spawn(async move {
             let mut id_store = id_store.write().await;
-            let _ = id_remove.keys().map(|k| id_store.remove(k));
+            let _ = id_remove.keys().for_each(|k| {
+                id_store.remove(k);
+            });
             event!(Level::TRACE, "AssociateRecvSession dropped");
         });
     }
