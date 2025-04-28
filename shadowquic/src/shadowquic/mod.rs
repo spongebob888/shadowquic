@@ -23,6 +23,12 @@ use crate::{
 pub mod inbound;
 pub mod outbound;
 
+// 4 times larger than quinn default value
+// Better decrease the size for portable device
+pub const MAX_WINDOW_BASE: u64 = 4 * 12_500_000 * 100 / 1000; // 100ms RTT
+pub const MAX_STREAM_WINDOW: u64 = MAX_WINDOW_BASE;
+pub const MAX_SEND_WINDOW: u64 = MAX_WINDOW_BASE * 8;
+pub const MAX_DATAGRAM_WINDOW: u64 = MAX_WINDOW_BASE * 2;
 #[derive(Clone)]
 pub struct SQConn {
     conn: Connection,
@@ -265,7 +271,7 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
                 Err(notify) =>  {
                     let id_store = id_store.clone();
                     event!(Level::TRACE, "resolving datagram id:{}",id);
-                    // Might block here spawn needed
+                    // Might spawn too many tasks
                     tokio::spawn(async move {
                         notify.notified().await;
                         let (udp,addr) = id_store.get_socket(id).await.unwrap();

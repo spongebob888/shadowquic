@@ -57,6 +57,10 @@ impl ShadowQuicClient {
             .min_mtu(cfg.min_mtu)
             .initial_mtu(cfg.initial_mtu);
 
+        // Only increase receive window to maximize download speed
+        tp_cfg.stream_receive_window(super::MAX_STREAM_WINDOW.try_into().unwrap());
+        tp_cfg.datagram_receive_buffer_size(Some(super::MAX_DATAGRAM_WINDOW as usize));
+
         match cfg.congestion_control {
             CongestionControl::Cubic => {
                 tp_cfg.congestion_controller_factory(Arc::new(CubicConfig::default()))

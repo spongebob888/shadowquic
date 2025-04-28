@@ -88,6 +88,11 @@ impl ShadowQuicServer {
         let mut config = ServerConfig::with_crypto(Arc::new(
             QuicServerConfig::try_from(crypto).expect("rustls config can't created"),
         ));
+        tp_cfg.send_window(super::MAX_SEND_WINDOW);
+        tp_cfg.stream_receive_window(super::MAX_STREAM_WINDOW.try_into().unwrap());
+        tp_cfg.datagram_send_buffer_size(super::MAX_DATAGRAM_WINDOW.try_into().unwrap());
+        tp_cfg.datagram_receive_buffer_size(Some(super::MAX_DATAGRAM_WINDOW as usize));
+
         config.transport_config(Arc::new(tp_cfg));
 
         let (send, recv) = channel::<ProxyRequest>(10);
