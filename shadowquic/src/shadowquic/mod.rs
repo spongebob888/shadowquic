@@ -8,7 +8,7 @@ use std::{
 
 use bytes::{BufMut, Bytes, BytesMut};
 use quinn::{Connection, RecvStream, SendDatagramError, SendStream};
-use tokio::sync::{Notify, RwLock, mpsc::channel};
+use tokio::sync::{Notify, RwLock};
 use tracing::{Level, debug, error, event, info, trace, warn};
 
 use crate::{
@@ -46,12 +46,11 @@ struct IDStore {
 
 impl IDStore {
     async fn get_socket(&self, id: u16) -> Result<(AnyUdpSend, SocksAddr), Arc<Notify>> {
-        let mut h = self.inner.write().await;
-        if let Some(r) = h.get_mut(&id) {
+        if let Some(r) = self.inner.read().await.get(&id) {
             r.clone()
         } else {
             let notify = Arc::new(Notify::new());
-            h.insert(id, Err(notify.clone()));
+            self.inner.write().await.insert(id, Err(notify.clone()));
             Err(notify)
         }
     }
@@ -249,52 +248,44 @@ pub async fn handle_udp_recv_ctrl(
 pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
     let id_store = conn.id_store.clone();
 
-    let mut id_map = HashMap::<u16, (AnyUdpSend, SocksAddr)>::new();
-    let (send, mut recv) = channel(10);
-
     loop {
         tokio::select! {
-            Ok(b) = conn.read_datagram() => {
+            b = conn.read_datagram() => {
+                let b = b?;
                 let b = BytesMut::from(b);
                 let mut cur = Cursor::new(b);
                 let SQPacketDatagramHeader{id} = SQPacketDatagramHeader::decode(&mut cur).await?;
 
-                if let Some((udp,addr)) = id_map.get(&id) {
+                match id_store.get_socket(id).await {
+                 Ok((udp,addr)) =>  {
                     let pos = cur.position() as usize;
                     let b = cur.into_inner().freeze();
                     udp.send_to(b.slice(pos..b.len()), addr.clone()).await?;
-                } else {
+                }
+                Err(notify) =>  {
                     let id_store = id_store.clone();
-                    let sender = send.clone();
                     event!(Level::TRACE, "resolving datagram id:{}",id);
+                    // Might block here spawn needed
                     tokio::spawn(async move {
-                        let (udp,addr) = id_store.get_socket_or_wait(id).await;
+                        notify.notified().await;
+                        let (udp,addr) = id_store.get_socket(id).await.unwrap();
                         debug!("datagram id resolve: id:{}:,dst:{}",id, addr);
                         let pos = cur.position() as usize;
                         let b = cur.into_inner().freeze();
                         let _ = udp.clone().send_to(b.slice(pos..b.len()), addr.clone()).await
                         .map_err(|x|error!("{}",x));
-                        let _ = sender.send((id, udp,addr)).await.map_err(|_e|SError::ChannelError("can't open send udp trait".into()));
-                    });
+                     });
                 }
             }
-
-            Some((id, udp, addr)) = recv.recv() => {
-                id_map.insert(id, (udp,addr));
             }
 
             r = async {
                 let mut uni_stream = conn.accept_uni().await?;
                 trace!("unistream accepted");
                 let SQPacketDatagramHeader{id} = SQPacketDatagramHeader::decode(&mut uni_stream).await?;
-                let (udp,addr) = match id_map.get(&id){
-                    Some(r) => r,
-                    None => {
-                    let (udp,addr) = id_store.get_socket_or_wait(id).await;
 
-                let _ = send.send((id, udp.clone(),addr.clone())).await.map_err(|_e|SError::ChannelError("can't open send udp trait".into()));
-                &(udp.to_owned(),addr.to_owned())
-                }};
+                let (udp,addr) = id_store.get_socket_or_wait(id).await;
+
                 info!("unistream datagram accepted: id:{},dst:{}",id, addr);
                 Ok((uni_stream,udp.clone(),addr.clone())) as Result<(RecvStream,AnyUdpSend,SocksAddr),SError>
             } => {

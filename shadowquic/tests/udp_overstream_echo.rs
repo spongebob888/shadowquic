@@ -54,6 +54,7 @@ async fn main() {
                  } => {
                     r.unwrap();
                     ii += 1;
+                    #[warn(clippy::modulo_one)]
                     if ii % 1 == 0 {
                         tokio::time::sleep(Duration::from_millis(2)).await;
                     }

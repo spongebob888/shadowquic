@@ -152,16 +152,23 @@ async fn handle_udp(udp_session: UdpSession) -> Result<(), SError> {
         #[allow(unreachable_code)]
         (Ok(()) as Result<(), SError>)
     };
-    tokio::spawn(fut1);
-    loop {
-        let (buf, dst) = downstream.recv_from().await?;
+    let fut2 = async move {
+        loop {
+            let (buf, dst) = downstream.recv_from().await?;
 
-        //trace!("udp request to:{}", dst);
-        let dst = dns_cache.resolve(dst, ipv4_only).await?;
-        //trace!("udp resolve to:{}", dst);
-        let _siz = upstream_clone.send_to(&buf, &dst).await?;
-        //trace!("udp request sent:{}bytes", siz);
-    }
+            //trace!("udp request to:{}", dst);
+            let dst = dns_cache.resolve(dst, ipv4_only).await?;
+            //trace!("udp resolve to:{}", dst);
+            let _siz = upstream_clone.send_to(&buf, &dst).await?;
+            //trace!("udp request sent:{}bytes", siz);
+        }
+        #[allow(unreachable_code)]
+        (Ok(()) as Result<(), SError>)
+    };
+    // We can use spawn, but it requirs communication to shutdown the other
+    // Flatten spawn handle using try_join! doesn't work. Don't know why
+    tokio::try_join!(fut1, fut2)?;
+    Ok(())
 }
 
 struct DualSocket {

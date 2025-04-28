@@ -39,9 +39,18 @@ fn setup_log(level: LogLevel) {
     let filter = tracing_subscriber::filter::Targets::new()
         // Enable the `INFO` level for anything in `my_crate`
         .with_target("shadowquic", level.as_tracing_level());
+
+    #[cfg(feature = "tokio-console")]
+    let filter = filter
+        .with_target("tokio", Level::TRACE)
+        .with_target("runtime", Level::TRACE);
+    #[cfg(feature = "tokio-console")]
+    let console_layer = console_subscriber::spawn();
+
     let timer = LocalTime::new(time::macros::format_description!(
         "[year repr:last_two]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]"
     ));
+
     let fmt = tracing_subscriber::fmt::Layer::new()
         .with_timer(timer)
         .with_ansi(std::io::stdout().is_terminal())
@@ -51,5 +60,8 @@ fn setup_log(level: LogLevel) {
         .with_line_number(false)
         .with_level(true)
         .with_writer(std::io::stdout);
-    tracing_subscriber::registry().with(fmt).with(filter).init();
+    let sub = tracing_subscriber::registry().with(fmt).with(filter);
+    #[cfg(feature = "tokio-console")]
+    let sub = sub.with(console_layer);
+    sub.init();
 }
