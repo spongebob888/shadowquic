@@ -195,7 +195,10 @@ impl SQServerConn {
             "incomming from {} accepted",
             conn.remote_address()
         );
-        tokio::spawn(handle_udp_packet_recv(self.0.clone()).in_current_span());
+        let conn_clone = self.0.clone();
+        tokio::spawn(async move {
+            let _ = handle_udp_packet_recv(conn_clone).in_current_span().await;
+        });
 
         while conn.close_reason().is_none() {
             select! {
