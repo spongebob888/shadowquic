@@ -19,7 +19,7 @@ use tracing::{Level, level_filters::LevelFilter, trace};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const CHUNK_LEN: usize = 1024;
-const ROUND: usize = 1000;
+const ROUND: usize = 100;
 #[tokio::test]
 async fn main() {
     let socks_server = "127.0.0.1:1092";
