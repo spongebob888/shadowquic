@@ -1,9 +1,18 @@
 use async_trait::async_trait;
-use std::{net::ToSocketAddrs, sync::Arc, time::Duration};
-use tokio::io::AsyncReadExt;
+use bytes::Bytes;
+use std::{
+    io,
+    net::{ToSocketAddrs, UdpSocket},
+    sync::Arc,
+    time::Duration,
+};
+use tokio::{
+    io::AsyncReadExt,
+    sync::mpsc::{Receiver, Sender, channel},
+};
 
 use quinn::{
-    ClientConfig, Endpoint, MtuDiscoveryConfig, TransportConfig,
+    ClientConfig, Endpoint, MtuDiscoveryConfig, RecvStream, SendStream, TransportConfig,
     congestion::{BbrConfig, CubicConfig, NewRenoConfig},
     crypto::rustls::QuicClientConfig,
 };
@@ -16,7 +25,7 @@ use crate::{
     error::SError,
     msgs::{
         shadowquic::{SQCmd, SQReq},
-        socks5::SEncode,
+        socks5::{SEncode, SocksAddr},
     },
     shadowquic::{handle_udp_recv_ctrl, handle_udp_send},
 };
@@ -24,17 +33,52 @@ use crate::{
 use super::{SQConn, handle_udp_packet_recv, inbound::Unsplit};
 
 pub struct ShadowQuicClient {
-    quic_conn: Option<SQConn>,
+    pub quic_conn: Option<SQConn>,
     #[allow(dead_code)]
-    quic_config: quinn::ClientConfig,
-    quic_end: Endpoint,
-    dst_addr: String,
-    server_name: String,
-    zero_rtt: bool,
-    over_stream: bool,
+    pub quic_config: quinn::ClientConfig,
+    pub quic_end: Endpoint,
+    pub dst_addr: String,
+    pub server_name: String,
+    pub zero_rtt: bool,
+    pub over_stream: bool,
 }
 impl ShadowQuicClient {
     pub fn new(cfg: ShadowQuicClientCfg) -> Self {
+        let config = Self::gen_quic_cfg(&cfg);
+        let mut end =
+            Endpoint::client("[::]:0".parse().unwrap()).expect("Can't create quic endpoint");
+        end.set_default_client_config(config.clone());
+
+        Self {
+            quic_conn: None,
+            quic_config: config,
+            quic_end: end,
+            dst_addr: cfg.addr,
+            server_name: cfg.server_name,
+            zero_rtt: cfg.zero_rtt,
+            over_stream: cfg.over_stream,
+        }
+    }
+    pub fn new_with_socket(cfg: ShadowQuicClientCfg, socket: UdpSocket) -> Self {
+        let config = Self::gen_quic_cfg(&cfg);
+        let runtime = quinn::default_runtime()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no async runtime found"))
+            .unwrap();
+        let mut end = Endpoint::new(quinn::EndpointConfig::default(), None, socket, runtime)
+            .expect("Can't create quic endpoint");
+        end.set_default_client_config(config.clone());
+
+        Self {
+            quic_conn: None,
+            quic_config: config,
+            quic_end: end,
+            dst_addr: cfg.addr,
+            server_name: cfg.server_name,
+            zero_rtt: cfg.zero_rtt,
+            over_stream: cfg.over_stream,
+        }
+    }
+    pub fn gen_quic_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
         let root_store = RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.into(),
         };
@@ -77,19 +121,54 @@ impl ShadowQuicClient {
         ));
 
         config.transport_config(Arc::new(tp_cfg));
-        let mut end =
-            Endpoint::client("[::]:0".parse().unwrap()).expect("Can't create quic endpoint");
-        end.set_default_client_config(config.clone());
+        config
+    }
 
-        Self {
-            quic_conn: None,
-            quic_config: config,
-            quic_end: end,
-            dst_addr: cfg.addr,
-            server_name: cfg.server_name,
-            zero_rtt: cfg.zero_rtt,
-            over_stream: cfg.over_stream,
+    pub async fn get_conn(&self) -> Result<SQConn, SError> {
+        let addr = self
+            .dst_addr
+            .to_socket_addrs()
+            .unwrap_or_else(|_| panic!("resolve quic addr faile: {}", self.dst_addr))
+            .next()
+            .unwrap_or_else(|| panic!("resolve quic addr faile: {}", self.dst_addr));
+        let conn = self.quic_end.connect(addr, &self.server_name)?;
+        let conn = if self.zero_rtt {
+            match conn.into_0rtt() {
+                Ok((x, accepted)) => {
+                    let conn_clone = x.clone();
+                    tokio::spawn(async move {
+                        debug!("zero rtt accepted: {}", accepted.await);
+                        if conn_clone.is_jls() == Some(false) {
+                            error!("JLS hijacked or wrong pwd/iv");
+                            conn_clone.close(0u8.into(), b"");
+                        }
+                    });
+                    trace!("trying 0-rtt quic connection");
+                    x
+                }
+                Err(e) => {
+                    let x = e.await?;
+                    trace!("1-rtt quic connection established");
+                    x
+                }
+            }
+        } else {
+            let x = conn.await?;
+            trace!("1-rtt quic connection established");
+            x
+        };
+        if conn.is_jls() == Some(false) {
+            error!("JLS hijacked or wrong pwd/iv");
+            conn.close(0u8.into(), b"");
+            return Err(SError::JlsAuthFailed);
         }
+        let conn = SQConn {
+            conn,
+            id_store: Default::default(),
+        };
+
+        tokio::spawn(handle_udp_packet_recv(conn.clone()));
+        Ok(conn)
     }
     async fn prepare_conn(&mut self) -> Result<(), SError> {
         // delete connection if closed.
@@ -101,47 +180,9 @@ impl ShadowQuicClient {
         });
         // Creating new connectin
         if self.quic_conn.is_none() {
-            let addr = self
-                .dst_addr
-                .to_socket_addrs()
-                .unwrap_or_else(|_| panic!("resolve quic addr faile: {}", self.dst_addr))
-                .next()
-                .unwrap_or_else(|| panic!("resolve quic addr faile: {}", self.dst_addr));
-            let conn = self.quic_end.connect(addr, &self.server_name)?;
-            let conn = if self.zero_rtt {
-                match conn.into_0rtt() {
-                    Ok((x, accepted)) => {
-                        let conn_clone = x.clone();
-                        tokio::spawn(async move {
-                            debug!("zero rtt accepted: {}", accepted.await);
-                            if conn_clone.is_jls() == Some(false) {
-                                error!("JLS hijacked or wrong pwd/iv");
-                                conn_clone.close(0u8.into(), b"");
-                            }
-                        });
-                        trace!("trying 0-rtt quic connection");
-                        x
-                    }
-                    Err(e) => {
-                        let x = e.await?;
-                        trace!("1-rtt quic connection established");
-                        x
-                    }
-                }
-            } else {
-                let x = conn.await?;
-                trace!("1-rtt quic connection established");
-                x
-            };
-            if conn.is_jls() == Some(false) {
-                error!("JLS hijacked or wrong pwd/iv");
-                conn.close(0u8.into(), b"");
-            }
-            self.quic_conn = Some(SQConn {
-                conn,
-                id_store: Default::default(),
-            });
-            let conn = self.quic_conn.as_ref().unwrap().clone();
+            self.quic_conn = Some(self.get_conn().await?);
+
+            let conn: SQConn = self.quic_conn.as_ref().unwrap().clone();
             tokio::spawn(handle_udp_packet_recv(conn));
         }
         Ok(())
@@ -228,4 +269,87 @@ impl Outbound for ShadowQuicClient {
         });
         Ok(())
     }
+}
+
+/// Helper function to create new stream for proxy dstination
+#[allow(dead_code)]
+pub async fn connect_tcp(
+    sq_conn: &SQConn,
+    dst: SocksAddr,
+) -> Result<Unsplit<SendStream, RecvStream>, crate::error::SError> {
+    let conn = sq_conn;
+
+    let rate: f32 =
+        (conn.stats().path.lost_packets as f32) / ((conn.stats().path.sent_packets + 1) as f32);
+    info!(
+        "packet_loss_rate:{:.2}%, rtt:{:?}, mtu:{}",
+        rate * 100.0,
+        conn.rtt(),
+        conn.stats().path.current_mtu,
+    );
+    let (mut send, recv) = conn.open_bi().await?;
+
+    info!("bistream opened for tcp dst:{}", dst.clone());
+    //let _enter = _span.enter();
+    let req = SQReq {
+        cmd: SQCmd::Connect,
+        dst,
+    };
+    req.encode(&mut send).await?;
+    trace!("req header sent");
+
+    Ok(Unsplit { s: send, r: recv })
+}
+
+/// associate a udp socket in the remote server
+/// return a socket-like send, recv handle.
+#[allow(dead_code)]
+pub async fn associate_udp(
+    sq_conn: &SQConn,
+    dst: SocksAddr,
+    over_stream: bool,
+) -> Result<(Sender<(Bytes, SocksAddr)>, Receiver<(Bytes, SocksAddr)>), SError> {
+    let conn = sq_conn;
+
+    let rate: f32 =
+        (conn.stats().path.lost_packets as f32) / ((conn.stats().path.sent_packets + 1) as f32);
+    info!(
+        "packet_loss_rate:{:.2}%, rtt:{:?}, mtu:{}",
+        rate * 100.0,
+        conn.rtt(),
+        conn.stats().path.current_mtu,
+    );
+    let (mut send, recv) = conn.open_bi().await?;
+
+    info!("bistream opened for udp dst:{}", dst.clone());
+
+    let req = SQReq {
+        cmd: if over_stream {
+            SQCmd::AssociatOverStream
+        } else {
+            SQCmd::AssociatOverDatagram
+        },
+        dst: dst.clone(),
+    };
+    req.encode(&mut send).await?;
+    let (local_send, udp_recv) = channel::<(Bytes, SocksAddr)>(10);
+    let (udp_send, local_recv) = channel::<(Bytes, SocksAddr)>(10);
+    let local_send = Arc::new(local_send);
+    let fut2 = handle_udp_recv_ctrl(recv, local_send.clone(), conn.clone());
+    let fut1 = handle_udp_send(
+        send,
+        local_send,
+        Box::new(local_recv),
+        conn.clone(),
+        over_stream,
+    );
+
+    tokio::spawn(async {
+        match tokio::try_join!(fut1, fut2) {
+            Err(e) => error!("udp association ended due to {}", e),
+            Ok(_) => trace!("udp association ended"),
+        }
+    });
+
+    Ok((udp_send, udp_recv))
 }
