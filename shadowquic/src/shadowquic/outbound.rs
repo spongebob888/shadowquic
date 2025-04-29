@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use std::{
+    io,
     net::{ToSocketAddrs, UdpSocket},
     sync::Arc,
     time::Duration,
@@ -43,6 +44,41 @@ pub struct ShadowQuicClient {
 }
 impl ShadowQuicClient {
     pub fn new(cfg: ShadowQuicClientCfg) -> Self {
+        let config = Self::gen_quic_cfg(&cfg);
+        let mut end =
+            Endpoint::client("[::]:0".parse().unwrap()).expect("Can't create quic endpoint");
+        end.set_default_client_config(config.clone());
+
+        Self {
+            quic_conn: None,
+            quic_config: config,
+            quic_end: end,
+            dst_addr: cfg.addr,
+            server_name: cfg.server_name,
+            zero_rtt: cfg.zero_rtt,
+            over_stream: cfg.over_stream,
+        }
+    }
+    pub fn new_with_socket(cfg: ShadowQuicClientCfg, socket: UdpSocket) -> Self {
+        let config = Self::gen_quic_cfg(&cfg);
+        let runtime = quinn::default_runtime()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no async runtime found"))
+            .unwrap();
+        let mut end = Endpoint::new(quinn::EndpointConfig::default(), None, socket, runtime)
+            .expect("Can't create quic endpoint");
+        end.set_default_client_config(config.clone());
+
+        Self {
+            quic_conn: None,
+            quic_config: config,
+            quic_end: end,
+            dst_addr: cfg.addr,
+            server_name: cfg.server_name,
+            zero_rtt: cfg.zero_rtt,
+            over_stream: cfg.over_stream,
+        }
+    }
+    pub fn gen_quic_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
         let root_store = RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.into(),
         };
@@ -85,24 +121,9 @@ impl ShadowQuicClient {
         ));
 
         config.transport_config(Arc::new(tp_cfg));
-        let mut end =
-            Endpoint::client("[::]:0".parse().unwrap()).expect("Can't create quic endpoint");
-        end.set_default_client_config(config.clone());
+        config
+    }
 
-        Self {
-            quic_conn: None,
-            quic_config: config,
-            quic_end: end,
-            dst_addr: cfg.addr,
-            server_name: cfg.server_name,
-            zero_rtt: cfg.zero_rtt,
-            over_stream: cfg.over_stream,
-        }
-    }
-    pub fn rebind(&self, socket: UdpSocket) -> std::io::Result<()> {
-        self.quic_end.rebind(socket)?;
-        Ok(())
-    }
     pub async fn get_conn(&self) -> Result<SQConn, SError> {
         let addr = self
             .dst_addr
