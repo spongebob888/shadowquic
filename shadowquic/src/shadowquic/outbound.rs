@@ -255,6 +255,7 @@ impl Outbound for ShadowQuicClient {
                             .read_exact(&mut buf)
                             .await
                             .map_err(|_| SError::UDPCtrlStreamClosed)?;
+                        error!("unexpected data received from socks control stream");
                         Err(SError::UDPCtrlStreamClosed) as Result<(), SError>
                     };
 
