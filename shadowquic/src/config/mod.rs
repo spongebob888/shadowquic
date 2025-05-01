@@ -8,7 +8,7 @@ use crate::{
     direct::outbound::DirectOut,
     error::SError,
     shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
-    socks::inbound::SocksServer,
+    socks::{inbound::SocksServer, outbound::SocksClient},
 };
 
 #[derive(Deserialize, Clone, Debug)]
@@ -59,7 +59,7 @@ pub enum OutboundCfg {
 impl OutboundCfg {
     async fn build_outbound(self) -> Result<Box<dyn Outbound>, SError> {
         let r: Box<dyn Outbound> = match self {
-            OutboundCfg::Socks(_cfg) => panic!("Not implemented yet"),
+            OutboundCfg::Socks(cfg) => Box::new(SocksClient::new(cfg)),
             OutboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicClient::new(cfg)),
             OutboundCfg::Direct(_) => Box::new(DirectOut),
         };

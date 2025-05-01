@@ -247,7 +247,12 @@ impl Outbound for ShadowQuicClient {
                         conn,
                         over_stream,
                     );
+                    // control stream, in socks5 inbound, end of control stream
+                    // means end of udp association.
                     let fut3 = async {
+                        if udp_session.stream.is_none() {
+                            return Ok(());
+                        }
                         let mut buf = [0u8];
                         udp_session
                             .stream
