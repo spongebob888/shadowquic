@@ -1,0 +1,10 @@
+inbound:
+    type: socks
+    bind-addr: 127.0.0.1:1089
+outbound:
+    type: socks
+    addr: "192.168.7.1:1089"
+log-level: "trace"
+
+
+

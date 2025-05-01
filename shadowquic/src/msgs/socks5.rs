@@ -34,6 +34,7 @@ pub mod consts {
     pub const SOCKS5_REPLY_TTL_EXPIRED:                u8 = 0x06;
     pub const SOCKS5_REPLY_COMMAND_NOT_SUPPORTED:      u8 = 0x07;
     pub const SOCKS5_REPLY_ADDRESS_TYPE_NOT_SUPPORTED: u8 = 0x08;
+    pub const SOCKS5_RESERVE:                          u8 = 0x00;                 
 }
 
 pub use consts::*;
