@@ -1,6 +1,6 @@
 FROM alpine:latest
 ARG TARGETARCH
-COPY ./packages/tuic-server-${TARGETARCH} /usr/bin/shadowquic
+COPY ./packages/shadowquic-${TARGETARCH} /usr/bin/shadowquic
 RUN chmod +x /usr/bin/shadowquic
 WORKDIR /root
 

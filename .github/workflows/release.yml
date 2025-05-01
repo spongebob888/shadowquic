@@ -317,7 +317,7 @@ jobs:
       - name: Rename binary
         run: |
           mv ./packages/shadowquic-x86_64-linux-musl ./packages/shadowquic-amd64
-          mv ./packages/shadowquic-aarch64-linux-musl ./packages/shadowquic-server-arm64
+          mv ./packages/shadowquic-aarch64-linux-musl ./packages/shadowquic-arm64
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
