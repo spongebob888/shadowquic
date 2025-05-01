@@ -59,6 +59,8 @@ UDP Associate command is carried by bistream called *control stream*. For each d
 *control stream* doesn't send payload. The payload is carried by unistream or datagram extension chosen by user. 
 Control stream *MUST* remain alive during udp association task.
 
+If control stream is terminated, the udp association task *must* also be terminated.
+
 UDP Associate command associates a remote socket to local socket. For each 
 destination from a local socket the datagram will be asigned a `CONTEXT ID` which is in *one-to-one
 corespondance* to 4 tuple (local udp ip:port, destination udp ip:port).
