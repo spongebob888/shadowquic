@@ -85,8 +85,10 @@ pub struct ShadowQuicClientCfg {
     pub jls_pwd: String,
     pub jls_iv: String,
     pub addr: String,
+    /// must be the same as server jls_upstream domain name
     pub server_name: String,
     #[serde(default = "default_alpn")]
+    /// default is [h3]
     pub alpn: Vec<String>,
     #[serde(default = "default_initial_mtu")]
     pub initial_mtu: u16,
@@ -95,9 +97,17 @@ pub struct ShadowQuicClientCfg {
     #[serde(default = "default_zero_rtt")]
     pub zero_rtt: bool,
     #[serde(default = "default_over_stream")]
+    /// if true, use stream to send UDP, otherwise use datagram, similar to native UDP
+    /// in TUIC
     pub over_stream: bool,
     #[serde(default = "default_min_mtu")]
+    /// minimum mtu, must be smaller than initial mtu, at least to be 1200.
+    /// 1400 is recommended for high packet loss network.
     pub min_mtu: u16,
+    /// keep alive interval in milliseconds
+    /// 0 means disable keep alive, should be smaller than 30_000
+    #[serde(default = "default_keep_alive_interval")]
+    pub keep_alive_interval: u32,
 }
 
 impl Default for ShadowQuicClientCfg {
@@ -113,6 +123,7 @@ impl Default for ShadowQuicClientCfg {
             zero_rtt: Default::default(),
             over_stream: Default::default(),
             min_mtu: default_min_mtu(),
+            keep_alive_interval: default_keep_alive_interval(),
         }
     }
 }
@@ -134,6 +145,9 @@ pub fn default_over_stream() -> bool {
 }
 pub fn default_alpn() -> Vec<String> {
     vec!["h3".into()]
+}
+pub fn default_keep_alive_interval() -> u32 {
+    0
 }
 
 #[derive(Serialize, Deserialize, Default, Debug, Clone)]
