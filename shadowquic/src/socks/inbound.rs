@@ -1,23 +1,20 @@
-use std::io::Cursor;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::OnceCell;
 
 use crate::config::SocksServerCfg;
 use crate::error::SError;
 use crate::msgs::socks5::{
     self, AddrOrDomain, CmdReq, SDecode, SEncode, SOCKS5_ADDR_TYPE_DOMAIN_NAME,
     SOCKS5_ADDR_TYPE_IPV4, SOCKS5_AUTH_METHOD_NONE, SOCKS5_CMD_TCP_BIND, SOCKS5_CMD_TCP_CONNECT,
-    SOCKS5_CMD_UDP_ASSOCIATE, SOCKS5_REPLY_SUCCEEDED, SOCKS5_VERSION, SocksAddr, UdpReqHeader,
+    SOCKS5_CMD_UDP_ASSOCIATE, SOCKS5_REPLY_SUCCEEDED, SOCKS5_VERSION,
 };
-use crate::{Inbound, ProxyRequest, TcpSession, UdpRecv, UdpSend, UdpSession};
+use crate::{Inbound, ProxyRequest, TcpSession, UdpSession};
 use async_trait::async_trait;
-use bytes::{BufMut, Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, UdpSocket};
 
 use anyhow::Result;
-use tracing::{Instrument, trace, trace_span, warn};
+use tracing::{Instrument, trace, trace_span};
 
 use super::UdpSocksWrap;
 

@@ -1,30 +1,19 @@
-use std::fmt::format;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
-use bytes::buf;
 use fast_socks5::client::{Config, Socks5Datagram, Socks5Stream};
-use shadowquic::config::{
-    default_initial_mtu, CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksClientCfg, SocksServerCfg
-};
+use shadowquic::config::{SocksClientCfg, SocksServerCfg};
 use shadowquic::socks::outbound::SocksClient;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use tokio::net::TcpStream;
-use tokio::{net::TcpListener, time::Duration};
+use tokio::time::Duration;
 
-use shadowquic::{
-    Manager,
-    direct::outbound::DirectOut,
-    shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
-    socks::inbound::SocksServer,
-};
+use shadowquic::{Manager, direct::outbound::DirectOut, socks::inbound::SocksServer};
 
-use tracing::{debug, info};
 use tracing::{Level, level_filters::LevelFilter, trace};
+use tracing::{debug, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-const CHUNK_LEN: usize = 1024;
-const ROUND: usize = 100;
 #[tokio::test]
 async fn test_tcp() {
     let socks_server = "127.0.0.1:1093";
@@ -35,7 +24,7 @@ async fn test_tcp() {
     spawn_socks().await;
 
     tokio::time::sleep(Duration::from_millis(100)).await;
-    
+
     let mut s = Socks5Stream::connect(socks_server, target_addr.into(), target_port, config)
         .await
         .unwrap();
@@ -49,7 +38,7 @@ async fn test_tcp() {
     let mut len_buffer = [0u8; 2];
     s.read_exact(&mut len_buffer).await.unwrap();
     let response_len = u16::from_be_bytes(len_buffer) as usize;
-    
+
     // Read the response
     let mut response = vec![0u8; response_len];
     s.read_exact(&mut response).await.unwrap();
@@ -57,27 +46,28 @@ async fn test_tcp() {
     assert_eq!(response[0], 0x13);
     assert_eq!(response[1], 0x37);
 
-
     // Creating a SOCKS stream to the target address through the socks server
     let backing_socket = TcpStream::connect(socks_server).await.unwrap();
     // At least on some platforms it is important to use the same protocol as the server
     // XXX: assumes the returned UDP proxy will have the same protocol as the socks_server
     let client_bind_addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0);
 
-    let mut socks = Socks5Datagram::bind(backing_socket, client_bind_addr).await.unwrap();
+    let socks = Socks5Datagram::bind(backing_socket, client_bind_addr)
+        .await
+        .unwrap();
 
     let mut recv = [0u8; 200];
-    socks.send_to(&query, (target_addr, target_port)).await.unwrap();
-    let (len,_) = socks.recv_from(&mut recv).await.unwrap();
+    socks
+        .send_to(&query, (target_addr, target_port))
+        .await
+        .unwrap();
+    let (len, _) = socks.recv_from(&mut recv).await.unwrap();
     info!("from udp 8.8.8.8:53: {:?}", &recv[0..len]);
     assert_eq!(recv[0], 0x13);
     assert_eq!(recv[1], 0x37);
-
 }
 
- fn dns_request(
-    domain: String,
-) -> Vec<u8> {
+fn dns_request(domain: String) -> Vec<u8> {
     debug!("Requesting results...");
 
     let mut query: Vec<u8> = vec![
@@ -95,11 +85,9 @@ async fn test_tcp() {
     query.extend_from_slice(&[0, 0, 1, 0, 1]);
     debug!("query: {:?}", query);
 
-
-    return query;
+    query
     // assert_eq!(msg[0], 0x13);
     // assert_eq!(msg[1], 0x37);
-
 }
 
 async fn spawn_socks() {
@@ -126,7 +114,7 @@ async fn spawn_socks() {
     .await
     .unwrap();
     let sq_client = SocksClient::new(SocksClientCfg {
-        addr: "[::1]:1094".into()
+        addr: "[::1]:1094".into(),
     });
 
     let client = Manager {
@@ -134,9 +122,11 @@ async fn spawn_socks() {
         outbound: Box::new(sq_client),
     };
 
-    let sq_server = SocksServer::new(SocksServerCfg{
-        bind_addr: "[::1]:1094".parse().unwrap()
-    }).await.unwrap();
+    let sq_server = SocksServer::new(SocksServerCfg {
+        bind_addr: "[::1]:1094".parse().unwrap(),
+    })
+    .await
+    .unwrap();
     let direct_client = DirectOut;
     let server = Manager {
         inbound: Box::new(sq_server),
@@ -148,4 +138,3 @@ async fn spawn_socks() {
     tokio::spawn(client.run());
     tokio::time::sleep(Duration::from_millis(100)).await;
 }
-
