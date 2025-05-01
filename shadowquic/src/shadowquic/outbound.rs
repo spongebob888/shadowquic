@@ -104,6 +104,11 @@ impl ShadowQuicClient {
         // Only increase receive window to maximize download speed
         tp_cfg.stream_receive_window(super::MAX_STREAM_WINDOW.try_into().unwrap());
         tp_cfg.datagram_receive_buffer_size(Some(super::MAX_DATAGRAM_WINDOW as usize));
+        tp_cfg.keep_alive_interval(if cfg.keep_alive_interval > 0 {
+            Some(Duration::from_millis(cfg.keep_alive_interval as u64))
+        } else {
+            None
+        });
 
         match cfg.congestion_control {
             CongestionControl::Cubic => {
