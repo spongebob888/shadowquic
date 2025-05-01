@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use fast_socks5::client::{Config, Socks5Datagram, Socks5Stream};
 use shadowquic::config::{SocksClientCfg, SocksServerCfg};
@@ -50,7 +50,7 @@ async fn test_tcp() {
     let backing_socket = TcpStream::connect(socks_server).await.unwrap();
     // At least on some platforms it is important to use the same protocol as the server
     // XXX: assumes the returned UDP proxy will have the same protocol as the socks_server
-    let client_bind_addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0);
+    let client_bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
 
     let socks = Socks5Datagram::bind(backing_socket, client_bind_addr)
         .await

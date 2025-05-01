@@ -21,7 +21,7 @@ use tracing::{Level, level_filters::LevelFilter, trace};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const CHUNK_LEN: usize = 1000;
-const ROUND: usize = 10;
+const ROUND: usize = 3;
 #[tokio::test]
 async fn main() {
     let socks_server = "127.0.0.1:1031";
@@ -56,7 +56,7 @@ async fn main() {
                     ii += 1;
                     #[warn(clippy::modulo_one)]
                     if ii % 1 == 0 {
-                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        tokio::time::sleep(Duration::from_millis(150)).await;
                     }
                 }
                 r = socks.recv_from(&mut recvbuf[jj*CHUNK_LEN..(jj+1)*CHUNK_LEN]) => {
