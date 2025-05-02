@@ -171,6 +171,9 @@ async fn handle_udp(udp_session: UdpSession) -> Result<(), SError> {
     Ok(())
 }
 
+/// A dual stack UDP socket. In linux dual stack is enabled by default for IPv6 socket,
+/// and IPv4 address mapped from/to IPv6 address is done automatically.
+/// In windows, Ipv4 mapping must be done manually.
 struct DualSocket {
     inner: UdpSocket,
     dual_stack: bool,
