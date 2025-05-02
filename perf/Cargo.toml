@@ -21,6 +21,6 @@ rustls = { package = "rustls", git = "https://github.com/spongebob888/rustls-jls
 rcgen = { version = "0.13", default-features = false, features = ["crypto","ring"] }
 bytes = "1.10.1"
 async-trait = "0.1.88"
-webpki-roots = "0.26.8"
+webpki-roots = "0.26.10"
 fast-socks5 = "0.10.0"
 [dev-dependencies]
