@@ -29,6 +29,10 @@ pub const MAX_WINDOW_BASE: u64 = 4 * 12_500_000 * 100 / 1000; // 100ms RTT
 pub const MAX_STREAM_WINDOW: u64 = MAX_WINDOW_BASE;
 pub const MAX_SEND_WINDOW: u64 = MAX_WINDOW_BASE * 8;
 pub const MAX_DATAGRAM_WINDOW: u64 = MAX_WINDOW_BASE * 2;
+
+/// ShadowQuic connection, which is a wrapper around quinn::Connection.
+/// It contains a connection object and an ID store for managing UDP sockets.
+/// The IDStore stores the mapping between ids and the destionation addresses as well as associated sockets
 #[derive(Clone)]
 pub struct SQConn {
     conn: Connection,
@@ -44,6 +48,9 @@ impl Deref for SQConn {
 }
 
 type IDStoreVal = Result<(AnyUdpSend, SocksAddr), Arc<Notify>>;
+/// IDStore is a thread-safe store for managing UDP sockets and their associated ids.
+/// It uses a HashMap to store the mapping between ids and the destination addresses as well as associated sockets.
+/// It also uses an atomic counter to generate unique ids for new sockets.
 #[derive(Clone, Default)]
 struct IDStore {
     id_counter: Arc<AtomicU16>,
@@ -101,6 +108,10 @@ impl IDStore {
     }
 }
 
+/// AssociateSendSession is a session for sending UDP packets.
+/// It is created for each association task
+/// The local dst_map works as a inverse map from destination to id
+/// When session ended, the ids created by this session will be removed from the IDStore.
 struct AssociateSendSession {
     id_store: IDStore,
     dst_map: HashMap<SocksAddr, u16>,
@@ -131,8 +142,11 @@ impl Drop for AssociateSendSession {
         });
     }
 }
-// There are two usages for id_map
-// First, it works as local cache avoiding using global store repeatedly witch is more expensive
+/// AssociateRecvSession is a session for receiving UDP ctrl stream.
+/// It is created for each association task
+/// There are two usages for id_map
+/// First, it works as local cache avoiding using global store repeatedly which is more expensive
+/// Second. it records ids created by this session and clean those ids when session ended.
 struct AssociateRecvSession {
     id_store: IDStore,
     id_map: HashMap<u16, SocksAddr>,
@@ -161,6 +175,9 @@ impl Drop for AssociateRecvSession {
     }
 }
 
+/// Handle udp packets send
+/// It watches the udp socket and sends the packets to the quic connection.
+/// This function is symetrical for both clients and servers.
 pub async fn handle_udp_send(
     mut send: SendStream,
     udp_send: AnyUdpSend,
@@ -234,6 +251,9 @@ pub async fn handle_udp_send(
     Ok(())
 }
 
+/// Handle udp ctrl stream receive task
+/// it retrieves the dst id pair from the bistream and records related socket and address
+/// This function is symetrical for both clients and servers.
 pub async fn handle_udp_recv_ctrl(
     mut recv: RecvStream,
     udp_socket: AnyUdpSend,
@@ -251,6 +271,10 @@ pub async fn handle_udp_recv_ctrl(
     Ok(())
 }
 
+/// Handle udp packet receive task
+/// It watches udp packets from quic connection and sends them to the udp socket.
+/// The udp socket could be downstream(inbound) or upstream(outbound)
+/// This function is symetrical for both clients and servers.
 pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
     let id_store = conn.id_store.clone();
 
