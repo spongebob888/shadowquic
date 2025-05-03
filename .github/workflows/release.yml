@@ -337,6 +337,7 @@ jobs:
 
       - name: Build and push
         uses: docker/build-push-action@v6
+        if: startsWith(github.ref, 'refs/tags/v')
         with:
           context: .
           file: .github/Dockerfile
