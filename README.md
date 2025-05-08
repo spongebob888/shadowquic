@@ -24,6 +24,11 @@ $ shadowquic -c server.yaml
 
 Example config [server.yaml](./shadowquic/config_examples/server.yaml)
 
+Configuration detail can be found in [Documentation](https://spongebob888.github.io/shadowquic/shadowquic/config/struct.Config.html)
+## Other Clients
+- [clash-rs](https://github.com/Watfaq/clash-rs)
+## Other Servers
+- [docker](https://github.com/spongebob888/shadowquic/pkgs/container/shadowquic)
 ## Protocol
 [PROTOCOL](./PROTOCOL.pdf)
 
@@ -32,4 +37,5 @@ Example config [server.yaml](./shadowquic/config_examples/server.yaml)
  * [TUIC Protocol](https://github.com/tuic-protocol/tuic)
  * [TUIC Itsusinn fork](https://github.com/Itsusinn/tuic)
  * [leaf](https://github.com/eycorsican/leaf)
+ * [clash-rs](https://github.com/Watfaq/clash-rs)
 
