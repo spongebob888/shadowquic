@@ -48,6 +48,7 @@ async fn main() {
         }
         let after = tokio::time::Instant::now();
         let dura = after - now;
+        info!("read finished at:{:?}", after);
         eprintln!(
             "average download speed:{} MB/s",
             (CHUNK_LEN * ROUND) as f64 / dura.as_secs_f64() / 1024.0 / 1024.0
@@ -55,6 +56,7 @@ async fn main() {
     };
     let fut_2 = async {
         let now = tokio::time::Instant::now();
+        info!("start write at:{:?}", now);
         for ii in 0..ROUND {
             w.write_all(&sendbuf[ii * CHUNK_LEN..(ii + 1) * CHUNK_LEN])
                 .await
