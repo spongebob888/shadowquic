@@ -10,7 +10,19 @@ use crate::{
     shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
     socks::{inbound::SocksServer, outbound::SocksClient},
 };
-
+/// configuration
+/// example:
+/// ```yaml
+/// inbound:
+///   type: xxx
+///   xxx: xxx
+/// outbound:
+///   type: xxx
+///   xxx: xxx
+/// log-level: trace # or debug, info, warn, error
+/// ```
+/// supported inbound types are listed in [`InboundCfg`]
+/// supported outbound types are listed in [`OutboundCfg`]
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct Config {
@@ -28,6 +40,14 @@ impl Config {
     }
 }
 
+/// inbound config
+/// example:
+/// ```yaml
+/// type: socks # or shadowquic
+/// bind-addr: xxxxx
+/// xxx: xxx # other field depending on type
+/// ```
+/// See [`SocksServerCfg`] and [`ShadowQuicServerCfg`] for configuration detail
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case")]
 #[serde(tag = "type")]
@@ -67,45 +87,76 @@ impl OutboundCfg {
     }
 }
 
+/// socks inbound config  
+/// example
+/// ```yaml
+/// bind-addr: 0.0.0.0:1089 # or [::]:1089 for dualstack
+/// ```
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct SocksServerCfg {
     pub bind_addr: SocketAddr,
 }
 
+/// socks outbound config  
+/// example
+/// ```yaml
+/// addr: 12.34.56.7:1089 # or [12:ff::ff]:1089 for dualstack
+/// ```
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct SocksClientCfg {
     pub addr: String,
 }
 
+/// shadowquic outbound config  
+/// example
+/// ```yaml
+/// addr: 12.34.56.7:1089 # or [12:ff::ff]:1089 for dualstack
+/// jls-pwd: "12345678"
+/// jls-iv: "87654321"
+/// server-name: "echo.free.beeceptor.com" # must be the same as jls_upstream in server
+/// alpn: ["h3"]
+/// initial-mtu: 1400
+/// congestion-control: bbr
+/// zero-rtt: true
+/// over-stream: false  # true for udp over stream, false for udp over datagram
+/// ```
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", default)]
 pub struct ShadowQuicClientCfg {
+    /// jls password, must be the same as the server
     pub jls_pwd: String,
+    /// jls initial vector, must be the same as the server
     pub jls_iv: String,
+    /// shadowquic server address. example: `127.0.0.0.1:443`, "www.server.com:443", "[ff::f1]:4443"
     pub addr: String,
-    /// must be the same as server jls_upstream domain name
+    /// server name, must be the same as the server jls_upstream
+    /// domain name
     pub server_name: String,
+    /// default is \["h3"\], must have common element with server
     #[serde(default = "default_alpn")]
-    /// default is [h3]
     pub alpn: Vec<String>,
+    /// initial mtu, must be larger than min mtu, at least to be 1200.
+    /// 1400 is recommended for high packet loss network. default to be 1300
     #[serde(default = "default_initial_mtu")]
     pub initial_mtu: u16,
+    /// congestion control, default to "bbr", supported: "bbr", "new-reno", "cubic"
     #[serde(default = "default_congestion_control")]
     pub congestion_control: CongestionControl,
+    /// set to true to enable zero rtt, default to true
     #[serde(default = "default_zero_rtt")]
     pub zero_rtt: bool,
+    /// if true, use quic stream to send UDP, otherwise use quic datagram
+    /// extension, similar to native UDP in TUIC
     #[serde(default = "default_over_stream")]
-    /// if true, use stream to send UDP, otherwise use datagram, similar to native UDP
-    /// in TUIC
     pub over_stream: bool,
     #[serde(default = "default_min_mtu")]
     /// minimum mtu, must be smaller than initial mtu, at least to be 1200.
-    /// 1400 is recommended for high packet loss network.
+    /// 1400 is recommended for high packet loss network. default to be 1290
     pub min_mtu: u16,
     /// keep alive interval in milliseconds
-    /// 0 means disable keep alive, should be smaller than 30_000
+    /// 0 means disable keep alive, should be smaller than 30_000(idle time)
     #[serde(default = "default_keep_alive_interval")]
     pub keep_alive_interval: u32,
 }
@@ -166,18 +217,29 @@ pub struct DirectOutCfg;
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct ShadowQuicServerCfg {
+    /// binding address. e.g. `0.0.0.0:443`, `[::1]:443`
     pub bind_addr: SocketAddr,
+    /// jls password, used for authentication
     pub jls_pwd: String,
+    /// jls initial vector, used for authentication
     pub jls_iv: String,
+    /// jls upstream, camouflage server, must be domain with port. e.g.: `codepn.io:443`,`google.com:443`
     pub jls_upstream: String,
+    /// default is `["h3"]`, must have common element with client
     #[serde(default = "default_alpn")]
     pub alpn: Vec<String>,
+    /// set to true to enable zero rtt, default to true
     #[serde(default = "default_zero_rtt")]
     pub zero_rtt: bool,
+    /// congestion control, default to "bbr", supported: "bbr", "new-reno", "cubic"
     #[serde(default = "default_congestion_control")]
     pub congestion_control: CongestionControl,
+    /// initial mtu, must be larger than min mtu, at least to be 1200.
+    /// 1400 is recommended for high packet loss network. default to be 1300
     #[serde(default = "default_initial_mtu")]
     pub initial_mtu: u16,
+    /// minimum mtu, must be smaller than initial mtu, at least to be 1200.
+    /// 1400 is recommended for high packet loss network. default to be 1290
     #[serde(default = "default_min_mtu")]
     pub min_mtu: u16,
 }
