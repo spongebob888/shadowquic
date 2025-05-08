@@ -11,7 +11,7 @@ use crate::{
     socks::{inbound::SocksServer, outbound::SocksClient},
 };
 /// Overall configuration of shadowquic.
-/// 
+///
 /// Example:
 /// ```yaml
 /// inbound:
@@ -23,7 +23,7 @@ use crate::{
 /// log-level: trace # or debug, info, warn, error
 /// ```
 /// Supported inbound types are listed in [`InboundCfg`]
-/// 
+///
 /// Supported outbound types are listed in [`OutboundCfg`]
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case")]
@@ -98,7 +98,7 @@ impl OutboundCfg {
 }
 
 /// Socks inbound configuration
-/// 
+///
 /// Example:
 /// ```yaml
 /// bind-addr: 0.0.0.0:1089 # or [::]:1089 for dualstack
@@ -159,7 +159,7 @@ pub struct ShadowQuicClientCfg {
     /// Set to true to enable zero rtt, default to true
     #[serde(default = "default_zero_rtt")]
     pub zero_rtt: bool,
-    /// Transfer udp over stream or over datagram. 
+    /// Transfer udp over stream or over datagram.
     /// If true, use quic stream to send UDP, otherwise use quic datagram
     /// extension, similar to native UDP in TUIC
     #[serde(default = "default_over_stream")]
@@ -229,7 +229,7 @@ pub enum CongestionControl {
 pub struct DirectOutCfg;
 
 /// Configuration of shadowquic inbound
-/// 
+///
 /// Example:
 /// ```yaml
 /// bind-addr: 0.0.0.0:1443
@@ -254,7 +254,7 @@ pub struct ShadowQuicServerCfg {
     /// Alpn of tls. Default is `["h3"]`, must have common element with client
     #[serde(default = "default_alpn")]
     pub alpn: Vec<String>,
-    /// 0-RTT handshake. 
+    /// 0-RTT handshake.
     /// Set to true to enable zero rtt.
     /// Enabled by default
     #[serde(default = "default_zero_rtt")]
