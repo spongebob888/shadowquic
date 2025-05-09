@@ -221,7 +221,7 @@ impl Outbound for ShadowQuicClient {
                         dst: tcp_session.dst.clone(),
                     };
                     req.encode(&mut send).await?;
-                    trace!("req header sent");
+                    trace!("tcp connect req header sent");
 
                     let u = tokio::io::copy_bidirectional(
                         &mut Unsplit { s: send, r: recv },
@@ -244,6 +244,7 @@ impl Outbound for ShadowQuicClient {
                         dst: udp_session.dst.clone(),
                     };
                     req.encode(&mut send).await?;
+                    trace!("udp associate req header sent");
                     let fut2 = handle_udp_recv_ctrl(recv, udp_session.send.clone(), conn.clone());
                     let fut1 = handle_udp_send(
                         send,

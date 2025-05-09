@@ -265,6 +265,7 @@ pub async fn handle_udp_recv_ctrl(
     };
     loop {
         let SQUdpControlHeader { id, dst } = SQUdpControlHeader::decode(&mut recv).await?;
+        trace!("udp control header received: id:{},dst:{}", id, dst);
         session.store_socket(&id, dst, udp_socket.clone()).await;
     }
     #[allow(unreachable_code)]
