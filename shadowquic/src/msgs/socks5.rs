@@ -57,11 +57,34 @@ pub struct AuthReq {
     pub methods: VarVec,
 }
 
+#[derive(Clone, Debug, SDecode, SEncode)]
+pub struct PasswordAuthReq {
+    pub version: u8,
+    pub username: VarVec,
+    pub password: VarVec,
+}
+
+#[derive(Clone, Debug, SDecode, SEncode)]
+pub struct PasswordAuthReply {
+    pub version: u8,
+    pub status: u8,
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct VarVec {
     pub len: u8,
     pub contents: Vec<u8>,
 }
+
+impl From<Vec<u8>> for VarVec {
+    fn from(vec: Vec<u8>) -> Self {
+        VarVec {
+            len: vec.len() as u8,
+            contents: vec,
+        }
+    }
+}
+
 impl SEncode for VarVec {
     async fn encode<T: AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
         let buf = vec![self.len];

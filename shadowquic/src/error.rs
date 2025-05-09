@@ -33,4 +33,6 @@ pub enum SError {
     ChannelError(String),
     #[error("Socks UDP control stream closed")]
     UDPCtrlStreamClosed,
+    #[error("socks error: {0}")]
+    SocksError(String),
 }
