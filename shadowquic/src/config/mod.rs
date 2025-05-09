@@ -118,6 +118,10 @@ pub struct SocksServerCfg {
 #[serde(rename_all = "kebab-case")]
 pub struct SocksClientCfg {
     pub addr: String,
+    /// SOCKS5 username, optional
+    pub username: Option<String>,
+    /// SOCKS5 password, optional
+    pub password: Option<String>,
 }
 
 /// Shadowquic outbound configuration

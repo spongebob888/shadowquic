@@ -3,7 +3,9 @@ inbound:
     bind-addr: 127.0.0.1:1089
 outbound:
     type: socks
-    addr: "192.168.7.1:1089"
+    addr: "127.0.0.1:1091"
+    username: "username"
+    password: "password"
 log-level: "trace"
 
 

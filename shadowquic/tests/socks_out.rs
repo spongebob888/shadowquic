@@ -115,6 +115,8 @@ async fn spawn_socks() {
     .unwrap();
     let sq_client = SocksClient::new(SocksClientCfg {
         addr: "[::1]:1094".into(),
+        username: None,
+        password: None,
     });
 
     let client = Manager {
