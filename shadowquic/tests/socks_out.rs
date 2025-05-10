@@ -127,12 +127,10 @@ async fn spawn_socks() {
 
     let sq_server = SocksServer::new(SocksServerCfg {
         bind_addr: "[::1]:1094".parse().unwrap(),
-        users: vec![
-            SocksUser {
-                username: "test".into(),
-                password: "test".into(),
-            },
-        ],
+        users: vec![SocksUser {
+            username: "test".into(),
+            password: "test".into(),
+        }],
     })
     .await
     .unwrap();
