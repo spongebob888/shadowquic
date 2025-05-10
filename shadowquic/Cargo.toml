@@ -14,16 +14,16 @@ tokio-console = ["dep:console-subscriber","tokio/tracing"]
 [dependencies]
 anyhow = "1.0.97"
 thiserror = "2.0.12"
-tokio = {version = "1.44.2", features = ["io-util", "net","rt","macros","rt-multi-thread"]}
+tokio = {version = "1.45.0", features = ["io-util", "net","rt","macros","rt-multi-thread"]}
 tracing = "0.1.41"
-time = { version = "=0.3.39", features = ["macros", "local-offset"] }
+time = { version = "=0.3.41", features = ["macros", "local-offset"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt", "ansi", "time", "local-time"]}
 quinn = { package = "quinn", git = "https://github.com/spongebob888/quinn-jls", version = "0.11.7-0.1.1", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 rustls = { package = "rustls", git = "https://github.com/spongebob888/rustls-jls", version = "0.23.25-1.0.2", default-features = false, features = ["std","ring"]}
 rcgen = { version = "0.13", default-features = false, features = ["crypto","ring"] }
 bytes = "1.10.1"
 async-trait = "0.1.88"
-webpki-roots = "0.26.8"
+webpki-roots = "1.0.0"
 shadowquic-macros = {path = "../shadowquic-macros", version = "*"}
 yaml-rust2 = "0.10.1"
 serde = { version = "1.0.219", features = ["derive"]}
