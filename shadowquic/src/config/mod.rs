@@ -102,11 +102,27 @@ impl OutboundCfg {
 /// Example:
 /// ```yaml
 /// bind-addr: 0.0.0.0:1089 # or [::]:1089 for dualstack
+/// users:
+///  - username: "username"
+///    password: "password"
 /// ```
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct SocksServerCfg {
+    /// Server binding address. e.g. `0.0.0.0:1089`, `[::1]:1089`
     pub bind_addr: SocketAddr,
+    /// Socks5 username, optional
+    /// Left empty to disable authentication
+    #[serde(default = "Vec::new")]
+    pub users: Vec<SocksUser>,
+}
+
+/// Socks user authentication
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub struct SocksUser {
+    pub username: String,
+    pub password: String,
 }
 
 /// Socks outbound configuration

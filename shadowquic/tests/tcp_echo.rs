@@ -95,6 +95,7 @@ async fn test_shadowquic() {
 
     let socks_server = SocksServer::new(SocksServerCfg {
         bind_addr: "127.0.0.1:1092".parse().unwrap(),
+        users: vec![],
     })
     .await
     .unwrap();
