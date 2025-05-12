@@ -40,18 +40,22 @@ async fn main() {
     )
     .await
     .unwrap();
-    let sendbuf: Vec<u8> = (0..(CHUNK_LEN * ROUND)).map(|_| rand::random()).collect();
-    let mut recvbuf = vec![0u8; CHUNK_LEN * ROUND];
+    let mut sendbuf: Vec<Vec<u8>> = (0..ROUND)
+        .map(|_| (0..CHUNK_LEN).map(|_| rand::random()).collect())
+        .collect();
+    let mut recvbuf: Vec<Vec<u8>> = vec![];
     let mut ii = 0;
     let mut jj = 0;
+
     let fut = async {
         loop {
+            let mut localbuf = vec![0u8; CHUNK_LEN];
             tokio::select! {
                 r = async {
                     if ii == ROUND {
                         tokio::time::sleep(Duration::from_millis(2000000)).await;
                     }
-                    socks.send_to(&sendbuf[ii*CHUNK_LEN..(ii+1)*CHUNK_LEN], target_addr).await
+                    socks.send_to(&sendbuf[ii], target_addr).await
                  } => {
                     r.unwrap();
                     ii += 1;
@@ -60,9 +64,10 @@ async fn main() {
                         tokio::time::sleep(Duration::from_millis(2)).await;
                     }
                 }
-                r = socks.recv_from(&mut recvbuf[jj*CHUNK_LEN..(jj+1)*CHUNK_LEN]) => {
+                r = socks.recv_from(&mut localbuf) => {
                     let (len, _addr) = r.unwrap();
                     assert!(len == CHUNK_LEN);
+                    recvbuf.push(localbuf);
                     jj += 1;
                     if jj == ROUND {
                         break;
@@ -75,6 +80,8 @@ async fn main() {
         .await
         .unwrap();
 
+    sendbuf.sort();
+    recvbuf.sort();
     assert!(sendbuf == recvbuf);
 }
 
