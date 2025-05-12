@@ -17,6 +17,7 @@ use shadowquic::{
     socks::inbound::SocksServer,
 };
 
+use tracing::info;
 use tracing::{Level, level_filters::LevelFilter, trace};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -56,7 +57,7 @@ async fn main() {
                     ii += 1;
                     #[warn(clippy::modulo_one)]
                     if ii % 1 == 0 {
-                        tokio::time::sleep(Duration::from_millis(150)).await;
+                        tokio::time::sleep(Duration::from_millis(2)).await;
                     }
                 }
                 r = socks.recv_from(&mut recvbuf[jj*CHUNK_LEN..(jj+1)*CHUNK_LEN]) => {
@@ -81,8 +82,7 @@ async fn test_shadowquic() {
     let filter = tracing_subscriber::filter::Targets::new()
         // Enable the `INFO` level for anything in `my_crate`
         .with_target("udp", Level::TRACE)
-        .with_target("shadowquic", Level::INFO)
-        .with_target("shadowquic::msgs::socks", LevelFilter::OFF);
+        .with_target("shadowquic", Level::TRACE);
 
     // Enable the `DEBUG` level for a specific module.
 
@@ -150,9 +150,11 @@ async fn echo_udp(port: u16) {
     // let mut s1:TcpStream = s.get_socket();
 
     let socks1 = socks.clone();
+    let mut ii = 0;
     loop {
         let (_len, addr) = socks1.recv_from(&mut recvbuf).await.unwrap();
-
+        ii += 1;
+        info!("packet number: {}, recv {} bytes from {:?}", ii, _len, addr);
         socks.send_to(&recvbuf, addr).await.unwrap();
     }
 }
