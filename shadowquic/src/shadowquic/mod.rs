@@ -8,8 +8,11 @@ use std::{
 
 use bytes::{BufMut, Bytes, BytesMut};
 use quinn::{Connection, RecvStream, SendDatagramError, SendStream};
-use tokio::sync::{Notify, RwLock};
-use tracing::{Level, debug, error, event, info, trace, warn};
+use tokio::sync::{
+    RwLock,
+    watch::{Receiver, Sender, channel},
+};
+use tracing::{Instrument, Level, debug, error, event, info, trace, warn};
 
 use crate::{
     AnyUdpRecv, AnyUdpSend,
@@ -47,7 +50,9 @@ impl Deref for SQConn {
     }
 }
 
-type IDStoreVal = Result<(AnyUdpSend, SocksAddr), Arc<Notify>>;
+// Notify is not suitable here
+// see https://github.com/tokio-rs/tokio/issues/3757
+type IDStoreVal = Result<(AnyUdpSend, SocksAddr), Sender<()>>;
 /// IDStore is a thread-safe store for managing UDP sockets and their associated ids.
 /// It uses a HashMap to store the mapping between ids and the destination addresses as well as associated sockets.
 /// It also uses an atomic counter to generate unique ids for new sockets.
@@ -58,20 +63,20 @@ struct IDStore {
 }
 
 impl IDStore {
-    async fn get_socket(&self, id: u16) -> Result<(AnyUdpSend, SocksAddr), Arc<Notify>> {
+    async fn get_socket(&self, id: u16) -> Result<(AnyUdpSend, SocksAddr), Receiver<()>> {
         if let Some(r) = self.inner.read().await.get(&id) {
-            r.clone()
+            r.clone().map_err(|x| x.subscribe())
         } else {
-            let notify = Arc::new(Notify::new());
-            self.inner.write().await.insert(id, Err(notify.clone()));
-            Err(notify)
+            let (s, r) = channel(());
+            self.inner.write().await.insert(id, Err(s));
+            Err(r)
         }
     }
     async fn get_socket_or_wait(&self, id: u16) -> (AnyUdpSend, SocksAddr) {
         match self.get_socket(id).await {
             Ok(r) => r,
-            Err(n) => {
-                n.notified().await;
+            Err(mut n) => {
+                n.changed().await.unwrap();
                 self.get_socket(id).await.unwrap()
             }
         }
@@ -85,7 +90,16 @@ impl IDStore {
                 Ok(_) => {}
                 Err(_) => {
                     let notify = replace(s, Ok((socket, dst)));
-                    let _ = notify.map_err(|x| x.notify_one());
+                    //let _ = notify.map_err(|x| x.notify_one());
+                    match notify {
+                        Ok(_) => {
+                            panic!("should be notify"); // should never happen
+                        }
+                        Err(n) => {
+                            n.send(()).unwrap();
+                            event!(Level::TRACE, "notify socket id:{}", id);
+                        }
+                    }
                 }
             }
         } else {
@@ -133,13 +147,16 @@ impl Drop for AssociateSendSession {
     fn drop(&mut self) {
         let id_store = self.id_store.inner.clone();
         let id_remove = self.dst_map.clone();
-        tokio::spawn(async move {
-            let mut id_store = id_store.write().await;
-            id_remove.values().for_each(|k| {
-                id_store.remove(k);
-            });
-            event!(Level::TRACE, "AssociateSendSession dropped");
-        });
+        tokio::spawn(
+            async move {
+                let mut id_store = id_store.write().await;
+                id_remove.values().for_each(|k| {
+                    id_store.remove(k);
+                });
+                event!(Level::TRACE, "AssociateSendSession dropped");
+            }
+            .in_current_span(),
+        );
     }
 }
 /// AssociateRecvSession is a session for receiving UDP ctrl stream.
@@ -165,13 +182,16 @@ impl Drop for AssociateRecvSession {
     fn drop(&mut self) {
         let id_store = self.id_store.inner.clone();
         let id_remove = self.id_map.clone();
-        tokio::spawn(async move {
-            let mut id_store = id_store.write().await;
-            id_remove.keys().for_each(|k| {
-                id_store.remove(k);
-            });
-            event!(Level::TRACE, "AssociateRecvSession dropped");
-        });
+        tokio::spawn(
+            async move {
+                let mut id_store = id_store.write().await;
+                id_remove.keys().for_each(|k| {
+                    id_store.remove(k);
+                });
+                event!(Level::TRACE, "AssociateRecvSession dropped");
+            }
+            .in_current_span(),
+        );
     }
 }
 
@@ -293,12 +313,12 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
                     let b = cur.into_inner().freeze();
                     udp.send_to(b.slice(pos..b.len()), addr.clone()).await?;
                 }
-                Err(notify) =>  {
+                Err(mut notify) =>  {
                     let id_store = id_store.clone();
                     event!(Level::TRACE, "resolving datagram id:{}",id);
                     // Might spawn too many tasks
                     tokio::spawn(async move {
-                        notify.notified().await;
+                        notify.changed().await.unwrap();
                         let (udp,addr) = id_store.get_socket(id).await.unwrap();
                         debug!("datagram id resolve: id:{}:,dst:{}",id, addr);
                         let pos = cur.position() as usize;
@@ -332,7 +352,7 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
                     }
                     #[allow(unreachable_code)]
                     (Ok(()) as Result<(), SError>)
-                });
+                }.in_current_span());
             }
         }
     }
