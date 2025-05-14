@@ -30,7 +30,7 @@ use crate::{
     shadowquic::{handle_udp_recv_ctrl, handle_udp_send},
 };
 
-use super::{SQConn, handle_udp_packet_recv, inbound::Unsplit};
+use super::{IDStore, SQConn, handle_udp_packet_recv, inbound::Unsplit};
 
 pub struct ShadowQuicClient {
     pub quic_conn: Option<SQConn>,
@@ -169,7 +169,11 @@ impl ShadowQuicClient {
         }
         let conn = SQConn {
             conn,
-            id_store: Default::default(),
+            send_id_store: Default::default(),
+            recv_id_store: IDStore {
+                id_counter: Default::default(),
+                inner: Default::default(),
+            },
         };
 
         tokio::spawn(handle_udp_packet_recv(conn.clone()));
@@ -246,13 +250,7 @@ impl Outbound for ShadowQuicClient {
                     req.encode(&mut send).await?;
                     trace!("udp associate req header sent");
                     let fut2 = handle_udp_recv_ctrl(recv, udp_session.send.clone(), conn.clone());
-                    let fut1 = handle_udp_send(
-                        send,
-                        udp_session.send,
-                        udp_session.recv,
-                        conn,
-                        over_stream,
-                    );
+                    let fut1 = handle_udp_send(send, udp_session.recv, conn, over_stream);
                     // control stream, in socks5 inbound, end of control stream
                     // means end of udp association.
                     let fut3 = async {
@@ -347,14 +345,8 @@ pub async fn associate_udp(
     let (local_send, udp_recv) = channel::<(Bytes, SocksAddr)>(10);
     let (udp_send, local_recv) = channel::<(Bytes, SocksAddr)>(10);
     let local_send = Arc::new(local_send);
-    let fut2 = handle_udp_recv_ctrl(recv, local_send.clone(), conn.clone());
-    let fut1 = handle_udp_send(
-        send,
-        local_send,
-        Box::new(local_recv),
-        conn.clone(),
-        over_stream,
-    );
+    let fut2 = handle_udp_recv_ctrl(recv, local_send, conn.clone());
+    let fut1 = handle_udp_send(send, Box::new(local_recv), conn.clone(), over_stream);
 
     tokio::spawn(async {
         match tokio::try_join!(fut1, fut2) {
