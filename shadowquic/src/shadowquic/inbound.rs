@@ -26,9 +26,7 @@ use crate::{
     },
 };
 
-use super::{
-    SQConn, {handle_udp_packet_recv, handle_udp_recv_ctrl, handle_udp_send},
-};
+use super::{IDStore, SQConn, handle_udp_packet_recv, handle_udp_recv_ctrl, handle_udp_send};
 
 pub struct ShadowQuicServer {
     pub squic_conn: Vec<SQServerConn>,
@@ -138,7 +136,11 @@ impl ShadowQuicServer {
         }
         let sq_conn = SQServerConn(SQConn {
             conn: connection,
-            id_store: Default::default(),
+            send_id_store: Default::default(),
+            recv_id_store: IDStore {
+                id_counter: Default::default(),
+                inner: Default::default(),
+            },
         });
         let span = trace_span!("quic", id = sq_conn.0.stable_id());
         sq_conn
@@ -261,7 +263,6 @@ impl SQServerConn {
                     .map_err(|_| SError::OutboundUnavailable)?;
                 let fut1 = handle_udp_send(
                     send,
-                    local_send.clone(),
                     Box::new(local_recv),
                     self.0.clone(),
                     req.cmd == SQCmd::AssociatOverStream,

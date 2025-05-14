@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, hash_map},
     io::Cursor,
     mem::replace,
     ops::Deref,
@@ -39,7 +39,8 @@ pub const MAX_DATAGRAM_WINDOW: u64 = MAX_WINDOW_BASE * 2;
 #[derive(Clone)]
 pub struct SQConn {
     conn: Connection,
-    id_store: IDStore,
+    send_id_store: IDStore<()>,
+    recv_id_store: IDStore<(AnyUdpSend, SocksAddr)>,
 }
 
 impl Deref for SQConn {
@@ -50,20 +51,23 @@ impl Deref for SQConn {
     }
 }
 
-// Notify is not suitable here
+// Use watch channel here. Notify is not suitable here
 // see https://github.com/tokio-rs/tokio/issues/3757
-type IDStoreVal = Result<(AnyUdpSend, SocksAddr), Sender<()>>;
+type IDStoreVal<T> = Result<T, Sender<()>>;
 /// IDStore is a thread-safe store for managing UDP sockets and their associated ids.
 /// It uses a HashMap to store the mapping between ids and the destination addresses as well as associated sockets.
 /// It also uses an atomic counter to generate unique ids for new sockets.
 #[derive(Clone, Default)]
-struct IDStore {
+struct IDStore<T = (AnyUdpSend, SocksAddr)> {
     id_counter: Arc<AtomicU16>,
-    inner: Arc<RwLock<HashMap<u16, IDStoreVal>>>,
+    inner: Arc<RwLock<HashMap<u16, IDStoreVal<T>>>>,
 }
 
-impl IDStore {
-    async fn get_socket(&self, id: u16) -> Result<(AnyUdpSend, SocksAddr), Receiver<()>> {
+impl<T> IDStore<T>
+where
+    T: Clone,
+{
+    async fn get_socket(&self, id: u16) -> Result<T, Receiver<()>> {
         if let Some(r) = self.inner.read().await.get(&id) {
             r.clone().map_err(|x| x.subscribe())
         } else {
@@ -72,7 +76,7 @@ impl IDStore {
             Err(r)
         }
     }
-    async fn get_socket_or_wait(&self, id: u16) -> (AnyUdpSend, SocksAddr) {
+    async fn get_socket_or_wait(&self, id: u16) -> T {
         match self.get_socket(id).await {
             Ok(r) => r,
             Err(mut n) => {
@@ -81,15 +85,17 @@ impl IDStore {
             }
         }
     }
-    async fn store_socket(&self, id: u16, socket: AnyUdpSend, dst: SocksAddr) {
+    async fn store_socket(&self, id: u16, val: T) {
         let mut h = self.inner.write().await;
-        trace!("alive socket number: {}", h.len());
+        trace!("receiving side alive socket number: {}", h.len());
         let r = h.get_mut(&id);
         if let Some(s) = r {
             match s {
-                Ok(_) => {}
+                Ok(_) => {
+                    error!("id:{} already exists", id);
+                }
                 Err(_) => {
-                    let notify = replace(s, Ok((socket, dst)));
+                    let notify = replace(s, Ok(val));
                     //let _ = notify.map_err(|x| x.notify_one());
                     match notify {
                         Ok(_) => {
@@ -103,18 +109,19 @@ impl IDStore {
                 }
             }
         } else {
-            h.insert(id, Ok((socket, dst)));
+            h.insert(id, Ok(val));
         }
     }
-    async fn fetch_new_id(&self, socket: AnyUdpSend, dst: SocksAddr) -> u16 {
+    async fn fetch_new_id(&self, val: T) -> u16 {
         let mut inner = self.inner.write().await;
+        trace!("sending side socket number: {}", inner.len());
         let mut r;
         loop {
             r = self
                 .id_counter
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            if let std::collections::hash_map::Entry::Vacant(e) = inner.entry(r) {
-                e.insert(Ok((socket.clone(), dst)));
+            if let hash_map::Entry::Vacant(e) = inner.entry(r) {
+                e.insert(Ok(val));
                 break;
             }
         }
@@ -127,16 +134,16 @@ impl IDStore {
 /// The local dst_map works as a inverse map from destination to id
 /// When session ended, the ids created by this session will be removed from the IDStore.
 struct AssociateSendSession {
-    id_store: IDStore,
+    id_store: IDStore<()>,
     dst_map: HashMap<SocksAddr, u16>,
     unistream_map: HashMap<SocksAddr, SendStream>,
 }
 impl AssociateSendSession {
-    pub async fn get_id_or_insert(&mut self, addr: &SocksAddr, socket: AnyUdpSend) -> (u16, bool) {
+    pub async fn get_id_or_insert(&mut self, addr: &SocksAddr) -> (u16, bool) {
         if let Some(id) = self.dst_map.get(addr) {
             (*id, false)
         } else {
-            let id = self.id_store.fetch_new_id(socket, addr.clone()).await;
+            let id = self.id_store.fetch_new_id(()).await;
             self.dst_map.insert(addr.clone(), id);
             (id, true)
         }
@@ -165,15 +172,14 @@ impl Drop for AssociateSendSession {
 /// First, it works as local cache avoiding using global store repeatedly which is more expensive
 /// Second. it records ids created by this session and clean those ids when session ended.
 struct AssociateRecvSession {
-    id_store: IDStore,
+    id_store: IDStore<(AnyUdpSend, SocksAddr)>,
     id_map: HashMap<u16, SocksAddr>,
 }
 impl AssociateRecvSession {
-    pub async fn store_socket(&mut self, id: &u16, dst: SocksAddr, socks: AnyUdpSend) {
-        if self.id_map.contains_key(id) {
-        } else {
-            self.id_store.store_socket(*id, socks, dst.clone()).await;
-            self.id_map.insert(*id, dst);
+    pub async fn store_socket(&mut self, id: u16, dst: SocksAddr, socks: AnyUdpSend) {
+        if let hash_map::Entry::Vacant(e) = self.id_map.entry(id) {
+            self.id_store.store_socket(id, (socks, dst.clone())).await;
+            e.insert(dst);
         }
     }
 }
@@ -200,21 +206,20 @@ impl Drop for AssociateRecvSession {
 /// This function is symetrical for both clients and servers.
 pub async fn handle_udp_send(
     mut send: SendStream,
-    udp_send: AnyUdpSend,
     udp_recv: AnyUdpRecv,
     conn: SQConn,
     over_stream: bool,
 ) -> Result<(), SError> {
     let mut down_stream = udp_recv;
     let mut session = AssociateSendSession {
-        id_store: conn.id_store.clone(),
+        id_store: conn.send_id_store.clone(),
         dst_map: Default::default(),
         unistream_map: Default::default(),
     };
     let quic_conn = conn.conn.clone();
     loop {
         let (bytes, dst) = down_stream.recv_from().await?;
-        let (id, is_new) = session.get_id_or_insert(&dst, udp_send.clone()).await;
+        let (id, is_new) = session.get_id_or_insert(&dst).await;
         //let span = trace_span!("udp", id = id);
         let ctl_header = SQUdpControlHeader {
             dst: dst.clone(),
@@ -280,13 +285,13 @@ pub async fn handle_udp_recv_ctrl(
     conn: SQConn,
 ) -> Result<(), SError> {
     let mut session = AssociateRecvSession {
-        id_store: conn.id_store.clone(),
+        id_store: conn.recv_id_store.clone(),
         id_map: Default::default(),
     };
     loop {
         let SQUdpControlHeader { id, dst } = SQUdpControlHeader::decode(&mut recv).await?;
         trace!("udp control header received: id:{},dst:{}", id, dst);
-        session.store_socket(&id, dst, udp_socket.clone()).await;
+        session.store_socket(id, dst, udp_socket.clone()).await;
     }
     #[allow(unreachable_code)]
     Ok(())
@@ -297,7 +302,7 @@ pub async fn handle_udp_recv_ctrl(
 /// The udp socket could be downstream(inbound) or upstream(outbound)
 /// This function is symetrical for both clients and servers.
 pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
-    let id_store = conn.id_store.clone();
+    let id_store = conn.recv_id_store.clone();
 
     loop {
         tokio::select! {
@@ -318,7 +323,7 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
                     event!(Level::TRACE, "resolving datagram id:{}",id);
                     // Might spawn too many tasks
                     tokio::spawn(async move {
-                        notify.changed().await.unwrap();
+                        let _ = notify.changed().await.map_err(|_|error!("id:{} notifier dropped",id));
                         let (udp,addr) = id_store.get_socket(id).await.unwrap();
                         debug!("datagram id resolve: id:{}:,dst:{}",id, addr);
                         let pos = cur.position() as usize;
