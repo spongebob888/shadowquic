@@ -56,6 +56,8 @@ The design has heavily considerred #link("https://www.rfc-editor.org/rfc/rfc9298
 ```
 UDP Associate command is carried by bistream called *control stream*. For each datagram received from local socket or remote socket a control header consists of `SOCKSADDR` and `CONTEXT ID` is sent. If `CONTEXT ID` has been sent in the past which indicates the destination address has been cached, then this header could been skipped.
 
+For each connection, implementation must maintain two `CONTEXT ID` spaces. One is for client to server direction. The other is for server to client direction. These two id spaces are independent. 
+
 *control stream* doesn't send payload. The payload is carried by unistream or datagram extension chosen by user. 
 Control stream *MUST* remain alive during udp association task.
 
