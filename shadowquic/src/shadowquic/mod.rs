@@ -145,6 +145,7 @@ impl AssociateSendSession {
         } else {
             let id = self.id_store.fetch_new_id(()).await;
             self.dst_map.insert(addr.clone(), id);
+            trace!("send session: insert id:{}, addr:{}", id, addr);
             (id, true)
         }
     }
@@ -157,10 +158,17 @@ impl Drop for AssociateSendSession {
         tokio::spawn(
             async move {
                 let mut id_store = id_store.write().await;
+                let len = id_store.len();
                 id_remove.values().for_each(|k| {
                     id_store.remove(k);
                 });
-                event!(Level::TRACE, "AssociateSendSession dropped");
+                let decrease = len - id_store.len();
+                event!(
+                    Level::TRACE,
+                    "AssociateSendSession dropped, session id size:{}, {} ids cleaned",
+                    id_remove.len(),
+                    decrease
+                );
             }
             .in_current_span(),
         );
@@ -179,6 +187,7 @@ impl AssociateRecvSession {
     pub async fn store_socket(&mut self, id: u16, dst: SocksAddr, socks: AnyUdpSend) {
         if let hash_map::Entry::Vacant(e) = self.id_map.entry(id) {
             self.id_store.store_socket(id, (socks, dst.clone())).await;
+            trace!("recv session: insert id:{}, addr:{}", id, dst);
             e.insert(dst);
         }
     }
@@ -191,10 +200,18 @@ impl Drop for AssociateRecvSession {
         tokio::spawn(
             async move {
                 let mut id_store = id_store.write().await;
+                let len = id_store.len();
+
                 id_remove.keys().for_each(|k| {
                     id_store.remove(k);
                 });
-                event!(Level::TRACE, "AssociateRecvSession dropped");
+                let decrease = len - id_store.len();
+                event!(
+                    Level::TRACE,
+                    "AssociateRecvSession dropped, session id size:{}, {} ids cleaned",
+                    id_remove.len(),
+                    decrease
+                );
             }
             .in_current_span(),
         );

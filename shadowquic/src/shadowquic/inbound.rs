@@ -211,8 +211,9 @@ impl SQServerConn {
             select! {
                 bi = conn.accept_bi() => {
                     let (send, recv) = bi?;
+                    let span = trace_span!("bistream", id = send.id().index());
                     trace!("bistream accepted");
-                    tokio::spawn(self.clone().handle_bistream(send, recv, req_send.clone()).in_current_span());
+                    tokio::spawn(self.clone().handle_bistream(send, recv, req_send.clone()).instrument(span).in_current_span());
                 },
             }
         }
