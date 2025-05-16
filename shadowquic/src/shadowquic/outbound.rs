@@ -62,7 +62,7 @@ impl ShadowQuicClient {
     pub fn new_with_socket(cfg: ShadowQuicClientCfg, socket: UdpSocket) -> Self {
         let config = Self::gen_quic_cfg(&cfg);
         let runtime = quinn::default_runtime()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no async runtime found"))
+            .ok_or_else(|| io::Error::other("no async runtime found"))
             .unwrap();
         let mut end = Endpoint::new(quinn::EndpointConfig::default(), None, socket, runtime)
             .expect("Can't create quic endpoint");
