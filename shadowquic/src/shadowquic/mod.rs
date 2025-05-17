@@ -76,6 +76,16 @@ where
             Err(r)
         }
     }
+    async fn try_get_socket(&self, id: u16) -> Option<T> {
+        if let Some(r) = self.inner.read().await.get(&id) {
+            match r {
+                Ok(s) => Some(s.clone()),
+                Err(_) => None,
+            }
+        } else {
+            None
+        }
+    }
     async fn get_socket_or_wait(&self, id: u16) -> Result<T, SError> {
         match self.get_socket(id).await {
             Ok(r) => Ok(r),
@@ -343,14 +353,17 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
                     event!(Level::TRACE, "resolving datagram id:{}",id);
                     // Might spawn too many tasks
                     tokio::spawn(async move {
-                        let _ = notify.changed().await.map_err(|_|error!("id:{} notifier dropped",id));
-                        let (udp,addr) = id_store.get_socket(id).await.unwrap();
+                        // It's safe to sender to be dropped
+                        let _ = notify.changed().await.map_err(|_|debug!("id:{} notifier dropped",id));
+                        // session may be closed
+                        let (udp,addr) = id_store.try_get_socket(id).await.ok_or(SError::UDPSessionClosed("UDP session closed".to_string()))?;
                         debug!("datagram id resolve: id:{}:,dst:{}",id, addr);
                         let pos = cur.position() as usize;
                         let b = cur.into_inner().freeze();
                         let _ = udp.clone().send_to(b.slice(pos..b.len()), addr.clone()).await
                         .map_err(|x|error!("{}",x));
-                     });
+                        Ok(()) as Result<(), SError>
+                     }.in_current_span());
                 }
             }
             }
