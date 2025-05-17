@@ -76,12 +76,15 @@ where
             Err(r)
         }
     }
-    async fn get_socket_or_wait(&self, id: u16) -> T {
+    async fn get_socket_or_wait(&self, id: u16) -> Result<T, SError> {
         match self.get_socket(id).await {
-            Ok(r) => r,
+            Ok(r) => Ok(r),
             Err(mut n) => {
-                n.changed().await.unwrap();
-                self.get_socket(id).await.unwrap()
+                // This may fail is UDP session is closed right at this moment.
+                n.changed()
+                    .await
+                    .map_err(|_| SError::UDPSessionClosed("notify sender dropped".to_string()))?;
+                Ok(self.get_socket(id).await.unwrap())
             }
         }
     }
@@ -357,7 +360,7 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
                 trace!("unistream accepted");
                 let SQPacketDatagramHeader{id} = SQPacketDatagramHeader::decode(&mut uni_stream).await?;
 
-                let (udp,addr) = id_store.get_socket_or_wait(id).await;
+                let (udp,addr) = id_store.get_socket_or_wait(id).await?;
 
                 info!("unistream datagram accepted: id:{},dst:{}",id, addr);
                 Ok((uni_stream,udp.clone(),addr.clone())) as Result<(RecvStream,AnyUdpSend,SocksAddr),SError>

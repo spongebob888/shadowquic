@@ -263,9 +263,11 @@ impl Outbound for ShadowQuicClient {
                             .unwrap()
                             .read_exact(&mut buf)
                             .await
-                            .map_err(|_| SError::UDPCtrlStreamClosed)?;
+                            .map_err(|x| SError::UDPSessionClosed(x.to_string()))?;
                         error!("unexpected data received from socks control stream");
-                        Err(SError::UDPCtrlStreamClosed) as Result<(), SError>
+                        Err(SError::UDPSessionClosed(
+                            "unexpected data received from socks control stream".into(),
+                        )) as Result<(), SError>
                     };
 
                     tokio::try_join!(fut1, fut2, fut3)?;

@@ -192,9 +192,11 @@ impl SocksClient {
                 .unwrap()
                 .read_exact(&mut buf)
                 .await
-                .map_err(|_| SError::UDPCtrlStreamClosed)?;
+                .map_err(|x| SError::UDPSessionClosed(x.to_string()))?;
             error!("unexpected data received from socks control stream");
-            Err(SError::UDPCtrlStreamClosed) as Result<(), SError>
+            Err(SError::UDPSessionClosed(
+                "unexpected data received from socks control stream".into(),
+            )) as Result<(), SError>
         };
         // We can use spawn, but it requirs communication to shutdown the other
         // Flatten spawn handle using try_join! doesn't work. Don't know why

@@ -31,8 +31,8 @@ pub enum SError {
     DomainResolveFailed,
     #[error("mpsc channel error: {0}")]
     ChannelError(String),
-    #[error("Socks UDP control stream closed")]
-    UDPCtrlStreamClosed,
+    #[error("UDP session closed closed due to: {0}")]
+    UDPSessionClosed(String),
     #[error("socks error: {0}")]
     SocksError(String),
 }
