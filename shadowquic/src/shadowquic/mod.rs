@@ -67,7 +67,7 @@ impl<T> IDStore<T>
 where
     T: Clone,
 {
-    async fn get_socket(&self, id: u16) -> Result<T, Receiver<()>> {
+    async fn get_socket_or_notify(&self, id: u16) -> Result<T, Receiver<()>> {
         if let Some(r) = self.inner.read().await.get(&id) {
             r.clone().map_err(|x| x.subscribe())
         } else {
@@ -87,14 +87,14 @@ where
         }
     }
     async fn get_socket_or_wait(&self, id: u16) -> Result<T, SError> {
-        match self.get_socket(id).await {
+        match self.get_socket_or_notify(id).await {
             Ok(r) => Ok(r),
             Err(mut n) => {
                 // This may fail is UDP session is closed right at this moment.
                 n.changed()
                     .await
                     .map_err(|_| SError::UDPSessionClosed("notify sender dropped".to_string()))?;
-                Ok(self.get_socket(id).await.unwrap())
+                Ok(self.get_socket_or_notify(id).await.unwrap())
             }
         }
     }
@@ -342,7 +342,7 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
                 let mut cur = Cursor::new(b);
                 let SQPacketDatagramHeader{id} = SQPacketDatagramHeader::decode(&mut cur).await?;
 
-                match id_store.get_socket(id).await {
+                match id_store.get_socket_or_notify(id).await {
                  Ok((udp,addr)) =>  {
                     let pos = cur.position() as usize;
                     let b = cur.into_inner().freeze();
