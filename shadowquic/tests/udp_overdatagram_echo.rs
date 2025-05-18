@@ -18,7 +18,7 @@ use shadowquic::{
 };
 
 use tracing::info;
-use tracing::{Level, level_filters::LevelFilter, trace};
+use tracing::{Level, trace};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const CHUNK_LEN: usize = 1000;
