@@ -25,64 +25,75 @@ const CHUNK_LEN: usize = 1000;
 const ROUND: usize = 3;
 #[tokio::test]
 async fn main() {
-    let socks_server = "127.0.0.1:1031";
-    let target_addr = ("127.0.0.1", 1447);
+
     let mut config = Config::default();
     config.set_skip_auth(false);
     test_shadowquic().await;
-    tokio::spawn(echo_udp(1447));
+    tokio::spawn(echo_udp(1448));
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let backing_socket = TcpStream::connect(socks_server).await.unwrap();
-    let socks = Socks5Datagram::bind(
-        backing_socket,
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
-    )
-    .await
-    .unwrap();
-    let mut sendbuf: Vec<Vec<u8>> = (0..ROUND)
-        .map(|_| (0..CHUNK_LEN).map(|_| rand::random()).collect())
-        .collect();
-    let mut recvbuf: Vec<Vec<u8>> = vec![];
-    let mut ii = 0;
-    let mut jj = 0;
+    const TEST_ROUND:usize = 10;
+    for _ii in 0..TEST_ROUND {
+      test_udp().await      
+    }
+}
 
-    let fut = async {
-        loop {
-            let mut localbuf = vec![0u8; CHUNK_LEN];
-            tokio::select! {
-                r = async {
-                    if ii == ROUND {
-                        tokio::time::sleep(Duration::from_millis(2000000)).await;
+async fn test_udp() {
+    let socks_server = "127.0.0.1:1032";
+    let target_addr = ("127.0.0.1", 1448);
+
+        let backing_socket = TcpStream::connect(socks_server).await.unwrap();
+        let socks = Socks5Datagram::bind(
+            backing_socket,
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+        )
+        .await
+        .unwrap();
+        let mut sendbuf: Vec<Vec<u8>> = (0..ROUND)
+            .map(|_| (0..CHUNK_LEN).map(|_| rand::random()).collect())
+            .collect();
+        let mut recvbuf: Vec<Vec<u8>> = vec![];
+        let mut ii = 0;
+        let mut jj = 0;
+    
+        let fut = async {
+            loop {
+                let mut localbuf = vec![0u8; CHUNK_LEN];
+                tokio::select! {
+                    r = async {
+                        if ii == ROUND {
+                            tokio::time::sleep(Duration::from_millis(2000000)).await;
+                        }
+                        socks.send_to(&sendbuf[ii], target_addr).await
+                     } => {
+                        r.unwrap();
+                        ii += 1;
+                        #[warn(clippy::modulo_one)]
+                        if ii % 1 == 0 {
+                            tokio::time::sleep(Duration::from_millis(2)).await;
+                        }
                     }
-                    socks.send_to(&sendbuf[ii], target_addr).await
-                 } => {
-                    r.unwrap();
-                    ii += 1;
-                    #[warn(clippy::modulo_one)]
-                    if ii % 1 == 0 {
-                        tokio::time::sleep(Duration::from_millis(2)).await;
-                    }
-                }
-                r = socks.recv_from(&mut localbuf) => {
-                    let (len, _addr) = r.unwrap();
-                    assert!(len == CHUNK_LEN);
-                    recvbuf.push(localbuf);
-                    jj += 1;
-                    if jj == ROUND {
-                        break;
+                    r = socks.recv_from(&mut localbuf) => {
+                        let (len, _addr) = r.unwrap();
+                        assert!(len == CHUNK_LEN);
+                        recvbuf.push(localbuf);
+                        jj += 1;
+                        if jj == ROUND {
+                            break;
+                        }
                     }
                 }
             }
-        }
-    };
-    tokio::time::timeout(Duration::from_secs(60), fut)
-        .await
-        .unwrap();
 
-    sendbuf.sort();
-    recvbuf.sort();
-    assert!(sendbuf == recvbuf);
+        };
+        
+        tokio::time::timeout(Duration::from_secs(60), fut)
+            .await
+            .unwrap();
+    
+        sendbuf.sort();
+        recvbuf.sort();
+        assert!(sendbuf == recvbuf);    
 }
 
 async fn test_shadowquic() {
@@ -104,7 +115,7 @@ async fn test_shadowquic() {
     trace!("Running");
 
     let socks_server = SocksServer::new(SocksServerCfg {
-        bind_addr: "127.0.0.1:1031".parse().unwrap(),
+        bind_addr: "127.0.0.1:1032".parse().unwrap(),
         users: vec![],
     })
     .await
