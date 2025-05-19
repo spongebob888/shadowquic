@@ -1,5 +1,8 @@
 use std::{
-    collections::{HashMap, hash_map},
+    collections::{
+        HashMap,
+        hash_map::{self, Entry},
+    },
     io::Cursor,
     mem::replace,
     ops::Deref,
@@ -71,9 +74,18 @@ where
         if let Some(r) = self.inner.read().await.get(&id) {
             r.clone().map_err(|x| x.subscribe())
         } else {
-            let (s, r) = channel(());
-            self.inner.write().await.insert(id, Err(s));
-            Err(r)
+            // Need to recheck
+            // During change from read lock to write lock, hashmap may be modified
+            match self.inner.write().await.entry(id) {
+                Entry::Occupied(occupied_entry) => {
+                    occupied_entry.get().clone().map_err(|x| x.subscribe())
+                }
+                Entry::Vacant(vacant_entry) => {
+                    let (s, r) = channel(());
+                    vacant_entry.insert(Err(s));
+                    Err(r)
+                }
+            }
         }
     }
     async fn try_get_socket(&self, id: u16) -> Option<T> {
@@ -94,7 +106,12 @@ where
                 n.changed()
                     .await
                     .map_err(|_| SError::UDPSessionClosed("notify sender dropped".to_string()))?;
-                Ok(self.get_socket_or_notify(id).await.unwrap())
+                //
+                let ret = self
+                    .try_get_socket(id)
+                    .await
+                    .ok_or(SError::UDPSessionClosed("UDP session closed".to_string()))?;
+                Ok(ret)
             }
         }
     }
@@ -133,7 +150,7 @@ where
             r = self
                 .id_counter
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            if let hash_map::Entry::Vacant(e) = inner.entry(r) {
+            if let Entry::Vacant(e) = inner.entry(r) {
                 e.insert(Ok(val));
                 break;
             }
@@ -372,13 +389,23 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
                 let mut uni_stream = conn.accept_uni().await?;
                 trace!("unistream accepted");
                 let SQPacketDatagramHeader{id} = SQPacketDatagramHeader::decode(&mut uni_stream).await?;
+                event!(Level::TRACE, "resolving datagram id:{}",id);
 
                 let (udp,addr) = id_store.get_socket_or_wait(id).await?;
 
                 info!("unistream datagram accepted: id:{},dst:{}",id, addr);
                 Ok((uni_stream,udp.clone(),addr.clone())) as Result<(RecvStream,AnyUdpSend,SocksAddr),SError>
             } => {
-                let  (mut uni_stream,udp,addr) = r?;
+
+                let  (mut uni_stream,udp,addr) = match r {
+                    Ok(r) => r,
+                    Err(SError::UDPSessionClosed(_)) => {
+                        continue;
+                    }
+                    Err(e) => {
+                        return Err(e);
+                    }
+                };
 
                 tokio::spawn(async move {
                     loop {
