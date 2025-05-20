@@ -31,7 +31,7 @@ async fn main() {
         .await
         .expect("creating inbound/outbound failed");
 
-    info!("shadowquic running");
+    info!("shadowquic {} running", env!("CARGO_PKG_VERSION"));
     manager.run().await.expect("shadowquic stopped");
 }
 
