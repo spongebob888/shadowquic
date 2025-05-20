@@ -1,9 +1,9 @@
 inbound:
     type: socks
-    bind-addr: 127.0.0.1:1089
+    bind-addr: "127.0.0.1:1089"
 outbound:
     type: shadowquic
-    addr: 127.0.0.1:1443
+    addr: "127.0.0.1:1443"
     jls-pwd: "12345678"
     jls-iv: "87654321"
     server-name: "echo.free.beeceptor.com" # must be the same as jls_upstream in server

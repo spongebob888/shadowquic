@@ -1,6 +1,6 @@
 inbound:
     type: shadowquic
-    bind-addr: 0.0.0.0:1443
+    bind-addr: "0.0.0.0:1443"
     jls-pwd: "12345678"
     jls-iv: "87654321"
     jls-upstream: "echo.free.beeceptor.com:443" # domain + port, domain must be the same as client

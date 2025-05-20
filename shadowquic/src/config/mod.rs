@@ -101,7 +101,7 @@ impl OutboundCfg {
 ///
 /// Example:
 /// ```yaml
-/// bind-addr: 0.0.0.0:1089 # or [::]:1089 for dualstack
+/// bind-addr: "0.0.0.0:1089" # or "[::]:1089" for dualstack
 /// users:
 ///  - username: "username"
 ///    password: "password"
@@ -128,7 +128,7 @@ pub struct SocksUser {
 /// Socks outbound configuration
 /// Example:
 /// ```yaml
-/// addr: 12.34.56.7:1089 # or [12:ff::ff]:1089 for dualstack
+/// addr: "12.34.56.7:1089" # or "[12:ff::ff]:1089" for dualstack
 /// ```
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case")]
@@ -144,7 +144,7 @@ pub struct SocksClientCfg {
 ///   
 /// example:
 /// ```yaml
-/// addr: 12.34.56.7:1089 # or [12:ff::ff]:1089 for dualstack
+/// addr: "12.34.56.7:1089" # or "[12:ff::ff]:1089" for dualstack
 /// jls-pwd: "12345678"
 /// jls-iv: "87654321"
 /// server-name: "echo.free.beeceptor.com" # must be the same as jls_upstream in server
@@ -252,7 +252,7 @@ pub struct DirectOutCfg;
 ///
 /// Example:
 /// ```yaml
-/// bind-addr: 0.0.0.0:1443
+/// bind-addr: "0.0.0.0:1443"
 /// jls-pwd: "12345678"
 /// jls-iv: "87654321"
 /// jls-upstream: "echo.free.beeceptor.com:443" # domain + port, domain must be the same as client
