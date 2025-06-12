@@ -90,7 +90,7 @@ impl OutboundCfg {
     async fn build_outbound(self) -> Result<Box<dyn Outbound>, SError> {
         let r: Box<dyn Outbound> = match self {
             OutboundCfg::Socks(cfg) => Box::new(SocksClient::new(cfg)),
-            OutboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicClient::new(cfg)),
+            OutboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicClient::new(cfg)?),
             OutboundCfg::Direct(_) => Box::new(DirectOut),
         };
         Ok(r)

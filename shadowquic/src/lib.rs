@@ -17,6 +17,7 @@ pub mod error;
 pub mod msgs;
 pub mod shadowquic;
 pub mod socks;
+pub mod utils;
 pub enum ProxyRequest<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend> {
     Tcp(TcpSession<T>),
     Udp(UdpSession<I, O>),
