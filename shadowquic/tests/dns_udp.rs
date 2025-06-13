@@ -257,9 +257,7 @@ async fn shadowquic_client_server(over_stream: bool, port: u16) {
         zero_rtt: true,
         over_stream,
         ..Default::default()
-    })
-    .await
-    .unwrap();
+    });
 
     let client = Manager {
         inbound: Box::new(socks_server),

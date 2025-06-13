@@ -53,9 +53,7 @@ async fn test_shadowquic() {
         zero_rtt: true,
         over_stream: false,
         ..Default::default()
-    })
-    .await
-    .unwrap();
+    });
 
     let client = Manager {
         inbound: Box::new(socks_server),
