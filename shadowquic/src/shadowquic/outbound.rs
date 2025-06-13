@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use bytes::Bytes;
+use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     io,
     net::{ToSocketAddrs, UdpSocket},
@@ -43,32 +44,45 @@ pub struct ShadowQuicClient {
     pub over_stream: bool,
 }
 impl ShadowQuicClient {
-    pub fn new(cfg: ShadowQuicClientCfg) -> Self {
-        let config = Self::gen_quic_cfg(&cfg);
-        let mut end =
-            Endpoint::client("[::]:0".parse().unwrap()).expect("Can't create quic endpoint");
-        end.set_default_client_config(config.clone());
+    pub async fn new(cfg: ShadowQuicClientCfg) -> Result<Self, SError> {
+        let bind_addr = "[::]:0".parse().unwrap();
+        let socket = Socket::new(
+            Domain::for_address(bind_addr),
+            Type::DGRAM,
+            Some(Protocol::UDP),
+        )?;
+        socket.set_only_v6(false)?;
+        socket.bind(&bind_addr.into())?;
 
-        Self {
-            quic_conn: None,
-            quic_config: config,
-            quic_end: end,
-            dst_addr: cfg.addr,
-            server_name: cfg.server_name,
-            zero_rtt: cfg.zero_rtt,
-            over_stream: cfg.over_stream,
+        #[cfg(target_os = "android")]
+        if let Some(path) = &cfg.protect_path {
+            use crate::utils::protect_socket::protect_socket;
+            use std::os::fd::AsRawFd;
+
+            tracing::debug!("trying protect socket");
+            tokio::time::timeout(
+                tokio::time::Duration::from_secs(5),
+                protect_socket(path, socket.as_raw_fd()),
+            )
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "protecting socket timeout"))
+            .and_then(|x| x)
+            .map_err(|e| {
+                tracing::error!("error during protecing socket:{}", e);
+                e
+            })?;
         }
+
+        Self::new_with_socket(cfg, UdpSocket::from(socket))
     }
-    pub fn new_with_socket(cfg: ShadowQuicClientCfg, socket: UdpSocket) -> Self {
+    pub fn new_with_socket(cfg: ShadowQuicClientCfg, socket: UdpSocket) -> Result<Self, SError> {
         let config = Self::gen_quic_cfg(&cfg);
-        let runtime = quinn::default_runtime()
-            .ok_or_else(|| io::Error::other("no async runtime found"))
-            .unwrap();
-        let mut end = Endpoint::new(quinn::EndpointConfig::default(), None, socket, runtime)
-            .expect("Can't create quic endpoint");
+        let runtime =
+            quinn::default_runtime().ok_or_else(|| io::Error::other("no async runtime found"))?;
+        let mut end = Endpoint::new(quinn::EndpointConfig::default(), None, socket, runtime)?;
         end.set_default_client_config(config.clone());
 
-        Self {
+        Ok(Self {
             quic_conn: None,
             quic_config: config,
             quic_end: end,
@@ -76,7 +90,7 @@ impl ShadowQuicClient {
             server_name: cfg.server_name,
             zero_rtt: cfg.zero_rtt,
             over_stream: cfg.over_stream,
-        }
+        })
     }
     pub fn gen_quic_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
         let root_store = RootCertStore {

@@ -34,6 +34,9 @@ socket2 = "0.5.10"
 
 console-subscriber = { version = "0.4.1", optional = true }
 
+[target.'cfg(target_os="android")'.dependencies]
+sendfd = { version = "0.4.4", features = ["tokio"] }
+
 [dev-dependencies]
 fast-socks5 = "0.10.0"
 rand = "0.9.1"

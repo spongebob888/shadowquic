@@ -1438,6 +1438,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28d3b2b1366ec20994f1fd18c3c594f05c5dd4bc44d8bb0c1c632c8d6829481f"
 
 [[package]]
+name = "sendfd"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b183bfd5b1bc64ab0c1ef3ee06b008a9ef1b68a7d3a99ba566fbfe7a7c6d745b"
+dependencies = [
+ "libc",
+ "tokio",
+]
+
+[[package]]
 name = "serde"
 version = "1.0.219"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1497,6 +1507,7 @@ dependencies = [
  "rand 0.9.1",
  "rcgen",
  "rustls 0.23.25 (git+https://github.com/spongebob888/rustls-jls)",
+ "sendfd",
  "serde",
  "serde_yaml",
  "shadowquic-macros",
