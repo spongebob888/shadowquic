@@ -1,5 +1,5 @@
-use std::net::SocketAddr;
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use tracing::Level;
 
 use crate::{
@@ -12,7 +12,6 @@ use crate::{
 
 #[cfg(target_os = "android")]
 use std::path::PathBuf;
-
 
 /// Overall configuration of shadowquic.
 ///
@@ -94,7 +93,7 @@ impl OutboundCfg {
     async fn build_outbound(self) -> Result<Box<dyn Outbound>, SError> {
         let r: Box<dyn Outbound> = match self {
             OutboundCfg::Socks(cfg) => Box::new(SocksClient::new(cfg)),
-            OutboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicClient::new(cfg).await?),
+            OutboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicClient::new(cfg)),
             OutboundCfg::Direct(_) => Box::new(DirectOut),
         };
         Ok(r)

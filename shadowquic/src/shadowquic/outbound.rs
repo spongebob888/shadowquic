@@ -3,13 +3,16 @@ use bytes::Bytes;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     io,
-    net::{ToSocketAddrs, UdpSocket},
+    net::{SocketAddr, ToSocketAddrs, UdpSocket},
     sync::Arc,
     time::Duration,
 };
 use tokio::{
     io::AsyncReadExt,
-    sync::mpsc::{Receiver, Sender, channel},
+    sync::{
+        OnceCell,
+        mpsc::{Receiver, Sender, channel},
+    },
 };
 
 use quinn::{
@@ -19,6 +22,9 @@ use quinn::{
 };
 use rustls::RootCertStore;
 use tracing::{Instrument, Level, debug, error, info, span, trace};
+
+#[cfg(target_os = "android")]
+use std::path::PathBuf;
 
 use crate::{
     Outbound,
@@ -37,25 +43,43 @@ pub struct ShadowQuicClient {
     pub quic_conn: Option<SQConn>,
     #[allow(dead_code)]
     pub quic_config: quinn::ClientConfig,
-    pub quic_end: Endpoint,
+    pub quic_end: OnceCell<Endpoint>,
     pub dst_addr: String,
     pub server_name: String,
     pub zero_rtt: bool,
     pub over_stream: bool,
+    #[cfg(target_os = "android")]
+    pub protect_path: Option<PathBuf>,
 }
 impl ShadowQuicClient {
-    pub async fn new(cfg: ShadowQuicClientCfg) -> Result<Self, SError> {
-        let bind_addr = "[::]:0".parse().unwrap();
-        let socket = Socket::new(
-            Domain::for_address(bind_addr),
-            Type::DGRAM,
-            Some(Protocol::UDP),
-        )?;
-        socket.set_only_v6(false)?;
-        socket.bind(&bind_addr.into())?;
+    pub fn new(cfg: ShadowQuicClientCfg) -> Self {
+        Self {
+            quic_config: Self::gen_quic_cfg(&cfg),
+            dst_addr: cfg.addr,
+            server_name: cfg.server_name,
+            zero_rtt: cfg.zero_rtt,
+            over_stream: cfg.over_stream,
+            quic_conn: None,
+            quic_end: OnceCell::new(),
+            #[cfg(target_os = "android")]
+            protect_path: cfg.protect_path,
+        }
+    }
+    pub async fn init_endpoint(&self, ipv6: bool) -> Result<Endpoint, SError> {
+        let socket;
+        if ipv6 {
+            socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
+            let bind_addr: SocketAddr = "[::]:0".parse().unwrap();
+            socket.bind(&bind_addr.into())?;
+            socket.set_only_v6(false)?;
+        } else {
+            socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+            let bind_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
+            socket.bind(&bind_addr.into())?;
+        }
 
         #[cfg(target_os = "android")]
-        if let Some(path) = &cfg.protect_path {
+        if let Some(path) = &self.protect_path {
             use crate::utils::protect_socket::protect_socket;
             use std::os::fd::AsRawFd;
 
@@ -72,8 +96,17 @@ impl ShadowQuicClient {
                 e
             })?;
         }
+        let runtime =
+            quinn::default_runtime().ok_or_else(|| io::Error::other("no async runtime found"))?;
+        let mut end = Endpoint::new(
+            quinn::EndpointConfig::default(),
+            None,
+            socket.into(),
+            runtime,
+        )?;
+        end.set_default_client_config(self.quic_config.clone());
 
-        Self::new_with_socket(cfg, UdpSocket::from(socket))
+        Ok(end)
     }
     pub fn new_with_socket(cfg: ShadowQuicClientCfg, socket: UdpSocket) -> Result<Self, SError> {
         let config = Self::gen_quic_cfg(&cfg);
@@ -85,11 +118,13 @@ impl ShadowQuicClient {
         Ok(Self {
             quic_conn: None,
             quic_config: config,
-            quic_end: end,
+            quic_end: OnceCell::from(end),
             dst_addr: cfg.addr,
             server_name: cfg.server_name,
             zero_rtt: cfg.zero_rtt,
             over_stream: cfg.over_stream,
+            #[cfg(target_os = "android")]
+            protect_path: cfg.protect_path,
         })
     }
     pub fn gen_quic_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
@@ -150,7 +185,11 @@ impl ShadowQuicClient {
             .unwrap_or_else(|_| panic!("resolve quic addr faile: {}", self.dst_addr))
             .next()
             .unwrap_or_else(|| panic!("resolve quic addr faile: {}", self.dst_addr));
-        let conn = self.quic_end.connect(addr, &self.server_name)?;
+        let conn = self
+            .quic_end
+            .get_or_init(|| async { self.init_endpoint(addr.is_ipv6()).await.unwrap() })
+            .await
+            .connect(addr, &self.server_name)?;
         let conn = if self.zero_rtt {
             match conn.into_0rtt() {
                 Ok((x, accepted)) => {
