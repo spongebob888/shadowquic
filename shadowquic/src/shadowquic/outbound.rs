@@ -44,7 +44,7 @@ pub struct ShadowQuicClient {
     pub over_stream: bool,
 }
 impl ShadowQuicClient {
-    pub fn new(cfg: ShadowQuicClientCfg) -> Result<Self, SError> {
+    pub async fn new(cfg: ShadowQuicClientCfg) -> Result<Self, SError> {
         let bind_addr = "[::]:0".parse().unwrap();
         let socket = Socket::new(
             Domain::for_address(bind_addr),
@@ -53,6 +53,25 @@ impl ShadowQuicClient {
         )?;
         socket.set_only_v6(false)?;
         socket.bind(&bind_addr.into())?;
+
+        #[cfg(target_os = "android")]
+        if let Some(path) = &cfg.protect_path {
+            use crate::utils::protect_socket::protect_socket;
+            use std::os::fd::AsRawFd;
+
+            tracing::debug!("trying protect socket");
+            tokio::time::timeout(
+                tokio::time::Duration::from_secs(5),
+                protect_socket(path, socket.as_raw_fd()),
+            )
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "protecting socket timeout"))
+            .and_then(|x| x)
+            .map_err(|e| {
+                tracing::error!("error during protecing socket:{}", e);
+                e
+            })?;
+        }
 
         Self::new_with_socket(cfg, UdpSocket::from(socket))
     }

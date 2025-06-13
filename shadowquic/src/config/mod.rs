@@ -1,5 +1,4 @@
 use std::net::SocketAddr;
-
 use serde::{Deserialize, Serialize};
 use tracing::Level;
 
@@ -10,6 +9,11 @@ use crate::{
     shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
     socks::{inbound::SocksServer, outbound::SocksClient},
 };
+
+#[cfg(target_os = "android")]
+use std::path::PathBuf;
+
+
 /// Overall configuration of shadowquic.
 ///
 /// Example:
@@ -90,7 +94,7 @@ impl OutboundCfg {
     async fn build_outbound(self) -> Result<Box<dyn Outbound>, SError> {
         let r: Box<dyn Outbound> = match self {
             OutboundCfg::Socks(cfg) => Box::new(SocksClient::new(cfg)),
-            OutboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicClient::new(cfg)?),
+            OutboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicClient::new(cfg).await?),
             OutboundCfg::Direct(_) => Box::new(DirectOut),
         };
         Ok(r)
@@ -193,6 +197,10 @@ pub struct ShadowQuicClientCfg {
     /// Disabled by default.
     #[serde(default = "default_keep_alive_interval")]
     pub keep_alive_interval: u32,
+
+    /// Android Only. the unix socket path for protecting android socket
+    #[cfg(target_os = "android")]
+    pub protect_path: Option<PathBuf>,
 }
 
 impl Default for ShadowQuicClientCfg {
@@ -209,6 +217,8 @@ impl Default for ShadowQuicClientCfg {
             over_stream: Default::default(),
             min_mtu: default_min_mtu(),
             keep_alive_interval: default_keep_alive_interval(),
+            #[cfg(target_os = "android")]
+            protect_path: Default::default(),
         }
     }
 }

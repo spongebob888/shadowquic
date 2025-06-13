@@ -15,7 +15,7 @@ use crate::{
     Outbound, UdpSession,
     error::SError,
     msgs::socks5::{AddrOrDomain, SOCKS5_ADDR_TYPE_DOMAIN_NAME, SocksAddr, VarVec},
-    utils::socket_helper::DualSocket,
+    utils::dual_socket::DualSocket,
 };
 use async_trait::async_trait;
 

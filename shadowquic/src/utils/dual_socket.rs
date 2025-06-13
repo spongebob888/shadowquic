@@ -1,5 +1,5 @@
 use std::{
-    io,
+    io::{self},
     net::{IpAddr, SocketAddr},
     ops::Deref,
 };

@@ -258,6 +258,7 @@ async fn shadowquic_client_server(over_stream: bool, port: u16) {
         over_stream,
         ..Default::default()
     })
+    .await
     .unwrap();
 
     let client = Manager {

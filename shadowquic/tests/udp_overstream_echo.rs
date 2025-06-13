@@ -114,6 +114,7 @@ async fn test_shadowquic() {
         over_stream: true,
         ..Default::default()
     })
+    .await
     .unwrap();
 
     let client = Manager {
