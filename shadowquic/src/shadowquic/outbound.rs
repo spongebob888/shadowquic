@@ -89,7 +89,7 @@ impl ShadowQuicClient {
                 protect_socket(path, socket.as_raw_fd()),
             )
             .await
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "protecting socket timeout"))
+            .map_err(|_| io::Error::other("protecting socket timeout"))
             .and_then(|x| x)
             .map_err(|e| {
                 tracing::error!("error during protecing socket:{}", e);
