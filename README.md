@@ -27,6 +27,8 @@ Example config [server.yaml](./shadowquic/config_examples/server.yaml)
 Configuration detail can be found in [Documentation](https://spongebob888.github.io/shadowquic/shadowquic/config/struct.Config.html)
 ## Other Clients
 - [clash-rs](https://github.com/Watfaq/clash-rs)
+- [husi](https://github.com/xchacha20-poly1305/husi)
+
 ## Other Servers
 - [docker](https://github.com/spongebob888/shadowquic/pkgs/container/shadowquic)
 ## Protocol
