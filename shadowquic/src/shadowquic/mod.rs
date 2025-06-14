@@ -37,7 +37,7 @@ pub const MAX_SEND_WINDOW: u64 = MAX_WINDOW_BASE * 8;
 pub const MAX_DATAGRAM_WINDOW: u64 = MAX_WINDOW_BASE * 2;
 
 /// ShadowQuic connection, which is a wrapper around quinn::Connection.
-/// It contains a connection object and an ID store for managing UDP sockets.
+/// It contains a connection object and two ID store for managing UDP sockets.
 /// The IDStore stores the mapping between ids and the destionation addresses as well as associated sockets
 #[derive(Clone)]
 pub struct SQConn {
@@ -149,7 +149,7 @@ where
         loop {
             r = self
                 .id_counter
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst); // Wrapping occured if overflow
             if let Entry::Vacant(e) = inner.entry(r) {
                 e.insert(Ok(val));
                 break;

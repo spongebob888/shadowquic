@@ -41,13 +41,8 @@ pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
     recv: I,
     send: O,
     /// Control stream, should be kept alive during session.
-    #[allow(dead_code)]
     stream: Option<AnyTcp>,
     dst: SocksAddr,
-}
-pub struct DatagramMsg {
-    pub header: Vec<u8>,
-    pub payload: Bytes,
 }
 
 pub type AnyTcp = Box<dyn TcpTrait>;
