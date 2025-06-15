@@ -140,11 +140,11 @@ impl SocksAddr {
 }
 impl fmt::Display for SocksAddr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // Write strictly the first element into the supplied output
-        // stream: `f`. Returns `fmt::Result` which indicates whether the
-        // operation succeeded or failed. Note that `write!` uses syntax which
-        // is very similar to `println!`.
-        write!(f, "{}:{}", self.addr, self.port)
+        if let AddrOrDomain::V6(_) = self.addr {
+            write!(f, "[{}]:{}", self.addr, self.port)
+        } else {
+            write!(f, "{}:{}", self.addr, self.port)
+        }
     }
 }
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]

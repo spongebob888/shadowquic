@@ -198,8 +198,8 @@ impl SQServerConn {
     async fn handle_connection(self, req_send: Sender<ProxyRequest>) -> Result<(), SError> {
         let conn = &self.0;
         event!(
-            Level::TRACE,
-            "incomming from {} accepted",
+            Level::INFO,
+            "incoming from {} accepted",
             conn.remote_address()
         );
         let conn_clone = self.0.clone();
@@ -237,7 +237,11 @@ impl SQServerConn {
         );
         match req.cmd {
             SQCmd::Connect => {
-                info!("connect request to {} accepted", req.dst.clone());
+                info!(
+                    "connect request: {}->{} accepted",
+                    self.0.remote_address(),
+                    req.dst.clone()
+                );
                 let tcp: TcpSession = TcpSession {
                     stream: Box::new(Unsplit { s: send, r: recv }),
                     dst: req.dst,

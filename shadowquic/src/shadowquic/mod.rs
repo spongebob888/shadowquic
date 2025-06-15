@@ -367,6 +367,7 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
                 }
                 Err(mut notify) =>  {
                     let id_store = id_store.clone();
+                    let src_addr = conn.remote_address();
                     event!(Level::TRACE, "resolving datagram id:{}",id);
                     // Might spawn too many tasks
                     tokio::spawn(async move {
@@ -374,7 +375,7 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
                         let _ = notify.changed().await.map_err(|_|debug!("id:{} notifier dropped",id));
                         // session may be closed
                         let (udp,addr) = id_store.try_get_socket(id).await.ok_or(SError::UDPSessionClosed("UDP session closed".to_string()))?;
-                        debug!("datagram id resolve: id:{}:,dst:{}",id, addr);
+                        info!("udp over datagram: id:{}: {}->{}",id, src_addr, addr);
                         let pos = cur.position() as usize;
                         let b = cur.into_inner().freeze();
                         let _ = udp.clone().send_to(b.slice(pos..b.len()), addr.clone()).await
@@ -393,7 +394,7 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
 
                 let (udp,addr) = id_store.get_socket_or_wait(id).await?;
 
-                info!("unistream datagram accepted: id:{},dst:{}",id, addr);
+                info!("udp over stream: id:{}: {}->{}",id, conn.remote_address(), addr);
                 Ok((uni_stream,udp.clone(),addr.clone())) as Result<(RecvStream,AnyUdpSend,SocksAddr),SError>
             } => {
 
