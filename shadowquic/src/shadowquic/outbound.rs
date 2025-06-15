@@ -271,7 +271,7 @@ impl Outbound for ShadowQuicClient {
         let fut = async move {
             match req {
                 crate::ProxyRequest::Tcp(mut tcp_session) => {
-                    info!("bistream opened for tcp dst:{}", tcp_session.dst.clone());
+                    debug!("bistream opened for tcp dst:{}", tcp_session.dst.clone());
                     //let _enter = _span.enter();
                     let req = SQReq {
                         cmd: SQCmd::Connect,
