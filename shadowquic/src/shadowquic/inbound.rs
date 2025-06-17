@@ -29,7 +29,6 @@ use crate::{
 use super::{IDStore, SQConn, handle_udp_packet_recv, handle_udp_recv_ctrl, handle_udp_send};
 
 pub struct ShadowQuicServer {
-    pub squic_conn: Vec<SQServerConn>,
     pub quic_config: quinn::ServerConfig,
     pub bind_addr: SocketAddr,
     pub zero_rtt: bool,
@@ -96,7 +95,6 @@ impl ShadowQuicServer {
         let (send, recv) = channel::<ProxyRequest>(10);
 
         Ok(Self {
-            squic_conn: vec![],
             quic_config: config,
             zero_rtt: cfg.zero_rtt,
             bind_addr: cfg.bind_addr,
