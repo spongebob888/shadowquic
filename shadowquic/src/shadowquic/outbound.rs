@@ -189,7 +189,11 @@ impl ShadowQuicClient {
             .unwrap_or_else(|| panic!("resolve quic addr faile: {}", self.dst_addr));
         let conn = self
             .quic_end
-            .get_or_init(|| async { self.init_endpoint(addr.is_ipv6()).await.expect("error during initialize quic endpoint") })
+            .get_or_init(|| async {
+                self.init_endpoint(addr.is_ipv6())
+                    .await
+                    .expect("error during initialize quic endpoint")
+            })
             .await
             .connect(addr, &self.server_name)?;
         let conn = if self.zero_rtt {
