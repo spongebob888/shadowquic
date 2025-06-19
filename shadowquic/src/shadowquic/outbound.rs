@@ -70,8 +70,10 @@ impl ShadowQuicClient {
         if ipv6 {
             socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
             let bind_addr: SocketAddr = "[::]:0".parse().unwrap();
+            if let Err(e) = socket.set_only_v6(false) {
+                tracing::warn!(%e, "unable to make socket dual-stack");
+            }
             socket.bind(&bind_addr.into())?;
-            socket.set_only_v6(false)?;
         } else {
             socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
             let bind_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
@@ -187,7 +189,7 @@ impl ShadowQuicClient {
             .unwrap_or_else(|| panic!("resolve quic addr faile: {}", self.dst_addr));
         let conn = self
             .quic_end
-            .get_or_init(|| async { self.init_endpoint(addr.is_ipv6()).await.unwrap() })
+            .get_or_init(|| async { self.init_endpoint(addr.is_ipv6()).await.expect("error during initialize quic endpoint") })
             .await
             .connect(addr, &self.server_name)?;
         let conn = if self.zero_rtt {
