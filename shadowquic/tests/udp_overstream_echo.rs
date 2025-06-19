@@ -105,7 +105,7 @@ async fn test_shadowquic() {
     let sq_client = ShadowQuicClient::new(ShadowQuicClientCfg {
         jls_pwd: "123".into(),
         jls_iv: "123".into(),
-        addr: "127.0.0.1:4448".parse().unwrap(),
+        addr: "[::1]:4448".parse().unwrap(),
         server_name: "localhost".into(),
         alpn: vec!["h3".into()],
         initial_mtu: 1200,
@@ -121,7 +121,7 @@ async fn test_shadowquic() {
     };
 
     let sq_server = ShadowQuicServer::new(ShadowQuicServerCfg {
-        bind_addr: "127.0.0.1:4448".parse().unwrap(),
+        bind_addr: "[::1]:4448".parse().unwrap(),
         jls_pwd: "123".into(),
         jls_iv: "123".into(),
         jls_upstream: "localhost:443".into(),
