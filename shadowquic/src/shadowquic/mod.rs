@@ -9,13 +9,16 @@ use std::{
     sync::{Arc, atomic::AtomicU16},
 };
 
+use crate::quic::Connection;
 use bytes::{BufMut, Bytes, BytesMut};
-use quinn::{Connection, RecvStream, SendDatagramError, SendStream};
-use tokio::sync::{
-    RwLock,
-    watch::{Receiver, Sender, channel},
+use tokio::{
+    io::{AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    sync::{
+        RwLock,
+        watch::{Receiver, Sender, channel},
+    },
 };
-use tracing::{Instrument, Level, debug, error, event, info, trace, warn};
+use tracing::{Instrument, Level, debug, error, event, info, trace};
 
 use crate::{
     AnyUdpRecv, AnyUdpSend,
@@ -24,6 +27,7 @@ use crate::{
         shadowquic::{SQPacketDatagramHeader, SQUdpControlHeader},
         socks5::{SDecode, SEncode, SocksAddr},
     },
+    quic::QuicConnection,
 };
 
 pub mod inbound;
@@ -40,14 +44,14 @@ pub const MAX_DATAGRAM_WINDOW: u64 = MAX_WINDOW_BASE * 2;
 /// It contains a connection object and two ID store for managing UDP sockets.
 /// The IDStore stores the mapping between ids and the destionation addresses as well as associated sockets
 #[derive(Clone)]
-pub struct SQConn {
-    conn: Connection,
+pub struct SQConn<T: QuicConnection = Connection> {
+    conn: T,
     send_id_store: IDStore<()>,
     recv_id_store: IDStore<(AnyUdpSend, SocksAddr)>,
 }
 
-impl Deref for SQConn {
-    type Target = Connection;
+impl<T: QuicConnection> Deref for SQConn<T> {
+    type Target = T;
 
     fn deref(&self) -> &Self::Target {
         &self.conn
@@ -163,12 +167,12 @@ where
 /// It is created for each association task
 /// The local dst_map works as a inverse map from destination to id
 /// When session ended, the ids created by this session will be removed from the IDStore.
-struct AssociateSendSession {
+struct AssociateSendSession<W: AsyncWrite> {
     id_store: IDStore<()>,
     dst_map: HashMap<SocksAddr, u16>,
-    unistream_map: HashMap<SocksAddr, SendStream>,
+    unistream_map: HashMap<SocksAddr, W>,
 }
-impl AssociateSendSession {
+impl<W: AsyncWrite> AssociateSendSession<W> {
     pub async fn get_id_or_insert(&mut self, addr: &SocksAddr) -> (u16, bool) {
         if let Some(id) = self.dst_map.get(addr) {
             (*id, false)
@@ -181,7 +185,7 @@ impl AssociateSendSession {
     }
 }
 
-impl Drop for AssociateSendSession {
+impl<W: AsyncWrite> Drop for AssociateSendSession<W> {
     fn drop(&mut self) {
         let id_store = self.id_store.inner.clone();
         let id_remove = self.dst_map.clone();
@@ -251,10 +255,10 @@ impl Drop for AssociateRecvSession {
 /// Handle udp packets send
 /// It watches the udp socket and sends the packets to the quic connection.
 /// This function is symetrical for both clients and servers.
-pub async fn handle_udp_send(
-    mut send: SendStream,
+pub async fn handle_udp_send<C: QuicConnection>(
+    mut send: C::SendStream,
     udp_recv: AnyUdpRecv,
-    conn: SQConn,
+    conn: SQConn<C>,
     over_stream: bool,
 ) -> Result<(), SError> {
     let mut down_stream = udp_recv;
@@ -274,7 +278,7 @@ pub async fn handle_udp_send(
         };
         let dg_header = SQPacketDatagramHeader { id };
         if over_stream && !session.unistream_map.contains_key(&dst) {
-            let uni = conn.open_uni().await?;
+            let (uni, _id) = conn.open_uni().await?;
             session.unistream_map.insert(dst.clone(), uni);
         }
 
@@ -304,16 +308,7 @@ pub async fn handle_udp_send(
                 content.put(Bytes::from(head));
                 content.put(bytes);
                 let content = content.freeze();
-                let len = content.len();
-                match quic_conn.send_datagram(content) {
-                    Ok(_) => (),
-                    Err(SendDatagramError::TooLarge) => warn!(
-                        "datagram too large:{}>{}",
-                        len,
-                        quic_conn.max_datagram_size().unwrap()
-                    ),
-                    e => e?,
-                }
+                quic_conn.send_datagram(content).await?;
             }
             Ok(())
         };
@@ -326,10 +321,10 @@ pub async fn handle_udp_send(
 /// Handle udp ctrl stream receive task
 /// it retrieves the dst id pair from the bistream and records related socket and address
 /// This function is symetrical for both clients and servers.
-pub async fn handle_udp_recv_ctrl(
-    mut recv: RecvStream,
+pub async fn handle_udp_recv_ctrl<C: QuicConnection>(
+    mut recv: C::RecvStream,
     udp_socket: AnyUdpSend,
-    conn: SQConn,
+    conn: SQConn<C>,
 ) -> Result<(), SError> {
     let mut session = AssociateRecvSession {
         id_store: conn.recv_id_store.clone(),
@@ -348,7 +343,7 @@ pub async fn handle_udp_recv_ctrl(
 /// It watches udp packets from quic connection and sends them to the udp socket.
 /// The udp socket could be downstream(inbound) or upstream(outbound)
 /// This function is symetrical for both clients and servers.
-pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
+pub async fn handle_udp_packet_recv<C: QuicConnection>(conn: SQConn<C>) -> Result<(), SError> {
     let id_store = conn.recv_id_store.clone();
 
     loop {
@@ -387,7 +382,7 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
             }
 
             r = async {
-                let mut uni_stream = conn.accept_uni().await?;
+                let (mut uni_stream, _id) = conn.accept_uni().await?;
                 trace!("unistream accepted");
                 let SQPacketDatagramHeader{id} = SQPacketDatagramHeader::decode(&mut uni_stream).await?;
                 event!(Level::TRACE, "resolving datagram id:{}",id);
@@ -395,7 +390,7 @@ pub async fn handle_udp_packet_recv(conn: SQConn) -> Result<(), SError> {
                 let (udp,addr) = id_store.get_socket_or_wait(id).await?;
 
                 info!("udp over stream: id:{}: {}->{}",id, conn.remote_address(), addr);
-                Ok((uni_stream,udp.clone(),addr.clone())) as Result<(RecvStream,AnyUdpSend,SocksAddr),SError>
+                Ok((uni_stream,udp.clone(),addr.clone())) as Result<(C::RecvStream,AnyUdpSend,SocksAddr),SError>
             } => {
 
                 let  (mut uni_stream,udp,addr) = match r {

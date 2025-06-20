@@ -9,8 +9,9 @@ description = { workspace = true }
 license = { workspace = true}
 
 [features]
-default = []
+default = ["quinn"]
 tokio-console = ["dep:console-subscriber","tokio/tracing"]
+quinn = ["dep:quinn"]
 [dependencies]
 anyhow = "1.0.97"
 thiserror = "2.0.12"
@@ -18,7 +19,7 @@ tokio = {version = "1.45.1", features = ["io-util", "net","rt","macros","rt-mult
 tracing = "0.1.41"
 time = { version = "=0.3.41", features = ["macros", "local-offset"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt", "ansi", "time", "local-time"]}
-quinn = { package = "quinn", git = "https://github.com/spongebob888/quinn-jls", version = "0.11.7-0.1.1", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+quinn = { package = "quinn", git = "https://github.com/spongebob888/quinn-jls", version = "0.11.7-0.1.1", default-features = false, features = ["runtime-tokio", "rustls-ring"],optional = true}
 rustls = { package = "rustls", git = "https://github.com/spongebob888/rustls-jls", version = "0.23.25-1.0.2", default-features = false, features = ["std","ring"]}
 rcgen = { version = "0.13", default-features = false, features = ["crypto","ring"] }
 bytes = "1.10.1"

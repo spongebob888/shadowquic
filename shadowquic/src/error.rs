@@ -1,4 +1,5 @@
 use std::io;
+use std::result;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -36,3 +37,5 @@ pub enum SError {
     #[error("socks error: {0}")]
     SocksError(String),
 }
+
+pub type SResult<T> = result::Result<T, SError>;

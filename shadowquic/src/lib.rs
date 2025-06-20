@@ -15,6 +15,7 @@ pub mod config;
 pub mod direct;
 pub mod error;
 pub mod msgs;
+pub mod quic;
 pub mod shadowquic;
 pub mod socks;
 pub mod utils;

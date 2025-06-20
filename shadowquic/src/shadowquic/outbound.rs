@@ -1,26 +1,18 @@
 use async_trait::async_trait;
 use bytes::Bytes;
-use socket2::{Domain, Protocol, Socket, Type};
 use std::{
-    io,
-    net::{SocketAddr, ToSocketAddrs, UdpSocket},
+    net::{ToSocketAddrs, UdpSocket},
     sync::Arc,
-    time::Duration,
 };
 use tokio::{
-    io::AsyncReadExt,
+    io::{AsyncRead, AsyncReadExt, AsyncWrite},
     sync::{
         OnceCell,
         mpsc::{Receiver, Sender, channel},
     },
 };
 
-use quinn::{
-    ClientConfig, Endpoint, MtuDiscoveryConfig, RecvStream, SendStream, TransportConfig,
-    congestion::{BbrConfig, CubicConfig, NewRenoConfig},
-    crypto::rustls::QuicClientConfig,
-};
-use rustls::RootCertStore;
+use crate::quic::EndClient;
 use tracing::{Instrument, Level, debug, error, info, span, trace};
 
 #[cfg(target_os = "android")]
@@ -28,165 +20,57 @@ use std::path::PathBuf;
 
 use crate::{
     Outbound,
-    config::{CongestionControl, ShadowQuicClientCfg},
+    config::ShadowQuicClientCfg,
     error::SError,
     msgs::{
         shadowquic::{SQCmd, SQReq},
         socks5::{SEncode, SocksAddr},
     },
+    quic::{QuicClient, QuicConnection},
     shadowquic::{handle_udp_recv_ctrl, handle_udp_send},
 };
 
 use super::{IDStore, SQConn, handle_udp_packet_recv, inbound::Unsplit};
 
-pub struct ShadowQuicClient {
-    pub quic_conn: Option<SQConn>,
+pub struct ShadowQuicClient<EndT: QuicClient = EndClient> {
+    pub quic_conn: Option<SQConn<EndT::C>>,
     #[allow(dead_code)]
-    pub quic_config: quinn::ClientConfig,
-    pub quic_end: OnceCell<Endpoint>,
-    pub dst_addr: String,
-    pub server_name: String,
-    pub zero_rtt: bool,
-    pub over_stream: bool,
+    pub config: ShadowQuicClientCfg,
+    pub quic_end: OnceCell<EndT>,
     #[cfg(target_os = "android")]
     pub protect_path: Option<PathBuf>,
 }
-impl ShadowQuicClient {
+impl<End: QuicClient> ShadowQuicClient<End> {
     pub fn new(cfg: ShadowQuicClientCfg) -> Self {
         Self {
-            quic_config: Self::gen_quic_cfg(&cfg),
-            dst_addr: cfg.addr,
-            server_name: cfg.server_name,
-            zero_rtt: cfg.zero_rtt,
-            over_stream: cfg.over_stream,
+            config: cfg,
             quic_conn: None,
             quic_end: OnceCell::new(),
             #[cfg(target_os = "android")]
             protect_path: cfg.protect_path,
         }
     }
-    pub async fn init_endpoint(&self, ipv6: bool) -> Result<Endpoint, SError> {
-        let socket;
-        if ipv6 {
-            socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
-            let bind_addr: SocketAddr = "[::]:0".parse().unwrap();
-            if let Err(e) = socket.set_only_v6(false) {
-                tracing::warn!(%e, "unable to make socket dual-stack");
-            }
-            socket.bind(&bind_addr.into())?;
-        } else {
-            socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
-            let bind_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
-            socket.bind(&bind_addr.into())?;
-        }
-
-        #[cfg(target_os = "android")]
-        if let Some(path) = &self.protect_path {
-            use crate::utils::protect_socket::protect_socket;
-            use std::os::fd::AsRawFd;
-
-            tracing::debug!("trying protect socket");
-            tokio::time::timeout(
-                tokio::time::Duration::from_secs(5),
-                protect_socket(path, socket.as_raw_fd()),
-            )
-            .await
-            .map_err(|_| io::Error::other("protecting socket timeout"))
-            .and_then(|x| x)
-            .map_err(|e| {
-                tracing::error!("error during protecing socket:{}", e);
-                e
-            })?;
-        }
-        let runtime =
-            quinn::default_runtime().ok_or_else(|| io::Error::other("no async runtime found"))?;
-        let mut end = Endpoint::new(
-            quinn::EndpointConfig::default(),
-            None,
-            socket.into(),
-            runtime,
-        )?;
-        end.set_default_client_config(self.quic_config.clone());
-
-        Ok(end)
+    pub async fn init_endpoint(&self, ipv6: bool) -> Result<End, SError> {
+        End::new(&self.config, ipv6)
     }
     pub fn new_with_socket(cfg: ShadowQuicClientCfg, socket: UdpSocket) -> Result<Self, SError> {
-        let config = Self::gen_quic_cfg(&cfg);
-        let runtime =
-            quinn::default_runtime().ok_or_else(|| io::Error::other("no async runtime found"))?;
-        let mut end = Endpoint::new(quinn::EndpointConfig::default(), None, socket, runtime)?;
-        end.set_default_client_config(config.clone());
-
         Ok(Self {
+            quic_end: OnceCell::from(End::new_with_socket(&cfg, socket)?),
             quic_conn: None,
-            quic_config: config,
-            quic_end: OnceCell::from(end),
-            dst_addr: cfg.addr,
-            server_name: cfg.server_name,
-            zero_rtt: cfg.zero_rtt,
-            over_stream: cfg.over_stream,
+            config: cfg,
             #[cfg(target_os = "android")]
             protect_path: cfg.protect_path,
         })
     }
-    pub fn gen_quic_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
-        let root_store = RootCertStore {
-            roots: webpki_roots::TLS_SERVER_ROOTS.into(),
-        };
-        let mut crypto = rustls::ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
-        crypto.alpn_protocols = cfg.alpn.iter().map(|x| x.to_owned().into_bytes()).collect();
-        crypto.enable_early_data = cfg.zero_rtt;
-        crypto.jls_config = rustls::JlsConfig::new(&cfg.jls_pwd, &cfg.jls_iv);
-        let mut tp_cfg = TransportConfig::default();
 
-        let mut mtudis = MtuDiscoveryConfig::default();
-        mtudis.black_hole_cooldown(Duration::from_secs(120));
-        mtudis.interval(Duration::from_secs(90));
-
-        tp_cfg
-            .max_concurrent_bidi_streams(500u32.into())
-            .max_concurrent_uni_streams(500u32.into())
-            .mtu_discovery_config(Some(mtudis))
-            .min_mtu(cfg.min_mtu)
-            .initial_mtu(cfg.initial_mtu);
-
-        // Only increase receive window to maximize download speed
-        tp_cfg.stream_receive_window(super::MAX_STREAM_WINDOW.try_into().unwrap());
-        tp_cfg.datagram_receive_buffer_size(Some(super::MAX_DATAGRAM_WINDOW as usize));
-        tp_cfg.keep_alive_interval(if cfg.keep_alive_interval > 0 {
-            Some(Duration::from_millis(cfg.keep_alive_interval as u64))
-        } else {
-            None
-        });
-
-        match cfg.congestion_control {
-            CongestionControl::Cubic => {
-                tp_cfg.congestion_controller_factory(Arc::new(CubicConfig::default()))
-            }
-            CongestionControl::NewReno => {
-                tp_cfg.congestion_controller_factory(Arc::new(NewRenoConfig::default()))
-            }
-            CongestionControl::Bbr => {
-                tp_cfg.congestion_controller_factory(Arc::new(BbrConfig::default()))
-            }
-        };
-        let mut config = ClientConfig::new(Arc::new(
-            QuicClientConfig::try_from(crypto).expect("rustls config can't created"),
-        ));
-
-        config.transport_config(Arc::new(tp_cfg));
-        config
-    }
-
-    pub async fn get_conn(&self) -> Result<SQConn, SError> {
+    pub async fn get_conn(&self) -> Result<SQConn<End::C>, SError> {
         let addr = self
-            .dst_addr
+            .config
+            .addr
             .to_socket_addrs()
-            .unwrap_or_else(|_| panic!("resolve quic addr faile: {}", self.dst_addr))
+            .unwrap_or_else(|_| panic!("resolve quic addr faile: {}", self.config.addr))
             .next()
-            .unwrap_or_else(|| panic!("resolve quic addr faile: {}", self.dst_addr));
+            .unwrap_or_else(|| panic!("resolve quic addr faile: {}", self.config.addr));
         let conn = self
             .quic_end
             .get_or_init(|| async {
@@ -195,37 +79,9 @@ impl ShadowQuicClient {
                     .expect("error during initialize quic endpoint")
             })
             .await
-            .connect(addr, &self.server_name)?;
-        let conn = if self.zero_rtt {
-            match conn.into_0rtt() {
-                Ok((x, accepted)) => {
-                    let conn_clone = x.clone();
-                    tokio::spawn(async move {
-                        debug!("zero rtt accepted: {}", accepted.await);
-                        if conn_clone.is_jls() == Some(false) {
-                            error!("JLS hijacked or wrong pwd/iv");
-                            conn_clone.close(0u8.into(), b"");
-                        }
-                    });
-                    trace!("trying 0-rtt quic connection");
-                    x
-                }
-                Err(e) => {
-                    let x = e.await?;
-                    trace!("1-rtt quic connection established");
-                    x
-                }
-            }
-        } else {
-            let x = conn.await?;
-            trace!("1-rtt quic connection established");
-            x
-        };
-        if conn.is_jls() == Some(false) {
-            error!("JLS hijacked or wrong pwd/iv");
-            conn.close(0u8.into(), b"");
-            return Err(SError::JlsAuthFailed);
-        }
+            .connect(addr, &self.config.server_name, self.config.zero_rtt)
+            .await?;
+
         let conn = SQConn {
             conn,
             send_id_store: Default::default(),
@@ -234,8 +90,6 @@ impl ShadowQuicClient {
                 inner: Default::default(),
             },
         };
-
-        tokio::spawn(handle_udp_packet_recv(conn.clone()));
         Ok(conn)
     }
     async fn prepare_conn(&mut self) -> Result<(), SError> {
@@ -250,8 +104,12 @@ impl ShadowQuicClient {
         if self.quic_conn.is_none() {
             self.quic_conn = Some(self.get_conn().await?);
 
-            let conn: SQConn = self.quic_conn.as_ref().unwrap().clone();
-            tokio::spawn(handle_udp_packet_recv(conn));
+            let conn = self.quic_conn.as_ref().unwrap().clone();
+            tokio::spawn(async move {
+                let _ = handle_udp_packet_recv(conn)
+                    .await
+                    .map_err(|x| error!("handle udp packet recv error: {}", x));
+            });
         }
         Ok(())
     }
@@ -271,7 +129,7 @@ impl Outbound for ShadowQuicClient {
             conn.rtt(),
             conn.stats().path.current_mtu,
         );
-        let over_stream = self.over_stream;
+        let over_stream = self.config.over_stream;
         let (mut send, recv) = conn.open_bi().await?;
         let _span = span!(Level::TRACE, "bistream", id = (send.id().index()));
         let fut = async move {
@@ -344,21 +202,13 @@ impl Outbound for ShadowQuicClient {
 
 /// Helper function to create new stream for proxy dstination
 #[allow(dead_code)]
-pub async fn connect_tcp(
-    sq_conn: &SQConn,
+pub async fn connect_tcp<C: QuicConnection>(
+    sq_conn: &SQConn<C>,
     dst: SocksAddr,
-) -> Result<Unsplit<SendStream, RecvStream>, crate::error::SError> {
+) -> Result<Unsplit<impl AsyncWrite, impl AsyncRead>, crate::error::SError> {
     let conn = sq_conn;
 
-    let rate: f32 =
-        (conn.stats().path.lost_packets as f32) / ((conn.stats().path.sent_packets + 1) as f32);
-    info!(
-        "packet_loss_rate:{:.2}%, rtt:{:?}, mtu:{}",
-        rate * 100.0,
-        conn.rtt(),
-        conn.stats().path.current_mtu,
-    );
-    let (mut send, recv) = conn.open_bi().await?;
+    let (mut send, recv, _id) = conn.open_bi().await?;
 
     info!("bistream opened for tcp dst:{}", dst.clone());
     //let _enter = _span.enter();
@@ -375,22 +225,14 @@ pub async fn connect_tcp(
 /// associate a udp socket in the remote server
 /// return a socket-like send, recv handle.
 #[allow(dead_code)]
-pub async fn associate_udp(
-    sq_conn: &SQConn,
+pub async fn associate_udp<C: QuicConnection>(
+    sq_conn: &SQConn<C>,
     dst: SocksAddr,
     over_stream: bool,
 ) -> Result<(Sender<(Bytes, SocksAddr)>, Receiver<(Bytes, SocksAddr)>), SError> {
     let conn = sq_conn;
 
-    let rate: f32 =
-        (conn.stats().path.lost_packets as f32) / ((conn.stats().path.sent_packets + 1) as f32);
-    info!(
-        "packet_loss_rate:{:.2}%, rtt:{:?}, mtu:{}",
-        rate * 100.0,
-        conn.rtt(),
-        conn.stats().path.current_mtu,
-    );
-    let (mut send, recv) = conn.open_bi().await?;
+    let (mut send, recv, _id) = conn.open_bi().await?;
 
     info!("bistream opened for udp dst:{}", dst.clone());
 
