@@ -1,6 +1,7 @@
 use std::io;
 use std::result;
 use thiserror::Error;
+use crate::quic::QuicErrorRepr;
 
 #[derive(Error, Debug)]
 pub enum SError {
@@ -10,18 +11,8 @@ pub enum SError {
     ProtocolUnimpl,
     #[error("IO Error:{0}")]
     Io(#[from] io::Error),
-    #[error("QUIC Connect Error:{0}")]
-    QuicConnect(#[from] quinn::ConnectError),
-    #[error("QUIC Connection Error:{0}")]
-    QuicConnection(#[from] quinn::ConnectionError),
-    #[error("QUIC Write Error:{0}")]
-    QuicWrite(#[from] quinn::WriteError),
-    #[error("QUIC ReadExact Error:{0}")]
-    QuicReadExactError(#[from] quinn::ReadExactError),
-    #[error("QUIC SendDatagramError:{0}")]
-    QuicSendDatagramError(#[from] quinn::SendDatagramError),
-    #[error("JLS Authentication failed")]
-    JlsAuthFailed,
+    #[error(transparent)]
+    QuicError(#[from] QuicErrorRepr),
     #[error("Rustls Error")]
     RustlsError(#[from] rustls::Error),
     #[error("Outbound unavailable")]
@@ -39,3 +30,8 @@ pub enum SError {
 }
 
 pub type SResult<T> = result::Result<T, SError>;
+
+// #[derive(Error, Debug)]
+// #[error(transparent)]
+// pub struct QuicError(#[from] QuicErrorRepr);
+

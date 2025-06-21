@@ -12,6 +12,7 @@ use rustls::{
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
 };
 use socket2::{Domain, Protocol, Socket, Type};
+use thiserror::Error;
 use tracing::{debug, error, info, trace, warn};
 
 use rustls::ServerConfig as RustlsServerConfig;
@@ -32,7 +33,7 @@ pub use quinn::Endpoint as EndServer;
 impl QuicConnection for Connection {
     type RecvStream = quinn::RecvStream;
     type SendStream = quinn::SendStream;
-    async fn open_bi(&self) -> SResult<(Self::SendStream, Self::RecvStream, u64)> {
+    async fn open_bi(&self) -> Result<(Self::SendStream, Self::RecvStream, u64), QuicErrorRepr> {
         let rate: f32 =
             (self.stats().path.lost_packets as f32) / ((self.stats().path.sent_packets + 1) as f32);
         info!(
@@ -47,31 +48,31 @@ impl QuicConnection for Connection {
         Ok((send, recv, id))
     }
 
-    async fn accept_bi(&self) -> SResult<(Self::SendStream, Self::RecvStream, u64)> {
+    async fn accept_bi(&self) -> Result<(Self::SendStream, Self::RecvStream, u64), QuicErrorRepr> {
         let (send, recv) = self.accept_bi().await?;
 
         let id = send.id().index();
         Ok((send, recv, id))
     }
 
-    async fn open_uni(&self) -> SResult<(Self::SendStream, u64)> {
+    async fn open_uni(&self) -> Result<(Self::SendStream, u64), QuicErrorRepr> {
         let send = self.open_uni().await?;
         let id = send.id().index();
         Ok((send, id))
     }
 
-    async fn accept_uni(&self) -> SResult<(Self::RecvStream, u64)> {
+    async fn accept_uni(&self) -> Result<(Self::RecvStream, u64), QuicErrorRepr> {
         let recv = self.accept_uni().await?;
         let id = recv.id().index();
         Ok((recv, id))
     }
 
-    async fn read_datagram(&self) -> SResult<Bytes> {
+    async fn read_datagram(&self) -> Result<Bytes, QuicErrorRepr> {
         let bytes = self.read_datagram().await?;
         Ok(bytes)
     }
 
-    async fn send_datagram(&self, bytes: Bytes) -> SResult<()> {
+    async fn send_datagram(&self, bytes: Bytes) -> Result<(), QuicErrorRepr> {
         let len = bytes.len();
         match self.send_datagram(bytes) {
             Ok(_) => (),
@@ -85,7 +86,7 @@ impl QuicConnection for Connection {
         Ok(())
     }
 
-    fn close_reason(&self) -> Option<SError> {
+    fn close_reason(&self) -> Option<QuicErrorRepr> {
         self.close_reason().map(|x| x.into())
     }
     fn remote_address(&self) -> SocketAddr {
@@ -139,7 +140,7 @@ impl QuicClient for Endpoint {
         addr: SocketAddr,
         server_name: &str,
         zero_rtt: bool,
-    ) -> SResult<Self::C> {
+    ) -> Result<Self::C, QuicErrorRepr> {
         let conn = self.connect(addr, server_name)?;
         let conn = if zero_rtt {
             match conn.into_0rtt() {
@@ -169,7 +170,7 @@ impl QuicClient for Endpoint {
         if conn.is_jls() == Some(false) {
             error!("JLS hijacked or wrong pwd/iv");
             conn.close(0u8.into(), b"");
-            return Err(SError::JlsAuthFailed);
+            return Err(QuicErrorRepr::JlsAuthFailed);
         }
         Ok(conn)
     }
@@ -297,7 +298,7 @@ impl QuicServer for Endpoint {
         let endpoint = Endpoint::server(config, cfg.bind_addr)?;
         Ok(endpoint)
     }
-    async fn accept(&self, zero_rtt: bool) -> SResult<Self::C> {
+    async fn accept(&self, zero_rtt: bool) -> Result<Self::C, QuicErrorRepr> {
         match self.accept().await {
             Some(conn) => {
                 let conn = conn.accept()?;
@@ -322,7 +323,7 @@ impl QuicServer for Endpoint {
                 if connection.is_jls() == Some(false) {
                     error!("JLS hijacked or wrong pwd/iv");
                     connection.close(0u8.into(), b"");
-                    return Err(SError::JlsAuthFailed);
+                    return Err(QuicErrorRepr::JlsAuthFailed);
                 }
                 Ok(connection)
             }
@@ -331,4 +332,21 @@ impl QuicServer for Endpoint {
             }
         }
     }
+}
+
+#[derive(Error, Debug)]
+#[error(transparent)]
+pub enum QuicErrorRepr {
+    #[error("QUIC Connect Error:{0}")]
+    QuicConnect(#[from] quinn::ConnectError),
+    #[error("QUIC Connection Error:{0}")]
+    QuicConnection(#[from] quinn::ConnectionError),
+    #[error("QUIC Write Error:{0}")]
+    QuicWrite(#[from] quinn::WriteError),
+    #[error("QUIC ReadExact Error:{0}")]
+    QuicReadExactError(#[from] quinn::ReadExactError),
+    #[error("QUIC SendDatagramError:{0}")]
+    QuicSendDatagramError(#[from] quinn::SendDatagramError),
+    #[error("JLS Authentication failed")]
+    JlsAuthFailed,
 }

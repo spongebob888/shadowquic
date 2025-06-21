@@ -130,8 +130,8 @@ impl Outbound for ShadowQuicClient {
             conn.stats().path.current_mtu,
         );
         let over_stream = self.config.over_stream;
-        let (mut send, recv) = conn.open_bi().await?;
-        let _span = span!(Level::TRACE, "bistream", id = (send.id().index()));
+        let (mut send, recv, id) = QuicConnection::open_bi(&conn.conn).await?;
+        let _span = span!(Level::TRACE, "bistream", id = id);
         let fut = async move {
             match req {
                 crate::ProxyRequest::Tcp(mut tcp_session) => {

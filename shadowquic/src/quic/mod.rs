@@ -11,7 +11,13 @@ use tokio::io::{AsyncRead, AsyncWrite};
 #[cfg(feature = "quinn")]
 mod quinn_wrapper;
 #[cfg(feature = "quinn")]
-pub use quinn_wrapper::{Connection, EndClient, EndServer};
+pub use quinn_wrapper::{Connection, EndClient, EndServer, QuicErrorRepr};
+
+#[cfg(feature = "gm_quic")]
+mod gm_quic_wrapper;
+#[cfg(feature = "gm_quic")]
+pub use gm_quic_wrapper::{Connection, EndClient, EndServer};
+
 
 #[async_trait]
 pub trait QuicClient: Send + Sync {
@@ -27,7 +33,7 @@ pub trait QuicClient: Send + Sync {
         addr: SocketAddr,
         server_name: &str,
         zero_rtt: bool,
-    ) -> SResult<Self::C>;
+    ) -> Result<Self::C, QuicErrorRepr>;
 }
 #[async_trait]
 pub trait QuicServer: Send + Sync {
@@ -35,20 +41,20 @@ pub trait QuicServer: Send + Sync {
     fn new(cfg: &ShadowQuicServerCfg) -> SResult<Self>
     where
         Self: Sized;
-    async fn accept(&self, zero_rtt: bool) -> SResult<Self::C>;
+    async fn accept(&self, zero_rtt: bool) -> Result<Self::C, QuicErrorRepr>;
 }
 
 #[async_trait]
 pub trait QuicConnection: Send + Sync + Clone + 'static {
     type SendStream: AsyncWrite + Unpin + Send + Sync + 'static;
     type RecvStream: AsyncRead + Unpin + Send + Sync + 'static;
-    async fn open_bi(&self) -> SResult<(Self::SendStream, Self::RecvStream, u64)>;
-    async fn accept_bi(&self) -> SResult<(Self::SendStream, Self::RecvStream, u64)>;
-    async fn open_uni(&self) -> SResult<(Self::SendStream, u64)>;
-    async fn accept_uni(&self) -> SResult<(Self::RecvStream, u64)>;
-    async fn read_datagram(&self) -> SResult<Bytes>;
-    async fn send_datagram(&self, bytes: Bytes) -> SResult<()>;
-    fn close_reason(&self) -> Option<SError>;
+    async fn open_bi(&self) -> Result<(Self::SendStream, Self::RecvStream, u64), QuicErrorRepr>;
+    async fn accept_bi(&self) -> Result<(Self::SendStream, Self::RecvStream, u64), QuicErrorRepr>;
+    async fn open_uni(&self) -> Result<(Self::SendStream, u64), QuicErrorRepr>;
+    async fn accept_uni(&self) -> Result<(Self::RecvStream, u64), QuicErrorRepr>;
+    async fn read_datagram(&self) -> Result<Bytes, QuicErrorRepr>;
+    async fn send_datagram(&self, bytes: Bytes) -> Result<(), QuicErrorRepr>;
+    fn close_reason(&self) -> Option<QuicErrorRepr>;
     fn remote_address(&self) -> SocketAddr;
     fn peer_id(&self) -> u64;
 }
