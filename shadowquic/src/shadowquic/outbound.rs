@@ -43,11 +43,11 @@ pub struct ShadowQuicClient<EndT: QuicClient = EndClient> {
 impl<End: QuicClient> ShadowQuicClient<End> {
     pub fn new(cfg: ShadowQuicClientCfg) -> Self {
         Self {
-            config: cfg,
             quic_conn: None,
             quic_end: OnceCell::new(),
             #[cfg(target_os = "android")]
-            protect_path: cfg.protect_path,
+            protect_path: cfg.protect_path.clone(),
+            config: cfg,
         }
     }
     pub async fn init_endpoint(&self, ipv6: bool) -> Result<End, SError> {
@@ -57,9 +57,9 @@ impl<End: QuicClient> ShadowQuicClient<End> {
         Ok(Self {
             quic_end: OnceCell::from(End::new_with_socket(&cfg, socket)?),
             quic_conn: None,
-            config: cfg,
             #[cfg(target_os = "android")]
-            protect_path: cfg.protect_path,
+            protect_path: cfg.protect_path.clone(),
+            config: cfg,
         })
     }
 

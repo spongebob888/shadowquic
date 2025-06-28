@@ -136,7 +136,7 @@ impl QuicClient for Endpoint {
         }
 
         #[cfg(target_os = "android")]
-        if let Some(path) = &self.protect_path {
+        if let Some(path) = &cfg.protect_path {
             use crate::utils::protect_socket::protect_socket;
             use std::os::fd::AsRawFd;
 
