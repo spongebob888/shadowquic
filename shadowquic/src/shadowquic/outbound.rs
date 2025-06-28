@@ -79,7 +79,7 @@ impl<End: QuicClient> ShadowQuicClient<End> {
                     .expect("error during initialize quic endpoint")
             })
             .await
-            .connect(addr, &self.config.server_name, self.config.zero_rtt)
+            .connect(addr, &self.config.server_name)
             .await?;
 
         let conn = SQConn {
@@ -121,17 +121,6 @@ impl Outbound for ShadowQuicClient {
 
         let conn = self.quic_conn.as_mut().unwrap().clone();
 
-        #[cfg(feature = "quinn")]
-        {
-            let rate: f32 = (conn.stats().path.lost_packets as f32)
-                / ((conn.stats().path.sent_packets + 1) as f32);
-            info!(
-                "packet_loss_rate:{:.2}%, rtt:{:?}, mtu:{}",
-                rate * 100.0,
-                conn.rtt(),
-                conn.stats().path.current_mtu,
-            );
-        }
         let over_stream = self.config.over_stream;
         let (mut send, recv, id) = QuicConnection::open_bi(&conn.conn).await?;
         let _span = span!(Level::TRACE, "bistream", id = id);

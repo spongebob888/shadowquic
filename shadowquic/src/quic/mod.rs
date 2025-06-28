@@ -27,12 +27,7 @@ pub trait QuicClient: Send + Sync {
     fn new_with_socket(cfg: &ShadowQuicClientCfg, socket: UdpSocket) -> SResult<Self>
     where
         Self: Sized;
-    async fn connect(
-        &self,
-        addr: SocketAddr,
-        server_name: &str,
-        zero_rtt: bool,
-    ) -> Result<Self::C, QuicErrorRepr>;
+    async fn connect(&self, addr: SocketAddr, server_name: &str) -> Result<Self::C, QuicErrorRepr>;
 }
 #[async_trait]
 pub trait QuicServer: Send + Sync {
@@ -40,7 +35,7 @@ pub trait QuicServer: Send + Sync {
     async fn new(cfg: &ShadowQuicServerCfg) -> SResult<Self>
     where
         Self: Sized;
-    async fn accept(&self, zero_rtt: bool) -> Result<Self::C, QuicErrorRepr>;
+    async fn accept(&self) -> Result<Self::C, QuicErrorRepr>;
 }
 
 #[async_trait]

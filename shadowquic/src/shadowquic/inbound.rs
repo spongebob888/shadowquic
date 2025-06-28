@@ -75,7 +75,6 @@ impl Inbound for ShadowQuicServer {
     }
     /// Init background job for accepting connection
     async fn init(&self) -> Result<(), SError> {
-        let zero_rtt = self.config.zero_rtt;
         let request_sender = self.request_sender.clone();
         let config = self.config.clone();
         let fut = async move {
@@ -83,7 +82,7 @@ impl Inbound for ShadowQuicServer {
                 .await
                 .expect("Failed to listening on udp");
             loop {
-                match QuicServer::accept(&endpoint, zero_rtt).await {
+                match QuicServer::accept(&endpoint).await {
                     Ok(conn) => {
                         let request_sender = request_sender.clone();
                         let span = trace_span!("quic", id = conn.peer_id());

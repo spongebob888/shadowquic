@@ -1,9 +1,9 @@
-use std::{io, net::SocketAddr, sync::Arc, time::Duration};
+use std::{io, net::SocketAddr, ops::Deref, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use bytes::Bytes;
 use quinn::{
-    ClientConfig, Endpoint, MtuDiscoveryConfig, SendDatagramError, TransportConfig,
+    ClientConfig, MtuDiscoveryConfig, SendDatagramError, TransportConfig,
     congestion::{BbrConfig, CubicConfig, NewRenoConfig},
     crypto::rustls::QuicClientConfig,
 };
@@ -26,9 +26,21 @@ use crate::{
     shadowquic::{MAX_DATAGRAM_WINDOW, MAX_SEND_WINDOW, MAX_STREAM_WINDOW},
 };
 
-pub use quinn::Connection;
-pub use quinn::Endpoint as EndClient;
-pub use quinn::Endpoint as EndServer;
+pub type Connection = quinn::Connection;
+pub struct Endpoint {
+    inner: quinn::Endpoint,
+    zero_rtt: bool,
+}
+impl Deref for Endpoint {
+    type Target = quinn::Endpoint;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+pub use Endpoint as EndClient;
+pub use Endpoint as EndServer;
 #[async_trait]
 impl QuicConnection for Connection {
     type RecvStream = quinn::RecvStream;
@@ -50,6 +62,15 @@ impl QuicConnection for Connection {
 
     async fn accept_bi(&self) -> Result<(Self::SendStream, Self::RecvStream, u64), QuicErrorRepr> {
         let (send, recv) = self.accept_bi().await?;
+
+        let rate: f32 =
+            (self.stats().path.lost_packets as f32) / ((self.stats().path.sent_packets + 1) as f32);
+        info!(
+            "packet_loss_rate:{:.2}%, rtt:{:?}, mtu:{}",
+            rate * 100.0,
+            self.rtt(),
+            self.stats().path.current_mtu,
+        );
 
         let id = send.id().index();
         Ok((send, recv, id))
@@ -135,14 +156,9 @@ impl QuicClient for Endpoint {
 
         Self::new_with_socket(cfg, socket.into())
     }
-    async fn connect(
-        &self,
-        addr: SocketAddr,
-        server_name: &str,
-        zero_rtt: bool,
-    ) -> Result<Self::C, QuicErrorRepr> {
-        let conn = self.connect(addr, server_name)?;
-        let conn = if zero_rtt {
+    async fn connect(&self, addr: SocketAddr, server_name: &str) -> Result<Self::C, QuicErrorRepr> {
+        let conn = self.inner.connect(addr, server_name)?;
+        let conn = if self.zero_rtt {
             match conn.into_0rtt() {
                 Ok((x, accepted)) => {
                     let conn_clone = x.clone();
@@ -178,15 +194,19 @@ impl QuicClient for Endpoint {
     fn new_with_socket(cfg: &ShadowQuicClientCfg, socket: std::net::UdpSocket) -> SResult<Self> {
         let runtime =
             quinn::default_runtime().ok_or_else(|| io::Error::other("no async runtime found"))?;
-        let mut end = Endpoint::new(quinn::EndpointConfig::default(), None, socket, runtime)?;
-        end.set_default_client_config(gen_quic_cfg(cfg));
-        Ok(end)
+        let mut end =
+            quinn::Endpoint::new(quinn::EndpointConfig::default(), None, socket, runtime)?;
+        end.set_default_client_config(gen_client_cfg(cfg));
+        Ok(Endpoint {
+            inner: end,
+            zero_rtt: cfg.zero_rtt,
+        })
     }
 
     type C = Connection;
 }
 
-pub fn gen_quic_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
+pub fn gen_client_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
     let root_store = RootCertStore {
         roots: webpki_roots::TLS_SERVER_ROOTS.into(),
     };
@@ -295,14 +315,17 @@ impl QuicServer for Endpoint {
 
         config.transport_config(Arc::new(tp_cfg));
 
-        let endpoint = Endpoint::server(config, cfg.bind_addr)?;
-        Ok(endpoint)
+        let endpoint = quinn::Endpoint::server(config, cfg.bind_addr)?;
+        Ok(Endpoint {
+            inner: endpoint,
+            zero_rtt: cfg.zero_rtt,
+        })
     }
-    async fn accept(&self, zero_rtt: bool) -> Result<Self::C, QuicErrorRepr> {
-        match self.accept().await {
+    async fn accept(&self) -> Result<Self::C, QuicErrorRepr> {
+        match self.deref().accept().await {
             Some(conn) => {
                 let conn = conn.accept()?;
-                let connection = if zero_rtt {
+                let connection = if self.zero_rtt {
                     match conn.into_0rtt() {
                         Ok((conn, accepted)) => {
                             let conn_clone = conn.clone();

@@ -2,7 +2,7 @@ use std::future::poll_fn;
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::{io, u8};
 
 use async_trait::async_trait;
@@ -10,13 +10,12 @@ use bytes::Bytes;
 use gm_quic::handy::{client_parameters, server_parameters};
 
 use gm_quic::StreamWriter;
-use gm_quic::{StreamReader, ToCertificate, ToPrivateKey};
-use qevent::telemetry::handy::{DefaultSeqLogger, NoopLogger};
+use gm_quic::{StreamReader, ToPrivateKey};
+use qevent::telemetry::handy::DefaultSeqLogger;
 
 use rustls::RootCertStore;
-use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
+use rustls::pki_types::CertificateDer;
 use thiserror::Error;
-use tokio::sync::OnceCell;
 
 use crate::quic::QuicConnection;
 use crate::quic::{QuicClient, QuicServer};
@@ -24,6 +23,7 @@ use crate::quic::{QuicClient, QuicServer};
 pub use gm_quic::QuicClient as EndClient;
 pub type EndServer = Arc<gm_quic::QuicListeners>;
 
+#[deprecated(note = "Use quinn instead")]
 #[derive(Clone)]
 pub struct Connection {
     inner: Arc<gm_quic::Connection>,
@@ -39,7 +39,7 @@ impl QuicClient for gm_quic::QuicClient {
         cfg: &crate::config::ShadowQuicClientCfg,
         ipv6: bool,
     ) -> crate::error::SResult<Self> {
-        let mut roots = RootCertStore::empty();
+        let roots = RootCertStore::empty();
         let mut cli_para = client_parameters();
         cli_para
             .set(gm_quic::ParameterId::MaxDatagramFrameSize, 2000)
@@ -67,7 +67,6 @@ impl QuicClient for gm_quic::QuicClient {
         &self,
         addr: std::net::SocketAddr,
         server_name: &str,
-        zero_rtt: bool,
     ) -> Result<Self::C, QuicErrorRepr> {
         let conn = self.connect(server_name, addr)?;
         Ok(Connection {
@@ -157,7 +156,7 @@ impl QuicServer for EndServer {
         Ok(listeners)
     }
 
-    async fn accept(&self, zero_rtt: bool) -> Result<Self::C, QuicErrorRepr> {
+    async fn accept(&self) -> Result<Self::C, QuicErrorRepr> {
         let (conn, sni, path, link) = self.deref().accept().await?;
         Ok(Connection {
             datagram_reader: conn.unreliable_reader()??,
