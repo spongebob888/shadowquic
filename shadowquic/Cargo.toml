@@ -12,7 +12,7 @@ license = { workspace = true}
 default = ["quinn"]
 tokio-console = ["dep:console-subscriber","tokio/tracing"]
 quinn = ["dep:quinn"]
-gm-quic = ["dep:gm_quic","dep:qevent", "dep:qbase"]
+
 [dependencies]
 anyhow = "1.0.97"
 thiserror = "2.0.12"
@@ -22,14 +22,6 @@ time = { version = "=0.3.41", features = ["macros", "local-offset"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt", "ansi", "time", "local-time"]}
 quinn = { package = "quinn", git = "https://github.com/spongebob888/quinn-jls", version = "0.11.7-0.1.1", default-features = false, features = ["runtime-tokio", "rustls-ring"],optional = true}
 
-# gm_quic = { package = "gm-quic", git = "https://github.com/spongebob888/gm-quic", default-features = false, optional = true}
-# qevent = { package = "qevent", git = "https://github.com/spongebob888/gm-quic", default-features = false, optional = true}
-# qbase = { package = "qbase", git = "https://github.com/spongebob888/gm-quic", default-features = false, optional = true}
-
-gm_quic = { package = "gm-quic", path = "../../gm-quic/gm-quic", default-features = false, optional = true}
-qevent = { package = "qevent", path = "../../gm-quic/qevent", default-features = false, optional = true}
-qbase = { package = "qbase", path = "../../gm-quic/qbase", default-features = false, optional = true}
-#qunreliable = { package = "qunreliable", path = "../../gm-quic/qunreliable", default-features = false, optional = true}
 
 rustls = { package = "rustls", git = "https://github.com/spongebob888/rustls-jls", version = "0.23.25-1.0.2", default-features = false, features = ["std","ring"]}
 rcgen = { version = "0.13", default-features = false, features = ["crypto","ring"] }

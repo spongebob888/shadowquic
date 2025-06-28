@@ -23,6 +23,8 @@ use crate::quic::{QuicClient, QuicServer};
 pub use gm_quic::QuicClient as EndClient;
 pub type EndServer = Arc<gm_quic::QuicListeners>;
 
+/// Right now(202506), gm-quic doesn't provide BBR support. 
+/// So we stopped here.
 #[deprecated(note = "Use quinn instead")]
 #[derive(Clone)]
 pub struct Connection {
