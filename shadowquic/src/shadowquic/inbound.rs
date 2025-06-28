@@ -79,7 +79,9 @@ impl Inbound for ShadowQuicServer {
         let request_sender = self.request_sender.clone();
         let config = self.config.clone();
         let fut = async move {
-            let endpoint: EndServer = QuicServer::new(&config).expect("Failed to listening on udp");
+            let endpoint: EndServer = QuicServer::new(&config)
+                .await
+                .expect("Failed to listening on udp");
             loop {
                 match QuicServer::accept(&endpoint, zero_rtt).await {
                     Ok(conn) => {

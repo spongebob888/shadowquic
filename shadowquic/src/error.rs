@@ -1,7 +1,7 @@
+use crate::quic::QuicErrorRepr;
 use std::io;
 use std::result;
 use thiserror::Error;
-use crate::quic::QuicErrorRepr;
 
 #[derive(Error, Debug)]
 pub enum SError {
@@ -34,4 +34,3 @@ pub type SResult<T> = result::Result<T, SError>;
 // #[derive(Error, Debug)]
 // #[error(transparent)]
 // pub struct QuicError(#[from] QuicErrorRepr);
-

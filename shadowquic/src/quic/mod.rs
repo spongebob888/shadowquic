@@ -2,7 +2,7 @@ use std::net::{SocketAddr, UdpSocket};
 
 use crate::{
     config::{ShadowQuicClientCfg, ShadowQuicServerCfg},
-    error::{SError, SResult},
+    error::SResult,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -13,16 +13,15 @@ mod quinn_wrapper;
 #[cfg(feature = "quinn")]
 pub use quinn_wrapper::{Connection, EndClient, EndServer, QuicErrorRepr};
 
-#[cfg(feature = "gm_quic")]
+#[cfg(feature = "gm-quic")]
 mod gm_quic_wrapper;
-#[cfg(feature = "gm_quic")]
-pub use gm_quic_wrapper::{Connection, EndClient, EndServer};
-
+#[cfg(feature = "gm-quic")]
+pub use gm_quic_wrapper::{Connection, EndClient, EndServer, QuicErrorRepr};
 
 #[async_trait]
 pub trait QuicClient: Send + Sync {
     type C: QuicConnection;
-    fn new(cfg: &ShadowQuicClientCfg, ipv6: bool) -> SResult<Self>
+    async fn new(cfg: &ShadowQuicClientCfg, ipv6: bool) -> SResult<Self>
     where
         Self: Sized;
     fn new_with_socket(cfg: &ShadowQuicClientCfg, socket: UdpSocket) -> SResult<Self>
@@ -38,7 +37,7 @@ pub trait QuicClient: Send + Sync {
 #[async_trait]
 pub trait QuicServer: Send + Sync {
     type C: QuicConnection;
-    fn new(cfg: &ShadowQuicServerCfg) -> SResult<Self>
+    async fn new(cfg: &ShadowQuicServerCfg) -> SResult<Self>
     where
         Self: Sized;
     async fn accept(&self, zero_rtt: bool) -> Result<Self::C, QuicErrorRepr>;

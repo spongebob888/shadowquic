@@ -21,7 +21,7 @@ use quinn::crypto::rustls::QuicServerConfig;
 
 use crate::{
     config::{CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg},
-    error::{SError, SResult},
+    error::SResult,
     quic::{QuicClient, QuicConnection, QuicServer},
     shadowquic::{MAX_DATAGRAM_WINDOW, MAX_SEND_WINDOW, MAX_STREAM_WINDOW},
 };
@@ -99,7 +99,7 @@ impl QuicConnection for Connection {
 
 #[async_trait]
 impl QuicClient for Endpoint {
-    fn new(cfg: &ShadowQuicClientCfg, ipv6: bool) -> SResult<Self> {
+    async fn new(cfg: &ShadowQuicClientCfg, ipv6: bool) -> SResult<Self> {
         let socket;
         if ipv6 {
             socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
@@ -240,7 +240,7 @@ pub fn gen_quic_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
 #[async_trait]
 impl QuicServer for Endpoint {
     type C = Connection;
-    fn new(cfg: &ShadowQuicServerCfg) -> SResult<Self> {
+    async fn new(cfg: &ShadowQuicServerCfg) -> SResult<Self> {
         let mut crypto: RustlsServerConfig;
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let cert_der = CertificateDer::from(cert.cert);
