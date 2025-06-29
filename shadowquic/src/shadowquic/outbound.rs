@@ -15,9 +15,6 @@ use tokio::{
 use crate::quic::EndClient;
 use tracing::{Instrument, Level, debug, error, info, span, trace};
 
-#[cfg(target_os = "android")]
-use std::path::PathBuf;
-
 use crate::{
     Outbound,
     config::ShadowQuicClientCfg,
@@ -34,19 +31,14 @@ use super::{IDStore, SQConn, handle_udp_packet_recv, inbound::Unsplit};
 
 pub struct ShadowQuicClient<EndT: QuicClient = EndClient> {
     pub quic_conn: Option<SQConn<EndT::C>>,
-    #[allow(dead_code)]
     pub config: ShadowQuicClientCfg,
     pub quic_end: OnceCell<EndT>,
-    #[cfg(target_os = "android")]
-    pub protect_path: Option<PathBuf>,
 }
 impl<End: QuicClient> ShadowQuicClient<End> {
     pub fn new(cfg: ShadowQuicClientCfg) -> Self {
         Self {
             quic_conn: None,
             quic_end: OnceCell::new(),
-            #[cfg(target_os = "android")]
-            protect_path: cfg.protect_path.clone(),
             config: cfg,
         }
     }
@@ -57,8 +49,6 @@ impl<End: QuicClient> ShadowQuicClient<End> {
         Ok(Self {
             quic_end: OnceCell::from(End::new_with_socket(&cfg, socket)?),
             quic_conn: None,
-            #[cfg(target_os = "android")]
-            protect_path: cfg.protect_path.clone(),
             config: cfg,
         })
     }
@@ -90,6 +80,12 @@ impl<End: QuicClient> ShadowQuicClient<End> {
                 inner: Default::default(),
             },
         };
+        let conn_clone = conn.clone();
+        tokio::spawn(async move {
+            let _ = handle_udp_packet_recv(conn_clone)
+                .await
+                .map_err(|x| error!("handle udp packet recv error: {}", x));
+        });
         Ok(conn)
     }
     async fn prepare_conn(&mut self) -> Result<(), SError> {
@@ -103,13 +99,6 @@ impl<End: QuicClient> ShadowQuicClient<End> {
         // Creating new connectin
         if self.quic_conn.is_none() {
             self.quic_conn = Some(self.get_conn().await?);
-
-            let conn = self.quic_conn.as_ref().unwrap().clone();
-            tokio::spawn(async move {
-                let _ = handle_udp_packet_recv(conn)
-                    .await
-                    .map_err(|x| error!("handle udp packet recv error: {}", x));
-            });
         }
         Ok(())
     }
