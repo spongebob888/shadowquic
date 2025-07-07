@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite},
+    io::AsyncReadExt,
     sync::{
         OnceCell,
         mpsc::{Receiver, Sender, channel},
@@ -186,7 +186,7 @@ impl Outbound for ShadowQuicClient {
 pub async fn connect_tcp<C: QuicConnection>(
     sq_conn: &SQConn<C>,
     dst: SocksAddr,
-) -> Result<Unsplit<impl AsyncWrite, impl AsyncRead>, crate::error::SError> {
+) -> Result<Unsplit<C::SendStream, C::RecvStream>, crate::error::SError> {
     let conn = sq_conn;
 
     let (mut send, recv, _id) = conn.open_bi().await?;
