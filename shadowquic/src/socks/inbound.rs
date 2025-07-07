@@ -26,6 +26,7 @@ pub struct SocksServer {
 }
 impl SocksServer {
     pub async fn new(cfg: SocksServerCfg) -> Result<Self, SError> {
+        TcpListener::bind(cfg.bind_addr).await?;
         Ok(Self {
             bind_addr: cfg.bind_addr,
             listener: TcpListener::bind(cfg.bind_addr).await?,
