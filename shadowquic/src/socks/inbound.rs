@@ -49,7 +49,7 @@ impl SocksServer {
         socket.bind(&cfg.bind_addr.into())?;
         socket.listen(256)?;
         let listener = TcpListener::from_std(socket.into())
-            .map_err(|e| SError::SocksError(format!("failed to create TcpListener: {}", e)))?;
+            .map_err(|e| SError::SocksError(format!("failed to create TcpListener: {e}")))?;
         Ok(Self {
             bind_addr: cfg.bind_addr,
             listener,
