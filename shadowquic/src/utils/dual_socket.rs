@@ -30,7 +30,7 @@ impl DualSocket {
         if dual_stack {
             let _ = socket
                 .set_only_v6(false)
-                .map_err(|x| tracing::warn!("set dual stack for socks failed: {}", x));
+                .map_err(|x| tracing::warn!("set dual stack for failed: {}", x));
         };
         socket.set_nonblocking(true)?;
         socket.bind(&addr.into())?;

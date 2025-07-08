@@ -40,8 +40,11 @@ impl SocksServer {
             Some(Protocol::TCP),
         )?;
         if dual_stack {
-            socket.set_only_v6(false)?;
+            let _ = socket
+                .set_only_v6(false)
+                .map_err(|e| tracing::warn!("failed to set dual stack for socket: {}", e));
         };
+        socket.set_reuse_address(true)?;
         socket.set_nonblocking(true)?;
         socket.bind(&cfg.bind_addr.into())?;
         socket.listen(256)?;
