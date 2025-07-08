@@ -28,8 +28,9 @@ impl DualSocket {
             Some(Protocol::UDP),
         )?;
         if dual_stack {
-            socket.set_only_v6(false)?;
-            // socket.set_reuse_address(true)?;
+            let _ = socket
+                .set_only_v6(false)
+                .map_err(|x| tracing::warn!("set dual stack for failed: {}", x));
         };
         socket.set_nonblocking(true)?;
         socket.bind(&addr.into())?;
@@ -67,4 +68,16 @@ impl Deref for DualSocket {
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
+}
+
+pub fn to_ipv4_mapped(mut addr: SocketAddr) -> SocketAddr {
+    let ip = match addr.ip() {
+        ip_addr @ IpAddr::V6(ipv6_addr) => ipv6_addr
+            .to_ipv4_mapped()
+            .map(IpAddr::V4)
+            .unwrap_or(ip_addr),
+        ip => ip,
+    };
+    addr.set_ip(ip);
+    addr
 }

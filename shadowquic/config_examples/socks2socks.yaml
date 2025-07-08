@@ -1,6 +1,6 @@
 inbound:
     type: socks
-    bind-addr: "127.0.0.1:1089"
+    bind-addr: "[::]:1089"
     # users:
     #     - username: "username"
     #       password: "password"

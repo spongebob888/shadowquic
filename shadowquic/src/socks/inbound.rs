@@ -9,8 +9,10 @@ use crate::msgs::socks5::{
     SOCKS5_AUTH_METHOD_PASSWORD, SOCKS5_CMD_TCP_BIND, SOCKS5_CMD_TCP_CONNECT,
     SOCKS5_CMD_UDP_ASSOCIATE, SOCKS5_REPLY_SUCCEEDED, SOCKS5_VERSION,
 };
+use crate::utils::dual_socket::to_ipv4_mapped;
 use crate::{Inbound, ProxyRequest, TcpSession, UdpSession};
 use async_trait::async_trait;
+use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 
 use anyhow::Result;
@@ -26,10 +28,31 @@ pub struct SocksServer {
 }
 impl SocksServer {
     pub async fn new(cfg: SocksServerCfg) -> Result<Self, SError> {
-        TcpListener::bind(cfg.bind_addr).await?;
+        let dual_stack = cfg.bind_addr.is_ipv6();
+        let socket = Socket::new(
+            // Use socket2 for dualstack for windows compact
+            if dual_stack {
+                Domain::IPV6
+            } else {
+                Domain::IPV4
+            },
+            Type::STREAM,
+            Some(Protocol::TCP),
+        )?;
+        if dual_stack {
+            let _ = socket
+                .set_only_v6(false)
+                .map_err(|e| tracing::warn!("failed to set dual stack for socket: {}", e));
+        };
+        socket.set_reuse_address(true)?;
+        socket.set_nonblocking(true)?;
+        socket.bind(&cfg.bind_addr.into())?;
+        socket.listen(256)?;
+        let listener = TcpListener::from_std(socket.into())
+            .map_err(|e| SError::SocksError(format!("failed to create TcpListener: {e}")))?;
         Ok(Self {
             bind_addr: cfg.bind_addr,
-            listener: TcpListener::bind(cfg.bind_addr).await?,
+            listener,
             users: cfg.users,
         })
     }
@@ -135,7 +158,8 @@ impl Inbound for SocksServer {
     async fn accept(&mut self) -> Result<ProxyRequest, SError> {
         let (stream, addr) = self.listener.accept().await?;
         let span = trace_span!("socks", src = addr.to_string());
-        let local_addr = stream.local_addr().unwrap();
+        // ipv4 may be mapped for dual stack socket
+        let local_addr = to_ipv4_mapped(stream.local_addr().unwrap());
 
         let (s, req, socket) = self
             .handle_socks(stream, local_addr)
