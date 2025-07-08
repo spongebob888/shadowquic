@@ -1502,7 +1502,7 @@ dependencies = [
 
 [[package]]
 name = "shadowquic"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1531,7 +1531,7 @@ dependencies = [
 
 [[package]]
 name = "shadowquic-macros"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "proc-macro2",
  "quote",
