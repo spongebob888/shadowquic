@@ -85,16 +85,11 @@ impl Inbound for ShadowQuicServer {
                 match QuicServer::accept(&endpoint).await {
                     Ok(conn) => {
                         let request_sender = request_sender.clone();
-                        let span = trace_span!("quic", id = conn.peer_id());
-                        tokio::spawn(
-                            async move {
-                                Self::handle_incoming(conn, request_sender)
-                                    .await
-                                    .map_err(|x| error!("{}", x))
-                            }
-                            .instrument(span)
-                            .in_current_span(),
-                        );
+                        tokio::spawn(async move {
+                            Self::handle_incoming(conn, request_sender)
+                                .await
+                                .map_err(|x| error!("{}", x))
+                        });
                     }
                     Err(e) => {
                         error!("Error accepting quic connection: {}", e);
