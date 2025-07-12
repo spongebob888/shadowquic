@@ -148,8 +148,8 @@ pub struct SocksClientCfg {
 /// example:
 /// ```yaml
 /// addr: "12.34.56.7:1089" # or "[12:ff::ff]:1089" for dualstack
-/// jls-pwd: "12345678"
-/// jls-iv: "87654321"
+/// password: "12345678"
+/// username: "87654321"
 /// server-name: "echo.free.beeceptor.com" # must be the same as jls_upstream in server
 /// alpn: ["h3"]
 /// initial-mtu: 1400
@@ -266,9 +266,12 @@ pub struct DirectOutCfg;
 /// ```yaml
 /// bind-addr: "0.0.0.0:1443"
 /// users:
-///   -username: "zhangsan"
-///   -password: "12345678"
-/// jls-upstream: "echo.free.beeceptor.com:443" # domain + port, domain must be the same as client
+///   - username: "zhangsan"
+///     password: "12345678"
+/// jls-upstream:
+///   addr: "echo.free.beeceptor.com:443" # domain/ip + port, domain must be the same as client.
+///   rate-limit: 1000000 # Limiting forwarding rate in unit of bps. optional, default is disabled
+/// server-name: "echo.free.beeceptor.com" # must be the same as client
 /// alpn: ["h3"]
 /// congestion-control: bbr
 /// zero-rtt: true
