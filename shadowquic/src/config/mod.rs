@@ -117,13 +117,13 @@ pub struct SocksServerCfg {
     /// Socks5 username, optional
     /// Left empty to disable authentication
     #[serde(default = "Vec::new")]
-    pub users: Vec<SocksUser>,
+    pub users: Vec<AuthUser>,
 }
 
-/// Socks user authentication
+/// user authentication
 #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
-pub struct SocksUser {
+pub struct AuthUser {
     pub username: String,
     pub password: String,
 }
@@ -160,10 +160,10 @@ pub struct SocksClientCfg {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", default)]
 pub struct ShadowQuicClientCfg {
-    /// Jls password, must be the same as the server
-    pub jls_pwd: String,
-    /// Jls initial vector, must be the same as the server
-    pub jls_iv: String,
+    /// username, must be the same as the server
+    pub username: String,
+    /// password, must be the same as the server
+    pub password: String,
     /// Shadowquic server address. example: `127.0.0.0.1:443`, `www.server.com:443`, `[ff::f1]:4443`
     pub addr: String,
     /// Server name, must be the same as the server jls_upstream
@@ -205,8 +205,8 @@ pub struct ShadowQuicClientCfg {
 impl Default for ShadowQuicClientCfg {
     fn default() -> Self {
         Self {
-            jls_pwd: Default::default(),
-            jls_iv: Default::default(),
+            password: Default::default(),
+            username: Default::default(),
             addr: Default::default(),
             server_name: Default::default(),
             alpn: Default::default(),
@@ -262,8 +262,9 @@ pub struct DirectOutCfg;
 /// Example:
 /// ```yaml
 /// bind-addr: "0.0.0.0:1443"
-/// jls-pwd: "12345678"
-/// jls-iv: "87654321"
+/// users:
+///   -username: "zhangsan"
+///   -password: "12345678"
 /// jls-upstream: "echo.free.beeceptor.com:443" # domain + port, domain must be the same as client
 /// alpn: ["h3"]
 /// congestion-control: bbr
@@ -274,12 +275,14 @@ pub struct DirectOutCfg;
 pub struct ShadowQuicServerCfg {
     /// Binding address. e.g. `0.0.0.0:443`, `[::1]:443`
     pub bind_addr: SocketAddr,
-    /// Jls password, used for authentication
-    pub jls_pwd: String,
-    /// Jls initial vector, used for authentication
-    pub jls_iv: String,
-    /// Jls upstream, camouflage server, must be domain with port. e.g.: `codepn.io:443`,`google.com:443`
-    pub jls_upstream: String,
+    /// Users for client authentication
+    pub users: Vec<AuthUser>,
+    /// Server name used to check client. Must be the same as client
+    /// If empty, server name will be parsed from jls_upstream
+    /// If not available, server name check will be skipped
+    pub server_name: Option<String>,
+    /// Jls upstream, camouflage server, must be address with port. e.g.: `codepn.io:443`,`google.com:443`,`127.0.0.1:443`
+    pub jls_upstream: JlsUpstream,
     /// Alpn of tls. Default is `["h3"]`, must have common element with client
     #[serde(default = "default_alpn")]
     pub alpn: Vec<String>,
@@ -300,18 +303,37 @@ pub struct ShadowQuicServerCfg {
     #[serde(default = "default_min_mtu")]
     pub min_mtu: u16,
 }
+
+/// Jls upstream configuration
+#[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "kebab-case")]
+pub struct JlsUpstream {
+    /// Jls upstream address, e.g. `codepn.io:443`, `google.com:443`, `127.0.0.1:443`
+    pub addr: String,
+    /// Maximum rate for JLS forwarding in unit of bps, default is disabled.
+    pub rate_limit: u64,
+}
+
+impl Default for JlsUpstream {
+    fn default() -> Self {
+        Self {
+            addr: String::new(),
+            rate_limit: u64::MAX,
+        }
+    }
+}
 impl Default for ShadowQuicServerCfg {
     fn default() -> Self {
         Self {
             bind_addr: "127.0.0.1:443".parse().unwrap(),
-            jls_pwd: Default::default(),
-            jls_iv: Default::default(),
+            users: Default::default(),
             jls_upstream: Default::default(),
             alpn: Default::default(),
             zero_rtt: Default::default(),
             congestion_control: Default::default(),
             initial_mtu: default_initial_mtu(),
             min_mtu: default_min_mtu(),
+            server_name: None,
         }
     }
 }

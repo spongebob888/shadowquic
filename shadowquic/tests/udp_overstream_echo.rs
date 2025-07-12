@@ -4,8 +4,8 @@ use std::sync::Arc;
 use fast_socks5::client::{Config, Socks5Datagram};
 
 use shadowquic::config::{
-    CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg,
-    default_initial_mtu,
+    AuthUser, CongestionControl, JlsUpstream, ShadowQuicClientCfg, ShadowQuicServerCfg,
+    SocksServerCfg, default_initial_mtu,
 };
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::time::Duration;
@@ -103,8 +103,8 @@ async fn test_shadowquic() {
     .await
     .unwrap();
     let sq_client = ShadowQuicClient::new(ShadowQuicClientCfg {
-        jls_pwd: "123".into(),
-        jls_iv: "123".into(),
+        password: "123".into(),
+        username: "123".into(),
         addr: "[::1]:4448".parse().unwrap(),
         server_name: "localhost".into(),
         alpn: vec!["h3".into()],
@@ -122,9 +122,14 @@ async fn test_shadowquic() {
 
     let sq_server = ShadowQuicServer::new(ShadowQuicServerCfg {
         bind_addr: "[::1]:4448".parse().unwrap(),
-        jls_pwd: "123".into(),
-        jls_iv: "123".into(),
-        jls_upstream: "localhost:443".into(),
+        users: vec![AuthUser {
+            username: "123".into(),
+            password: "123".into(),
+        }],
+        jls_upstream: JlsUpstream {
+            addr: "localhost:443".into(),
+            ..Default::default()
+        },
         alpn: vec!["h3".into()],
         zero_rtt: true,
         initial_mtu: default_initial_mtu(),

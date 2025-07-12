@@ -1,10 +1,10 @@
-use std::time::Duration;
+use std::{time::Duration, vec};
 
 use shadowquic::{
     Manager,
     config::{
-        CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg,
-        default_initial_mtu,
+        AuthUser, CongestionControl, JlsUpstream, ShadowQuicClientCfg, ShadowQuicServerCfg,
+        SocksServerCfg, default_initial_mtu,
     },
     direct::outbound::DirectOut,
     shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
@@ -43,8 +43,8 @@ async fn test_shadowquic() {
     .await
     .unwrap();
     let sq_client = ShadowQuicClient::new(ShadowQuicClientCfg {
-        jls_pwd: "123".into(),
-        jls_iv: "123".into(),
+        password: "123".into(),
+        username: "123".into(),
         addr: "127.0.0.1:4444".parse().unwrap(),
         server_name: "localhost".into(),
         alpn: vec!["h3".into()],
@@ -62,9 +62,14 @@ async fn test_shadowquic() {
 
     let sq_server = ShadowQuicServer::new(ShadowQuicServerCfg {
         bind_addr: "127.0.0.1:4444".parse().unwrap(),
-        jls_pwd: "123".into(),
-        jls_iv: "123".into(),
-        jls_upstream: "localhost:443".into(),
+        users: vec![AuthUser {
+            username: "123".into(),
+            password: "123".into(),
+        }],
+        jls_upstream: JlsUpstream {
+            addr: "localhost:443".into(),
+            ..Default::default()
+        },
         alpn: vec!["h3".into()],
         zero_rtt: true,
         initial_mtu: default_initial_mtu(),

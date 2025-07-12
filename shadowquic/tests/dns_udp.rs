@@ -7,8 +7,8 @@ use fast_socks5::{Result, client::Socks5Datagram};
 use shadowquic::{
     Manager,
     config::{
-        CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg,
-        default_initial_mtu,
+        AuthUser, CongestionControl, JlsUpstream, ShadowQuicClientCfg, ShadowQuicServerCfg,
+        SocksServerCfg, default_initial_mtu,
     },
     direct::outbound::DirectOut,
     shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
@@ -247,8 +247,8 @@ async fn shadowquic_client_server(over_stream: bool, port: u16) {
     .await
     .unwrap();
     let sq_client = ShadowQuicClient::new(ShadowQuicClientCfg {
-        jls_pwd: "123".into(),
-        jls_iv: "123".into(),
+        password: "123".into(),
+        username: "123".into(),
         addr: format!("127.0.0.1:{}", port + 10),
         server_name: "localhost".into(),
         alpn: vec!["h3".into()],
@@ -266,9 +266,14 @@ async fn shadowquic_client_server(over_stream: bool, port: u16) {
 
     let sq_server = ShadowQuicServer::new(ShadowQuicServerCfg {
         bind_addr: format!("127.0.0.1:{}", port + 10).parse().unwrap(),
-        jls_pwd: "123".into(),
-        jls_iv: "123".into(),
-        jls_upstream: "localhost:443".into(),
+        users: vec![AuthUser {
+            username: "123".into(),
+            password: "123".into(),
+        }],
+        jls_upstream: JlsUpstream {
+            addr: "localhost:443".into(),
+            ..Default::default()
+        },
         alpn: vec!["h3".into()],
         zero_rtt: true,
         initial_mtu: default_initial_mtu(),

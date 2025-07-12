@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use crate::config::{SocksServerCfg, SocksUser};
+use crate::config::{AuthUser, SocksServerCfg};
 use crate::error::SError;
 use crate::msgs::socks5::{
     self, AddrOrDomain, AuthReq, CmdReq, PasswordAuthReply, PasswordAuthReq, SDecode, SEncode,
@@ -23,7 +23,7 @@ use super::UdpSocksWrap;
 pub struct SocksServer {
     #[allow(dead_code)]
     bind_addr: SocketAddr,
-    users: Vec<SocksUser>,
+    users: Vec<AuthUser>,
     listener: TcpListener,
 }
 impl SocksServer {
@@ -86,7 +86,7 @@ impl SocksServer {
             return Ok(stream);
         }
         let auth = PasswordAuthReq::decode(&mut stream).await?;
-        if !self.users.contains(&SocksUser {
+        if !self.users.contains(&AuthUser {
             username: String::from_utf8(auth.username.contents)
                 .map_err(|_| SError::SocksError("invalid UTF-8 in username".to_string()))?,
             password: String::from_utf8(auth.password.contents)

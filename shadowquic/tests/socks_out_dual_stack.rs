@@ -1,7 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use fast_socks5::client::{Config, Socks5Datagram, Socks5Stream};
-use shadowquic::config::{SocksClientCfg, SocksServerCfg, SocksUser};
+use shadowquic::config::{AuthUser, SocksClientCfg, SocksServerCfg};
 use shadowquic::socks::outbound::SocksClient;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -127,7 +127,7 @@ async fn spawn_socks() {
 
     let sq_server = SocksServer::new(SocksServerCfg {
         bind_addr: "[::]:1070".parse().unwrap(),
-        users: vec![SocksUser {
+        users: vec![AuthUser {
             username: "test".into(),
             password: "test".into(),
         }],

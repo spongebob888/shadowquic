@@ -95,8 +95,8 @@ async fn test_shadowquic() {
     .await
     .unwrap();
     let sq_client = ShadowQuicClient::new(ShadowQuicClientCfg {
-        jls_pwd: "123".into(),
-        jls_iv: "123".into(),
+        password: "123".into(),
+        username: "123".into(),
         addr: "127.0.0.1:4444".parse().unwrap(),
         server_name: "localhost".into(),
         alpn: vec!["h3".into()],
