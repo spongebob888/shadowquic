@@ -243,6 +243,9 @@ pub fn default_alpn() -> Vec<String> {
 pub fn default_keep_alive_interval() -> u32 {
     0
 }
+pub fn default_rate_limit() -> u64 {
+    u64::MAX
+}
 
 #[derive(Serialize, Deserialize, Default, Debug, Clone)]
 #[serde(rename_all = "kebab-case")]
@@ -311,6 +314,7 @@ pub struct JlsUpstream {
     /// Jls upstream address, e.g. `codepn.io:443`, `google.com:443`, `127.0.0.1:443`
     pub addr: String,
     /// Maximum rate for JLS forwarding in unit of bps, default is disabled.
+    #[serde(default = "default_rate_limit")]
     pub rate_limit: u64,
 }
 
