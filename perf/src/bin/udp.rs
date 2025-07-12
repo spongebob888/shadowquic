@@ -5,8 +5,7 @@ use fast_socks5::client::{Config, Socks5Datagram};
 use fast_socks5::util::target_addr::TargetAddr;
 
 use shadowquic::config::{
-    CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg,
-    default_initial_mtu,
+    default_initial_mtu, AuthUser, CongestionControl, JlsUpstream, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg
 };
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::time::Duration;
@@ -134,9 +133,15 @@ async fn test_shadowquic() {
 
     let sq_server = ShadowQuicServer::new(ShadowQuicServerCfg {
         bind_addr: "127.0.0.1:4444".parse().unwrap(),
-        jls_pwd: "123".into(),
-        jls_iv: "123".into(),
-        jls_upstream: "localhost:443".into(),
+        users: vec![AuthUser {
+            username: "123".into(),
+            password: "123".into(),
+        }],
+        jls_upstream: JlsUpstream {
+            addr: "localhost:443".into(),
+            ..Default::default()
+        },
+
         alpn: vec!["h3".into()],
         zero_rtt: true,
         initial_mtu: default_initial_mtu(),
