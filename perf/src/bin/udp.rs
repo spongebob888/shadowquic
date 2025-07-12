@@ -5,7 +5,8 @@ use fast_socks5::client::{Config, Socks5Datagram};
 use fast_socks5::util::target_addr::TargetAddr;
 
 use shadowquic::config::{
-    default_initial_mtu, AuthUser, CongestionControl, JlsUpstream, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg
+    AuthUser, CongestionControl, JlsUpstream, ShadowQuicClientCfg, ShadowQuicServerCfg,
+    SocksServerCfg, default_initial_mtu,
 };
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::time::Duration;

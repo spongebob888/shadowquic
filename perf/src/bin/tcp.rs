@@ -1,6 +1,7 @@
 use fast_socks5::client::{Config, Socks5Stream};
 use shadowquic::config::{
-    default_initial_mtu, AuthUser, CongestionControl, JlsUpstream, ShadowQuicClientCfg, ShadowQuicServerCfg, SocksServerCfg
+    AuthUser, CongestionControl, JlsUpstream, ShadowQuicClientCfg, ShadowQuicServerCfg,
+    SocksServerCfg, default_initial_mtu,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
