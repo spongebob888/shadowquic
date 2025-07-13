@@ -137,13 +137,13 @@ impl QuicClient for Endpoint {
 
         #[cfg(target_os = "android")]
         if let Some(path) = &cfg.protect_path {
-            use crate::utils::protect_socket::protect_socket;
+            use crate::utils::protect_socket::protect_socket_with_retry;
             use std::os::fd::AsRawFd;
 
             tracing::debug!("trying protect socket");
             tokio::time::timeout(
                 tokio::time::Duration::from_secs(5),
-                protect_socket(path, socket.as_raw_fd()),
+                protect_socket_with_retry(path, socket.as_raw_fd()),
             )
             .await
             .map_err(|_| io::Error::other("protecting socket timeout"))

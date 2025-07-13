@@ -24,6 +24,17 @@ pub async fn protect_socket<P: AsRef<Path>>(path: P, fd: RawFd) -> io::Result<()
 
     Ok(())
 }
+pub async fn protect_socket_with_retry<P: AsRef<Path>>(path: P, fd: RawFd) -> io::Result<()> {
+    let mut out = Ok(());
+    for delay in [0, 100, 300, 800] {
+        tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
+        out = protect_socket(path.as_ref(), fd).await;
+        if out.is_ok() {
+            break;
+        }
+    }
+    out
+}
 
 /// Send data with file descriptors
 pub async fn send_with_fd(stream: &UnixStream, buf: &[u8], fds: &[RawFd]) -> io::Result<usize> {
