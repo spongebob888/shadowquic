@@ -41,7 +41,7 @@ fn setup_log(level: LogLevel) {
         .with_target("shadowquic", level.as_tracing_level())
         .with_target(
             "quinn",
-            std::cmp::max(Level::WARN, level.as_tracing_level()),
+            std::cmp::min(Level::WARN, level.as_tracing_level()),
         );
 
     #[cfg(feature = "tokio-console")]
