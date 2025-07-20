@@ -2,7 +2,7 @@ use std::{io::IsTerminal, path::PathBuf};
 
 use clap::Parser;
 use shadowquic::config::{Config, LogLevel};
-use tracing::info;
+use tracing::{Level, info};
 use tracing_subscriber::{fmt::time::LocalTime, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser)]
@@ -38,7 +38,11 @@ async fn main() {
 fn setup_log(level: LogLevel) {
     let filter = tracing_subscriber::filter::Targets::new()
         // Enable the `INFO` level for anything in `my_crate`
-        .with_target("shadowquic", level.as_tracing_level());
+        .with_target("shadowquic", level.as_tracing_level())
+        .with_target(
+            "quinn",
+            std::cmp::max(Level::WARN, level.as_tracing_level()),
+        );
 
     #[cfg(feature = "tokio-console")]
     let filter = filter
