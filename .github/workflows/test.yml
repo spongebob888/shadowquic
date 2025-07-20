@@ -37,5 +37,8 @@ jobs:
       - run: |
           nix develop --command \
             cargo test --release --verbose
+      - run: |
+          nix develop --command \
+            uv run ./scripts/main_test.py 
 
   
