@@ -1159,7 +1159,7 @@ dependencies = [
 [[package]]
 name = "quinn"
 version = "0.11.7"
-source = "git+https://github.com/spongebob888/quinn-jls#72dcb6e40e8c857d46561b14c96eadf07376d074"
+source = "git+https://github.com/spongebob888/quinn-jls#3364498f3376432dc8d27ed2fb74b4695506288c"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -1197,7 +1197,7 @@ dependencies = [
 [[package]]
 name = "quinn-proto"
 version = "0.11.10"
-source = "git+https://github.com/spongebob888/quinn-jls#72dcb6e40e8c857d46561b14c96eadf07376d074"
+source = "git+https://github.com/spongebob888/quinn-jls#3364498f3376432dc8d27ed2fb74b4695506288c"
 dependencies = [
  "bytes",
  "getrandom 0.3.3",
@@ -1229,14 +1229,14 @@ dependencies = [
 [[package]]
 name = "quinn-udp"
 version = "0.5.10"
-source = "git+https://github.com/spongebob888/quinn-jls#72dcb6e40e8c857d46561b14c96eadf07376d074"
+source = "git+https://github.com/spongebob888/quinn-jls#3364498f3376432dc8d27ed2fb74b4695506288c"
 dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
