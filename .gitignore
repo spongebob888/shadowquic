@@ -3,3 +3,4 @@
 /client.yaml
 .venv
 .python-version
+__pycache__

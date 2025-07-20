@@ -40,6 +40,7 @@
           killall
           act
           rustup
+          uv
         ];
       in
       {
