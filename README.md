@@ -28,9 +28,10 @@ Configuration detail can be found in [Documentation](https://spongebob888.github
 ## Other Clients
 - [clash-rs](https://github.com/Watfaq/clash-rs)
 - [husi](https://github.com/xchacha20-poly1305/husi)
+- nekobox: [usage](./document/clients/windows.md)
 
 ## Other Servers
-- [docker](https://github.com/spongebob888/shadowquic/pkgs/container/shadowquic)
+- [docker](https://github.com/spongebob888/shadowquic/pkgs/container/shadowquic): example [coompose file](./shadowquic/config_examples/compose.yaml)
 ## Protocol
 [PROTOCOL](./PROTOCOL.pdf)
 

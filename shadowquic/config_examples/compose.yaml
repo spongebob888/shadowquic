@@ -1,0 +1,13 @@
+version: '3'
+services:
+  shadowquic-server:
+    image: ghcr.io/spongebob888/shadowquic:latest
+    container_name: shadowquic
+    restart: unless-stopped
+    # ports:
+    # - "443:443/udp" # UDP port for QUIC
+    volumes:
+      - ./server.yaml:/etc/shadowquic/config.yaml #adjust ./server.yaml to your shadowquic config path
+    environment:
+      - TZ=Asia/Shanghai
+    network_mode: "host"
