@@ -264,7 +264,7 @@ impl QuicServer for Endpoint {
         let mut crypto: RustlsServerConfig;
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let cert_der = CertificateDer::from(cert.cert);
-        let priv_key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+        let priv_key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
         crypto = RustlsServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
             .with_no_client_auth()
             .with_single_cert(vec![cert_der], PrivateKeyDer::Pkcs8(priv_key))?;
