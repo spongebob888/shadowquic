@@ -134,7 +134,7 @@ async fn spawn_socks() {
     })
     .await
     .unwrap();
-    let direct_client = DirectOut;
+    let direct_client = DirectOut::default();
     let server = Manager {
         inbound: Box::new(sq_server),
         outbound: Box::new(direct_client),

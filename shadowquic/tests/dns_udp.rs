@@ -7,8 +7,8 @@ use fast_socks5::{Result, client::Socks5Datagram};
 use shadowquic::{
     Manager,
     config::{
-        AuthUser, CongestionControl, JlsUpstream, ShadowQuicClientCfg, ShadowQuicServerCfg,
-        SocksServerCfg, default_initial_mtu,
+        AuthUser, CongestionControl, DirectOutCfg, JlsUpstream, ShadowQuicClientCfg,
+        ShadowQuicServerCfg, SocksServerCfg, default_initial_mtu,
     },
     direct::outbound::DirectOut,
     shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
@@ -177,7 +177,7 @@ async fn spawn_socks_server() {
     })
     .await
     .unwrap();
-    let direct_client = DirectOut;
+    let direct_client = DirectOut::new(DirectOutCfg::default());
     let server = Manager {
         inbound: Box::new(socks_server),
         outbound: Box::new(direct_client),
@@ -281,7 +281,7 @@ async fn shadowquic_client_server(over_stream: bool, port: u16) {
         ..Default::default()
     })
     .unwrap();
-    let direct_client = DirectOut;
+    let direct_client = DirectOut::new(DirectOutCfg::default());
     let server = Manager {
         inbound: Box::new(sq_server),
         outbound: Box::new(direct_client),
