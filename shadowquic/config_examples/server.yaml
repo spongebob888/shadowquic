@@ -13,6 +13,7 @@ inbound:
     zero-rtt: true
 outbound:
     type: direct
+    dns-strategy: prefer-ipv4 # or prefer-ipv6, ipv4-only, ipv6-only
 log-level: "trace"
 
 

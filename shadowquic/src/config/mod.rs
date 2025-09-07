@@ -94,7 +94,7 @@ impl OutboundCfg {
         let r: Box<dyn Outbound> = match self {
             OutboundCfg::Socks(cfg) => Box::new(SocksClient::new(cfg)),
             OutboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicClient::new(cfg)),
-            OutboundCfg::Direct(_) => Box::new(DirectOut),
+            OutboundCfg::Direct(cfg) => Box::new(DirectOut::new(cfg)),
         };
         Ok(r)
     }
@@ -255,10 +255,32 @@ pub enum CongestionControl {
     Cubic,
     NewReno,
 }
-
-#[derive(Deserialize, Clone, Debug)]
+/// Configuration of direct outbound
+/// Example:
+/// ```yaml
+/// dns-strategy: prefer-ipv4 # or prefer-ipv6, ipv4-only, ipv6-only
+/// ```
+#[derive(Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "kebab-case")]
-pub struct DirectOutCfg;
+pub struct DirectOutCfg {
+    #[serde(default)]
+    pub dns_strategy: DnsStrategy,
+}
+/// DNS resolution strategy
+/// Default is `prefer-ipv4``
+/// - `prefer-ipv4`: try to use ipv4 first, if no ipv4 address, use ipv6
+/// - `prefer-ipv6`: try to use ipv6 first, if no ipv6 address, use ipv4
+/// - `ipv4-only`: only use ipv4 address
+/// - `ipv6-only`: only use ipv6 address
+#[derive(Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum DnsStrategy {
+    #[default]
+    PreferIpv4,
+    PreferIpv6,
+    Ipv4Only,
+    Ipv6Only,
+}
 
 /// Configuration of shadowquic inbound
 ///
@@ -379,6 +401,7 @@ inbound:
     bind-addr: 127.0.0.1:1089
 outbound:
     type: direct
+    dns-strategy: prefer-ipv4
 "###;
         let _cfg: Config = serde_yaml::from_str(cfgstr).expect("yaml parsed failed");
     }

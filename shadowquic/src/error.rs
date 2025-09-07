@@ -19,8 +19,8 @@ pub enum SError {
     OutboundUnavailable,
     #[error("Inbound unavailable")]
     InboundUnavailable,
-    #[error("hostname can't be resolved")]
-    DomainResolveFailed,
+    #[error("hostname {0} can't be resolved")]
+    DomainResolveFailed(String),
     #[error("mpsc channel error: {0}")]
     ChannelError(String),
     #[error("UDP session closed closed due to: {0}")]
