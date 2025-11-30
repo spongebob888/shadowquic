@@ -7,8 +7,8 @@ After downloading, locate the bin folder in the installation directory and creat
 After downloading, rename the file to shadowquic.exe.</br>
 @ 2.2 Add configuration file and start</br>
 Open V2rayN as shown in the image below. Open the configuration options - add custom configuration.</br>
-<img width="263" height="736" alt="image" src="https://github.com/user-attachments/assets/cc44e585-c92a-41e4-9c13-e2c87026a956" /></br>
-The alias can be any name. Select the Shadowquic client configuration file: https://github.com/spongebob888/shadowquic/blob/main/shadowquic/config_examples/client.yaml,Modify the example configuration file, then select the file; select Shadowquic as the core.</br>
+The alias can be any name. Select the Shadowquic client configuration file: https://github.com/spongebob888/shadowquic/blob/main/shadowquic/config_examples/client.yaml</br>
+Modify the example configuration file, then select the file; select Shadowquic as the core.</br>
 <img width="840" height="681" alt="image" src="https://github.com/user-attachments/assets/20a2bed1-ef9e-4884-b96b-02074bed166a" /></br>
 The SOCKS port is configured in the configuration file. After clicking OK, select the active node as shown in the image below.</br>
 <img width="728" height="223" alt="image" src="https://github.com/user-attachments/assets/3598e9fa-dd6c-47e8-84b3-97f80d8c9977" /></br>
