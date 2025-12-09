@@ -2,9 +2,10 @@
   inputs = {
     nixpkgs.url = "nixpkgs";
     flake-utils.url = "github:numtide/flake-utils";
+    crane.url = "github:ipetkov/crane";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, crane }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
@@ -21,7 +22,7 @@
             dnspython
           ]);
 
-
+        craneLib = crane.mkLib pkgs;
         packages = with pkgs; [
           curlHTTP3
           pythonEnv
@@ -53,5 +54,14 @@
               export XDG_DATA_DIRS=${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:$XDG_DATA_DIRS
             '';
         };
+      packages.default = craneLib.buildPackage rec {
+        src = craneLib.cleanCargoSource ./.;
+        pname = "shadowquic";
+        doCheck = false;
+        # Add extra inputs here or any other derivation settings
+        # doCheck = true;
+        # buildInputs = [];
+        # nativeBuildInputs = [];
+      };
       });
 }
