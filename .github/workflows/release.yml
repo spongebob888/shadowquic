@@ -171,7 +171,7 @@ jobs:
             tool: cross
             toolchain: nightly
             install-target: false
-            components: rust-src
+            components: rust-src, rustfmt, clippy
             extra-args: "-Z build-std=std,panic_abort"
             skip-test: true
           - os: ubuntu-latest
@@ -180,7 +180,7 @@ jobs:
             tool: cross
             toolchain: nightly
             install-target: false
-            components: rust-src
+            components: rust-src, rustfmt, clippy
             extra-args: "-Z build-std=std,panic_abort"
             skip-test: true
           - os: ubuntu-latest
@@ -189,7 +189,7 @@ jobs:
             tool: cross
             toolchain: nightly
             install-target: false
-            components: rust-src
+            components: rust-src, rustfmt, clippy
             extra-args: "-Z build-std=std,panic_abort"
             skip-test: true
           - os: ubuntu-latest
