@@ -164,7 +164,43 @@ jobs:
             tool: cross  
             skip-test: true
 
-          # Linux mips: tier-3, pity
+          # Linux mips
+          - os: ubuntu-latest
+            target: mips-unknown-linux-musl
+            release-name: mips-linux-musl
+            tool: cross
+            toolchain: nightly
+            install-target: false
+            components: rust-src, rustfmt, clippy
+            extra-args: "-Z build-std=std,panic_abort"
+            skip-test: true
+          - os: ubuntu-latest
+            target: mipsel-unknown-linux-musl
+            release-name: mipsel-linux-musl
+            tool: cross
+            toolchain: nightly
+            install-target: false
+            components: rust-src, rustfmt, clippy
+            extra-args: "-Z build-std=std,panic_abort"
+            skip-test: true
+          - os: ubuntu-latest
+            target: mips64-unknown-linux-muslabi64
+            release-name: mips64-linux-musl
+            tool: cross
+            toolchain: nightly
+            install-target: false
+            components: rust-src, rustfmt, clippy
+            extra-args: "-Z build-std=std,panic_abort"
+            skip-test: true
+          - os: ubuntu-latest
+            target: mips64el-unknown-linux-muslabi64
+            release-name: mips64el-linux-musl
+            tool: cross
+            toolchain: nightly
+            install-target: false
+            components: rust-src, rustfmt, clippy
+            extra-args: "-Z build-std=std,panic_abort"
+            skip-test: true
           # Windows gnu: tokio dont work
           # Windows aarch: todo
 
@@ -185,17 +221,24 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.toolchain || env.RUST_TOOLCHAIN }}
-          target: ${{ matrix.target }}
+          targets: ${{ matrix.install-target != false && matrix.target || '' }}
           components: ${{ matrix.components || 'rustfmt, clippy' }}
 
       - name: Install rust targets & cross
         if: matrix.tool == 'cross'
         run: |
-          rustup target add ${TARGET}
+          if [ "${{ matrix.install-target }}" != "false" ]; then
+            rustup target add ${TARGET}
+          fi
           rm -f ~/.cargo/bin/cross*
           cargo install cross --git https://github.com/cross-rs/cross
         env:
           TARGET: ${{ matrix.target }}
+
+      # Don't know why it's not installed
+      - name: Install Windows ARM target
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        run: rustup target add aarch64-pc-windows-msvc
 
       - name: Cargo fmt
         uses: clechasseur/rs-cargo@v3
