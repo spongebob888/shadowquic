@@ -164,7 +164,35 @@ jobs:
             tool: cross  
             skip-test: true
 
-          # Linux mips: tier-3, pity
+          # Linux mips
+          - os: ubuntu-latest
+            target: mips-unknown-linux-musl
+            release-name: mips-linux-musl
+            tool: cross
+            toolchain: nightly
+            extra-args: "-Z build-std=std,panic_abort"
+            skip-test: true
+          - os: ubuntu-latest
+            target: mipsel-unknown-linux-musl
+            release-name: mipsel-linux-musl
+            tool: cross
+            toolchain: nightly
+            extra-args: "-Z build-std=std,panic_abort"
+            skip-test: true
+          - os: ubuntu-latest
+            target: mips64-unknown-linux-muslabi64
+            release-name: mips64-linux-musl
+            tool: cross
+            toolchain: nightly
+            extra-args: "-Z build-std=std,panic_abort"
+            skip-test: true
+          - os: ubuntu-latest
+            target: mips64el-unknown-linux-muslabi64
+            release-name: mips64el-linux-musl
+            tool: cross
+            toolchain: nightly
+            extra-args: "-Z build-std=std,panic_abort"
+            skip-test: true
           # Windows gnu: tokio dont work
           # Windows aarch: todo
 
