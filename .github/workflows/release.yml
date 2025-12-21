@@ -170,6 +170,8 @@ jobs:
             release-name: mips-linux-musl
             tool: cross
             toolchain: nightly
+            install-target: false
+            components: rust-src
             extra-args: "-Z build-std=std,panic_abort"
             skip-test: true
           - os: ubuntu-latest
@@ -177,6 +179,8 @@ jobs:
             release-name: mipsel-linux-musl
             tool: cross
             toolchain: nightly
+            install-target: false
+            components: rust-src
             extra-args: "-Z build-std=std,panic_abort"
             skip-test: true
           - os: ubuntu-latest
@@ -184,6 +188,8 @@ jobs:
             release-name: mips64-linux-musl
             tool: cross
             toolchain: nightly
+            install-target: false
+            components: rust-src
             extra-args: "-Z build-std=std,panic_abort"
             skip-test: true
           - os: ubuntu-latest
@@ -191,6 +197,8 @@ jobs:
             release-name: mips64el-linux-musl
             tool: cross
             toolchain: nightly
+            install-target: false
+            components: rust-src
             extra-args: "-Z build-std=std,panic_abort"
             skip-test: true
           # Windows gnu: tokio dont work
@@ -213,13 +221,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.toolchain || env.RUST_TOOLCHAIN }}
-          target: ${{ matrix.target }}
+          targets: ${{ matrix.install-target != false && matrix.target || '' }}
           components: ${{ matrix.components || 'rustfmt, clippy' }}
 
       - name: Install rust targets & cross
         if: matrix.tool == 'cross'
         run: |
-          rustup target add ${TARGET}
+          if [ "${{ matrix.install-target }}" != "false" ]; then
+            rustup target add ${TARGET}
+          fi
           rm -f ~/.cargo/bin/cross*
           cargo install cross --git https://github.com/cross-rs/cross
         env:
