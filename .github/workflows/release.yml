@@ -198,7 +198,7 @@ jobs:
             tool: cross
             toolchain: nightly
             install-target: false
-            components: rust-src
+            components: rust-src, rustfmt, clippy
             extra-args: "-Z build-std=std,panic_abort"
             skip-test: true
           # Windows gnu: tokio dont work
@@ -235,6 +235,7 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
 
+      # Don't know why it's not installed
       - name: Install Windows ARM target
         if: matrix.target == 'aarch64-pc-windows-msvc'
         run: rustup target add aarch64-pc-windows-msvc
