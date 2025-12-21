@@ -108,7 +108,7 @@ jobs:
             postfix: ".exe"
             skip-test: true
           # MacOSX
-          - os: macos-13
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             release-name: x86_64-darwin
             # extra-args: "--features jemallocator"
