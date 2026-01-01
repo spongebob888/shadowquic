@@ -205,11 +205,11 @@ jobs:
           # Windows aarch: todo
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: true
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -241,13 +241,13 @@ jobs:
         run: rustup target add aarch64-pc-windows-msvc
 
       - name: Cargo fmt
-        uses: clechasseur/rs-cargo@v3
+        uses: clechasseur/rs-cargo@v4
         with:
           command: fmt
           args: --all -- --check
 
       - name: Cargo clippy
-        uses: clechasseur/rs-cargo@v3
+        uses: clechasseur/rs-cargo@v4
         with:
           tool: ${{ matrix.tool }}
           command: clippy
@@ -256,7 +256,7 @@ jobs:
           RUSTFLAGS: ${{ matrix.rustflags }}
 
       - name: Cargo test
-        uses: clechasseur/rs-cargo@v3
+        uses: clechasseur/rs-cargo@v4
         if: ${{ !matrix.skip-test }}
         with:
           tool: ${{ matrix.tool }}
@@ -267,7 +267,7 @@ jobs:
           RUSTFLAGS: ${{ matrix.rustflags }}
 
       - name: Cargo build
-        uses: clechasseur/rs-cargo@v3
+        uses: clechasseur/rs-cargo@v4
         with:
           tool: ${{ matrix.tool }}
           command: build
@@ -279,7 +279,7 @@ jobs:
         run: mv target/${{ matrix.target }}/release/${{ env.PACKAGE }}${{ matrix.postfix }} ${{ env.PACKAGE }}-${{ matrix.release-name || matrix.target }}${{ matrix.postfix }}
 
       - name: Upload binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ env.PACKAGE }}-${{ matrix.release-name || matrix.target }}
           path: ${{ env.PACKAGE }}-${{ matrix.release-name || matrix.target }}${{ matrix.postfix }}
@@ -291,20 +291,20 @@ jobs:
     runs-on: ubuntu-latest
     permissions: write-all
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           fetch-tags: true
 
       - name: Merge binaries
-        uses: actions/upload-artifact/merge@v4
+        uses: actions/upload-artifact/merge@v6
         with:
           name: binaries
           pattern: '*'
           retention-days: 1
 
       - name: Download binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: binaries
           path: ./packages
@@ -365,7 +365,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [compile]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -374,13 +374,13 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Download binaries amd64
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: shadowquic-x86_64-linux-musl
           path: ./packages
 
       - name: Download binaries arm64
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: shadowquic-aarch64-linux-musl
           path: ./packages
