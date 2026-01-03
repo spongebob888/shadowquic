@@ -13,10 +13,10 @@ mod quinn_wrapper;
 #[cfg(feature = "quinn")]
 pub use quinn_wrapper::{Connection, EndClient, EndServer, QuicErrorRepr};
 
-// #[cfg(feature = "gm-quic")]
-// mod gm_quic_wrapper;
-// #[cfg(feature = "gm-quic")]
-// pub use gm_quic_wrapper::{Connection, EndClient, EndServer, QuicErrorRepr};
+#[cfg(feature = "gm-quic")]
+mod gm_quic_wrapper;
+#[cfg(feature = "gm-quic")]
+pub use gm_quic_wrapper::{Connection, EndClient, EndServer, QuicErrorRepr};
 
 #[async_trait]
 pub trait QuicClient: Send + Sync {
