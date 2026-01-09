@@ -114,10 +114,10 @@ impl SocksClient {
     }
 
     async fn handle_tcp(&self, mut tcp_session: TcpSession) -> Result<(), SError> {
+        tracing::info!("connect to socks server: {}", self.addr);
         let tcp = TcpStream::connect(self.addr.clone()).await?;
-
+        tcp.set_nodelay(true)?;
         let mut tcp = self.authenticate(tcp).await?;
-
         let socksreq = CmdReq {
             version: SOCKS5_VERSION,
             cmd: SOCKS5_CMD_TCP_CONNECT,
@@ -126,14 +126,16 @@ impl SocksClient {
         };
         socksreq.encode(&mut tcp).await?;
         let _rep = CmdReply::decode(&mut tcp).await?;
-
+        tracing::trace!("socks tcp connection established");
         copy_bidirectional_with_sizes(&mut tcp, &mut tcp_session.stream, 16 * 1024, 16 * 1024)
             .await?;
         Ok(())
     }
 
     async fn handle_udp(&self, mut udp_session: UdpSession) -> Result<(), SError> {
+        tracing::info!("connect to socks server: {}", self.addr);
         let tcp = TcpStream::connect(self.addr.clone()).await?;
+        tcp.set_nodelay(true)?;
 
         let mut tcp = self.authenticate(tcp).await?;
 
@@ -145,6 +147,7 @@ impl SocksClient {
         };
         socksreq.encode(&mut tcp).await?;
         let rep = CmdReply::decode(&mut tcp).await?;
+        tracing::trace!("socks udp association established");
         let peer_addr = rep
             .bind_addr
             .to_socket_addrs()
