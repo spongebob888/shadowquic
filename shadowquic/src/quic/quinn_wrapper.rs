@@ -227,7 +227,12 @@ pub fn gen_client_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
         .max_concurrent_uni_streams(500u32.into())
         .mtu_discovery_config(Some(mtudis))
         .min_mtu(cfg.min_mtu)
-        .initial_mtu(cfg.initial_mtu);
+        .initial_mtu(cfg.initial_mtu)
+        .enable_segmentation_offload(cfg.gso);
+
+    if !cfg.gso {
+        tracing::warn!("disabling QUIC segmentation offload (GSO)");
+    }
 
     // Only increase receive window to maximize download speed
     tp_cfg.stream_receive_window(MAX_STREAM_WINDOW.try_into().unwrap());
@@ -299,7 +304,13 @@ impl QuicServer for Endpoint {
             .max_concurrent_uni_streams(1000u32.into())
             .mtu_discovery_config(Some(mtudis))
             .min_mtu(cfg.min_mtu)
-            .initial_mtu(cfg.initial_mtu);
+            .initial_mtu(cfg.initial_mtu)
+            .enable_segmentation_offload(cfg.gso);
+
+        if !cfg.gso {
+            tracing::warn!("disabling QUIC segmentation offload (GSO)");
+        }
+
         match cfg.congestion_control {
             CongestionControl::Bbr => {
                 let bbr_config = BbrConfig::default();

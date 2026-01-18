@@ -11,6 +11,7 @@ outbound:
     initial-mtu: 1300
     congestion-control: bbr
     zero-rtt: true
+    gso: true # Enable Quinn Generic Segmentation Offload (GSO)
     over-stream: false  # true for udp over stream, false for udp over datagram
 log-level: "trace"
 
