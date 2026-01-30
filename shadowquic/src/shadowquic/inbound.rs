@@ -5,7 +5,7 @@ use std::{pin::Pin, sync::Arc};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     select,
-    sync::mpsc::{Receiver, Sender, channel},
+    sync::{SetOnce, mpsc::{Receiver, Sender, channel}},
 };
 use tracing::{Instrument, Level, error, event, info, trace, trace_span};
 
@@ -14,15 +14,14 @@ use crate::{
     config::ShadowQuicServerCfg,
     error::SError,
     msgs::{
-        shadowquic::{SQCmd, SQReq},
-        socks5::{SDecode, SocksAddr},
+        socks5::{SDecode, SocksAddr}, squic::{SQCmd, SQReq}
     },
-    quic::QuicConnection,
+    quic::QuicConnection, squic::inbound::SQServerConn,
 };
 
-use super::{IDStore, SQConn, handle_udp_packet_recv, handle_udp_recv_ctrl, handle_udp_send};
+use crate::squic::{IDStore, SQConn, handle_udp_packet_recv, handle_udp_recv_ctrl, handle_udp_send};
 
-use crate::quic::EndServer;
+use super::quinn_wrapper::EndServer;
 use crate::quic::QuicServer;
 pub struct ShadowQuicServer {
     pub config: ShadowQuicServerCfg,
@@ -45,15 +44,19 @@ impl ShadowQuicServer {
         incom: C,
         req_sender: Sender<ProxyRequest>,
     ) -> Result<(), SError> {
-        let sq_conn = SQServerConn(SQConn {
+        let sq_conn = SQServerConn{
+            inner: SQConn {
             conn: incom,
+            authed: SetOnce::new_with(Some(())),
             send_id_store: Default::default(),
             recv_id_store: IDStore {
                 id_counter: Default::default(),
                 inner: Default::default(),
             },
-        });
-        let span = trace_span!("quic", id = sq_conn.0.peer_id());
+        },
+                users: Arc::new(Vec::new()),
+    };
+        let span = trace_span!("quic", id = sq_conn.inner.peer_id());
         sq_conn
             .handle_connection(req_sender)
             .instrument(span)
@@ -102,134 +105,4 @@ impl Inbound for ShadowQuicServer {
     }
 }
 
-#[derive(Clone)]
-pub struct SQServerConn<C: QuicConnection>(SQConn<C>);
-impl<C: QuicConnection> SQServerConn<C> {
-    async fn handle_connection(self, req_send: Sender<ProxyRequest>) -> Result<(), SError> {
-        let conn = &self.0;
-        event!(
-            Level::INFO,
-            "incoming from {} accepted",
-            conn.remote_address()
-        );
-        let conn_clone = self.0.clone();
-        tokio::spawn(async move {
-            let _ = handle_udp_packet_recv(conn_clone).in_current_span().await;
-        });
 
-        while conn.close_reason().is_none() {
-            select! {
-                bi = conn.accept_bi() => {
-                    let (send, recv, id) = bi?;
-                    let span = trace_span!("bistream", id = id);
-                    trace!("bistream accepted");
-                    tokio::spawn(self.clone().handle_bistream(send, recv, req_send.clone()).instrument(span).in_current_span());
-                },
-            }
-        }
-        Ok(())
-    }
-    async fn handle_bistream(
-        self,
-        send: C::SendStream,
-        mut recv: C::RecvStream,
-        req_send: Sender<ProxyRequest>,
-    ) -> Result<(), SError> {
-        let req = SQReq::decode(&mut recv).await?;
-
-        // let rate: f32 = (self.0.conn.stats().path.lost_packets as f32)
-        //     / ((self.0.conn.stats().path.sent_packets + 1) as f32);
-        // info!(
-        //     "packet_loss_rate:{:.2}%, rtt:{:?}, mtu:{}",
-        //     rate * 100.0,
-        //     self.0.conn.rtt(),
-        //     self.0.conn.stats().path.current_mtu,
-        // );
-        match req.cmd {
-            SQCmd::Connect => {
-                info!(
-                    "connect request: {}->{} accepted",
-                    self.0.remote_address(),
-                    req.dst.clone()
-                );
-                let tcp: TcpSession = TcpSession {
-                    stream: Box::new(Unsplit { s: send, r: recv }),
-                    dst: req.dst,
-                };
-                req_send
-                    .send(ProxyRequest::Tcp(tcp))
-                    .await
-                    .map_err(|_| SError::OutboundUnavailable)?;
-            }
-            SQCmd::AssociatOverDatagram | SQCmd::AssociatOverStream => {
-                info!("association request to {} accepted", req.dst.clone());
-                let (local_send, udp_recv) = channel::<(Bytes, SocksAddr)>(10);
-                let (udp_send, local_recv) = channel::<(Bytes, SocksAddr)>(10);
-                let udp: UdpSession = UdpSession {
-                    send: Arc::new(udp_send),
-                    recv: Box::new(udp_recv),
-                    stream: None,
-                    dst: req.dst,
-                };
-                let local_send = Arc::new(local_send);
-                req_send
-                    .send(ProxyRequest::Udp(udp))
-                    .await
-                    .map_err(|_| SError::OutboundUnavailable)?;
-                let fut1 = handle_udp_send(
-                    send,
-                    Box::new(local_recv),
-                    self.0.clone(),
-                    req.cmd == SQCmd::AssociatOverStream,
-                );
-                let fut2 = handle_udp_recv_ctrl(recv, local_send, self.0);
-                tokio::try_join!(fut1, fut2)?;
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-}
-#[derive(Debug)]
-pub struct Unsplit<S, R> {
-    pub s: S,
-    pub r: R,
-}
-impl<S: AsyncWrite + Unpin + Sync + Send, R: AsyncRead + Unpin + Sync + Send> TcpTrait
-    for Unsplit<S, R>
-{
-}
-
-impl<S: AsyncWrite + Unpin, R: AsyncRead + Unpin> AsyncRead for Unsplit<S, R> {
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        Pin::new(&mut self.as_mut().r).poll_read(cx, buf)
-    }
-}
-
-impl<S: AsyncWrite + Unpin, R: AsyncRead + Unpin> AsyncWrite for Unsplit<S, R> {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<Result<usize, std::io::Error>> {
-        Pin::new(&mut self.as_mut().s).poll_write(cx, buf)
-    }
-
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), std::io::Error>> {
-        Pin::new(&mut self.as_mut().s).poll_flush(cx)
-    }
-
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), std::io::Error>> {
-        Pin::new(&mut self.as_mut().s).poll_shutdown(cx)
-    }
-}

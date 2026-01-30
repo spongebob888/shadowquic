@@ -17,6 +17,8 @@ pub mod error;
 pub mod msgs;
 pub mod quic;
 pub mod shadowquic;
+pub mod sunquic;
+pub mod squic;
 pub mod socks;
 pub mod utils;
 pub enum ProxyRequest<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend> {

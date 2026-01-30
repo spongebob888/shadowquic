@@ -1,4 +1,4 @@
-use std::{io, net::SocketAddr, ops::Deref, sync::Arc, time::Duration};
+use std::{io, net::{SocketAddr, ToSocketAddrs}, ops::Deref, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -22,8 +22,7 @@ use quinn::crypto::rustls::QuicServerConfig;
 use crate::{
     config::{CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg},
     error::SResult,
-    quic::{QuicClient, QuicConnection, QuicServer},
-    shadowquic::{MAX_DATAGRAM_WINDOW, MAX_SEND_WINDOW, MAX_STREAM_WINDOW},
+    quic::{MAX_DATAGRAM_WINDOW, MAX_SEND_WINDOW, MAX_STREAM_WINDOW, QuicClient, QuicConnection, QuicErrorRepr, QuicServer},
 };
 
 pub type Connection = quinn::Connection;
@@ -120,7 +119,8 @@ impl QuicConnection for Connection {
 
 #[async_trait]
 impl QuicClient for Endpoint {
-    async fn new(cfg: &ShadowQuicClientCfg, ipv6: bool) -> SResult<Self> {
+    type SC = ShadowQuicClientCfg;
+    async fn new(cfg: &Self::SC, ipv6: bool) -> SResult<Self> {
         let socket;
         if ipv6 {
             socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
@@ -154,7 +154,7 @@ impl QuicClient for Endpoint {
             })?;
         }
 
-        Self::new_with_socket(cfg, socket.into())
+        Self::new_with_socket(&cfg, socket.into())
     }
     async fn connect(&self, addr: SocketAddr, server_name: &str) -> Result<Self::C, QuicErrorRepr> {
         let conn = self.inner.connect(addr, server_name)?;
@@ -191,12 +191,12 @@ impl QuicClient for Endpoint {
         Ok(conn)
     }
 
-    fn new_with_socket(cfg: &ShadowQuicClientCfg, socket: std::net::UdpSocket) -> SResult<Self> {
+    fn new_with_socket(cfg: &Self::SC, socket: std::net::UdpSocket) -> SResult<Self> {
         let runtime =
             quinn::default_runtime().ok_or_else(|| io::Error::other("no async runtime found"))?;
         let mut end =
             quinn::Endpoint::new(quinn::EndpointConfig::default(), None, socket, runtime)?;
-        end.set_default_client_config(gen_client_cfg(cfg));
+        end.set_default_client_config(gen_client_cfg(&cfg));
         Ok(Endpoint {
             inner: end,
             zero_rtt: cfg.zero_rtt,
@@ -260,7 +260,8 @@ pub fn gen_client_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
 #[async_trait]
 impl QuicServer for Endpoint {
     type C = Connection;
-    async fn new(cfg: &ShadowQuicServerCfg) -> SResult<Self> {
+    type SC = ShadowQuicServerCfg;
+    async fn new(cfg: &Self::SC) -> SResult<Self> {
         let mut crypto: RustlsServerConfig;
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let cert_der = CertificateDer::from(cert.cert);
@@ -366,19 +367,20 @@ impl QuicServer for Endpoint {
     }
 }
 
-#[derive(Error, Debug)]
-#[error(transparent)]
-pub enum QuicErrorRepr {
-    #[error("QUIC Connect Error:{0}")]
-    QuicConnect(#[from] quinn::ConnectError),
-    #[error("QUIC Connection Error:{0}")]
-    QuicConnection(#[from] quinn::ConnectionError),
-    #[error("QUIC Write Error:{0}")]
-    QuicWrite(#[from] quinn::WriteError),
-    #[error("QUIC ReadExact Error:{0}")]
-    QuicReadExactError(#[from] quinn::ReadExactError),
-    #[error("QUIC SendDatagramError:{0}")]
-    QuicSendDatagramError(#[from] quinn::SendDatagramError),
-    #[error("JLS Authentication failed")]
-    JlsAuthFailed,
+impl From<quinn::ConnectionError> for QuicErrorRepr {
+    fn from(value: quinn::ConnectionError) -> Self {
+        QuicErrorRepr::QuicConnection(format!("{}", value))
+    }
+}
+
+impl From<quinn::ConnectError> for QuicErrorRepr {
+    fn from(value: quinn::ConnectError) -> Self {
+        QuicErrorRepr::QuicConnect(format!("{}", value))
+    }
+}
+
+impl From<quinn::SendDatagramError> for QuicErrorRepr {
+    fn from(value: quinn::SendDatagramError) -> Self {
+        QuicErrorRepr::QuicSendDatagramError(format!("{}", value))
+    }
 }
