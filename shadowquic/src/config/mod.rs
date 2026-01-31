@@ -8,7 +8,7 @@ use crate::{
     error::SError,
     shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
     socks::{inbound::SocksServer, outbound::SocksClient},
-    sunnyquic::inbound::SunnyQuicServer,
+    sunnyquic::{inbound::SunnyQuicServer, outbound::SunnyQuicClient},
 };
 
 mod shadowquic;
@@ -65,15 +65,15 @@ pub enum InboundCfg {
     Socks(SocksServerCfg),
     #[serde(rename = "shadowquic")]
     ShadowQuic(ShadowQuicServerCfg),
-    #[serde(rename = "sunquic")]
-    SunQuic(SunnyQuicServerCfg),
+    #[serde(rename = "sunnyquic")]
+    SunnyQuic(SunnyQuicServerCfg),
 }
 impl InboundCfg {
     async fn build_inbound(self) -> Result<Box<dyn Inbound>, SError> {
         let r: Box<dyn Inbound> = match self {
             InboundCfg::Socks(cfg) => Box::new(SocksServer::new(cfg).await?),
             InboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicServer::new(cfg)?),
-            InboundCfg::SunQuic(cfg) => Box::new(SunnyQuicServer::new(cfg)?),
+            InboundCfg::SunnyQuic(cfg) => Box::new(SunnyQuicServer::new(cfg)?),
         };
         Ok(r)
     }
@@ -94,6 +94,8 @@ pub enum OutboundCfg {
     Socks(SocksClientCfg),
     #[serde(rename = "shadowquic")]
     ShadowQuic(ShadowQuicClientCfg),
+    #[serde(rename = "sunnyquic")]
+    SunnyQuic(SunnyQuicClientCfg),
     Direct(DirectOutCfg),
 }
 
@@ -102,6 +104,7 @@ impl OutboundCfg {
         let r: Box<dyn Outbound> = match self {
             OutboundCfg::Socks(cfg) => Box::new(SocksClient::new(cfg)),
             OutboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicClient::new(cfg)),
+            OutboundCfg::SunnyQuic(cfg) => Box::new(SunnyQuicClient::new(cfg)),
             OutboundCfg::Direct(cfg) => Box::new(DirectOut::new(cfg)),
         };
         Ok(r)

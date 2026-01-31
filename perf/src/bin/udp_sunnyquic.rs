@@ -94,7 +94,7 @@ async fn main() {
 async fn test_shadowquic() {
     let filter = tracing_subscriber::filter::Targets::new()
         // Enable the `INFO` level for anything in `my_crate`
-        .with_target("udp_sunquic", Level::TRACE)
+        .with_target("udp_sunnyquic", Level::TRACE)
         .with_target("shadowquic", LevelFilter::TRACE);
 
     // Enable the `DEBUG` level for a specific module.
