@@ -5,20 +5,15 @@ use fast_socks5::client::{Config, Socks5Datagram};
 use fast_socks5::util::target_addr::TargetAddr;
 
 use shadowquic::config::{
-    AuthUser, CongestionControl, JlsUpstream, ShadowQuicClientCfg, ShadowQuicServerCfg,
-    SocksServerCfg, SunnyQuicClientCfg, SunnyQuicServerCfg, default_initial_mtu,
+    AuthUser, CongestionControl, SocksServerCfg, SunnyQuicClientCfg, SunnyQuicServerCfg,
+    default_initial_mtu,
 };
 use shadowquic::sunnyquic::inbound::SunnyQuicServer;
 use shadowquic::sunnyquic::outbound::SunnyQuicClient;
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::time::Duration;
 
-use shadowquic::{
-    Manager,
-    direct::outbound::DirectOut,
-    shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
-    socks::inbound::SocksServer,
-};
+use shadowquic::{Manager, direct::outbound::DirectOut, socks::inbound::SocksServer};
 
 use tracing::info;
 use tracing::{Level, level_filters::LevelFilter, trace};
