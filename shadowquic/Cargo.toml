@@ -38,10 +38,10 @@ clap = { version = "4", features = ["derive"] }
 educe = "0.6.0"
 socket2 = "0.6.1"
 
-gm-quic = { package = "gm-quic", path = "../../gm-quic/gm-quic", default-features = false, optional = true}
-qevent = { package = "qevent", path = "../../gm-quic/qevent", default-features = false, optional = true}
-qbase = { package = "qbase", path = "../../gm-quic/qbase", default-features = false, optional = true}
-qunreliable = { package = "qunreliable", path = "../../gm-quic/qunreliable", default-features = false, optional = true}
+gm-quic = { version = "0.4", default-features = false, optional = true}
+qevent = { version = "0.4", default-features = false, optional = true}
+qbase = { version = "0.4", default-features = false, optional = true}
+qunreliable = { version = "0.4", default-features = false, optional = true}
 rustls = { version = "0.23", default-features = false, features = ["std","ring"], optional = true}
 rustls-native-certs = {version = "*", optional = true}
 

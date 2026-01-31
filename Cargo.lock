@@ -999,6 +999,8 @@ dependencies = [
 [[package]]
 name = "gm-quic"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73c9881b922b998efb26b020ff6e452e76a0dc859ff191c911ef564b8cb3209f"
 dependencies = [
  "bytes",
  "dashmap",
@@ -1851,6 +1853,8 @@ dependencies = [
 [[package]]
 name = "qbase"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2634399a2eca401b140b1e89ce7f326cc816de487e01c76350d9439a7e5cd176"
 dependencies = [
  "bitflags",
  "bytes",
@@ -1873,6 +1877,8 @@ dependencies = [
 [[package]]
 name = "qcongestion"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f1d18c9321ffba0ba83316fc4d3ec687a8a6c3d4d3532ed7105c98cba5556b6"
 dependencies = [
  "qbase",
  "qevent",
@@ -1885,6 +1891,8 @@ dependencies = [
 [[package]]
 name = "qconnection"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f561741b24076d3160bb7e6f1a4de88f5aed3d14c9fc13a94dcf37ace2cc77a"
 dependencies = [
  "bytes",
  "dashmap",
@@ -1909,6 +1917,8 @@ dependencies = [
 [[package]]
 name = "qevent"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d1fad07cca1bfadc0be7cd1dbda15746ef9b17c41e3f8184b3ac34395a97443"
 dependencies = [
  "bytes",
  "derive_builder",
@@ -1926,6 +1936,8 @@ dependencies = [
 [[package]]
 name = "qinterface"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f80d6741a8bf91671d4f5908681f80f20a9aaa5b2dfba09457ff17d95eeb3bd4"
 dependencies = [
  "bytes",
  "dashmap",
@@ -1947,6 +1959,8 @@ dependencies = [
 [[package]]
 name = "qmacro"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3859df78e87e8fb5bba0172fccce01e1e41f73719def9c93333c5f817ccfcd52"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -1957,6 +1971,8 @@ dependencies = [
 [[package]]
 name = "qrecovery"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ade4f96f651319f887de2f696161561068cabb50a30868b4fb7ace30969b7c2"
 dependencies = [
  "bytes",
  "derive_more",
@@ -1974,6 +1990,8 @@ dependencies = [
 [[package]]
 name = "qudp"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9238fe8ac28f5b2f403b7f62a8cfc0ba42c24d9346795036c7af429103bba3b4"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -2090,6 +2108,8 @@ dependencies = [
 [[package]]
 name = "qunreliable"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d696ab6023d0f13ca2ad6377c779b87881dbdbacad63a8d50c2a98f96e3a004"
 dependencies = [
  "bytes",
  "futures",
