@@ -15,8 +15,6 @@ mod shadowquic;
 mod sunnyquic;
 pub use crate::config::shadowquic::*;
 pub use crate::config::sunnyquic::*;
-#[cfg(target_os = "android")]
-use std::path::PathBuf;
 
 /// Overall configuration of shadowquic.
 ///

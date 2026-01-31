@@ -188,5 +188,5 @@ pub struct ShadowQuicClientCfg {
 
     /// Android Only. the unix socket path for protecting android socket
     #[cfg(target_os = "android")]
-    pub protect_path: Option<PathBuf>,
+    pub protect_path: Option<std::path::PathBuf>,
 }
