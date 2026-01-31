@@ -1,12 +1,13 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{AuthUser, CongestionControl, default_alpn, default_congestion_control, default_initial_mtu, default_keep_alive_interval, default_min_mtu, default_over_stream, default_zero_rtt
+use crate::config::{
+    AuthUser, CongestionControl, default_alpn, default_congestion_control, default_initial_mtu,
+    default_keep_alive_interval, default_min_mtu, default_over_stream, default_zero_rtt,
 };
 
-
-/// Configuration of shadowquic inbound
+/// Configuration of sunnyquic inbound
 ///
 /// Example:
 /// ```yaml
@@ -21,15 +22,17 @@ use crate::config::{AuthUser, CongestionControl, default_alpn, default_congestio
 /// ```
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case")]
-pub struct SunQuicServerCfg {
+pub struct SunnyQuicServerCfg {
     /// Binding address. e.g. `0.0.0.0:443`, `[::1]:443`
     pub bind_addr: SocketAddr,
     /// Users for client authentication
     pub users: Vec<AuthUser>,
-    /// Server name used to check client. Must be the same as client
-    /// If empty, server name will be parsed from jls_upstream
-    /// If not available, server name check will be skipped
-    pub server_name: Option<String>,
+    /// Server name of the certificates
+    pub server_name: String,
+    /// Certificate path for tls
+    pub cert_path: PathBuf,
+    /// Private key path for tls
+    pub key_path: PathBuf,
     /// Alpn of tls. Default is `["h3"]`, must have common element with client
     #[serde(default = "default_alpn")]
     pub alpn: Vec<String>,
@@ -51,8 +54,7 @@ pub struct SunQuicServerCfg {
     pub min_mtu: u16,
 }
 
-
-impl Default for SunQuicServerCfg {
+impl Default for SunnyQuicServerCfg {
     fn default() -> Self {
         Self {
             bind_addr: "127.0.0.1:443".parse().unwrap(),
@@ -62,12 +64,14 @@ impl Default for SunQuicServerCfg {
             congestion_control: Default::default(),
             initial_mtu: default_initial_mtu(),
             min_mtu: default_min_mtu(),
-            server_name: None,
+            cert_path: PathBuf::from("./assets/certs/localhost.cert.pem"),
+            key_path: PathBuf::from("./assets/certs/localhost.key.pem"),
+            server_name: "localhost".into(),
         }
     }
 }
 
-impl Default for SunQuicClientCfg {
+impl Default for SunnyQuicClientCfg {
     fn default() -> Self {
         Self {
             password: Default::default(),
@@ -81,13 +85,14 @@ impl Default for SunQuicClientCfg {
             over_stream: Default::default(),
             min_mtu: default_min_mtu(),
             keep_alive_interval: default_keep_alive_interval(),
+            cert_path: Default::default(),
             #[cfg(target_os = "android")]
             protect_path: Default::default(),
         }
     }
 }
 
-/// Shadowquic outbound configuration
+/// Sunnyquic outbound configuration
 ///   
 /// example:
 /// ```yaml
@@ -103,7 +108,7 @@ impl Default for SunQuicClientCfg {
 /// ```
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", default)]
-pub struct SunQuicClientCfg {
+pub struct SunnyQuicClientCfg {
     /// username, must be the same as the server
     pub username: String,
     /// password, must be the same as the server
@@ -116,6 +121,8 @@ pub struct SunQuicClientCfg {
     /// Alpn of tls, default is \["h3"\], must have common element with server
     #[serde(default = "default_alpn")]
     pub alpn: Vec<String>,
+    /// Certificate path for tls
+    pub cert_path: Option<PathBuf>,
     /// Initial mtu, must be larger than min mtu, at least to be 1200.
     /// 1400 is recommended for high packet loss network. default to be 1300
     #[serde(default = "default_initial_mtu")]

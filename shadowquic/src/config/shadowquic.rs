@@ -2,7 +2,9 @@ use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{AuthUser, CongestionControl, default_alpn, default_congestion_control, default_initial_mtu, default_keep_alive_interval, default_min_mtu, default_over_stream, default_zero_rtt
+use crate::config::{
+    AuthUser, CongestionControl, default_alpn, default_congestion_control, default_initial_mtu,
+    default_keep_alive_interval, default_min_mtu, default_over_stream, default_zero_rtt,
 };
 
 pub fn default_rate_limit() -> u64 {

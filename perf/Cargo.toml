@@ -7,7 +7,7 @@ homepage = { workspace = true }
 authors = { workspace = true }
 
 [[bin]]
-name = "udp"
+name = "udp_shadowquic"
 bench = false
 
 [dependencies]

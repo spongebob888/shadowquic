@@ -1,11 +1,14 @@
 use async_trait::async_trait;
 use bytes::Bytes;
-use std::{marker::PhantomData, pin::Pin, sync::Arc};
+use std::{collections::HashMap, marker::PhantomData, pin::Pin, sync::Arc, time::Duration};
 
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     select,
-    sync::{OnceCell, SetOnce, mpsc::{Receiver, Sender, channel}},
+    sync::{
+        OnceCell, SetOnce,
+        mpsc::{Receiver, Sender, channel},
+    },
 };
 use tracing::{Instrument, Level, error, event, info, trace, trace_span};
 
@@ -14,23 +17,23 @@ use crate::{
     config::ShadowQuicServerCfg,
     error::SError,
     msgs::{
-        squic::{SQCmd, SQReq, SUN_QUIC_AUTH_LEN},
         socks5::{SDecode, SocksAddr},
+        squic::{SQCmd, SQReq, SUNNY_QUIC_AUTH_LEN},
     },
     quic::QuicConnection,
+    squic::wait_sunny_auth,
 };
 
 use super::{IDStore, SQConn, handle_udp_packet_recv, handle_udp_recv_ctrl, handle_udp_send};
 
 use crate::quic::QuicServer;
 
-pub type SunQuicUsers = Arc<Vec<(String, [u8; SUN_QUIC_AUTH_LEN])>>;
-
+pub type SunnyQuicUsers = Arc<HashMap<[u8; SUNNY_QUIC_AUTH_LEN], String>>;
 
 #[derive(Clone)]
 pub struct SQServerConn<C: QuicConnection> {
     pub inner: SQConn<C>,
-    pub users: Arc<Vec<(String, [u8; SUN_QUIC_AUTH_LEN])>>,
+    pub users: SunnyQuicUsers,
 }
 impl<C: QuicConnection> SQServerConn<C> {
     pub async fn handle_connection(self, req_send: Sender<ProxyRequest>) -> Result<(), SError> {
@@ -75,6 +78,7 @@ impl<C: QuicConnection> SQServerConn<C> {
         // );
         match req {
             SQReq::SQConnect(dst) => {
+                wait_sunny_auth(&self.inner).await?;
                 info!(
                     "connect request: {}->{} accepted",
                     self.inner.remote_address(),
@@ -89,7 +93,9 @@ impl<C: QuicConnection> SQServerConn<C> {
                     .await
                     .map_err(|_| SError::OutboundUnavailable)?;
             }
-            ref req @ (SQReq::SQAssociatOverDatagram(ref dst) | SQReq::SQAssociatOverStream(ref dst)) => {
+            ref req @ (SQReq::SQAssociatOverDatagram(ref dst)
+            | SQReq::SQAssociatOverStream(ref dst)) => {
+                wait_sunny_auth(&self.inner).await?;
                 info!("association request to {} accepted", dst.clone());
                 let (local_send, udp_recv) = channel::<(Bytes, SocksAddr)>(10);
                 let (udp_send, local_recv) = channel::<(Bytes, SocksAddr)>(10);
@@ -113,7 +119,21 @@ impl<C: QuicConnection> SQServerConn<C> {
                 let fut2 = handle_udp_recv_ctrl(recv, local_send, self.inner);
                 tokio::try_join!(fut1, fut2)?;
             }
-            _ => {}
+            SQReq::SQAuthenticate(passwd_hash) => {
+                if let Some(name) = self.users.get(&passwd_hash) {
+                    tracing::info!("user authenticated:{}", name);
+                    self.inner
+                        .authed
+                        .set(true)
+                        .expect("repeated authentication!");
+                } else {
+                    tracing::warn!("authentication failed");
+                    return Err(SError::SunnyAuthError("Wrong password/username".into()));
+                }
+            }
+            _ => {
+                unimplemented!()
+            }
         }
         Ok(())
     }

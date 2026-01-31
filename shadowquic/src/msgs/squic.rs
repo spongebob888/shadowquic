@@ -4,7 +4,7 @@ use super::socks5::{SDecode, SEncode, SocksAddr};
 use shadowquic_macros::{SDecode, SEncode};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-pub static SUN_QUIC_AUTH_LEN: usize = 256;
+pub static SUNNY_QUIC_AUTH_LEN: usize = 256;
 #[repr(u8)]
 #[derive(PartialEq)]
 pub enum SQCmd {
@@ -45,9 +45,8 @@ pub enum SQReq {
     SQBind(SocksAddr),
     SQAssociatOverDatagram(SocksAddr),
     SQAssociatOverStream(SocksAddr),
-    SQAuthenticate([u8; SUN_QUIC_AUTH_LEN]),
+    SQAuthenticate([u8; SUNNY_QUIC_AUTH_LEN]),
 }
-
 
 impl SEncode for SQReq {
     async fn encode<T: tokio::io::AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
@@ -98,7 +97,7 @@ impl SDecode for SQReq {
                 Ok(SQReq::SQAssociatOverStream(addr))
             }
             SQCmd::Authenticate => {
-                let mut data = [0u8; SUN_QUIC_AUTH_LEN];
+                let mut data = [0u8; SUNNY_QUIC_AUTH_LEN];
                 s.read_exact(&mut data).await?;
                 Ok(SQReq::SQAuthenticate(data))
             }

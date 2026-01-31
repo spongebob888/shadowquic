@@ -19,8 +19,8 @@ use crate::{
     config::ShadowQuicClientCfg,
     error::SError,
     msgs::{
-        squic::{SQCmd, SQReq},
         socks5::{SEncode, SocksAddr},
+        squic::{SQCmd, SQReq},
     },
     quic::{QuicClient, QuicConnection},
     squic::{handle_udp_recv_ctrl, handle_udp_send},
@@ -62,10 +62,10 @@ pub async fn associate_udp<C: QuicConnection>(
     info!("bistream opened for udp dst:{}", dst.clone());
 
     let req = if over_stream {
-            SQReq::SQAssociatOverStream(dst.clone())
-        } else {
-            SQReq::SQAssociatOverDatagram(dst.clone())
-        };
+        SQReq::SQAssociatOverStream(dst.clone())
+    } else {
+        SQReq::SQAssociatOverDatagram(dst.clone())
+    };
     req.encode(&mut send).await?;
     let (local_send, udp_recv) = channel::<(Bytes, SocksAddr)>(10);
     let (udp_send, local_recv) = channel::<(Bytes, SocksAddr)>(10);

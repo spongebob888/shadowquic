@@ -6,8 +6,8 @@ use crate::{
 };
 use async_trait::async_trait;
 use bytes::Bytes;
-use tokio::io::{AsyncRead, AsyncWrite};
 use thiserror::Error;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 // 4 times larger than quinn default value
 // Better decrease the size for portable device
@@ -59,7 +59,17 @@ pub trait QuicConnection: Send + Sync + Clone + 'static {
 }
 
 #[derive(Error, Debug)]
+#[error(transparent)]
 pub enum QuicErrorRepr {
+    // gm-quic errors
+    #[error("QUIC IO Error:{0}")]
+    QuicIoError(String),
+    #[error("QUIC Error:{0}")]
+    QuicBaseError(String),
+    #[error("Failed to build Quic Listener:{0}")]
+    QuicListenerBuilderError(String),
+
+    // quinn errors
     #[error("QUIC Connect Error:{0}")]
     QuicConnect(String),
     #[error("QUIC Connection Error:{0}")]

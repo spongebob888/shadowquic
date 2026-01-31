@@ -1,25 +1,31 @@
 use std::{
-     collections::{
+    collections::{
         HashMap,
         hash_map::{self, Entry},
-    }, io::Cursor, mem::replace, ops::Deref, sync::{Arc, atomic::AtomicU16}
+    },
+    io::Cursor,
+    mem::replace,
+    ops::Deref,
+    sync::{Arc, atomic::AtomicU16},
+    time::Duration,
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
 use tokio::{
     io::{AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::{
-        OnceCell, RwLock, SetOnce, watch::{Receiver, Sender, channel}
+        RwLock, SetOnce,
+        watch::{Receiver, Sender, channel},
     },
 };
 use tracing::{Instrument, Level, debug, error, event, info, trace};
 
 use crate::{
     AnyUdpRecv, AnyUdpSend,
-    error::SError,
+    error::{SError, SResult},
     msgs::{
-        squic::{SQPacketDatagramHeader, SQUdpControlHeader},
         socks5::{SDecode, SEncode, SocksAddr},
+        squic::{SQPacketDatagramHeader, SQReq, SQUdpControlHeader, SUNNY_QUIC_AUTH_LEN},
     },
     quic::QuicConnection,
 };
@@ -27,15 +33,40 @@ use crate::{
 pub mod inbound;
 pub mod outbound;
 
-/// ShadowQuic connection, which is a wrapper around quinn::Connection.
+/// SQuic connection, it is shared by shadowquic and sunnyquic and is a wrapper of quic connection.
 /// It contains a connection object and two ID store for managing UDP sockets.
 /// The IDStore stores the mapping between ids and the destionation addresses as well as associated sockets
 #[derive(Clone)]
 pub struct SQConn<T: QuicConnection> {
     pub(crate) conn: T,
-    pub(crate) authed: SetOnce<()>,
+    pub(crate) authed: Arc<SetOnce<bool>>,
     pub(crate) send_id_store: IDStore<()>,
     pub(crate) recv_id_store: IDStore<(AnyUdpSend, SocksAddr)>,
+}
+
+async fn wait_sunny_auth<T: QuicConnection>(conn: &SQConn<T>) -> SResult<()> {
+    match tokio::time::timeout(Duration::from_millis(3200), conn.authed.wait()).await {
+        Ok(true) => Ok(()),
+        Ok(false) => {
+            return Err(SError::SunnyAuthError("Wrong psassword/username".into()));
+        }
+        Err(_) => {
+            return Err(SError::SunnyAuthError("timeout".into()));
+        }
+    }
+}
+
+pub(crate) async fn auth_sunny<T: QuicConnection>(
+    conn: &SQConn<T>,
+    user_hash: &[u8; SUNNY_QUIC_AUTH_LEN],
+) -> SResult<()> {
+    if conn.authed.get().is_none() {
+        let (mut send, _recv, id) = conn.open_bi().await?;
+        SQReq::SQAuthenticate(*user_hash).encode(&mut send).await?;
+        debug!("authentication request sent");
+        conn.authed.set(true).expect("repeated authentication");
+    }
+    Ok(())
 }
 
 impl<T: QuicConnection> Deref for SQConn<T> {
@@ -334,6 +365,7 @@ pub async fn handle_udp_recv_ctrl<C: QuicConnection>(
 pub async fn handle_udp_packet_recv<C: QuicConnection>(conn: SQConn<C>) -> Result<(), SError> {
     let id_store = conn.recv_id_store.clone();
 
+    wait_sunny_auth(&conn).await?;
     loop {
         tokio::select! {
             b = conn.read_datagram() => {

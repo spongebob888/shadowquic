@@ -8,12 +8,13 @@ use crate::{
     error::SError,
     shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
     socks::{inbound::SocksServer, outbound::SocksClient},
+    sunnyquic::inbound::SunnyQuicServer,
 };
 
 mod shadowquic;
-mod sunquic;
+mod sunnyquic;
 pub use crate::config::shadowquic::*;
-pub use crate::config::sunquic::*;
+pub use crate::config::sunnyquic::*;
 #[cfg(target_os = "android")]
 use std::path::PathBuf;
 
@@ -64,12 +65,15 @@ pub enum InboundCfg {
     Socks(SocksServerCfg),
     #[serde(rename = "shadowquic")]
     ShadowQuic(ShadowQuicServerCfg),
+    #[serde(rename = "sunquic")]
+    SunQuic(SunnyQuicServerCfg),
 }
 impl InboundCfg {
     async fn build_inbound(self) -> Result<Box<dyn Inbound>, SError> {
         let r: Box<dyn Inbound> = match self {
             InboundCfg::Socks(cfg) => Box::new(SocksServer::new(cfg).await?),
             InboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicServer::new(cfg)?),
+            InboundCfg::SunQuic(cfg) => Box::new(SunnyQuicServer::new(cfg)?),
         };
         Ok(r)
     }
@@ -203,7 +207,6 @@ pub enum DnsStrategy {
     Ipv4Only,
     Ipv6Only,
 }
-
 
 /// Log level of shadowquic
 /// Default level is info.
