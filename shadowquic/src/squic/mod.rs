@@ -47,12 +47,8 @@ pub struct SQConn<T: QuicConnection> {
 async fn wait_sunny_auth<T: QuicConnection>(conn: &SQConn<T>) -> SResult<()> {
     match tokio::time::timeout(Duration::from_millis(3200), conn.authed.wait()).await {
         Ok(true) => Ok(()),
-        Ok(false) => {
-            return Err(SError::SunnyAuthError("Wrong psassword/username".into()));
-        }
-        Err(_) => {
-            return Err(SError::SunnyAuthError("timeout".into()));
-        }
+        Ok(false) => Err(SError::SunnyAuthError("Wrong psassword/username".into())),
+        Err(_) => Err(SError::SunnyAuthError("timeout".into())),
     }
 }
 
@@ -61,8 +57,10 @@ pub(crate) async fn auth_sunny<T: QuicConnection>(
     user_hash: &[u8; SUNNY_QUIC_AUTH_LEN],
 ) -> SResult<()> {
     if conn.authed.get().is_none() {
-        let (mut send, _recv, id) = conn.open_bi().await?;
-        SQReq::SQAuthenticate(*user_hash).encode(&mut send).await?;
+        let (mut send, _recv, _id) = conn.open_bi().await?;
+        SQReq::SQAuthenticate(Box::new(*user_hash))
+            .encode(&mut send)
+            .await?;
         debug!("authentication request sent");
         conn.authed.set(true).expect("repeated authentication");
     }

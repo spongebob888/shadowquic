@@ -1,32 +1,18 @@
 use async_trait::async_trait;
-use bytes::Bytes;
-use std::{pin::Pin, sync::Arc};
+use std::sync::Arc;
 
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    select,
-    sync::{
-        SetOnce,
-        mpsc::{Receiver, Sender, channel},
-    },
+use tokio::sync::{
+    SetOnce,
+    mpsc::{Receiver, Sender, channel},
 };
-use tracing::{Instrument, Level, error, event, info, trace, trace_span};
+use tracing::{Instrument, error, trace_span};
 
 use crate::{
-    Inbound, ProxyRequest, TcpSession, TcpTrait, UdpSession,
-    config::ShadowQuicServerCfg,
-    error::SError,
-    msgs::{
-        socks5::{SDecode, SocksAddr},
-        squic::{SQCmd, SQReq},
-    },
-    quic::QuicConnection,
+    Inbound, ProxyRequest, config::ShadowQuicServerCfg, error::SError, quic::QuicConnection,
     squic::inbound::SQServerConn,
 };
 
-use crate::squic::{
-    IDStore, SQConn, handle_udp_packet_recv, handle_udp_recv_ctrl, handle_udp_send,
-};
+use crate::squic::{IDStore, SQConn};
 
 use super::quinn_wrapper::EndServer;
 use crate::quic::QuicServer;

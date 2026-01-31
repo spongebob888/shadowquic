@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::config::{
     AuthUser, CongestionControl, default_alpn, default_congestion_control, default_initial_mtu,

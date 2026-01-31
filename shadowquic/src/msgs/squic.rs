@@ -45,7 +45,7 @@ pub enum SQReq {
     SQBind(SocksAddr),
     SQAssociatOverDatagram(SocksAddr),
     SQAssociatOverStream(SocksAddr),
-    SQAuthenticate([u8; SUNNY_QUIC_AUTH_LEN]),
+    SQAuthenticate(Box<[u8; SUNNY_QUIC_AUTH_LEN]>),
 }
 
 impl SEncode for SQReq {
@@ -69,7 +69,7 @@ impl SEncode for SQReq {
             }
             SQReq::SQAuthenticate(data) => {
                 SQCmd::Authenticate.encode(s).await?;
-                s.write_all(&data).await?;
+                s.write_all(&*data).await?;
             }
         }
         Ok(())
@@ -97,8 +97,8 @@ impl SDecode for SQReq {
                 Ok(SQReq::SQAssociatOverStream(addr))
             }
             SQCmd::Authenticate => {
-                let mut data = [0u8; SUNNY_QUIC_AUTH_LEN];
-                s.read_exact(&mut data).await?;
+                let mut data = Box::new([0u8; SUNNY_QUIC_AUTH_LEN]);
+                s.read_exact(&mut *data).await?;
                 Ok(SQReq::SQAuthenticate(data))
             }
         }

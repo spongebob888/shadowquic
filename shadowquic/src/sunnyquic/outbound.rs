@@ -1,15 +1,11 @@
 use async_trait::async_trait;
-use bytes::Bytes;
 use std::{
     net::{ToSocketAddrs, UdpSocket},
     sync::Arc,
 };
 use tokio::{
     io::AsyncReadExt,
-    sync::{
-        OnceCell, SetOnce,
-        mpsc::{Receiver, Sender, channel},
-    },
+    sync::{OnceCell, SetOnce},
 };
 
 use super::EndClient;
@@ -17,12 +13,9 @@ use tracing::{Instrument, Level, debug, error, info, span, trace};
 
 use crate::{
     Outbound,
-    config::{ShadowQuicClientCfg, SunnyQuicClientCfg},
+    config::SunnyQuicClientCfg,
     error::SError,
-    msgs::{
-        socks5::{SEncode, SocksAddr},
-        squic::{SQCmd, SQReq},
-    },
+    msgs::{socks5::SEncode, squic::SQReq},
     quic::{QuicClient, QuicConnection},
     squic::{auth_sunny, handle_udp_recv_ctrl, handle_udp_send},
     sunnyquic::gen_sunny_user_hash,

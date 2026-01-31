@@ -1,15 +1,11 @@
 use async_trait::async_trait;
-use bytes::Bytes;
 use std::{
     net::{ToSocketAddrs, UdpSocket},
     sync::Arc,
 };
 use tokio::{
     io::AsyncReadExt,
-    sync::{
-        OnceCell, SetOnce,
-        mpsc::{Receiver, Sender, channel},
-    },
+    sync::{OnceCell, SetOnce},
 };
 
 use super::quinn_wrapper::EndClient;
@@ -19,10 +15,7 @@ use crate::{
     Outbound,
     config::ShadowQuicClientCfg,
     error::SError,
-    msgs::{
-        socks5::{SEncode, SocksAddr},
-        squic::{SQCmd, SQReq},
-    },
+    msgs::{socks5::SEncode, squic::SQReq},
     quic::{QuicClient, QuicConnection},
     squic::{handle_udp_recv_ctrl, handle_udp_send},
 };

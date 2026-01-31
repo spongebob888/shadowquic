@@ -1,10 +1,4 @@
-use std::{
-    io,
-    net::{SocketAddr, ToSocketAddrs},
-    ops::Deref,
-    sync::Arc,
-    time::Duration,
-};
+use std::{io, net::SocketAddr, ops::Deref, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -18,7 +12,6 @@ use rustls_jls::{
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
 };
 use socket2::{Domain, Protocol, Socket, Type};
-use thiserror::Error;
 use tracing::{debug, error, info, trace, warn};
 
 use rustls_jls::ServerConfig as RustlsServerConfig;
@@ -163,7 +156,7 @@ impl QuicClient for Endpoint {
             })?;
         }
 
-        Self::new_with_socket(&cfg, socket.into())
+        Self::new_with_socket(cfg, socket.into())
     }
     async fn connect(&self, addr: SocketAddr, server_name: &str) -> Result<Self::C, QuicErrorRepr> {
         let conn = self.inner.connect(addr, server_name)?;
@@ -205,7 +198,7 @@ impl QuicClient for Endpoint {
             quinn::default_runtime().ok_or_else(|| io::Error::other("no async runtime found"))?;
         let mut end =
             quinn::Endpoint::new(quinn::EndpointConfig::default(), None, socket, runtime)?;
-        end.set_default_client_config(gen_client_cfg(&cfg));
+        end.set_default_client_config(gen_client_cfg(cfg));
         Ok(Endpoint {
             inner: end,
             zero_rtt: cfg.zero_rtt,

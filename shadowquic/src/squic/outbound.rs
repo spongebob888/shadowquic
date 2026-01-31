@@ -1,32 +1,20 @@
-use async_trait::async_trait;
 use bytes::Bytes;
-use std::{
-    net::{ToSocketAddrs, UdpSocket},
-    sync::Arc,
-};
-use tokio::{
-    io::AsyncReadExt,
-    sync::{
-        OnceCell,
-        mpsc::{Receiver, Sender, channel},
-    },
-};
+use std::sync::Arc;
+use tokio::sync::mpsc::{Receiver, Sender, channel};
 
-use tracing::{Instrument, Level, debug, error, info, span, trace};
+use tracing::{error, info, trace};
 
 use crate::{
-    Outbound,
-    config::ShadowQuicClientCfg,
     error::SError,
     msgs::{
         socks5::{SEncode, SocksAddr},
-        squic::{SQCmd, SQReq},
+        squic::SQReq,
     },
-    quic::{QuicClient, QuicConnection},
+    quic::QuicConnection,
     squic::{handle_udp_recv_ctrl, handle_udp_send},
 };
 
-use super::{IDStore, SQConn, handle_udp_packet_recv, inbound::Unsplit};
+use super::{SQConn, inbound::Unsplit};
 
 /// Helper function to create new stream for proxy dstination
 #[allow(dead_code)]

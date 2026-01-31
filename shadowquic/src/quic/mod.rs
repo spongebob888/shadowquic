@@ -1,9 +1,6 @@
 use std::net::{SocketAddr, UdpSocket};
 
-use crate::{
-    config::{ShadowQuicClientCfg, ShadowQuicServerCfg},
-    error::SResult,
-};
+use crate::error::SResult;
 use async_trait::async_trait;
 use bytes::Bytes;
 use thiserror::Error;

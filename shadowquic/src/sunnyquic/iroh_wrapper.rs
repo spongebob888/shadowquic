@@ -1,10 +1,4 @@
-use std::{
-    io,
-    net::{SocketAddr, ToSocketAddrs},
-    ops::Deref,
-    sync::Arc,
-    time::Duration,
-};
+use std::{io, net::SocketAddr, ops::Deref, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -15,21 +9,17 @@ use iroh_quinn::{
 };
 use rustls::{
     RootCertStore,
-    pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, pem::PemObject},
+    pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
 };
 use socket2::{Domain, Protocol, Socket, Type};
-use thiserror::Error;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, trace, warn};
 
 use rustls::ServerConfig as RustlsServerConfig;
 
 use iroh_quinn::crypto::rustls::QuicServerConfig;
 
 use crate::{
-    config::{
-        CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg, SunnyQuicClientCfg,
-        SunnyQuicServerCfg,
-    },
+    config::{CongestionControl, SunnyQuicClientCfg, SunnyQuicServerCfg},
     error::{SError, SResult},
     quic::{
         MAX_DATAGRAM_WINDOW, MAX_SEND_WINDOW, MAX_STREAM_WINDOW, QuicClient, QuicConnection,
@@ -166,14 +156,14 @@ impl QuicClient for Endpoint {
             })?;
         }
 
-        Self::new_with_socket(&cfg, socket.into())
+        Self::new_with_socket(cfg, socket.into())
     }
     async fn connect(&self, addr: SocketAddr, server_name: &str) -> Result<Self::C, QuicErrorRepr> {
         let conn = self.inner.connect(addr, server_name)?;
         let conn = if self.zero_rtt {
             match conn.into_0rtt() {
                 Ok((x, accepted)) => {
-                    let conn_clone = x.clone();
+                    let _conn_clone = x.clone();
                     tokio::spawn(async move {
                         debug!("zero rtt accepted: {}", accepted.await);
                     });
@@ -197,13 +187,13 @@ impl QuicClient for Endpoint {
     fn new_with_socket(cfg: &Self::SC, socket: std::net::UdpSocket) -> SResult<Self> {
         let runtime = iroh_quinn::default_runtime()
             .ok_or_else(|| io::Error::other("no async runtime found"))?;
-        let mut end = iroh_quinn::Endpoint::new(
+        let end = iroh_quinn::Endpoint::new(
             iroh_quinn::EndpointConfig::default(),
             None,
             socket,
             runtime,
         )?;
-        end.set_default_client_config(gen_client_cfg(&cfg));
+        end.set_default_client_config(gen_client_cfg(cfg));
         Ok(Endpoint {
             inner: end,
             zero_rtt: cfg.zero_rtt,
@@ -219,7 +209,7 @@ pub fn gen_client_cfg(cfg: &SunnyQuicClientCfg) -> iroh_quinn::ClientConfig {
     };
     if let Some(path) = &cfg.cert_path {
         let der_cert = CertificateDer::from_pem_file(path)
-            .expect(&format!("certificate not found:{:?}", path));
+            .unwrap_or_else(|_| panic!("certificate not found:{:?}", path));
         root_store.add_parsable_certificates([der_cert]);
     }
 
@@ -293,7 +283,7 @@ impl QuicServer for Endpoint {
         crypto.max_early_data_size = if cfg.zero_rtt { u32::MAX } else { 0 };
         crypto.send_half_rtt_data = cfg.zero_rtt;
 
-        for user in &cfg.users {}
+        for _user in &cfg.users {}
 
         let mut tp_cfg = TransportConfig::default();
 
@@ -344,7 +334,7 @@ impl QuicServer for Endpoint {
                 let connection = if self.zero_rtt {
                     match conn.into_0rtt() {
                         Ok((conn, accepted)) => {
-                            let conn_clone = conn.clone();
+                            let _conn_clone = conn.clone();
                             tokio::spawn(async move {
                                 debug!("zero rtt accepted:{}", accepted.await);
                             });

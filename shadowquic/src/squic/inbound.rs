@@ -1,32 +1,25 @@
-use async_trait::async_trait;
 use bytes::Bytes;
-use std::{collections::HashMap, marker::PhantomData, pin::Pin, sync::Arc, time::Duration};
+use std::{collections::HashMap, pin::Pin, sync::Arc};
 
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     select,
-    sync::{
-        OnceCell, SetOnce,
-        mpsc::{Receiver, Sender, channel},
-    },
+    sync::mpsc::{Sender, channel},
 };
-use tracing::{Instrument, Level, error, event, info, trace, trace_span};
+use tracing::{Instrument, Level, event, info, trace, trace_span};
 
 use crate::{
-    Inbound, ProxyRequest, TcpSession, TcpTrait, UdpSession,
-    config::ShadowQuicServerCfg,
+    ProxyRequest, TcpSession, TcpTrait, UdpSession,
     error::SError,
     msgs::{
         socks5::{SDecode, SocksAddr},
-        squic::{SQCmd, SQReq, SUNNY_QUIC_AUTH_LEN},
+        squic::{SQReq, SUNNY_QUIC_AUTH_LEN},
     },
     quic::QuicConnection,
     squic::wait_sunny_auth,
 };
 
-use super::{IDStore, SQConn, handle_udp_packet_recv, handle_udp_recv_ctrl, handle_udp_send};
-
-use crate::quic::QuicServer;
+use super::{SQConn, handle_udp_packet_recv, handle_udp_recv_ctrl, handle_udp_send};
 
 pub type SunnyQuicUsers = Arc<HashMap<[u8; SUNNY_QUIC_AUTH_LEN], String>>;
 
@@ -120,7 +113,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                 tokio::try_join!(fut1, fut2)?;
             }
             SQReq::SQAuthenticate(passwd_hash) => {
-                if let Some(name) = self.users.get(&passwd_hash) {
+                if let Some(name) = self.users.get(passwd_hash.as_ref()) {
                     tracing::info!("user authenticated:{}", name);
                     self.inner
                         .authed
