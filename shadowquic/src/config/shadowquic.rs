@@ -3,8 +3,9 @@ use std::net::SocketAddr;
 use serde::Deserialize;
 
 use crate::config::{
-    AuthUser, CongestionControl, default_alpn, default_congestion_control, default_initial_mtu,
-    default_keep_alive_interval, default_min_mtu, default_over_stream, default_zero_rtt,
+    AuthUser, CongestionControl, default_alpn, default_congestion_control, default_gso,
+    default_initial_mtu, default_keep_alive_interval, default_min_mtu, default_over_stream,
+    default_zero_rtt,
 };
 
 pub fn default_rate_limit() -> u64 {
@@ -59,6 +60,12 @@ pub struct ShadowQuicServerCfg {
     /// 1400 is recommended for high packet loss network. default to be 1290
     #[serde(default = "default_min_mtu")]
     pub min_mtu: u16,
+    /// Enable Quinn Generic Segmentation Offload (GSO).
+    /// Controls [`quinn::TransportConfig::enable_segmentation_offload`]. When supported, GSO reduces
+    /// CPU usage for bulk sends; unsupported environments may see transient startup packet loss.
+    /// Enabled by default
+    #[serde(default = "default_gso")]
+    pub gso: bool,
 }
 
 /// Jls upstream configuration
@@ -92,6 +99,7 @@ impl Default for ShadowQuicServerCfg {
             initial_mtu: default_initial_mtu(),
             min_mtu: default_min_mtu(),
             server_name: None,
+            gso: default_gso(),
         }
     }
 }
@@ -110,6 +118,7 @@ impl Default for ShadowQuicClientCfg {
             over_stream: Default::default(),
             min_mtu: default_min_mtu(),
             keep_alive_interval: default_keep_alive_interval(),
+            gso: default_gso(),
             #[cfg(target_os = "android")]
             protect_path: Default::default(),
         }
@@ -169,6 +178,13 @@ pub struct ShadowQuicClientCfg {
     /// Disabled by default.
     #[serde(default = "default_keep_alive_interval")]
     pub keep_alive_interval: u32,
+
+    /// Enable Quinn Generic Segmentation Offload (GSO).
+    /// Controls [`quinn::TransportConfig::enable_segmentation_offload`]. When supported, GSO reduces
+    /// CPU usage for bulk sends; unsupported environments may see transient startup packet loss.
+    /// Enabled by default
+    #[serde(default = "default_gso")]
+    pub gso: bool,
 
     /// Android Only. the unix socket path for protecting android socket
     #[cfg(target_os = "android")]

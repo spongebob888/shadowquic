@@ -11,6 +11,7 @@ inbound:
     alpn: ["h3"]
     congestion-control: bbr
     zero-rtt: true
+    gso: true # Enable Quinn Generic Segmentation Offload (GSO)
 outbound:
     type: direct
     dns-strategy: prefer-ipv4 # or prefer-ipv6, ipv4-only, ipv6-only

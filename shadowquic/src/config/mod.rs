@@ -176,6 +176,10 @@ pub fn default_keep_alive_interval() -> u32 {
     0
 }
 
+pub fn default_gso() -> bool {
+    true
+}
+
 #[derive(Serialize, Deserialize, Default, Debug, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub enum CongestionControl {
