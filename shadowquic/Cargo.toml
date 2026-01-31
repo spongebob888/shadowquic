@@ -9,10 +9,10 @@ description = { workspace = true }
 license = { workspace = true}
 
 [features]
-default = ["quinn", "sunnyquic-iroh-quinn"]
+default = ["shadowquic-quinn", "sunnyquic-iroh-quinn"]
 tokio-console = ["dep:console-subscriber","tokio/tracing"]
-quinn = ["dep:quinn"]
-sunnyquic-gm-quic = ["dep:gm-quic","dep:qevent","dep:qbase","dep:qunreliable", "dep:rustls"]
+shadowquic-quinn = ["dep:quinn","dep:rustls_jls"]
+sunnyquic-gm-quic = ["dep:gm-quic","dep:qevent","dep:qbase","dep:qunreliable", "dep:rustls","dep:ring", "dep:rustls-native-certs"]
 sunnyquic-iroh-quinn = ["dep:iroh-quinn", "dep:rustls", "dep:ring"]
 
 [dependencies]
@@ -25,7 +25,7 @@ tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt", "ans
 quinn = { package = "quinn", git = "https://github.com/spongebob888/quinn-jls", version = "0.11.7-0.2.1", default-features = false, features = ["runtime-tokio", "rustls-ring"],optional = true}
 
 
-rustls_jls = { package = "rustls", git = "https://github.com/spongebob888/rustls-jls", version = "0.23.25-1.1.0", default-features = false, features = ["std","ring"]}
+rustls_jls = { package = "rustls", git = "https://github.com/spongebob888/rustls-jls", version = "0.23.25-1.1.0", default-features = false, features = ["std","ring"],optional = true}
 rcgen = { version = "0.14", default-features = false, features = ["crypto","ring"] }
 bytes = "1.11.0"
 async-trait = "0.1.89"
@@ -43,7 +43,7 @@ qevent = { package = "qevent", path = "../../gm-quic/qevent", default-features =
 qbase = { package = "qbase", path = "../../gm-quic/qbase", default-features = false, optional = true}
 qunreliable = { package = "qunreliable", path = "../../gm-quic/qunreliable", default-features = false, optional = true}
 rustls = { version = "0.23", default-features = false, features = ["std","ring"], optional = true}
-rustls-native-certs = "*"
+rustls-native-certs = {version = "*", optional = true}
 
 iroh-quinn ={ version = "*",optional = true, default-features = false, features = ["rustls-ring","runtime-tokio"]}
 ring = {version = "*", optional = true}
