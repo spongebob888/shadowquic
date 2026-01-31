@@ -13,8 +13,8 @@ pub enum SError {
     Io(#[from] io::Error),
     #[error(transparent)]
     QuicError(#[from] QuicErrorRepr),
-    #[error("Rustls Error")]
-    RustlsError(#[from] rustls::Error),
+    #[error("Rustls Error:{0}")]
+    RustlsError(String),
     #[error("Outbound unavailable")]
     OutboundUnavailable,
     #[error("Inbound unavailable")]
@@ -27,6 +27,8 @@ pub enum SError {
     UDPSessionClosed(String),
     #[error("socks error: {0}")]
     SocksError(String),
+    #[error("Sunnyquic authentication error: {0}")]
+    SunnyAuthError(String),
 }
 
 pub type SResult<T> = result::Result<T, SError>;
@@ -34,3 +36,9 @@ pub type SResult<T> = result::Result<T, SError>;
 // #[derive(Error, Debug)]
 // #[error(transparent)]
 // pub struct QuicError(#[from] QuicErrorRepr);
+
+impl From<rustls_jls::Error> for SError {
+    fn from(err: rustls_jls::Error) -> Self {
+        SError::RustlsError(err.to_string())
+    }
+}

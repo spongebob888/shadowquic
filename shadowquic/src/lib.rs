@@ -18,6 +18,8 @@ pub mod msgs;
 pub mod quic;
 pub mod shadowquic;
 pub mod socks;
+pub mod squic;
+pub mod sunnyquic;
 pub mod utils;
 pub enum ProxyRequest<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend> {
     Tcp(TcpSession<T>),
