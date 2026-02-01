@@ -204,7 +204,7 @@ impl QuicClient for Endpoint<SunnyQuicClientCfg> {
             let conn = conn.clone();
             let path = path.clone();
             let fut = async move {
-                for ii in 0..2 {
+                for ii in 0..5 {
                     let to_open = conn.open_path_ensure(path_addr, Default::default()).await;
                     match to_open {
                         Ok(path) => {
@@ -212,13 +212,13 @@ impl QuicClient for Endpoint<SunnyQuicClientCfg> {
                             break;
                         }
                         Err(e) => {
-                            if ii == 1 {
+                            if ii == 4 {
                                 warn!("failed to add multipath path {}: {e}", path);
                                 break;
                             }
                             debug!("failed to add multipath path {path}: {e}, try again");
 
-                            tokio::time::sleep(Duration::from_millis(333)).await;
+                            tokio::time::sleep(Duration::from_millis(2000)).await;
                         }
                     }
                 }
