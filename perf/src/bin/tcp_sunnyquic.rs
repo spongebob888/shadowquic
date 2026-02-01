@@ -1,7 +1,7 @@
 use fast_socks5::client::{Config, Socks5Stream};
 use shadowquic::config::{
-    AuthUser, CongestionControl, SocksServerCfg, SunnyQuicClientCfg, SunnyQuicServerCfg,
-    default_initial_mtu,
+    AuthUser, CongestionControl, JlsUpstream, ShadowQuicServerCfg, SocksServerCfg,
+    SunnyQuicClientCfg, SunnyQuicServerCfg, default_initial_mtu,
 };
 use shadowquic::sunnyquic::inbound::SunnyQuicServer;
 use shadowquic::sunnyquic::outbound::SunnyQuicClient;
@@ -9,7 +9,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use tokio::{net::TcpListener, time::Duration};
 
-use shadowquic::{Manager, direct::outbound::DirectOut, socks::inbound::SocksServer};
+use shadowquic::{
+    Manager,
+    direct::outbound::DirectOut,
+    shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
+    socks::inbound::SocksServer,
+};
 
 use tracing::info;
 use tracing::{Level, level_filters::LevelFilter, trace};
@@ -101,6 +106,7 @@ async fn test_shadowquic() {
         congestion_control: CongestionControl::Bbr,
         zero_rtt: true,
         over_stream: true,
+        extra_paths: vec!["[::1]:4444".into()],
         cert_path: Some("./assets/certs/MyCA.pem".into()),
         ..Default::default()
     });
@@ -111,7 +117,7 @@ async fn test_shadowquic() {
     };
 
     let sq_server = SunnyQuicServer::new(SunnyQuicServerCfg {
-        bind_addr: "127.0.0.1:4444".parse().unwrap(),
+        bind_addr: "[::]:4444".parse().unwrap(),
         users: vec![AuthUser {
             username: "123".into(),
             password: "123".into(),
