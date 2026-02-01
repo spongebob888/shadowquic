@@ -58,14 +58,15 @@ impl SunnyQuicClient {
         let end = self
             .quic_end
             .get_or_init(|| async {
-
                 match self.init_endpoint(true).await {
                     Ok(ep) => ep,
-                    Err(_) => self.init_endpoint(false).await
-                    .expect("error during initialize quic endpoint"),
+                    Err(_) => self
+                        .init_endpoint(false)
+                        .await
+                        .expect("error during initialize quic endpoint"),
                 }
-         
-            }).await;
+            })
+            .await;
         let conn = QuicClient::connect(end, addr, &self.config.server_name).await?;
 
         let conn = SQConn {

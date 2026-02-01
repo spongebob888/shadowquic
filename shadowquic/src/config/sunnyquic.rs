@@ -2,13 +2,10 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use serde::Deserialize;
 
-use crate::{
-    config::{
+use crate::config::{
         AuthUser, CongestionControl, default_alpn, default_congestion_control, default_initial_mtu,
         default_keep_alive_interval, default_min_mtu, default_over_stream, default_zero_rtt,
-    },
-    msgs::socks5::AddrOrDomain,
-};
+    };
 
 pub(crate) fn default_multipath_num() -> u32 {
     12

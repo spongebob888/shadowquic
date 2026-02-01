@@ -2,7 +2,6 @@ use std::{
     io,
     net::{SocketAddr, ToSocketAddrs},
     ops::Deref,
-    path,
     sync::Arc,
     time::Duration,
 };
@@ -193,13 +192,15 @@ impl QuicClient for Endpoint<SunnyQuicClientCfg> {
                 .to_socket_addrs()
                 .map_err(|e| {
                     QuicErrorRepr::QuicConnect(format!("invalid multipath address {}: {}", path, e))
-                })?
-                .into_iter();
+                })?;
             let path_addr = addrs_iter.next().ok_or_else(|| {
                 QuicErrorRepr::QuicConnect(format!("no valid socket address found for {}", path))
             })?;
             if !conn.is_multipath_enabled() {
-                warn!("multipath not enabled in quic connection, can't add path {}", path);
+                warn!(
+                    "multipath not enabled in quic connection, can't add path {}",
+                    path
+                );
                 break;
             }
             let conn = conn.clone();
@@ -284,7 +285,7 @@ pub fn gen_client_cfg(cfg: &SunnyQuicClientCfg) -> iroh_quinn::ClientConfig {
     } else {
         None
     });
-    tp_cfg.max_concurrent_multipath_paths(cfg.max_path_num as u32);
+    tp_cfg.max_concurrent_multipath_paths(cfg.max_path_num);
 
     match cfg.congestion_control {
         CongestionControl::Cubic => {
@@ -364,7 +365,7 @@ impl QuicServer for Endpoint<SunnyQuicServerCfg> {
         tp_cfg.stream_receive_window(MAX_STREAM_WINDOW.try_into().unwrap());
         tp_cfg.datagram_send_buffer_size(MAX_DATAGRAM_WINDOW.try_into().unwrap());
         tp_cfg.datagram_receive_buffer_size(Some(MAX_DATAGRAM_WINDOW as usize));
-        tp_cfg.max_concurrent_multipath_paths(cfg.max_path_num as u32);
+        tp_cfg.max_concurrent_multipath_paths(cfg.max_path_num);
 
         config.transport_config(Arc::new(tp_cfg));
 
