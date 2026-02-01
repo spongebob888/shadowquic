@@ -191,48 +191,11 @@ impl QuicClient for Endpoint<SunnyQuicClientCfg> {
             trace!("1-rtt quic connection established");
             x
         };
-        for path in &self.cfg.extra_paths {
-            let mut addrs_iter = path.to_socket_addrs().map_err(|e| {
-                QuicErrorRepr::QuicConnect(format!("invalid multipath address {}: {}", path, e))
-            })?;
-            let path_addr = addrs_iter.next().ok_or_else(|| {
-                QuicErrorRepr::QuicConnect(format!("no valid socket address found for {}", path))
-            })?;
-            // We must wait for server hello before knowning whether multipath is enabled
-            if let Some(x) = &mut accepted_0rtt {
-                let _ = x.await;
-            }
-            if !conn.is_multipath_enabled() {
-                warn!(
-                    "multipath not enabled in quic connection, can't add path {}",
-                    path
-                );
-                break;
-            }
-            let conn = conn.clone();
-            let path = path.clone();
-            let fut = async move {
-                for ii in 0..5 {
-                    let to_open = conn.open_path_ensure(path_addr, Default::default()).await;
-                    match to_open {
-                        Ok(path) => {
-                            debug!("added multipath path: {:?}", path.id());
-                            break;
-                        }
-                        Err(e) => {
-                            if ii == 4 {
-                                warn!("failed to add multipath path {}: {e}", path);
-                                break;
-                            }
-                            debug!("failed to add multipath path {path}: {e}, try again");
-
-                            tokio::time::sleep(Duration::from_millis(2000)).await;
-                        }
-                    }
-                }
-            };
-            tokio::spawn(fut);
-        }
+        tokio::spawn(add_extra_path(
+            conn.clone(),
+            self.cfg.extra_paths.clone(),
+            accepted_0rtt,
+        ));
         Ok(conn)
     }
 
@@ -253,6 +216,56 @@ impl QuicClient for Endpoint<SunnyQuicClientCfg> {
     }
 
     type C = Connection;
+}
+
+async fn add_extra_path(
+    conn: Connection,
+    extra_paths: Vec<String>,
+    mut accepted_0rtt: Option<tokio::sync::oneshot::Receiver<()>>,
+) -> Result<(), QuicErrorRepr> {
+    for path in extra_paths {
+        let mut addrs_iter = path.to_socket_addrs().map_err(|e| {
+            QuicErrorRepr::QuicConnect(format!("invalid multipath address {}: {}", path, e))
+        })?;
+        let path_addr = addrs_iter.next().ok_or_else(|| {
+            QuicErrorRepr::QuicConnect(format!("no valid socket address found for {}", path))
+        })?;
+        // We must wait for server hello before knowning whether multipath is enabled
+        if let Some(x) = &mut accepted_0rtt {
+            let _ = x.await;
+        }
+        if !conn.is_multipath_enabled() {
+            warn!(
+                "multipath not enabled in quic connection, can't add path {}",
+                path
+            );
+            break;
+        }
+        let conn = conn.clone();
+        let path = path.clone();
+        let fut = async move {
+            for ii in 0..5 {
+                let to_open = conn.open_path_ensure(path_addr, Default::default()).await;
+                match to_open {
+                    Ok(path) => {
+                        debug!("added multipath path: {:?}", path.id());
+                        break;
+                    }
+                    Err(e) => {
+                        if ii == 4 {
+                            warn!("failed to add multipath path {}: {e}", path);
+                            break;
+                        }
+                        debug!("failed to add multipath path {path}: {e}, try again");
+
+                        tokio::time::sleep(Duration::from_millis(2000)).await;
+                    }
+                }
+            }
+        };
+        tokio::spawn(fut);
+    }
+    Ok(())
 }
 
 pub fn gen_client_cfg(cfg: &SunnyQuicClientCfg) -> iroh_quinn::ClientConfig {
