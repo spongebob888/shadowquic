@@ -247,8 +247,8 @@ async fn add_extra_path(
             for ii in 0..5 {
                 let to_open = conn.open_path_ensure(path_addr, Default::default()).await;
                 match to_open {
-                    Ok(path) => {
-                        debug!("added multipath path: {:?}", path.id());
+                    Ok(p) => {
+                        debug!("added multipath path to {path}: {:?}", p.id());
                         break;
                     }
                     Err(e) => {
