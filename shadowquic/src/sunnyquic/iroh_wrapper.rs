@@ -1,4 +1,11 @@
-use std::{io, net::SocketAddr, ops::Deref, sync::Arc, time::Duration};
+use std::{
+    io,
+    net::{SocketAddr, ToSocketAddrs},
+    ops::Deref,
+    path,
+    sync::Arc,
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -28,11 +35,11 @@ use crate::{
 };
 
 pub type Connection = iroh_quinn::Connection;
-pub struct Endpoint {
+pub struct Endpoint<SC> {
     inner: iroh_quinn::Endpoint,
-    zero_rtt: bool,
+    cfg: Arc<SC>,
 }
-impl Deref for Endpoint {
+impl<SC> Deref for Endpoint<SC> {
     type Target = iroh_quinn::Endpoint;
 
     fn deref(&self) -> &Self::Target {
@@ -40,8 +47,8 @@ impl Deref for Endpoint {
     }
 }
 
-pub use Endpoint as EndClient;
-pub use Endpoint as EndServer;
+pub type EndClient = Endpoint<SunnyQuicClientCfg>;
+pub type EndServer = Endpoint<SunnyQuicServerCfg>;
 #[async_trait]
 impl QuicConnection for Connection {
     type RecvStream = iroh_quinn::RecvStream;
@@ -120,7 +127,7 @@ impl QuicConnection for Connection {
 }
 
 #[async_trait]
-impl QuicClient for Endpoint {
+impl QuicClient for Endpoint<SunnyQuicClientCfg> {
     type SC = SunnyQuicClientCfg;
     async fn new(cfg: &Self::SC, ipv6: bool) -> SResult<Self> {
         let socket;
@@ -160,7 +167,7 @@ impl QuicClient for Endpoint {
     }
     async fn connect(&self, addr: SocketAddr, server_name: &str) -> Result<Self::C, QuicErrorRepr> {
         let conn = self.inner.connect(addr, server_name)?;
-        let conn = if self.zero_rtt {
+        let conn = if self.cfg.zero_rtt {
             match conn.into_0rtt() {
                 Ok((x, accepted)) => {
                     let _conn_clone = x.clone();
@@ -181,6 +188,44 @@ impl QuicClient for Endpoint {
             trace!("1-rtt quic connection established");
             x
         };
+        for path in &self.cfg.extra_paths {
+            let mut addrs_iter = path
+                .to_socket_addrs()
+                .map_err(|e| {
+                    QuicErrorRepr::QuicConnect(format!("invalid multipath address {}: {}", path, e))
+                })?
+                .into_iter();
+            let path_addr = addrs_iter.next().ok_or_else(|| {
+                QuicErrorRepr::QuicConnect(format!("no valid socket address found for {}", path))
+            })?;
+            if !conn.is_multipath_enabled() {
+                warn!("multipath not enabled in quic connection, can't add path {}", path);
+                break;
+            }
+            let conn = conn.clone();
+            let path = path.clone();
+            let fut = async move {
+                for ii in 0..2 {
+                    let to_open = conn.open_path_ensure(path_addr, Default::default()).await;
+                    match to_open {
+                        Ok(path) => {
+                            debug!("added multipath path: {:?}", path.id());
+                            break;
+                        }
+                        Err(e) => {
+                            if ii == 1 {
+                                warn!("failed to add multipath path {}: {e}", path);
+                                break;
+                            }
+                            debug!("failed to add multipath path {path}: {e}, try again");
+
+                            tokio::time::sleep(Duration::from_millis(333)).await;
+                        }
+                    }
+                }
+            };
+            tokio::spawn(fut);
+        }
         Ok(conn)
     }
 
@@ -196,7 +241,7 @@ impl QuicClient for Endpoint {
         end.set_default_client_config(gen_client_cfg(cfg));
         Ok(Endpoint {
             inner: end,
-            zero_rtt: cfg.zero_rtt,
+            cfg: Arc::new(cfg.to_owned()),
         })
     }
 
@@ -239,6 +284,7 @@ pub fn gen_client_cfg(cfg: &SunnyQuicClientCfg) -> iroh_quinn::ClientConfig {
     } else {
         None
     });
+    tp_cfg.max_concurrent_multipath_paths(cfg.max_path_num as u32);
 
     match cfg.congestion_control {
         CongestionControl::Cubic => {
@@ -260,7 +306,7 @@ pub fn gen_client_cfg(cfg: &SunnyQuicClientCfg) -> iroh_quinn::ClientConfig {
 }
 
 #[async_trait]
-impl QuicServer for Endpoint {
+impl QuicServer for Endpoint<SunnyQuicServerCfg> {
     type C = Connection;
     type SC = SunnyQuicServerCfg;
     async fn new(cfg: &Self::SC) -> SResult<Self> {
@@ -318,20 +364,21 @@ impl QuicServer for Endpoint {
         tp_cfg.stream_receive_window(MAX_STREAM_WINDOW.try_into().unwrap());
         tp_cfg.datagram_send_buffer_size(MAX_DATAGRAM_WINDOW.try_into().unwrap());
         tp_cfg.datagram_receive_buffer_size(Some(MAX_DATAGRAM_WINDOW as usize));
+        tp_cfg.max_concurrent_multipath_paths(cfg.max_path_num as u32);
 
         config.transport_config(Arc::new(tp_cfg));
 
         let endpoint = iroh_quinn::Endpoint::server(config, cfg.bind_addr)?;
         Ok(Endpoint {
             inner: endpoint,
-            zero_rtt: cfg.zero_rtt,
+            cfg: Arc::new(cfg.to_owned()),
         })
     }
     async fn accept(&self) -> Result<Self::C, QuicErrorRepr> {
         match self.deref().accept().await {
             Some(conn) => {
                 let conn = conn.accept()?;
-                let connection = if self.zero_rtt {
+                let connection = if self.cfg.zero_rtt {
                     match conn.into_0rtt() {
                         Ok((conn, accepted)) => {
                             let _conn_clone = conn.clone();

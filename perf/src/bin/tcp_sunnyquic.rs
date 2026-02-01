@@ -106,6 +106,7 @@ async fn test_shadowquic() {
         congestion_control: CongestionControl::Bbr,
         zero_rtt: true,
         over_stream: true,
+        extra_paths: vec!["[::1]:4444".into()],
         cert_path: Some("./assets/certs/MyCA.pem".into()),
         ..Default::default()
     });
@@ -116,7 +117,7 @@ async fn test_shadowquic() {
     };
 
     let sq_server = SunnyQuicServer::new(SunnyQuicServerCfg {
-        bind_addr: "127.0.0.1:4444".parse().unwrap(),
+        bind_addr: "[::]:4444".parse().unwrap(),
         users: vec![AuthUser {
             username: "123".into(),
             password: "123".into(),
