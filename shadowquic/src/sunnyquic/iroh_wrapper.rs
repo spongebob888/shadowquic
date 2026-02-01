@@ -188,11 +188,9 @@ impl QuicClient for Endpoint<SunnyQuicClientCfg> {
             x
         };
         for path in &self.cfg.extra_paths {
-            let mut addrs_iter = path
-                .to_socket_addrs()
-                .map_err(|e| {
-                    QuicErrorRepr::QuicConnect(format!("invalid multipath address {}: {}", path, e))
-                })?;
+            let mut addrs_iter = path.to_socket_addrs().map_err(|e| {
+                QuicErrorRepr::QuicConnect(format!("invalid multipath address {}: {}", path, e))
+            })?;
             let path_addr = addrs_iter.next().ok_or_else(|| {
                 QuicErrorRepr::QuicConnect(format!("no valid socket address found for {}", path))
             })?;
@@ -250,9 +248,13 @@ impl QuicClient for Endpoint<SunnyQuicClientCfg> {
 }
 
 pub fn gen_client_cfg(cfg: &SunnyQuicClientCfg) -> iroh_quinn::ClientConfig {
-    let mut root_store = RootCertStore {
-        roots: webpki_roots::TLS_SERVER_ROOTS.into(),
-    };
+    let mut root_store = RootCertStore::empty();
+    for cert in
+        rustls_native_certs::load_native_certs().expect("failed to load OS root certificates")
+    {
+        root_store.add(cert).unwrap();
+    }
+
     if let Some(path) = &cfg.cert_path {
         let der_cert = CertificateDer::from_pem_file(path)
             .unwrap_or_else(|_| panic!("certificate not found:{:?}", path));
@@ -313,14 +315,16 @@ impl QuicServer for Endpoint<SunnyQuicServerCfg> {
     async fn new(cfg: &Self::SC) -> SResult<Self> {
         let mut crypto: RustlsServerConfig;
 
-        let cert_der = CertificateDer::from_pem_file(&cfg.cert_path)
-            .map_err(|x| SError::RustlsError(x.to_string()))?;
+        let cert_der = CertificateDer::pem_file_iter(&cfg.cert_path)
+            .map_err(|x| SError::RustlsError(x.to_string()))?
+            .filter_map(|x| x.ok())
+            .collect();
         let priv_key = PrivateKeyDer::from_pem_file(&cfg.key_path)
             .map_err(|x| SError::RustlsError(x.to_string()))?;
 
         crypto = RustlsServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
             .with_no_client_auth()
-            .with_single_cert(vec![cert_der], priv_key)?;
+            .with_single_cert(cert_der, priv_key)?;
         crypto.alpn_protocols = cfg
             .alpn
             .iter()
