@@ -166,12 +166,16 @@ impl QuicClient for Endpoint<SunnyQuicClientCfg> {
     }
     async fn connect(&self, addr: SocketAddr, server_name: &str) -> Result<Self::C, QuicErrorRepr> {
         let conn = self.inner.connect(addr, server_name)?;
+        let mut accepted_0rtt = None;
         let conn = if self.cfg.zero_rtt {
             match conn.into_0rtt() {
                 Ok((x, accepted)) => {
                     let _conn_clone = x.clone();
+                    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+                    accepted_0rtt = Some(rx);
                     tokio::spawn(async move {
                         debug!("zero rtt accepted: {}", accepted.await);
+                        tx.send(()).unwrap_or(());
                     });
                     trace!("trying 0-rtt quic connection");
                     x
@@ -194,6 +198,10 @@ impl QuicClient for Endpoint<SunnyQuicClientCfg> {
             let path_addr = addrs_iter.next().ok_or_else(|| {
                 QuicErrorRepr::QuicConnect(format!("no valid socket address found for {}", path))
             })?;
+            // We must wait for server hello before knowning whether multipath is enabled
+            if let Some(x) = &mut accepted_0rtt {
+                let _ = x.await;
+            }
             if !conn.is_multipath_enabled() {
                 warn!(
                     "multipath not enabled in quic connection, can't add path {}",
