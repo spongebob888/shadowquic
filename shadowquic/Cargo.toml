@@ -9,7 +9,7 @@ description = { workspace = true }
 license = { workspace = true}
 
 [features]
-default = ["shadowquic-quinn"]
+default = ["shadowquic-quinn", "sunnyquic-iroh-quinn"]
 tokio-console = ["dep:console-subscriber","tokio/tracing"]
 shadowquic-quinn = ["dep:quinn","dep:rustls_jls"]
 sunnyquic-gm-quic = ["dep:gm-quic","dep:qevent","dep:qbase","dep:qunreliable", "dep:rustls","dep:rustls-native-certs"]
