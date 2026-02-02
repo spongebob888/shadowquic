@@ -1,6 +1,6 @@
 use fast_socks5::client::{Config, Socks5Stream};
 use shadowquic::config::{
-    AuthUser, CongestionControl, JlsUpstream, ShadowQuicClientCfg, ShadowQuicServerCfg,
+    AuthUser, CongestionControl,
     SocksServerCfg, SunnyQuicClientCfg, SunnyQuicServerCfg, default_initial_mtu,
 };
 use shadowquic::sunnyquic::inbound::SunnyQuicServer;
@@ -12,7 +12,6 @@ use tokio::{net::TcpListener, time::Duration};
 use shadowquic::{
     Manager,
     direct::outbound::DirectOut,
-    shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
     socks::inbound::SocksServer,
 };
 
