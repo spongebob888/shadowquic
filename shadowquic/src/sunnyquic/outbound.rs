@@ -75,14 +75,13 @@ impl SunnyQuicClient {
             },
         };
 
-        auth_sunny(
-            &conn,
-            gen_sunny_user_hash(&self.config.username, &self.config.password),
-        )
-        .await?;
-
+        let username = self.config.username.clone();
+        let password = self.config.password.clone();
         let conn_clone = conn.clone();
         tokio::spawn(async move {
+            let _ = auth_sunny(&conn_clone, gen_sunny_user_hash(&username, &password))
+                .await
+                .map_err(|x| error!("authentication failed: {}", x));
             let _ = handle_udp_packet_recv(conn_clone)
                 .await
                 .map_err(|x| error!("handle udp packet recv error: {}", x));
