@@ -77,7 +77,7 @@ impl SunnyQuicClient {
 
         auth_sunny(
             &conn,
-            &gen_sunny_user_hash(&self.config.username, &self.config.password),
+            gen_sunny_user_hash(&self.config.username, &self.config.password),
         )
         .await?;
 

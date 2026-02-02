@@ -27,9 +27,10 @@ use tracing::{Instrument, Level, debug, error, event, info, trace};
 use crate::{
     AnyUdpRecv, AnyUdpSend,
     error::{SError, SResult},
+    msgs::squic::SunnyCredential,
     msgs::{
         socks5::{SDecode, SEncode, SocksAddr},
-        squic::{SQPacketDatagramHeader, SQReq, SQUdpControlHeader, SUNNY_QUIC_AUTH_LEN},
+        squic::{SQPacketDatagramHeader, SQReq, SQUdpControlHeader},
     },
     quic::QuicConnection,
 };
@@ -58,13 +59,11 @@ async fn wait_sunny_auth<T: QuicConnection>(conn: &SQConn<T>) -> SResult<()> {
 
 pub(crate) async fn auth_sunny<T: QuicConnection>(
     conn: &SQConn<T>,
-    user_hash: &[u8; SUNNY_QUIC_AUTH_LEN],
+    user_hash: SunnyCredential,
 ) -> SResult<()> {
     if conn.authed.get().is_none() {
         let (mut send, _recv, _id) = conn.open_bi().await?;
-        SQReq::SQAuthenticate(Box::new(*user_hash))
-            .encode(&mut send)
-            .await?;
+        SQReq::SQAuthenticate(user_hash).encode(&mut send).await?;
         debug!("authentication request sent");
         conn.authed.set(true).expect("repeated authentication");
     }

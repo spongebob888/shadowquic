@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::error::SError;
 
 use super::socks5::{SDecode, SEncode, SocksAddr};
@@ -5,6 +7,7 @@ use shadowquic_macros::{SDecode, SEncode};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub static SUNNY_QUIC_AUTH_LEN: usize = 64;
+pub(crate) type SunnyCredential = Arc<[u8; SUNNY_QUIC_AUTH_LEN]>;
 #[repr(u8)]
 #[derive(PartialEq)]
 pub enum SQCmd {
@@ -45,7 +48,7 @@ pub enum SQReq {
     SQBind(SocksAddr),
     SQAssociatOverDatagram(SocksAddr),
     SQAssociatOverStream(SocksAddr),
-    SQAuthenticate(Box<[u8; SUNNY_QUIC_AUTH_LEN]>),
+    SQAuthenticate(SunnyCredential),
 }
 
 impl SEncode for SQReq {
@@ -97,9 +100,9 @@ impl SDecode for SQReq {
                 Ok(SQReq::SQAssociatOverStream(addr))
             }
             SQCmd::Authenticate => {
-                let mut data = Box::new([0u8; SUNNY_QUIC_AUTH_LEN]);
-                s.read_exact(&mut *data).await?;
-                Ok(SQReq::SQAuthenticate(data))
+                let mut data = [0u8; SUNNY_QUIC_AUTH_LEN];
+                s.read_exact(&mut data).await?;
+                Ok(SQReq::SQAuthenticate(Arc::new(data)))
             }
         }
     }

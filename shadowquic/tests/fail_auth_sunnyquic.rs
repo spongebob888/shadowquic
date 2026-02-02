@@ -1,7 +1,7 @@
 use fast_socks5::client::{Config, Socks5Stream};
 use shadowquic::config::{
-    AuthUser, CongestionControl,
-    SocksServerCfg, SunnyQuicClientCfg, SunnyQuicServerCfg, default_initial_mtu,
+    AuthUser, CongestionControl, SocksServerCfg, SunnyQuicClientCfg, SunnyQuicServerCfg,
+    default_initial_mtu,
 };
 use shadowquic::sunnyquic::inbound::SunnyQuicServer;
 use shadowquic::sunnyquic::outbound::SunnyQuicClient;
@@ -9,11 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use tokio::{net::TcpListener, time::Duration};
 
-use shadowquic::{
-    Manager,
-    direct::outbound::DirectOut,
-    socks::inbound::SocksServer,
-};
+use shadowquic::{Manager, direct::outbound::DirectOut, socks::inbound::SocksServer};
 
 use tracing::info;
 use tracing::{Level, level_filters::LevelFilter, trace};
