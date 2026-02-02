@@ -13,7 +13,7 @@ use crate::{
     error::SError,
     msgs::{
         socks5::{SDecode, SocksAddr},
-        squic::{SQReq, SUNNY_QUIC_AUTH_LEN},
+        squic::{SQReq, SunnyCredential},
     },
     quic::QuicConnection,
     squic::wait_sunny_auth,
@@ -21,7 +21,7 @@ use crate::{
 
 use super::{SQConn, handle_udp_packet_recv, handle_udp_recv_ctrl, handle_udp_send};
 
-pub type SunnyQuicUsers = Arc<HashMap<[u8; SUNNY_QUIC_AUTH_LEN], String>>;
+pub type SunnyQuicUsers = Arc<HashMap<SunnyCredential, String>>;
 
 #[derive(Clone)]
 pub struct SQServerConn<C: QuicConnection> {
