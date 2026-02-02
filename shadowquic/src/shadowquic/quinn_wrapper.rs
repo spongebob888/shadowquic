@@ -3,7 +3,7 @@ use std::{io, net::SocketAddr, ops::Deref, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use bytes::Bytes;
 use quinn::{
-    ClientConfig, MtuDiscoveryConfig, SendDatagramError, TransportConfig,
+    ClientConfig, MtuDiscoveryConfig, SendDatagramError, TransportConfig, VarInt,
     congestion::{BbrConfig, CubicConfig, NewRenoConfig},
     crypto::rustls::QuicClientConfig,
 };
@@ -116,6 +116,9 @@ impl QuicConnection for Connection {
     }
     fn peer_id(&self) -> u64 {
         self.stable_id() as u64
+    }
+    fn close(&self, error_code: u64, reason: &[u8]) {
+        self.close(VarInt::from_u64(error_code).unwrap(), reason);
     }
 }
 
