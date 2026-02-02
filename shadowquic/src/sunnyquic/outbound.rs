@@ -92,7 +92,7 @@ impl SunnyQuicClient {
     async fn prepare_conn(&mut self) -> Result<(), SError> {
         // delete connection if closed.
         self.quic_conn.take_if(|x| {
-            x.close_reason().is_some_and(|x| {
+            QuicConnection::close_reason(&x.conn).is_some_and(|x| {
                 info!("quic connection closed due to {}", x);
                 true
             })

@@ -5,14 +5,10 @@
 use async_trait::async_trait;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-
 use crate::{
     config::SunnyQuicServerCfg,
     error::SResult,
-    quic::{
-        QuicClient, QuicConnection,
-        QuicErrorRepr, QuicServer,
-    },
+    quic::{QuicClient, QuicConnection, QuicErrorRepr, QuicServer},
 };
 
 #[derive(Clone)]
@@ -27,11 +23,18 @@ impl QuicClient for EndClient {
         unimplemented!()
     }
 
-    async fn connect(&self, _addr: std::net::SocketAddr, _server_name: &str) -> Result<Self::C, crate::quic::QuicErrorRepr> {
+    async fn connect(
+        &self,
+        _addr: std::net::SocketAddr,
+        _server_name: &str,
+    ) -> Result<Self::C, crate::quic::QuicErrorRepr> {
         unimplemented!()
     }
 
-    fn new_with_socket(_cfg: &Self::SC, _socket: std::net::UdpSocket) -> crate::error::SResult<Self> {
+    fn new_with_socket(
+        _cfg: &Self::SC,
+        _socket: std::net::UdpSocket,
+    ) -> crate::error::SResult<Self> {
         unimplemented!()
     }
 }
@@ -135,4 +138,3 @@ impl QuicServer for EndServer {
         unimplemented!()
     }
 }
-

@@ -154,6 +154,9 @@ impl QuicConnection for Connection {
         id.copy_from_slice(self.inner.origin_dcid().unwrap().as_ref());
         u64::from_be_bytes(id)
     }
+    fn close(&self, error_code: u64, reason: &[u8]) {
+        unimplemented!()
+    }
 }
 
 #[async_trait]
