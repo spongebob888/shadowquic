@@ -4,7 +4,7 @@ use super::socks5::{SDecode, SEncode, SocksAddr};
 use shadowquic_macros::{SDecode, SEncode};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-pub static SUNNY_QUIC_AUTH_LEN: usize = 256;
+pub static SUNNY_QUIC_AUTH_LEN: usize = 64;
 #[repr(u8)]
 #[derive(PartialEq)]
 pub enum SQCmd {

@@ -50,6 +50,7 @@ pub trait QuicConnection: Send + Sync + Clone + 'static {
     async fn accept_uni(&self) -> Result<(Self::RecvStream, u64), QuicErrorRepr>;
     async fn read_datagram(&self) -> Result<Bytes, QuicErrorRepr>;
     async fn send_datagram(&self, bytes: Bytes) -> Result<(), QuicErrorRepr>;
+    fn close(&self, error_code: u64, reason: &[u8]);
     fn close_reason(&self) -> Option<QuicErrorRepr>;
     fn remote_address(&self) -> SocketAddr;
     fn peer_id(&self) -> u64;

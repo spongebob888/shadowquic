@@ -120,7 +120,10 @@ impl<C: QuicConnection> SQServerConn<C> {
                         .set(true)
                         .expect("repeated authentication!");
                 } else {
-                    tracing::warn!("authentication failed");
+                    tracing::error!("authentication failed");
+                    // 263 is tested result by connecting with sunnyquic client to
+                    // cloudflare.com:443
+                    self.inner.close(263, &[]);
                     return Err(SError::SunnyAuthError("Wrong password/username".into()));
                 }
             }
