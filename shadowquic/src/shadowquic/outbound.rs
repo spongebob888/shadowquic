@@ -3,24 +3,17 @@ use std::{
     net::{ToSocketAddrs, UdpSocket},
     sync::Arc,
 };
-use tokio::{
-    io::AsyncReadExt,
-    sync::{OnceCell, SetOnce},
-};
+use tokio::sync::{OnceCell, SetOnce};
 
 use super::quinn_wrapper::EndClient;
-use tracing::{Instrument, Level, debug, error, info, span, trace};
+use tracing::{error, info};
 
 use crate::{
-    Outbound,
-    config::ShadowQuicClientCfg,
-    error::SError,
-    msgs::{socks5::SEncode, squic::SQReq},
-    quic::{QuicClient, QuicConnection},
-    squic::{handle_udp_recv_ctrl, handle_udp_send},
+    Outbound, config::ShadowQuicClientCfg, error::SError, quic::QuicClient,
+    squic::outbound::handle_request,
 };
 
-use crate::squic::{IDStore, SQConn, handle_udp_packet_recv, inbound::Unsplit};
+use crate::squic::{IDStore, SQConn, handle_udp_packet_recv};
 
 pub struct ShadowQuicClient {
     pub quic_conn: Option<SQConn<<EndClient as QuicClient>::C>>,
@@ -105,66 +98,7 @@ impl Outbound for ShadowQuicClient {
         let conn = self.quic_conn.as_mut().unwrap().clone();
 
         let over_stream = self.config.over_stream;
-        let (mut send, recv, id) = QuicConnection::open_bi(&conn.conn).await?;
-        let _span = span!(Level::TRACE, "bistream", id = id);
-        let fut = async move {
-            match req {
-                crate::ProxyRequest::Tcp(mut tcp_session) => {
-                    debug!("bistream opened for tcp dst:{}", tcp_session.dst.clone());
-                    //let _enter = _span.enter();
-                    let req = SQReq::SQConnect(tcp_session.dst.clone());
-                    req.encode(&mut send).await?;
-                    trace!("tcp connect req header sent");
-
-                    let u = tokio::io::copy_bidirectional(
-                        &mut Unsplit { s: send, r: recv },
-                        &mut tcp_session.stream,
-                    )
-                    .await?;
-                    info!(
-                        "request:{} finished, upload:{}bytes,download:{}bytes",
-                        tcp_session.dst, u.1, u.0
-                    );
-                }
-                crate::ProxyRequest::Udp(udp_session) => {
-                    info!("bistream opened for udp dst:{}", udp_session.dst.clone());
-                    let req = if over_stream {
-                        SQReq::SQAssociatOverStream(udp_session.dst.clone())
-                    } else {
-                        SQReq::SQAssociatOverDatagram(udp_session.dst.clone())
-                    };
-                    req.encode(&mut send).await?;
-                    trace!("udp associate req header sent");
-                    let fut2 = handle_udp_recv_ctrl(recv, udp_session.send.clone(), conn.clone());
-                    let fut1 = handle_udp_send(send, udp_session.recv, conn, over_stream);
-                    // control stream, in socks5 inbound, end of control stream
-                    // means end of udp association.
-                    let fut3 = async {
-                        if udp_session.stream.is_none() {
-                            return Ok(());
-                        }
-                        let mut buf = [0u8];
-                        udp_session
-                            .stream
-                            .unwrap()
-                            .read_exact(&mut buf)
-                            .await
-                            .map_err(|x| SError::UDPSessionClosed(x.to_string()))?;
-                        error!("unexpected data received from socks control stream");
-                        Err(SError::UDPSessionClosed(
-                            "unexpected data received from socks control stream".into(),
-                        )) as Result<(), SError>
-                    };
-
-                    tokio::try_join!(fut1, fut2, fut3)?;
-                    info!("udp association to {} ended", udp_session.dst.clone());
-                }
-            }
-            Ok(()) as Result<(), SError>
-        };
-        tokio::spawn(async {
-            let _ = fut.instrument(_span).await.map_err(|x| error!("{}", x));
-        });
+        handle_request(req, conn, over_stream).await?;
         Ok(())
     }
 }
