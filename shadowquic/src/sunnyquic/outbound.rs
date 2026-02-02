@@ -12,7 +12,7 @@ use crate::{
     Outbound,
     config::SunnyQuicClientCfg,
     error::SError,
-    quic::QuicClient,
+    quic::{QuicClient, QuicConnection},
     squic::{auth_sunny, outbound::handle_request},
     sunnyquic::gen_sunny_user_hash,
 };
