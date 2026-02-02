@@ -96,3 +96,24 @@ Namely for each unistream, CONTEXT ID is sent only once right after this stream 
 ```
 If datagrams are carried by QUIC datagram extension, the payload is sent directly without length field (only with `Context ID`).
 
+= SunnyQUIC
+*SunnyQUIC* is the twin protocol of *ShadowQUIC*. It is nearly the same as *ShadowQUIC*. The only
+difference is that *SunnyQUIC* gives up JLS layer and provide a QUIC layer authentication.
+The underlying connection is native QUIC connection.
+
+== Authentication
+SunnyQUIC adds a new _authentication_ command. The command is carried by the bistream.
+
+```plain
++-------+---------------+
+|  CMD  |   AUTH_HASH   |
++-------+---------------+
+|   1   |       64      |
++-------+---------------+
+```
+The `CMD` field is `0x5` for authentication command, The `AUTH_HASH` field is truncated 64byte hash:
+`SHA256(username:password)[0..64]`
+       
+For client, the authentication command can be issued in parallel with other proxy commands.
+
+For server, it should block any commands until authentication is finished. If authentication fails, server should terminate the connection.
