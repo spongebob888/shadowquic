@@ -1,3 +1,7 @@
+//! This module is shared by sunnyquic and shadowquic
+//! It handles the general tcp/udp proxying logic over quic connection
+//! It contains an optional authentication feature for sunnyquic only
+
 use std::{
     collections::{
         HashMap,
