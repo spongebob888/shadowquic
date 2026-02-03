@@ -134,11 +134,14 @@ impl DirectOut {
 
     async fn handle_udp(&self, udp_session: UdpSession) -> Result<(), SError> {
         trace!("associating udp to {}", udp_session.bind_addr);
-        let dst = udp_session
-            .bind_addr
-            .to_socket_addrs()?
-            .next()
-            .ok_or(SError::DomainResolveFailed(udp_session.bind_addr.to_string()))?;
+        let dst =
+            udp_session
+                .bind_addr
+                .to_socket_addrs()?
+                .next()
+                .ok_or(SError::DomainResolveFailed(
+                    udp_session.bind_addr.to_string(),
+                ))?;
         trace!("resolved to {}", dst);
         let ipv4_only = dst.is_ipv4();
 
@@ -162,14 +165,14 @@ impl DirectOut {
                 //trace!("udp source inverse resolved to:{}", dst);
                 let buf = buf_send.freeze();
                 //trace!("udp recved:{} bytes", len);
-                let _ = udp_session.send.send_to(buf.slice(..len), dst).await?;
+                let _ = udp_session.send.send_proxy(buf.slice(..len), dst).await?;
             }
             #[allow(unreachable_code)]
             (Ok(()) as Result<(), SError>)
         };
         let fut2 = async move {
             loop {
-                let (buf, dst) = downstream.recv_from().await?;
+                let (buf, dst) = downstream.recv_proxy().await?;
 
                 //trace!("udp request to:{}", dst);
                 let dst = dns_cache.resolve(dst, &dns_strategy).await?;

@@ -18,7 +18,7 @@ pub mod outbound;
 pub struct UdpSocksWrap(Arc<UdpSocket>, OnceCell<SocketAddr>); // remote addr
 #[async_trait]
 impl UdpRecv for UdpSocksWrap {
-    async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr), SError> {
+    async fn recv_proxy(&mut self) -> Result<(Bytes, SocksAddr), SError> {
         let mut buf = BytesMut::new();
         buf.resize(2000, 0);
 
@@ -44,7 +44,9 @@ impl UdpRecv for UdpSocksWrap {
 }
 #[async_trait]
 impl UdpSend for UdpSocksWrap {
-    async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
+    /// this addr is the address of the proxied destination
+    /// It's not the local address of the UDP socket.
+    async fn send_proxy(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
         let reply = UdpReqHeader {
             rsv: 0,
             frag: 0,

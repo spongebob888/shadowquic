@@ -29,12 +29,16 @@ pub enum ProxyRequest<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend> {
 /// So it can be safely wrapped by Arc and cloned to work in duplex way.
 #[async_trait]
 pub trait UdpSend: Send + Sync + Unpin {
-    async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError>; // addr is proxy addr
+    /// This proxy_dst is always proxy desination, no matter it is a uplink or downlink traffic socket
+    async fn send_proxy(&self, buf: Bytes, proxy_dst: SocksAddr) -> Result<usize, SError>; // addr is proxy addr
 }
+
 #[async_trait]
 pub trait UdpRecv: Send + Sync + Unpin {
-    async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr), SError>; // socksaddr is proxy addr
+    /// This SocksAddr is always proxy destination address, no matter it is uplink or downlink traffic socket
+    async fn recv_proxy(&mut self) -> Result<(Bytes, SocksAddr), SError>; // socksaddr is proxy addr
 }
+
 pub struct TcpSession<IO = AnyTcp> {
     stream: IO,
     dst: SocksAddr,
@@ -69,7 +73,7 @@ pub trait Outbound<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend>: Send + Sync + Un
 
 #[async_trait]
 impl UdpSend for Sender<(Bytes, SocksAddr)> {
-    async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
+    async fn send_proxy(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
         let siz = buf.len();
         self.send((buf, addr))
             .await
@@ -79,7 +83,7 @@ impl UdpSend for Sender<(Bytes, SocksAddr)> {
 }
 #[async_trait]
 impl UdpRecv for Receiver<(Bytes, SocksAddr)> {
-    async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr), SError> {
+    async fn recv_proxy(&mut self) -> Result<(Bytes, SocksAddr), SError> {
         let r = self.recv().await.ok_or(SError::OutboundUnavailable)?;
         Ok(r)
     }

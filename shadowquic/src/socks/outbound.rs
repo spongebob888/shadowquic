@@ -167,18 +167,18 @@ impl SocksClient {
         let upstream_clone = upstream.clone();
         let fut1 = async move {
             loop {
-                let (buf, dst) = upstream.recv_from().await?;
+                let (buf, dst) = upstream.recv_proxy().await?;
 
-                let _ = udp_session.send.send_to(buf, dst).await?;
+                let _ = udp_session.send.send_proxy(buf, dst).await?;
             }
             #[allow(unreachable_code)]
             (Ok(()) as Result<(), SError>)
         };
         let fut2 = async move {
             loop {
-                let (buf, dst) = udp_session.recv.recv_from().await?;
+                let (buf, dst) = udp_session.recv.recv_proxy().await?;
 
-                let _ = upstream_clone.send_to(buf, dst).await?;
+                let _ = upstream_clone.send_proxy(buf, dst).await?;
             }
             #[allow(unreachable_code)]
             (Ok(()) as Result<(), SError>)

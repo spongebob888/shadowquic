@@ -289,7 +289,7 @@ pub async fn handle_udp_send<C: QuicConnection>(
     };
     let quic_conn = conn.conn.clone();
     loop {
-        let (bytes, dst) = down_stream.recv_from().await?;
+        let (bytes, dst) = down_stream.recv_proxy().await?;
         let (id, is_new) = session.get_id_or_insert(&dst).await;
         //let span = trace_span!("udp", id = id);
         let ctl_header = SQUdpControlHeader {
@@ -379,7 +379,7 @@ pub async fn handle_udp_packet_recv<C: QuicConnection>(conn: SQConn<C>) -> Resul
                  Ok((udp,addr)) =>  {
                     let pos = cur.position() as usize;
                     let b = cur.into_inner().freeze();
-                    udp.send_to(b.slice(pos..b.len()), addr.clone()).await?;
+                    udp.send_proxy(b.slice(pos..b.len()), addr.clone()).await?;
                 }
                 Err(mut notify) =>  {
                     let id_store = id_store.clone();
@@ -394,7 +394,7 @@ pub async fn handle_udp_packet_recv<C: QuicConnection>(conn: SQConn<C>) -> Resul
                         info!("udp over datagram: id:{}: {}->{}",id, src_addr, addr);
                         let pos = cur.position() as usize;
                         let b = cur.into_inner().freeze();
-                        let _ = udp.clone().send_to(b.slice(pos..b.len()), addr.clone()).await
+                        let _ = udp.clone().send_proxy(b.slice(pos..b.len()), addr.clone()).await
                         .map_err(|x|error!("{}",x));
                         Ok(()) as Result<(), SError>
                      }.in_current_span());
@@ -430,7 +430,7 @@ pub async fn handle_udp_packet_recv<C: QuicConnection>(conn: SQConn<C>) -> Resul
                         let mut b = BytesMut::with_capacity(l);
                         b.resize(l,0);
                         uni_stream.read_exact(&mut b).await?;
-                        udp.send_to(b.freeze(), addr.clone()).await?;
+                        udp.send_proxy(b.freeze(), addr.clone()).await?;
                     }
                     #[allow(unreachable_code)]
                     (Ok(()) as Result<(), SError>)
