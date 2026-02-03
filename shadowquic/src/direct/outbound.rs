@@ -133,12 +133,12 @@ impl DirectOut {
     }
 
     async fn handle_udp(&self, udp_session: UdpSession) -> Result<(), SError> {
-        trace!("associating udp to {}", udp_session.dst);
+        trace!("associating udp to {}", udp_session.bind_addr);
         let dst = udp_session
-            .dst
+            .bind_addr
             .to_socket_addrs()?
             .next()
-            .ok_or(SError::DomainResolveFailed(udp_session.dst.to_string()))?;
+            .ok_or(SError::DomainResolveFailed(udp_session.bind_addr.to_string()))?;
         trace!("resolved to {}", dst);
         let ipv4_only = dst.is_ipv4();
 
