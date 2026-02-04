@@ -143,7 +143,7 @@ impl SocksClient {
             version: SOCKS5_VERSION,
             cmd: SOCKS5_CMD_UDP_ASSOCIATE,
             rsv: SOCKS5_RESERVE,
-            dst: udp_session.dst.clone(),
+            dst: udp_session.bind_addr.clone(),
         };
         socksreq.encode(&mut tcp).await?;
         let rep = CmdReply::decode(&mut tcp).await?;

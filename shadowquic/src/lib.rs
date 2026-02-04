@@ -45,7 +45,7 @@ pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
     send: O,
     /// Control stream, should be kept alive during session.
     stream: Option<AnyTcp>,
-    dst: SocksAddr,
+    bind_addr: SocksAddr,
 }
 
 pub type AnyTcp = Box<dyn TcpTrait>;

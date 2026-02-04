@@ -175,7 +175,7 @@ impl Inbound for SocksServer {
                 Ok(ProxyRequest::Udp(UdpSession {
                     send: Arc::new(UdpSocksWrap(socket.clone(), Default::default())),
                     recv: Box::new(UdpSocksWrap(socket, Default::default())),
-                    dst: req.dst,
+                    bind_addr: req.dst,
                     stream: Some(Box::new(s)),
                 }))
             }
