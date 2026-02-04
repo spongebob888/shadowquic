@@ -46,11 +46,14 @@ pub async fn handle_request<C: QuicConnection>(
                 );
             }
             crate::ProxyRequest::Udp(udp_session) => {
-                info!("bistream opened for udp dst:{}", udp_session.dst.clone());
+                info!(
+                    "bistream opened for udp dst:{}",
+                    udp_session.bind_addr.clone()
+                );
                 let req = if over_stream {
-                    SQReq::SQAssociatOverStream(udp_session.dst.clone())
+                    SQReq::SQAssociatOverStream(udp_session.bind_addr.clone())
                 } else {
-                    SQReq::SQAssociatOverDatagram(udp_session.dst.clone())
+                    SQReq::SQAssociatOverDatagram(udp_session.bind_addr.clone())
                 };
                 req.encode(&mut send).await?;
                 trace!("udp associate req header sent");
@@ -76,7 +79,7 @@ pub async fn handle_request<C: QuicConnection>(
                 };
 
                 tokio::try_join!(fut1, fut2, fut3)?;
-                info!("udp association to {} ended", udp_session.dst.clone());
+                info!("udp association to {} ended", udp_session.bind_addr.clone());
             }
         }
         Ok(()) as Result<(), SError>
