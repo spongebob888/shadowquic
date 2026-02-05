@@ -1,0 +1,22 @@
+inbound:
+    type: sunnyquic
+    bind-addr: "0.0.0.0:1443"
+    users:
+        - username: "87654321"
+          password: "12345678"
+        - username: "88888888"
+          password: "99999999"
+    alpn: ["h3"]
+    congestion-control: bbr
+    cert-path: "./assets/certs/localhost.crt"
+    key-path: "./assets/certs/localhost.key"
+    server-name: "localhost"
+    zero-rtt: true
+    gso: true # Enable Quinn Generic Segmentation Offload (GSO)
+outbound:
+    type: direct
+    dns-strategy: prefer-ipv4 # or prefer-ipv6, ipv4-only, ipv6-only
+log-level: "trace"
+
+
+
