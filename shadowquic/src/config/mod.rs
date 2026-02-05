@@ -178,6 +178,10 @@ pub fn default_gso() -> bool {
     true
 }
 
+pub fn default_mtu_discovery() -> bool {
+    true
+}
+
 #[derive(Serialize, Deserialize, Default, Debug, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub enum CongestionControl {

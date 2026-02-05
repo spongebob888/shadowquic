@@ -292,15 +292,21 @@ pub fn gen_client_cfg(cfg: &SunnyQuicClientCfg) -> iroh_quinn::ClientConfig {
     crypto.enable_early_data = cfg.zero_rtt;
     let mut tp_cfg = TransportConfig::default();
 
-    let mut mtudis = MtuDiscoveryConfig::default();
-    mtudis.black_hole_cooldown(Duration::from_secs(120));
-    mtudis.interval(Duration::from_secs(90));
+    let mtudis = if cfg.mtu_discovery {
+        let mut mtudis = MtuDiscoveryConfig::default();
+        mtudis.black_hole_cooldown(Duration::from_secs(120));
+        mtudis.interval(Duration::from_secs(90));
+        Some(mtudis)
+    } else {
+        None
+    };
 
     tp_cfg
         .max_concurrent_bidi_streams(500u32.into())
         .max_concurrent_uni_streams(500u32.into())
-        .mtu_discovery_config(Some(mtudis))
+        .mtu_discovery_config(mtudis)
         .min_mtu(cfg.min_mtu)
+        .enable_segmentation_offload(cfg.gso)
         .initial_mtu(cfg.initial_mtu);
 
     // Only increase receive window to maximize download speed
@@ -362,15 +368,21 @@ impl QuicServer for Endpoint<SunnyQuicServerCfg> {
 
         let mut tp_cfg = TransportConfig::default();
 
-        let mut mtudis = MtuDiscoveryConfig::default();
-        mtudis.black_hole_cooldown(Duration::from_secs(120));
-        mtudis.interval(Duration::from_secs(90));
+        let mtudis = if cfg.mtu_discovery {
+            let mut mtudis = MtuDiscoveryConfig::default();
+            mtudis.black_hole_cooldown(Duration::from_secs(120));
+            mtudis.interval(Duration::from_secs(90));
+            Some(mtudis)
+        } else {
+            None
+        };
 
         tp_cfg
             .max_concurrent_bidi_streams(1000u32.into())
             .max_concurrent_uni_streams(1000u32.into())
-            .mtu_discovery_config(Some(mtudis))
+            .mtu_discovery_config(mtudis)
             .min_mtu(cfg.min_mtu)
+            .enable_segmentation_offload(cfg.gso)
             .initial_mtu(cfg.initial_mtu);
         match cfg.congestion_control {
             CongestionControl::Bbr => {
