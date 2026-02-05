@@ -141,6 +141,13 @@ pub struct SunnyQuicClientCfg {
     /// Shadowquic server address. example: `127.0.0.0.1:443`, `www.server.com:443`, `[ff::f1]:4443`
     pub addr: String,
     /// Additional paths for multipath quic
+    /// IPV4 or IPv6 path are all fine.
+    /// Right now only one path is used to sending data, the rest paths are backup paths.
+    /// See https://github.com/n0-computer/quinn/issues/389 for more details.
+    /// ```yaml
+    /// extra-paths:
+    ///   - "[12:ff::ff]:1089"
+    /// ```
     pub extra_paths: Vec<QuicPath>,
     /// Maximum number of paths for multipath quic, 0 for disabling multipath
     #[serde(default = "default_multipath_num")]
