@@ -3,8 +3,9 @@ use std::{net::SocketAddr, path::PathBuf};
 use serde::Deserialize;
 
 use crate::config::{
-    AuthUser, CongestionControl, default_alpn, default_congestion_control, default_initial_mtu,
-    default_keep_alive_interval, default_min_mtu, default_over_stream, default_zero_rtt,
+    AuthUser, CongestionControl, default_alpn, default_congestion_control, default_gso,
+    default_initial_mtu, default_keep_alive_interval, default_min_mtu, default_mtu_discovery,
+    default_over_stream, default_zero_rtt,
 };
 
 pub(crate) fn default_multipath_num() -> u32 {
@@ -59,6 +60,16 @@ pub struct SunnyQuicServerCfg {
     /// 1400 is recommended for high packet loss network. default to be 1290
     #[serde(default = "default_min_mtu")]
     pub min_mtu: u16,
+    /// Enable QUIC Generic Segmentation Offload (GSO).
+    /// Controls [`quinn::TransportConfig::enable_segmentation_offload`]. When supported, GSO reduces
+    /// CPU usage for bulk sends; unsupported environments may see transient startup packet loss.
+    /// Enabled by default
+    #[serde(default = "default_gso")]
+    pub gso: bool,
+    /// Enable auto MTU discovery, default to true
+    /// For stable udp network, it's better to disable it and set a proper initial mtu
+    #[serde(default = "default_mtu_discovery")]
+    pub mtu_discovery: bool,
 }
 
 impl Default for SunnyQuicServerCfg {
@@ -75,6 +86,8 @@ impl Default for SunnyQuicServerCfg {
             key_path: PathBuf::from("./assets/certs/localhost.key.pem"),
             max_path_num: default_multipath_num(),
             server_name: "localhost".into(),
+            mtu_discovery: default_mtu_discovery(),
+            gso: default_gso(),
         }
     }
 }
@@ -96,6 +109,8 @@ impl Default for SunnyQuicClientCfg {
             max_path_num: default_multipath_num(),
             extra_paths: Default::default(),
             cert_path: Default::default(),
+            gso: default_gso(),
+            mtu_discovery: default_mtu_discovery(),
             #[cfg(target_os = "android")]
             protect_path: Default::default(),
         }
@@ -162,6 +177,16 @@ pub struct SunnyQuicClientCfg {
     /// Disabled by default.
     #[serde(default = "default_keep_alive_interval")]
     pub keep_alive_interval: u32,
+    /// Enable QUIC Generic Segmentation Offload (GSO).
+    /// Controls [`quinn::TransportConfig::enable_segmentation_offload`]. When supported, GSO reduces
+    /// CPU usage for bulk sends; unsupported environments may see transient startup packet loss.
+    /// Enabled by default
+    #[serde(default = "default_gso")]
+    pub gso: bool,
+    /// Enable auto MTU discovery, default to true
+    /// For stable udp network, it's better to disable it and set a proper initial mtu
+    #[serde(default = "default_mtu_discovery")]
+    pub mtu_discovery: bool,
 
     /// Android Only. the unix socket path for protecting android socket
     #[cfg(target_os = "android")]
