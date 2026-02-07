@@ -220,7 +220,7 @@ pub fn gen_client_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
         .with_no_client_auth();
     crypto.alpn_protocols = cfg.alpn.iter().map(|x| x.to_owned().into_bytes()).collect();
     crypto.enable_early_data = cfg.zero_rtt;
-    crypto.jls_config = rustls_jls::JlsConfig::new(&cfg.password, &cfg.username);
+    crypto.jls_config = rustls_jls::jls::JlsClientConfig::new(&cfg.password, &cfg.username);
     let mut tp_cfg = TransportConfig::default();
 
     let mtudis = if cfg.mtu_discovery {
@@ -293,7 +293,10 @@ impl QuicServer for Endpoint {
         crypto.max_early_data_size = if cfg.zero_rtt { u32::MAX } else { 0 };
         crypto.send_half_rtt_data = cfg.zero_rtt;
 
-        let mut jls_config = rustls_jls::JlsServerConfig::default();
+        let mut jls_config = rustls_jls::jls::JlsServerConfig {
+            enable: true,
+            ..Default::default()
+        };
         for user in &cfg.users {
             jls_config = jls_config.add_user(user.password.clone(), user.username.clone());
         }
@@ -302,7 +305,7 @@ impl QuicServer for Endpoint {
         }
         jls_config = jls_config.with_rate_limit(cfg.jls_upstream.rate_limit);
         jls_config = jls_config.with_upstream_addr(cfg.jls_upstream.addr.clone());
-        crypto.jls_config = jls_config;
+        crypto.jls_config = jls_config.into();
 
         let mut tp_cfg = TransportConfig::default();
 
