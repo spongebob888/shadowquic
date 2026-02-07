@@ -2010,15 +2010,15 @@ dependencies = [
 [[package]]
 name = "quinn"
 version = "0.11.7"
-source = "git+https://github.com/spongebob888/quinn-jls?tag=quinn-0.11.7-0.3.0#670e73bdb0a4a5d8d49c76f643154ce412bc7dcf"
+source = "git+https://github.com/spongebob888/quinn-jls?tag=quinn-0.11.7-0.3.1#ca7973771e2dec3e1dda7935a0b9d7ec7f2b0692"
 dependencies = [
  "bytes",
  "cfg_aliases",
  "pin-project-lite",
- "quinn-proto 0.11.10 (git+https://github.com/spongebob888/quinn-jls?tag=quinn-0.11.7-0.3.0)",
- "quinn-udp 0.5.10 (git+https://github.com/spongebob888/quinn-jls?tag=quinn-0.11.7-0.3.0)",
+ "quinn-proto 0.11.10 (git+https://github.com/spongebob888/quinn-jls?tag=quinn-0.11.7-0.3.1)",
+ "quinn-udp 0.5.10 (git+https://github.com/spongebob888/quinn-jls?tag=quinn-0.11.7-0.3.1)",
  "rustc-hash",
- "rustls 0.23.25 (git+https://github.com/spongebob888/rustls-jls?tag=v%2F0.23.25-1.2.0)",
+ "rustls 0.23.25 (git+https://github.com/spongebob888/rustls-jls?tag=v%2F0.23.25-1.2.1)",
  "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
@@ -2048,14 +2048,14 @@ dependencies = [
 [[package]]
 name = "quinn-proto"
 version = "0.11.10"
-source = "git+https://github.com/spongebob888/quinn-jls?tag=quinn-0.11.7-0.3.0#670e73bdb0a4a5d8d49c76f643154ce412bc7dcf"
+source = "git+https://github.com/spongebob888/quinn-jls?tag=quinn-0.11.7-0.3.1#ca7973771e2dec3e1dda7935a0b9d7ec7f2b0692"
 dependencies = [
  "bytes",
  "getrandom 0.3.4",
  "rand",
  "ring",
  "rustc-hash",
- "rustls 0.23.25 (git+https://github.com/spongebob888/rustls-jls?tag=v%2F0.23.25-1.2.0)",
+ "rustls 0.23.25 (git+https://github.com/spongebob888/rustls-jls?tag=v%2F0.23.25-1.2.1)",
  "rustls-pki-types",
  "slab",
  "thiserror 2.0.18",
@@ -2086,7 +2086,7 @@ dependencies = [
 [[package]]
 name = "quinn-udp"
 version = "0.5.10"
-source = "git+https://github.com/spongebob888/quinn-jls?tag=quinn-0.11.7-0.3.0#670e73bdb0a4a5d8d49c76f643154ce412bc7dcf"
+source = "git+https://github.com/spongebob888/quinn-jls?tag=quinn-0.11.7-0.3.1#ca7973771e2dec3e1dda7935a0b9d7ec7f2b0692"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -2276,6 +2276,20 @@ dependencies = [
 name = "rustls"
 version = "0.23.25"
 source = "git+https://github.com/spongebob888/rustls-jls?tag=v%2F0.23.25-1.2.0#2c9e4745dbc69bf925f9b8a37489584b6577dd58"
+dependencies = [
+ "aes-gcm",
+ "once_cell",
+ "ring",
+ "rustls-pki-types",
+ "rustls-webpki",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
+name = "rustls"
+version = "0.23.25"
+source = "git+https://github.com/spongebob888/rustls-jls?tag=v%2F0.23.25-1.2.1#9056e33ebc69ac6b75ca4730fb6d63e2831489fd"
 dependencies = [
  "aes-gcm",
  "once_cell",
@@ -2548,12 +2562,12 @@ dependencies = [
  "iroh-quinn",
  "qbase",
  "qevent",
- "quinn 0.11.7 (git+https://github.com/spongebob888/quinn-jls?tag=quinn-0.11.7-0.3.0)",
+ "quinn 0.11.7 (git+https://github.com/spongebob888/quinn-jls?tag=quinn-0.11.7-0.3.1)",
  "qunreliable",
  "rand",
  "rcgen",
  "ring",
- "rustls 0.23.25 (git+https://github.com/spongebob888/rustls-jls?tag=v%2F0.23.25-1.2.0)",
+ "rustls 0.23.25 (git+https://github.com/spongebob888/rustls-jls?tag=v%2F0.23.25-1.2.1)",
  "rustls 0.23.36",
  "rustls-native-certs",
  "sendfd",

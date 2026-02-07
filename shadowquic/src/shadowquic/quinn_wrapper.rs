@@ -293,18 +293,17 @@ impl QuicServer for Endpoint {
         crypto.max_early_data_size = if cfg.zero_rtt { u32::MAX } else { 0 };
         crypto.send_half_rtt_data = cfg.zero_rtt;
 
-        let mut jls_config = rustls_jls::jls::JlsServerConfig {
-            enable: true,
-            ..Default::default()
-        };
+        let mut jls_config = rustls_jls::jls::JlsServerConfig::default();
         for user in &cfg.users {
             jls_config = jls_config.add_user(user.password.clone(), user.username.clone());
         }
         if let Some(sni) = &cfg.server_name {
             jls_config = jls_config.with_server_name(sni.clone());
         }
-        jls_config = jls_config.with_rate_limit(cfg.jls_upstream.rate_limit);
-        jls_config = jls_config.with_upstream_addr(cfg.jls_upstream.addr.clone());
+        jls_config = jls_config
+            .with_rate_limit(cfg.jls_upstream.rate_limit)
+            .with_upstream_addr(cfg.jls_upstream.addr.clone())
+            .enable(true);
         crypto.jls_config = jls_config.into();
 
         let mut tp_cfg = TransportConfig::default();
