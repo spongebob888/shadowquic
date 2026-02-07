@@ -12,8 +12,8 @@ license = { workspace = true}
 default = ["shadowquic-quinn", "sunnyquic-iroh-quinn"]
 tokio-console = ["dep:console-subscriber","tokio/tracing"]
 shadowquic-quinn = ["dep:quinn","dep:rustls_jls"]
-sunnyquic-gm-quic = ["dep:gm-quic","dep:qevent","dep:qbase","dep:qunreliable", "dep:rustls","dep:rustls-native-certs"]
-sunnyquic-iroh-quinn = ["dep:iroh-quinn", "dep:rustls", "dep:rustls-native-certs"]
+sunnyquic-gm-quic = ["dep:gm-quic","dep:qevent","dep:qbase","dep:qunreliable", "dep:rustls","dep:rustls-native-certs","dep:arc-swap","dep:notify"]
+sunnyquic-iroh-quinn = ["dep:iroh-quinn", "dep:rustls", "dep:rustls-native-certs","dep:arc-swap","dep:notify"]
 
 [dependencies]
 anyhow = "1.0.100"
@@ -46,6 +46,8 @@ rustls = { version = "0.23", default-features = false, features = ["std","ring"]
 rustls-native-certs = {version = "*", optional = true}
 
 iroh-quinn ={ version = "*",optional = true, default-features = false, features = ["rustls-ring","runtime-tokio"]}
+notify = { version = "8.2.0", features = ["serde"], optional = true}
+arc-swap = { version = "1.8.1", optional = true }
 ring = {version = "*"}
 
 console-subscriber = { version = "0.5.0", optional = true }
