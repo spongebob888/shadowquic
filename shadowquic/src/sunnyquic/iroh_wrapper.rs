@@ -280,9 +280,10 @@ pub fn gen_client_cfg(cfg: &SunnyQuicClientCfg) -> iroh_quinn::ClientConfig {
     }
 
     if let Some(path) = &cfg.cert_path {
-        let der_cert = CertificateDer::from_pem_file(path)
-            .unwrap_or_else(|_| panic!("certificate not found:{:?}", path));
-        root_store.add_parsable_certificates([der_cert]);
+        let der_cert = CertificateDer::pem_file_iter(path)
+            .unwrap_or_else(|_| panic!("certificate not found:{:?}", path))
+            .filter_map(|x| x.ok());
+        root_store.add_parsable_certificates(der_cert);
     }
 
     let mut crypto = rustls::ClientConfig::builder()
