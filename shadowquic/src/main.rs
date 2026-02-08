@@ -32,6 +32,7 @@ async fn main() {
         .expect("creating inbound/outbound failed");
 
     info!("shadowquic {} running", env!("CARGO_PKG_VERSION"));
+    let _ = std::env::current_dir().inspect(|x| info!("current working directory: {:?}", x));
     manager.run().await.expect("shadowquic stopped");
 }
 
