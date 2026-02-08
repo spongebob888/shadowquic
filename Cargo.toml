@@ -14,6 +14,7 @@ homepage = "https://github.com/spongebob888/shadowquic"
 repository = "https://github.com/spongebob888/shadowquic.git"
 description = "A 0-RTT QUIC Proxy with SNI camouflage"
 license = "MIT"
+readme = "README.md"
 
 
 [workspace.dependencies]

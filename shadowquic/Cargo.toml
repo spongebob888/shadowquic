@@ -7,7 +7,7 @@ homepage = { workspace = true }
 authors = { workspace = true }
 description = { workspace = true }
 license = { workspace = true}
-
+readme = { workspace = true}
 [features]
 default = ["shadowquic-quinn", "sunnyquic-iroh-quinn"]
 tokio-console = ["dep:console-subscriber","tokio/tracing"]
