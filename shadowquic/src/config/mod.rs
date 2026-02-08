@@ -32,7 +32,7 @@ pub use crate::config::sunnyquic::*;
 ///
 /// Supported outbound types are listed in [`OutboundCfg`]
 #[derive(Deserialize, Clone, Debug)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Config {
     pub inbound: InboundCfg,
     pub outbound: OutboundCfg,
@@ -119,7 +119,7 @@ impl OutboundCfg {
 ///    password: "password"
 /// ```
 #[derive(Deserialize, Clone, Debug)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SocksServerCfg {
     /// Server binding address. e.g. `0.0.0.0:1089`, `[::1]:1089`
     pub bind_addr: SocketAddr,
@@ -131,7 +131,7 @@ pub struct SocksServerCfg {
 
 /// user authentication
 #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AuthUser {
     pub username: String,
     pub password: String,
@@ -143,7 +143,7 @@ pub struct AuthUser {
 /// addr: "12.34.56.7:1089" # or "[12:ff::ff]:1089" for dualstack
 /// ```
 #[derive(Deserialize, Clone, Debug)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SocksClientCfg {
     pub addr: String,
     /// SOCKS5 username, optional
@@ -196,7 +196,7 @@ pub enum CongestionControl {
 /// dns-strategy: prefer-ipv4 # or prefer-ipv6, ipv4-only, ipv6-only
 /// ```
 #[derive(Deserialize, Clone, Debug, Default)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct DirectOutCfg {
     #[serde(default)]
     pub dns_strategy: DnsStrategy,
@@ -254,6 +254,20 @@ outbound:
     type: direct
     dns-strategy: prefer-ipv4
 "###;
-        let _cfg: Config = serde_yaml::from_str(cfgstr).expect("yaml parsed failed");
+        let _cfg: Config = serde_saphyr::from_str(cfgstr).expect("yaml parsed failed");
+    }
+    #[test]
+    fn test_fail() {
+        let cfgstr = r###"
+inbound:
+    type: socks
+    bind-addr: 127.0.0.1:1089
+    dhjsj: jkj
+outbound:
+    type: direct
+    dns-strategy: prefer-ipv4
+"###;
+        let cfg: Result<Config, _> = serde_saphyr::from_str(cfgstr);
+        assert!(cfg.is_err());
     }
 }

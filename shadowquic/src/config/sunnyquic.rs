@@ -26,7 +26,7 @@ pub(crate) fn default_multipath_num() -> u32 {
 /// zero-rtt: true
 /// ```
 #[derive(Deserialize, Clone, Debug)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SunnyQuicServerCfg {
     /// Binding address. e.g. `0.0.0.0:443`, `[::1]:443`
     pub bind_addr: SocketAddr,
@@ -132,7 +132,7 @@ impl Default for SunnyQuicClientCfg {
 /// over-stream: false  # true for udp over stream, false for udp over datagram
 /// ```
 #[derive(Deserialize, Clone, Debug)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SunnyQuicClientCfg {
     /// username, must be the same as the server
     pub username: String,

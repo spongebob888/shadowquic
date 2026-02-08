@@ -29,7 +29,7 @@ pub fn default_rate_limit() -> u64 {
 /// zero-rtt: true
 /// ```
 #[derive(Deserialize, Clone, Debug)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ShadowQuicServerCfg {
     /// Binding address. e.g. `0.0.0.0:443`, `[::1]:443`
     pub bind_addr: SocketAddr,
@@ -146,7 +146,7 @@ impl Default for ShadowQuicClientCfg {
 /// over-stream: false  # true for udp over stream, false for udp over datagram
 /// ```
 #[derive(Deserialize, Clone, Debug)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ShadowQuicClientCfg {
     /// username, must be the same as the server
     pub username: String,
