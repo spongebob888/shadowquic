@@ -5,6 +5,9 @@ use crate::msgs::squic::{SUNNY_QUIC_AUTH_LEN, SunnyCredential};
 pub mod inbound;
 pub mod outbound;
 
+#[cfg(any(feature = "sunnyquic-gm-quic", feature = "sunnyquic-iroh-quinn"))]
+pub(crate) mod dynamic_cert;
+
 #[cfg(feature = "sunnyquic-gm-quic")]
 mod gm_quic_wrapper;
 #[cfg(feature = "sunnyquic-gm-quic")]
