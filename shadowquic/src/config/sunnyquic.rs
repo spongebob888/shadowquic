@@ -144,7 +144,7 @@ pub struct SunnyQuicClientCfg {
     /// IPV4 or IPv6 path are all fine.
     /// Right now only one path is used to sending data, the rest paths are backup paths.
     /// See https://github.com/n0-computer/quinn/issues/389 for more details.
-    /// 
+    ///
     /// It's recommended to use IPV4 and IPV6 path together for dual stack network.
     /// ```yaml
     /// extra-paths:
