@@ -132,7 +132,7 @@ impl Default for SunnyQuicClientCfg {
 /// over-stream: false  # true for udp over stream, false for udp over datagram
 /// ```
 #[derive(Deserialize, Clone, Debug)]
-#[serde(rename_all = "kebab-case", default)]
+#[serde(rename_all = "kebab-case")]
 pub struct SunnyQuicClientCfg {
     /// username, must be the same as the server
     pub username: String,
@@ -150,6 +150,7 @@ pub struct SunnyQuicClientCfg {
     /// extra-paths:
     ///   - "[12:ff::ff]:1089"
     /// ```
+    #[serde(default)]
     pub extra_paths: Vec<QuicPath>,
     /// Maximum number of paths for multipath quic, 0 for disabling multipath
     #[serde(default = "default_multipath_num")]
@@ -199,6 +200,7 @@ pub struct SunnyQuicClientCfg {
 
     /// Android Only. the unix socket path for protecting android socket
     #[cfg(target_os = "android")]
+    #[serde(default)]
     pub protect_path: Option<std::path::PathBuf>,
 }
 

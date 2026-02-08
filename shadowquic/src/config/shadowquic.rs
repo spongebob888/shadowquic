@@ -146,7 +146,7 @@ impl Default for ShadowQuicClientCfg {
 /// over-stream: false  # true for udp over stream, false for udp over datagram
 /// ```
 #[derive(Deserialize, Clone, Debug)]
-#[serde(rename_all = "kebab-case", default)]
+#[serde(rename_all = "kebab-case")]
 pub struct ShadowQuicClientCfg {
     /// username, must be the same as the server
     pub username: String,
@@ -198,5 +198,6 @@ pub struct ShadowQuicClientCfg {
 
     /// Android Only. the unix socket path for protecting android socket
     #[cfg(target_os = "android")]
+    #[serde(default)]
     pub protect_path: Option<std::path::PathBuf>,
 }
