@@ -15,7 +15,7 @@ use iroh_quinn::{
 };
 use rustls::{
     RootCertStore,
-    pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
+    pki_types::{CertificateDer, pem::PemObject},
 };
 use socket2::{Domain, Protocol, Socket, Type};
 use tracing::{debug, trace, warn};
@@ -31,6 +31,7 @@ use crate::{
         MAX_DATAGRAM_WINDOW, MAX_SEND_WINDOW, MAX_STREAM_WINDOW, QuicClient, QuicConnection,
         QuicErrorRepr, QuicServer,
     },
+    sunnyquic::dynamic_cert::DynamicCertResolver,
 };
 
 pub type Connection = iroh_quinn::Connection;
@@ -346,16 +347,16 @@ impl QuicServer for Endpoint<SunnyQuicServerCfg> {
     async fn new(cfg: &Self::SC) -> SResult<Self> {
         let mut crypto: RustlsServerConfig;
 
-        let cert_der = CertificateDer::pem_file_iter(&cfg.cert_path)
-            .map_err(|x| SError::RustlsError(x.to_string()))?
-            .filter_map(|x| x.ok())
-            .collect();
-        let priv_key = PrivateKeyDer::from_pem_file(&cfg.key_path)
-            .map_err(|x| SError::RustlsError(x.to_string()))?;
+        let resolver = DynamicCertResolver::new(&cfg.key_path.clone(), &cfg.cert_path.clone())?;
 
+        tokio::spawn(
+            resolver
+                .clone()
+                .watch_cert_and_update(cfg.key_path.clone(), cfg.cert_path.clone()),
+        );
         crypto = RustlsServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
             .with_no_client_auth()
-            .with_single_cert(cert_der, priv_key)?;
+            .with_cert_resolver(Arc::new(resolver.clone()));
         crypto.alpn_protocols = cfg
             .alpn
             .iter()
