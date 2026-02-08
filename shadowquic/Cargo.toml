@@ -42,15 +42,15 @@ qevent = { version = "0.4", default-features = false, optional = true}
 qbase = { version = "0.4", default-features = false, optional = true}
 qunreliable = { version = "0.4", default-features = false, optional = true}
 rustls = { version = "0.23", default-features = false, features = ["std","ring"], optional = true}
-rustls-native-certs = {version = "*", optional = true}
+rustls-native-certs = {version = "0.8.3", optional = true}
 
-iroh-quinn ={ version = "*",optional = true, default-features = false, features = ["rustls-ring","runtime-tokio"]}
+iroh-quinn ={ version = "0.16.1",optional = true, default-features = false, features = ["rustls-ring","runtime-tokio"]}
 notify = { version = "8.2.0", features = ["serde"], optional = true}
 arc-swap = { version = "1.8.1", optional = true }
-ring = {version = "*"}
 
 console-subscriber = { version = "0.5.0", optional = true }
 serde-saphyr = "0.0.17"
+ring = "0.17.14"
 
 [target.'cfg(target_os="android")'.dependencies]
 sendfd = { version = "0.4.4", features = ["tokio"] }
