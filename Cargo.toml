@@ -1,5 +1,5 @@
 [workspace]
-members = ["shadowquic", "shadowquic-macros","perf", "ui-tests"]
+members = ["shadowquic", "shadowquic-macros","perf"]
 default-members = ["shadowquic"]
 resolver = "3"
 

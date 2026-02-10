@@ -1,15 +1,14 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenTree;
 use quote::quote;
-use syn::{Ident, parse::Parse};
 
 #[proc_macro_derive(SEncode)]
 pub fn derive_encode(input: TokenStream) -> TokenStream {
     let ast = syn::parse_macro_input!(input as syn::DeriveInput);
 
     let ret = match ast.data {
-        syn::Data::Struct(ref s) => impl_struct_encode(&ast),
-        syn::Data::Enum(ref e) => impl_enum_encode(&ast),
+        syn::Data::Struct(_) => impl_struct_encode(&ast),
+        syn::Data::Enum(_) => impl_enum_encode(&ast),
         syn::Data::Union(..) => Err(syn::Error::new_spanned(
             ast,
             "Union is not supported by SEncode macro".to_string(),
@@ -173,10 +172,8 @@ fn get_variants_from_derive_input(d: &syn::DeriveInput) -> syn::Result<&EnumVari
 }
 fn generate_enum_encode_varints(
     fields: &EnumVariants,
-    repr_type: &syn::Type,
+    _repr_type: &syn::Type,
 ) -> syn::Result<proc_macro2::TokenStream> {
-    let idents: Vec<_> = fields.iter().map(|f| &f.ident).collect();
-
     // eprintln!("{:#?}", idents);
 
     // eprintln!("{:#?}", fields);
@@ -211,16 +208,14 @@ fn generate_enum_encode_varints(
 
 fn generate_enum_decode_varints(
     fields: &EnumVariants,
-    repr_type: &syn::Type,
+    _repr_type: &syn::Type,
 ) -> syn::Result<proc_macro2::TokenStream> {
-    let idents: Vec<_> = fields.iter().map(|f| &f.ident).collect();
-
     // eprintln!("{:#?}", idents);
 
     // eprintln!("{:#?}", fields);
     let fields = fields.iter();
     let mut token_stream = quote! {};
-    for (ident) in fields {
+    for ident in fields {
         if ident.fields == syn::Fields::Unit {
             //eprintln!("{:#?}", ident);
             let ident = &ident.ident;
@@ -255,12 +250,9 @@ fn generate_enum_discriminants(
     fields: &EnumVariants,
     repr: &syn::Type,
 ) -> syn::Result<proc_macro2::TokenStream> {
-    let idents: Vec<_> = fields.iter().map(|f| &f.ident).collect();
-
     // eprintln!("{:#?}", idents);
 
     //eprintln!("{:#?}", fields);
-    let mut token_stream = quote! {};
     let mut ret = quote! {};
     let mut counter = 0;
     let mut lit = syn::LitInt::new("0", proc_macro2::Span::call_site());
@@ -315,8 +307,8 @@ pub fn derive_decode(input: TokenStream) -> TokenStream {
     let ast = syn::parse_macro_input!(input as syn::DeriveInput);
 
     let ret = match ast.data {
-        syn::Data::Struct(ref s) => impl_struct_decode(&ast),
-        syn::Data::Enum(ref e) => impl_enum_decode(&ast),
+        syn::Data::Struct(_) => impl_struct_decode(&ast),
+        syn::Data::Enum(_) => impl_enum_decode(&ast),
         syn::Data::Union(..) => Err(syn::Error::new_spanned(
             ast,
             "Union is not supported by SEncode macro".to_string(),

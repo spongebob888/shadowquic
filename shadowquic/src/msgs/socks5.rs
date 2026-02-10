@@ -1,7 +1,6 @@
 use std::{
     fmt,
     net::{IpAddr, SocketAddr, ToSocketAddrs},
-    sync::Arc,
     vec,
 };
 
@@ -40,7 +39,7 @@ pub mod consts {
 
 pub use consts::*;
 
-use crate::{error::SError, msgs::squic::SQReq};
+use crate::error::SError;
 
 pub(crate) trait SEncode {
     async fn encode<T: AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError>;
