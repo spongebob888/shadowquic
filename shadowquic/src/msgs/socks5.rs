@@ -76,16 +76,18 @@ impl From<Vec<u8>> for VarVec {
     }
 }
 
+#[async_trait::async_trait]
 impl SEncode for VarVec {
-    async fn encode<T: AsyncWrite + Unpin>(&self, s: &mut T) -> Result<(), SError> {
+    async fn encode<T: AsyncWrite + Unpin + Send>(&self, s: &mut T) -> Result<(), SError> {
         let buf = vec![self.len];
         s.write_all(&buf).await?;
         s.write_all(&self.contents[0..self.len as usize]).await?;
         Ok(())
     }
 }
+#[async_trait::async_trait]
 impl SDecode for VarVec {
-    async fn decode<T: AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
+    async fn decode<T: AsyncRead + Unpin + Send>(s: &mut T) -> Result<Self, SError> {
         let mut buf = [0u8; 1];
         s.read_exact(&mut buf).await?;
         let mut buf2 = vec![0u8; buf[0] as usize];
@@ -207,34 +209,37 @@ pub struct UdpReqHeader {
     pub dst: SocksAddr,
 }
 
+#[async_trait::async_trait]
 impl SDecode for u8 {
-    async fn decode<T: AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
+    async fn decode<T: AsyncRead + Unpin + Send>(s: &mut T) -> Result<Self, SError> {
         let mut buf = [0u8];
         s.read_exact(&mut buf).await?;
         Ok(buf[0])
     }
 }
 
+#[async_trait::async_trait]
 impl SEncode for u8 {
-    async fn encode<T: AsyncWrite + Unpin>(&self, s: &mut T) -> Result<(), SError> {
+    async fn encode<T: AsyncWrite + Unpin + Send>(&self, s: &mut T) -> Result<(), SError> {
         let buf = [*self];
         s.write_all(&buf).await?;
         Ok(())
     }
 }
 
+#[async_trait::async_trait]
 impl SDecode for u16 {
-    async fn decode<T: AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
+    async fn decode<T: AsyncRead + Unpin + Send>(s: &mut T) -> Result<Self, SError> {
         let mut buf = [0u8; 2];
         s.read_exact(&mut buf).await?;
-
         let val = u16::from_be_bytes(buf);
         Ok(val)
     }
 }
 
+#[async_trait::async_trait]
 impl SEncode for u16 {
-    async fn encode<T: AsyncWrite + Unpin>(&self, s: &mut T) -> Result<(), SError> {
+    async fn encode<T: AsyncWrite + Unpin + Send>(&self, s: &mut T) -> Result<(), SError> {
         s.write_u16(*self).await?;
         Ok(())
     }

@@ -74,14 +74,14 @@ fn impl_enum_encode(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStre
     //eprintln!("{:#?}",fields);
     //eprintln!("{:#?}",st);
     let ret = quote! {
+        #[async_trait::async_trait]
         impl SEncode for #struct_ident {
-            async fn encode<T: tokio::io::AsyncWrite + Unpin>(&self, s: &mut T) -> Result<(), SError> {
+            async fn encode<T: tokio::io::AsyncWrite + Unpin + Send>(&self, s: &mut T) -> Result<(), SError> {
                 let x = unsafe { *<*const Self>::from(self).cast::<#repr_type>() }.clone();
                 x.encode(s).await?;
                 match self {
                     #builder_struct_fields_def
                 }
-
                 Ok(())
             }
         }
@@ -105,12 +105,11 @@ fn impl_enum_decode(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStre
     //eprintln!("{:#?}",fields);
     //eprintln!("{:#?}",st);
     let ret = quote! {
+        #[async_trait::async_trait]
         impl SDecode for #struct_ident {
-            async fn decode<T: tokio::io::AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
+            async fn decode<T: tokio::io::AsyncRead + Unpin + Send>(s: &mut T) -> Result<Self, SError> {
                 let disval = #repr_type::decode(s).await?;
-
                 #discrims
-
                 let ret = match disval {
                     #builder_struct_fields_def
                     _ => return Err(SError::ProtocolViolation),
@@ -130,8 +129,9 @@ fn impl_struct_encode(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenSt
 
     //eprintln!("{:#?}",st);
     let ret = quote! {
+        #[async_trait::async_trait]
         impl SEncode for #struct_ident {
-            async fn encode<T: tokio::io::AsyncWrite + Unpin>(&self, s: &mut T) -> Result<(), SError> {
+            async fn encode<T: tokio::io::AsyncWrite + Unpin + Send>(&self, s: &mut T) -> Result<(), SError> {
                 #builder_struct_fields_def
                 Ok(())
             }
@@ -336,8 +336,9 @@ fn impl_struct_decode(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenSt
 
     //eprintln!("{:#?}",st);
     let ret = quote! {
+        #[async_trait::async_trait]
         impl SDecode for #struct_ident {
-            async fn decode<T: tokio::io::AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
+            async fn decode<T: tokio::io::AsyncRead + Unpin + Send>(s: &mut T) -> Result<Self, SError> {
                Ok(Self {
                 #builder_struct_fields_def
                })
