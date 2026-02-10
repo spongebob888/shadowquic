@@ -25,7 +25,17 @@ pub fn derive_encode(input: TokenStream) -> TokenStream {
 fn is_valid_repr_type(s: &str) -> bool {
     matches!(
         s,
-        "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64" | "i128" | "isize"
+        "u8" | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
     )
 }
 /// Helper function to extract the Type from the #[repr(...)] attribute
@@ -35,16 +45,18 @@ fn get_repr_type(attrs: &[syn::Attribute]) -> Option<syn::Type> {
             // Parse the meta items inside the attribute (e.g., repr(u8))
             if let syn::Meta::List(meta_list) = &attr.meta {
                 //eprintln!("{:#?}", meta_list);
-                 {
-                    if let Some(TokenTree::Ident(repr_type)) = meta_list.tokens.clone().into_iter().next()  {
+                {
+                    if let Some(TokenTree::Ident(repr_type)) =
+                        meta_list.tokens.clone().into_iter().next()
+                    {
                         // Check if the path is a valid primitive (u8, u16, etc.)
                         // and convert the path to a Type
                         // Note: A real implementation should validate this further.
-    
-                            let ident_str = repr_type.to_string();
-                            if is_valid_repr_type(&ident_str) {
-                                return Some(syn::parse_quote! { #repr_type });
-                            }
+
+                        let ident_str = repr_type.to_string();
+                        if is_valid_repr_type(&ident_str) {
+                            return Some(syn::parse_quote! { #repr_type });
+                        }
                     }
                 }
             }
@@ -56,7 +68,8 @@ fn get_repr_type(attrs: &[syn::Attribute]) -> Option<syn::Type> {
 fn impl_enum_encode(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let struct_ident = &st.ident;
     let fields = get_variants_from_derive_input(st)?;
-    let repr_type = get_repr_type(&st.attrs).ok_or_else(|| syn::Error::new_spanned(st, "Missing repr attribute"))?;
+    let repr_type = get_repr_type(&st.attrs)
+        .ok_or_else(|| syn::Error::new_spanned(st, "Missing repr attribute"))?;
     let builder_struct_fields_def = generate_enum_encode_varints(fields, &repr_type)?;
 
     //eprintln!("{:#?}",fields);
@@ -80,11 +93,16 @@ fn impl_enum_encode(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStre
 fn impl_enum_decode(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let struct_ident = &st.ident;
     let fields = get_variants_from_derive_input(st)?;
-    let repr_type = get_repr_type(&st.attrs).ok_or_else(|| syn::Error::new_spanned(st, "Missing repr attribute"))?;
+    let repr_type = get_repr_type(&st.attrs).ok_or_else(|| {
+        syn::Error::new_spanned(
+            st,
+            "Missing repr attribute, adding attribute like `#[repr(u8)]`",
+        )
+    })?;
 
-    let  discrims= generate_enum_discriminants(fields, &repr_type)?;
-    let builder_struct_fields_def = generate_enum_decode_varints(fields,&repr_type)?;
-  
+    let discrims = generate_enum_discriminants(fields, &repr_type)?;
+    let builder_struct_fields_def = generate_enum_decode_varints(fields, &repr_type)?;
+
     //eprintln!("{:#?}",fields);
     //eprintln!("{:#?}",st);
     let ret = quote! {
@@ -93,7 +111,7 @@ fn impl_enum_decode(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStre
                 let disval = #repr_type::decode(s).await?;
 
                 #discrims
-                
+
                 let ret = match disval {
                     #builder_struct_fields_def
                     _ => return Err(SError::ProtocolViolation),
@@ -143,24 +161,31 @@ type EnumVariants = syn::punctuated::Punctuated<syn::Variant, syn::Token!(,)>;
 
 fn get_variants_from_derive_input(d: &syn::DeriveInput) -> syn::Result<&EnumVariants> {
     if let syn::Data::Enum(syn::DataEnum {
-        variants: ref vars ,..
+        variants: ref vars, ..
     }) = d.data
     {
-        return Ok(vars);   
+        return Ok(vars);
     }
     Err(syn::Error::new_spanned(
         d,
         "Must define on a Struct, not Enum".to_string(),
     ))
 }
-fn generate_enum_encode_varints(fields: &EnumVariants, repr_type: &syn::Type) -> syn::Result<proc_macro2::TokenStream> {
+fn generate_enum_encode_varints(
+    fields: &EnumVariants,
+    repr_type: &syn::Type,
+) -> syn::Result<proc_macro2::TokenStream> {
     let idents: Vec<_> = fields.iter().map(|f| &f.ident).collect();
 
     // eprintln!("{:#?}", idents);
 
     // eprintln!("{:#?}", fields);
     let mut token_stream = quote! {};
-    let unit_idents: Vec<_> = fields.iter().filter(|x|x.fields == syn::Fields::Unit).map(|f| &f.ident).collect();
+    let unit_idents: Vec<_> = fields
+        .iter()
+        .filter(|x| x.fields == syn::Fields::Unit)
+        .map(|f| &f.ident)
+        .collect();
     for ident in unit_idents {
         let tokenstream_piece = quote! {
             Self::#ident => { },
@@ -168,9 +193,13 @@ fn generate_enum_encode_varints(fields: &EnumVariants, repr_type: &syn::Type) ->
         };
         token_stream.extend(tokenstream_piece);
     }
-    for idents in fields.iter().filter(|x|x.fields != syn::Fields::Unit).map(|f| &f.ident) {
+    for idents in fields
+        .iter()
+        .filter(|x| x.fields != syn::Fields::Unit)
+        .map(|f| &f.ident)
+    {
         let tokenstream_piece = quote! {
-            Self::#idents(val) => { 
+            Self::#idents(val) => {
                 val.encode(s).await?;
             },
 
@@ -180,7 +209,10 @@ fn generate_enum_encode_varints(fields: &EnumVariants, repr_type: &syn::Type) ->
     Ok(token_stream)
 }
 
-fn generate_enum_decode_varints(fields: &EnumVariants, repr_type: &syn::Type) -> syn::Result<proc_macro2::TokenStream> {
+fn generate_enum_decode_varints(
+    fields: &EnumVariants,
+    repr_type: &syn::Type,
+) -> syn::Result<proc_macro2::TokenStream> {
     let idents: Vec<_> = fields.iter().map(|f| &f.ident).collect();
 
     // eprintln!("{:#?}", idents);
@@ -192,8 +224,10 @@ fn generate_enum_decode_varints(fields: &EnumVariants, repr_type: &syn::Type) ->
         if ident.fields == syn::Fields::Unit {
             //eprintln!("{:#?}", ident);
             let ident = &ident.ident;
-            let ident_name = quote::format_ident!("{}_TAG", ident).to_string().to_uppercase();
-             let ident_name = quote::format_ident!("{}", ident_name);
+            let ident_name = quote::format_ident!("{}_TAG", ident)
+                .to_string()
+                .to_uppercase();
+            let ident_name = quote::format_ident!("{}", ident_name);
             let tokenstream_piece = quote! {
                 #ident_name => Self::#ident,
             };
@@ -204,7 +238,7 @@ fn generate_enum_decode_varints(fields: &EnumVariants, repr_type: &syn::Type) ->
             let ident_tag = quote::format_ident!("{}_TAG", ident.ident.to_string().to_uppercase());
             let field_type = ident.fields.iter().next().unwrap().ty.clone();
             let tokenstream_piece = quote! {
-                #ident_tag => { 
+                #ident_tag => {
                     let val = #field_type::decode(s).await?;
                     Self::#ident_name(val)
                 },
@@ -217,21 +251,28 @@ fn generate_enum_decode_varints(fields: &EnumVariants, repr_type: &syn::Type) ->
     Ok(token_stream)
 }
 
-
-fn generate_enum_discriminants(fields: &EnumVariants, repr: &syn::Type) -> syn::Result<proc_macro2::TokenStream> {
+fn generate_enum_discriminants(
+    fields: &EnumVariants,
+    repr: &syn::Type,
+) -> syn::Result<proc_macro2::TokenStream> {
     let idents: Vec<_> = fields.iter().map(|f| &f.ident).collect();
 
     // eprintln!("{:#?}", idents);
 
     //eprintln!("{:#?}", fields);
     let mut token_stream = quote! {};
-    let mut ret= quote! {};
+    let mut ret = quote! {};
     let mut counter = 0;
     let mut lit = syn::LitInt::new("0", proc_macro2::Span::call_site());
     for idents in fields {
-        if let Some((_,syn::Expr::Lit(syn::ExprLit {
-            lit: syn::Lit::Int(lit_int),..
-        }))) = &idents.discriminant {
+        if let Some((
+            _,
+            syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Int(lit_int),
+                ..
+            }),
+        )) = &idents.discriminant
+        {
             let ident = &idents.ident;
             let tag_ident = quote::format_ident!("{}_TAG", ident.to_string().to_uppercase());
             ret.extend(quote! {
@@ -239,7 +280,7 @@ fn generate_enum_discriminants(fields: &EnumVariants, repr: &syn::Type) -> syn::
             });
             counter = 1;
             lit = lit_int.clone();
-      
+
             //eprintln!("{:#?}", lit_int);
         } else {
             let ident = &idents.ident;
@@ -253,7 +294,6 @@ fn generate_enum_discriminants(fields: &EnumVariants, repr: &syn::Type) -> syn::
     //eprint!("{:#?}", ret);
     Ok(ret)
 }
-
 
 fn generate_struct_encode_fields(fields: &StructFields) -> syn::Result<proc_macro2::TokenStream> {
     let idents: Vec<_> = fields.iter().map(|f| &f.ident).collect();

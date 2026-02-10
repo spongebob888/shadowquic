@@ -1,5 +1,8 @@
 use std::{
-    fmt, net::{IpAddr, SocketAddr, ToSocketAddrs}, sync::Arc, vec
+    fmt,
+    net::{IpAddr, SocketAddr, ToSocketAddrs},
+    sync::Arc,
+    vec,
 };
 
 use shadowquic_macros::{SDecode, SEncode};

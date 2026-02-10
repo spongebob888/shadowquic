@@ -21,10 +21,10 @@ pub enum SQCmd {
 #[repr(u8)]
 #[derive(SDecode, PartialEq)]
 pub enum Cmd {
-    Connect=0x78,
+    Connect = 0x78,
     Bind,
     AssociatOverDatagram,
-    AssociatOverStream ,
+    AssociatOverStream,
     Authenticate,
 }
 
@@ -150,5 +150,4 @@ async fn test_encode_req() {
     let mut cursor = std::io::Cursor::new(buf);
     req.encode(&mut cursor).await.unwrap();
     assert_eq!(cursor.into_inner()[0], 0x5);
-
 }
