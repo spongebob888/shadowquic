@@ -22,7 +22,8 @@ use crate::{
     Outbound, ProxyRequest,
     config::SocksClientCfg,
     error::SError,
-    msgs::socks5::{AuthReply, AuthReq, CmdReq, SDecode, SEncode, SOCKS5_AUTH_METHOD_NONE, VarVec},
+    msgs::socks5::{AuthReply, AuthReq, CmdReq, SOCKS5_AUTH_METHOD_NONE, VarVec},
+    msgs::{SDecode, SEncode},
 };
 
 #[derive(Debug, Clone)]

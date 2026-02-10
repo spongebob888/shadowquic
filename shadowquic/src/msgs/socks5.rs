@@ -6,6 +6,7 @@ use std::{
 
 use shadowquic_macros::{SDecode, SEncode};
 
+use super::{SDecode, SEncode};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 #[rustfmt::skip]
@@ -40,16 +41,6 @@ pub mod consts {
 pub use consts::*;
 
 use crate::error::SError;
-
-pub(crate) trait SEncode {
-    async fn encode<T: AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError>;
-}
-pub(crate) trait SDecode
-where
-    Self: Sized,
-{
-    async fn decode<T: AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError>;
-}
 
 #[derive(Clone, Debug, SDecode, SEncode)]
 pub struct AuthReq {
@@ -86,7 +77,7 @@ impl From<Vec<u8>> for VarVec {
 }
 
 impl SEncode for VarVec {
-    async fn encode<T: AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
+    async fn encode<T: AsyncWrite + Unpin>(&self, s: &mut T) -> Result<(), SError> {
         let buf = vec![self.len];
         s.write_all(&buf).await?;
         s.write_all(&self.contents[0..self.len as usize]).await?;
@@ -168,12 +159,12 @@ impl fmt::Display for AddrOrDomain {
     }
 }
 impl SEncode for SocksAddr {
-    async fn encode<T: AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
+    async fn encode<T: AsyncWrite + Unpin>(&self, s: &mut T) -> Result<(), SError> {
         let buf = vec![self.atype];
         s.write_all(&buf).await?;
-        match self.addr {
-            AddrOrDomain::V4(x) => s.write_all(&x).await?,
-            AddrOrDomain::V6(x) => s.write_all(&x).await?,
+        match &self.addr {
+            AddrOrDomain::V4(x) => s.write_all(x).await?,
+            AddrOrDomain::V6(x) => s.write_all(x).await?,
             AddrOrDomain::Domain(x) => x.encode(s).await?,
         };
         s.write_u16(self.port).await?;
@@ -273,8 +264,8 @@ impl SDecode for u8 {
 }
 
 impl SEncode for u8 {
-    async fn encode<T: AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
-        let buf = [self];
+    async fn encode<T: AsyncWrite + Unpin>(&self, s: &mut T) -> Result<(), SError> {
+        let buf = [*self];
         s.write_all(&buf).await?;
         Ok(())
     }
@@ -291,8 +282,8 @@ impl SDecode for u16 {
 }
 
 impl SEncode for u16 {
-    async fn encode<T: AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
-        s.write_u16(self).await?;
+    async fn encode<T: AsyncWrite + Unpin>(&self, s: &mut T) -> Result<(), SError> {
+        s.write_u16(*self).await?;
         Ok(())
     }
 }

@@ -29,7 +29,8 @@ use crate::{
     error::{SError, SResult},
     msgs::squic::SunnyCredential,
     msgs::{
-        socks5::{SDecode, SEncode, SocksAddr},
+        SDecode, SEncode,
+        socks5::SocksAddr,
         squic::{SQPacketDatagramHeader, SQReq, SQUdpControlHeader},
     },
     quic::QuicConnection,

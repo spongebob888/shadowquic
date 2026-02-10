@@ -4,11 +4,12 @@ use std::sync::Arc;
 use crate::config::{AuthUser, SocksServerCfg};
 use crate::error::SError;
 use crate::msgs::socks5::{
-    self, AddrOrDomain, AuthReq, CmdReq, PasswordAuthReply, PasswordAuthReq, SDecode, SEncode,
+    self, AddrOrDomain, AuthReq, CmdReq, PasswordAuthReply, PasswordAuthReq,
     SOCKS5_ADDR_TYPE_DOMAIN_NAME, SOCKS5_ADDR_TYPE_IPV4, SOCKS5_AUTH_METHOD_NONE,
     SOCKS5_AUTH_METHOD_PASSWORD, SOCKS5_CMD_TCP_BIND, SOCKS5_CMD_TCP_CONNECT,
     SOCKS5_CMD_UDP_ASSOCIATE, SOCKS5_REPLY_SUCCEEDED, SOCKS5_VERSION,
 };
+use crate::msgs::{SDecode, SEncode};
 use crate::utils::dual_socket::to_ipv4_mapped;
 use crate::{Inbound, ProxyRequest, TcpSession, UdpSession};
 use async_trait::async_trait;

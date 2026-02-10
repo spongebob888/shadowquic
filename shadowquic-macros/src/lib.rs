@@ -75,8 +75,8 @@ fn impl_enum_encode(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStre
     //eprintln!("{:#?}",st);
     let ret = quote! {
         impl SEncode for #struct_ident {
-            async fn encode<T: tokio::io::AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
-                let x = unsafe { *<*const _>::from(&self).cast::<#repr_type>() }.clone();
+            async fn encode<T: tokio::io::AsyncWrite + Unpin>(&self, s: &mut T) -> Result<(), SError> {
+                let x = unsafe { *<*const Self>::from(self).cast::<#repr_type>() }.clone();
                 x.encode(s).await?;
                 match self {
                     #builder_struct_fields_def
@@ -131,7 +131,7 @@ fn impl_struct_encode(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenSt
     //eprintln!("{:#?}",st);
     let ret = quote! {
         impl SEncode for #struct_ident {
-            async fn encode<T: tokio::io::AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
+            async fn encode<T: tokio::io::AsyncWrite + Unpin>(&self, s: &mut T) -> Result<(), SError> {
                 #builder_struct_fields_def
                 Ok(())
             }
@@ -232,6 +232,12 @@ fn generate_enum_decode_varints(
             let ident_name = ident.ident.clone();
             let ident_tag = quote::format_ident!("{}_TAG", ident.ident.to_string().to_uppercase());
             let field_type = ident.fields.iter().next().unwrap().ty.clone();
+            if ident.fields.iter().count() > 1 {
+                return Err(syn::Error::new_spanned(
+                    ident,
+                    "Only one field is supported for non-unit variants".to_string(),
+                ));
+            }
             let tokenstream_piece = quote! {
                 #ident_tag => {
                     let val = #field_type::decode(s).await?;

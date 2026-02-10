@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use crate::error::SError;
 
-use super::socks5::{SDecode, SEncode, SocksAddr};
+use super::socks5::SocksAddr;
+use super::{SDecode, SEncode};
 use shadowquic_macros::{SDecode, SEncode};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -16,16 +17,6 @@ pub enum SQCmd {
     AssociatOverDatagram = 0x3,
     AssociatOverStream = 0x4,
     Authenticate = 0x5,
-}
-
-#[repr(u8)]
-#[derive(SDecode, PartialEq)]
-pub enum Cmd {
-    Connect = 0x78,
-    Bind,
-    AssociatOverDatagram,
-    AssociatOverStream,
-    Authenticate,
 }
 
 impl SDecode for SQCmd {
@@ -130,8 +121,8 @@ pub struct SQPacketDatagramHeader {
 }
 
 impl SEncode for SunnyCredential {
-    async fn encode<T: AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError> {
-        s.write_all(&*self).await?;
+    async fn encode<T: AsyncWrite + Unpin>(&self, s: &mut T) -> Result<(), SError> {
+        s.write_all(self.as_ref()).await?;
         Ok(())
     }
 }
@@ -150,4 +141,17 @@ async fn test_encode_req() {
     let mut cursor = std::io::Cursor::new(buf);
     req.encode(&mut cursor).await.unwrap();
     assert_eq!(cursor.into_inner()[0], 0x5);
+}
+
+#[tokio::test]
+async fn test_macro_expand_req() {
+    #[repr(u8)]
+    #[derive(SDecode, SEncode, PartialEq)]
+    pub enum Cmd {
+        Connect,
+        Bind = 0x8,
+        AssociatOverDatagram,
+        AssociatOverStream,
+        Authenticate,
+    }
 }

@@ -9,10 +9,7 @@ use tracing::{Level, debug, error, info, span, trace};
 use crate::{
     ProxyRequest,
     error::SError,
-    msgs::{
-        socks5::{SEncode, SocksAddr},
-        squic::SQReq,
-    },
+    msgs::{SEncode, socks5::SocksAddr, squic::SQReq},
     quic::QuicConnection,
     squic::{handle_udp_recv_ctrl, handle_udp_send},
 };
