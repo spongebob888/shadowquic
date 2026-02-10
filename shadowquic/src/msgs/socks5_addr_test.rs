@@ -1,3 +1,5 @@
+use crate::msgs::socks5::SOCKS5_ADDR_TYPE_DOMAIN_NAME;
+
 use super::socks5::{AddrOrDomain, SOCKS5_ADDR_TYPE_IPV4, SOCKS5_ADDR_TYPE_IPV6, SocksAddr};
 use std::io::Cursor;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -5,7 +7,6 @@ use tokio::io::{AsyncRead, AsyncWrite};
 #[tokio::test]
 async fn test_socksaddr_ipv4_encode_decode() {
     let addr = SocksAddr {
-        atype: SOCKS5_ADDR_TYPE_IPV4,
         addr: AddrOrDomain::V4([127, 0, 0, 1]),
         port: 8080,
     };
@@ -24,7 +25,6 @@ async fn test_socksaddr_ipv4_encode_decode() {
         .await
         .expect("decode failed");
     // Intermediate check: decoded fields
-    assert_eq!(decoded.atype, SOCKS5_ADDR_TYPE_IPV4);
     assert_eq!(decoded.port, 8080);
     match decoded.addr {
         AddrOrDomain::V4(ip) => assert_eq!(ip, [127, 0, 0, 1]),
@@ -36,7 +36,6 @@ async fn test_socksaddr_ipv4_encode_decode() {
 #[tokio::test]
 async fn test_socksaddr_ipv6_encode_decode() {
     let addr = SocksAddr {
-        atype: SOCKS5_ADDR_TYPE_IPV6,
         addr: AddrOrDomain::V6([0u8; 16]),
         port: 443,
     };
@@ -55,7 +54,6 @@ async fn test_socksaddr_ipv6_encode_decode() {
         .await
         .expect("decode failed");
     // Intermediate check: decoded fields
-    assert_eq!(decoded.atype, SOCKS5_ADDR_TYPE_IPV6);
     assert_eq!(decoded.port, 443);
     match decoded.addr {
         AddrOrDomain::V6(ip) => assert_eq!(ip, [0u8; 16]),
@@ -73,7 +71,7 @@ async fn test_socksaddr_domain_encode_decode() {
         .await
         .expect("encode failed");
     // Intermediate check: buffer should be 1 (atype) + 1 (len) + N (domain) + 2 (port)
-    assert_eq!(buf[0], addr.atype);
+    assert_eq!(buf[0], SOCKS5_ADDR_TYPE_DOMAIN_NAME);
     let domain_len = domain.len();
     assert_eq!(buf[1] as usize, domain_len);
     assert_eq!(&buf[2..2 + domain_len], domain.as_bytes());
@@ -87,7 +85,6 @@ async fn test_socksaddr_domain_encode_decode() {
         .await
         .expect("decode failed");
     // Intermediate check: decoded fields
-    assert_eq!(decoded.atype, addr.atype);
     assert_eq!(decoded.port, 1234);
     if let AddrOrDomain::Domain(varvec) = &decoded.addr {
         assert_eq!(varvec.len as usize, domain_len);

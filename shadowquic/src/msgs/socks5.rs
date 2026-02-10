@@ -111,16 +111,14 @@ pub struct CmdReq {
     pub dst: SocksAddr,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, SDecode, SEncode)]
 pub struct SocksAddr {
-    pub atype: u8,
     pub addr: AddrOrDomain,
     pub port: u16,
 }
 impl SocksAddr {
     pub fn from_domain(name: String, port: u16) -> Self {
         SocksAddr {
-            atype: SOCKS5_ADDR_TYPE_DOMAIN_NAME,
             addr: AddrOrDomain::Domain(VarVec {
                 len: name.len() as u8,
                 contents: name.into_bytes(),
@@ -159,62 +157,15 @@ impl fmt::Display for AddrOrDomain {
         Ok(())
     }
 }
-impl SEncode for SocksAddr {
-    async fn encode<T: AsyncWrite + Unpin>(&self, s: &mut T) -> Result<(), SError> {
-        let buf = vec![self.atype];
-        s.write_all(&buf).await?;
-        match &self.addr {
-            AddrOrDomain::V4(x) => s.write_all(x).await?,
-            AddrOrDomain::V6(x) => s.write_all(x).await?,
-            AddrOrDomain::Domain(x) => x.encode(s).await?,
-        };
-        s.write_u16(self.port).await?;
-        Ok(())
-    }
-}
-impl SDecode for SocksAddr {
-    async fn decode<T: AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
-        let mut buf = [0u8; 1];
-        s.read_exact(&mut buf).await?;
-        let atype = buf[0];
-        let mut buf2 = vec![0u8; 1];
-        let addr = match buf[0] {
-            consts::SOCKS5_ADDR_TYPE_IPV4 => {
-                buf2.resize(4, 0);
-                s.read_exact(&mut buf2).await?;
-                AddrOrDomain::V4(buf2.try_into().unwrap())
-            }
-            consts::SOCKS5_ADDR_TYPE_IPV6 => {
-                buf2.resize(16, 0);
-                s.read_exact(&mut buf2).await?;
-                AddrOrDomain::V6(buf2.try_into().unwrap())
-            }
-            consts::SOCKS5_ADDR_TYPE_DOMAIN_NAME => {
-                let buf2 = VarVec::decode(s).await?;
-                AddrOrDomain::Domain(buf2)
-            }
-            _ => {
-                panic!("Socks Protocol Violated");
-            }
-        };
-        let mut buf = [0u8; 2];
-        s.read_exact(&mut buf).await?;
-
-        let port = u16::from_be_bytes(buf);
-        Ok(Self { atype, addr, port })
-    }
-}
 
 impl From<SocketAddr> for SocksAddr {
     fn from(value: SocketAddr) -> Self {
         match value {
             SocketAddr::V4(socket_addr_v4) => SocksAddr {
-                atype: SOCKS5_ADDR_TYPE_IPV4,
                 addr: AddrOrDomain::V4(socket_addr_v4.ip().octets()),
                 port: socket_addr_v4.port(),
             },
             SocketAddr::V6(socket_addr_v6) => SocksAddr {
-                atype: SOCKS5_ADDR_TYPE_IPV6,
                 addr: AddrOrDomain::V6(socket_addr_v6.ip().octets()),
                 port: socket_addr_v6.port(),
             },

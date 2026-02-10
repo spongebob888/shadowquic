@@ -4,8 +4,7 @@ use std::sync::Arc;
 use crate::config::{AuthUser, SocksServerCfg};
 use crate::error::SError;
 use crate::msgs::socks5::{
-    self, AddrOrDomain, AuthReq, CmdReq, PasswordAuthReply, PasswordAuthReq,
-    SOCKS5_ADDR_TYPE_DOMAIN_NAME, SOCKS5_ADDR_TYPE_IPV4, SOCKS5_AUTH_METHOD_NONE,
+    self, AddrOrDomain, AuthReq, CmdReq, PasswordAuthReply, PasswordAuthReq, SOCKS5_AUTH_METHOD_NONE,
     SOCKS5_AUTH_METHOD_PASSWORD, SOCKS5_CMD_TCP_BIND, SOCKS5_CMD_TCP_CONNECT,
     SOCKS5_CMD_UDP_ASSOCIATE, SOCKS5_REPLY_SUCCEEDED, SOCKS5_VERSION,
 };
@@ -114,20 +113,12 @@ impl SocksServer {
             AddrOrDomain::V4(_) | AddrOrDomain::Domain(_) => AddrOrDomain::V4([0u8, 0u8, 0u8, 0u8]),
             AddrOrDomain::V6(x) => AddrOrDomain::V6(x.map(|_| 0u8)),
         };
-        let mut atype: u8 = req.dst.atype;
-        if atype == SOCKS5_ADDR_TYPE_DOMAIN_NAME {
-            atype = SOCKS5_ADDR_TYPE_IPV4;
-        }
 
         let mut reply = socks5::CmdReply {
             version: SOCKS5_VERSION,
             rep: SOCKS5_REPLY_SUCCEEDED,
             rsv: 0u8,
-            bind_addr: socks5::SocksAddr {
-                atype,
-                addr,
-                port: 0u16,
-            },
+            bind_addr: socks5::SocksAddr { addr, port: 0u16 },
         };
         let (reply, socket) = match req.cmd {
             SOCKS5_CMD_TCP_CONNECT => (reply, None),

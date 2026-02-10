@@ -15,7 +15,7 @@ use crate::{
     Outbound, UdpSession,
     config::{DirectOutCfg, DnsStrategy},
     error::SError,
-    msgs::socks5::{AddrOrDomain, SOCKS5_ADDR_TYPE_DOMAIN_NAME, SocksAddr, VarVec},
+    msgs::socks5::{AddrOrDomain, SocksAddr, VarVec},
     utils::dual_socket::DualSocket,
 };
 use async_trait::async_trait;
@@ -91,7 +91,6 @@ impl DnsResolve {
     async fn inv_resolve(&self, addr: &SocketAddr) -> SocksAddr {
         if let Some(add) = self.0.lock().await.iter().find(|x| x.1 == addr) {
             SocksAddr {
-                atype: SOCKS5_ADDR_TYPE_DOMAIN_NAME,
                 addr: AddrOrDomain::Domain(VarVec {
                     len: add.0.len() as u8,
                     contents: add.0.clone(),
