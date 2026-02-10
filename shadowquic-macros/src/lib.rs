@@ -1,7 +1,65 @@
+//! This crate provides the [`shadowquic::SEncode`] and [`shadowquic::SDecode`] derive macros.
+//! These two macros automatically implement the SEncode and SDecode traits for structs and enums as long as
+//! the member or variants are themselves SEncode or SDecode.
+//!
+//! Below is the example of how to use, below example defines the protocol header for socks5 address.
+//!
+//! ```rust, ignore
+//! use shadowquic_macros::{SDecode, SEncode};
+//! use shadowquic::msgs::{SDecode, SEncode};
+//! use shadowquic::error::SError;
+//! /// derive SDecode and SEncode automatically.
+//! #[derive(SDecode, SEncode)]
+//! pub struct SocksAddr {
+//!     pub addr: AddrOrDomain,
+//!     pub port: u16,
+//! }
+//! /// SDecode/SEncode will define SDecode/SEncode automatically.
+//! /// `#[repr(u8)]` is required to specify the type of discriminant for enum.
+//! #[derive(SDecode, SEncode)]
+//! #[repr(u8)]
+//! pub enum AddrOrDomain {
+//!     V4([u8; 4]) = 0x1,
+//!     V6([u8; 16]) = 0x4,
+//!     Domain(VarVec) = 0x3,
+//! }
+//!
+//! /// You need to define SEncode/SDecode traits yourself
+//! /// since they are not defined for Vec.
+//! pub struct VarVec {
+//!     pub len: u8,
+//!     pub contents: Vec<u8>,
+//! }
+//! ```
+//! You can send the socks5 address by
+//! ```rust, ignore
+//! let addr: SocksAddr = ...;
+//! let mut tcp_stream: TcpStream = ...;
+//! addr.encode(&mut tcp_stream).await?;
+//! ```
+//! or you can receive the socks5 address by
+//! ```rust, ignore
+//! let mut tcp_stream: TcpStream = ...;
+//! let addr = SocksAddr::decode(&mut tcp_stream).await?;
+//! ```
+//!
+//! Based on these two macros,
+//! you can easily define your own protocol header and implement them fast and clean.
+//!
+//! Check [`shadowquic::msgs::socks5`] to see how socks5 protocol header is defined.
+//! A full protocol implementation can be seen in [`shadowquic::socks`] module
+//!
+//!
+
 use proc_macro::TokenStream;
 use proc_macro2::TokenTree;
 use quote::quote;
 
+/// Derive [`shadowquic::SEncode`] automatically for the struct or enum.
+/// For struct, it encodes each field in order. For enum, it first encodes the discriminant as a u8/u16... defined by `#[repr(*)]`
+/// and then encodes the content based on the value of disriminant.
+/// For enum variants, at most one field is supported. Named field/or tuple field is not supported for enum.
+///  `#[repr(*)]` is required for enum to specify the type of discriminant.
 #[proc_macro_derive(SEncode)]
 pub fn derive_encode(input: TokenStream) -> TokenStream {
     let ast = syn::parse_macro_input!(input as syn::DeriveInput);
@@ -311,6 +369,10 @@ fn generate_struct_encode_fields(fields: &StructFields) -> syn::Result<proc_macr
     Ok(token_stream)
 }
 
+/// Derive [`shadowquic::SDecode`] automatically for the struct or enum.
+/// For struct, it decodes each field in order. For enum, it first decodes a u8/u16... defined by `#[repr(*)]` as discriminant and then decodes the content based on the value of disriminant.
+/// For enum variants, at most one field is supported. Named field/or tuple field is not supported for enum.
+/// `#[repr(*)]` is required for enum to specify the type of discriminant.
 #[proc_macro_derive(SDecode)]
 pub fn derive_decode(input: TokenStream) -> TokenStream {
     let ast = syn::parse_macro_input!(input as syn::DeriveInput);
