@@ -15,8 +15,10 @@ use crate::{
 
 use crate::squic::{IDStore, SQConn, handle_udp_packet_recv};
 
+pub type ShadowQuicConn = SQConn<<EndClient as QuicClient>::C>;
+
 pub struct ShadowQuicClient {
-    pub quic_conn: Option<SQConn<<EndClient as QuicClient>::C>>,
+    pub quic_conn: Option<ShadowQuicConn>,
     pub config: ShadowQuicClientCfg,
     pub quic_end: OnceCell<EndClient>,
 }
@@ -39,7 +41,7 @@ impl ShadowQuicClient {
         })
     }
 
-    pub async fn get_conn(&self) -> Result<SQConn<<EndClient as QuicClient>::C>, SError> {
+    pub async fn get_conn(&self) -> Result<ShadowQuicConn, SError> {
         let addr = self
             .config
             .addr
