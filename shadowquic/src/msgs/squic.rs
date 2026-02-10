@@ -5,7 +5,6 @@ use crate::error::SError;
 use super::socks5::SocksAddr;
 use super::{SDecode, SEncode};
 use shadowquic_macros::{SDecode, SEncode};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub static SUNNY_QUIC_AUTH_LEN: usize = 64;
 pub(crate) type SunnyCredential = Arc<[u8; SUNNY_QUIC_AUTH_LEN]>;
@@ -120,24 +119,10 @@ pub struct SQPacketDatagramHeader {
     pub id: u16, // id is one to one coresponance a udpsocket and proxy dst
 }
 
-impl SEncode for SunnyCredential {
-    async fn encode<T: AsyncWrite + Unpin>(&self, s: &mut T) -> Result<(), SError> {
-        s.write_all(self.as_ref()).await?;
-        Ok(())
-    }
-}
-impl SDecode for SunnyCredential {
-    async fn decode<T: AsyncRead + Unpin>(s: &mut T) -> Result<Self, SError> {
-        let mut data = [0u8; SUNNY_QUIC_AUTH_LEN];
-        s.read_exact(&mut data).await?;
-        Ok(Arc::new(data))
-    }
-}
-
 #[tokio::test]
 async fn test_encode_req() {
     let req = SQReq::SQAuthenticate(Arc::new([1u8; SUNNY_QUIC_AUTH_LEN]));
-    let mut buf = vec![0u8; 1 + SUNNY_QUIC_AUTH_LEN];
+    let buf = vec![0u8; 1 + SUNNY_QUIC_AUTH_LEN];
     let mut cursor = std::io::Cursor::new(buf);
     req.encode(&mut cursor).await.unwrap();
     assert_eq!(cursor.into_inner()[0], 0x5);
@@ -147,6 +132,7 @@ async fn test_encode_req() {
 async fn test_macro_expand_req() {
     #[repr(u8)]
     #[derive(SDecode, SEncode, PartialEq)]
+    #[allow(dead_code)]
     pub enum Cmd {
         Connect,
         Bind = 0x8,
