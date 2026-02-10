@@ -1,7 +1,5 @@
 use std::{
-    fmt,
-    net::{IpAddr, SocketAddr, ToSocketAddrs},
-    vec,
+    fmt, net::{IpAddr, SocketAddr, ToSocketAddrs}, sync::Arc, vec
 };
 
 use shadowquic_macros::{SDecode, SEncode};
@@ -39,7 +37,7 @@ pub mod consts {
 
 pub use consts::*;
 
-use crate::error::SError;
+use crate::{error::SError, msgs::squic::SQReq};
 
 pub(crate) trait SEncode {
     async fn encode<T: AsyncWrite + Unpin>(self, s: &mut T) -> Result<(), SError>;
