@@ -8,9 +8,10 @@ use tracing::warn;
 use crate::{
     UdpRecv, UdpSend,
     error::SError,
-    msgs::socks5::{self, SDecode, SEncode, SocksAddr, UdpReqHeader},
+    msgs::socks5::{self, SocksAddr, UdpReqHeader},
 };
 
+use crate::msgs::{SDecode, SEncode};
 pub mod inbound;
 pub mod outbound;
 

@@ -12,7 +12,8 @@ use crate::{
     ProxyRequest, TcpSession, TcpTrait, UdpSession,
     error::SError,
     msgs::{
-        socks5::{SDecode, SocksAddr},
+        SDecode,
+        socks5::SocksAddr,
         squic::{SQReq, SunnyCredential},
     },
     quic::QuicConnection,

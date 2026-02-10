@@ -21,6 +21,9 @@ pub mod socks;
 pub mod squic;
 pub mod sunnyquic;
 pub mod utils;
+
+pub use msgs::SDecode;
+pub use msgs::SEncode;
 pub enum ProxyRequest<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend> {
     Tcp(TcpSession<T>),
     Udp(UdpSession<I, O>),
