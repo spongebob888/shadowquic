@@ -114,7 +114,7 @@ impl SocksServer {
             AddrOrDomain::V4(_) | AddrOrDomain::Domain(_) => AddrOrDomain::V4([0u8, 0u8, 0u8, 0u8]),
             AddrOrDomain::V6(x) => AddrOrDomain::V6(x.map(|_| 0u8)),
         };
-        let mut atype = req.dst.atype;
+        let mut atype: u8 = req.dst.atype;
         if atype == SOCKS5_ADDR_TYPE_DOMAIN_NAME {
             atype = SOCKS5_ADDR_TYPE_IPV4;
         }

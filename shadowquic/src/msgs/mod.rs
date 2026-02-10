@@ -4,6 +4,9 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::error::SError;
 
+#[cfg(test)]
+mod socks5_addr_test;
+
 pub mod socks5;
 pub mod squic;
 /// SEncode is a asyc trait for encoding. It can be automatically derived for struct by the SEncode macro

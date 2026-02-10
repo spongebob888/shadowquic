@@ -138,11 +138,12 @@ impl fmt::Display for SocksAddr {
         }
     }
 }
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, SDecode, SEncode)]
+#[repr(u8)]
 pub enum AddrOrDomain {
-    V4([u8; 4]),
-    V6([u8; 16]),
-    Domain(VarVec),
+    V4([u8; 4]) = SOCKS5_ADDR_TYPE_IPV4,
+    V6([u8; 16]) = SOCKS5_ADDR_TYPE_IPV6,
+    Domain(VarVec) = SOCKS5_ADDR_TYPE_DOMAIN_NAME,
 }
 impl fmt::Display for AddrOrDomain {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

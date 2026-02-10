@@ -240,7 +240,7 @@ fn generate_enum_decode_varints(
             }
             let tokenstream_piece = quote! {
                 #ident_tag => {
-                    let val = #field_type::decode(s).await?;
+                    let val = <#field_type as SDecode>::decode(s).await?;
                     Self::#ident_name(val)
                 },
 
@@ -261,14 +261,17 @@ fn generate_enum_discriminants(
     //eprintln!("{:#?}", fields);
     let mut ret = quote! {};
     let mut counter = 0;
-    let mut lit = syn::LitInt::new("0", proc_macro2::Span::call_site());
+    let mut lit = syn::Expr::Lit(syn::ExprLit {
+        lit: syn::Lit::Int(syn::LitInt::new("0", proc_macro2::Span::call_site())),
+        attrs: vec![],
+    });
     for idents in fields {
         if let Some((
             _,
-            syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Int(lit_int),
-                ..
-            }),
+            lit_int, // syn::Expr::Lit(syn::ExprLit {
+                     //     lit: syn::Lit::Int(lit_int),
+                     //     ..
+                     // }),
         )) = &idents.discriminant
         {
             let ident = &idents.ident;
