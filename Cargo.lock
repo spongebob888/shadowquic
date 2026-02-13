@@ -3077,7 +3077,7 @@ dependencies = [
 
 [[package]]
 name = "shadowquic"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3116,7 +3116,7 @@ dependencies = [
 
 [[package]]
 name = "shadowquic-macros"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "crabtime",
  "proc-macro2",

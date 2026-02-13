@@ -32,7 +32,7 @@ rcgen = { version = "0.14", default-features = false, features = ["crypto","ring
 bytes = "1.11.0"
 async-trait = "0.1.89"
 webpki-roots = "1.0.5"
-shadowquic-macros = {path = "../shadowquic-macros", version = "0.3.2"}
+shadowquic-macros = { path = "../shadowquic-macros" }
 yaml-rust2 = "0.11.0"
 serde = { version = "1.0.228", features = ["derive"]}
 clap = { version = "4", features = ["derive"] }
