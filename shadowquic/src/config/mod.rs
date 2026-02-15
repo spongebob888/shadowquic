@@ -13,9 +13,10 @@ use crate::{
 
 mod shadowquic;
 mod sunnyquic;
+mod tcp;
 pub use crate::config::shadowquic::*;
 pub use crate::config::sunnyquic::*;
-pub mod tls;
+pub use crate::config::tcp::*;
 
 /// Overall configuration of shadowquic.
 ///
@@ -62,8 +63,6 @@ impl Config {
 #[serde(tag = "type")]
 pub enum InboundCfg {
     Socks(SocksServerCfg),
-    #[serde(rename = "tcp")]
-    Tcp(crate::config::tls::TcpServerCfg),
     #[serde(rename = "shadowquic")]
     ShadowQuic(ShadowQuicServerCfg),
     #[serde(rename = "sunnyquic")]
@@ -73,7 +72,6 @@ impl InboundCfg {
     async fn build_inbound(self) -> Result<Box<dyn Inbound>, SError> {
         let r: Box<dyn Inbound> = match self {
             InboundCfg::Socks(cfg) => Box::new(SocksServer::new(cfg).await?),
-            InboundCfg::Tcp(cfg) => Box::new(super::tcp::inbound::TcpServer::new(cfg).await?),
             InboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicServer::new(cfg)?),
             InboundCfg::SunnyQuic(cfg) => Box::new(SunnyQuicServer::new(cfg)?),
         };

@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use tokio_tfo::TfoListener;
 use tracing::{error, info};
 
-use crate::config::tls::TcpServerCfg;
+use crate::config::TcpServerCfg;
 use crate::error::SError;
 use crate::{Inbound, ProxyRequest, TcpSession};
 
@@ -20,6 +20,7 @@ impl TcpServer {
 
         // tokio-tfo handles socket creation and TFO configuration
         let listener = TfoListener::bind(bind_addr).await?;
+        let bind_addr = listener.local_addr().map_err(SError::Io)?;
 
         info!("TcpServer (TFO enabled) listening on {}", bind_addr);
 
@@ -27,6 +28,10 @@ impl TcpServer {
             listener,
             bind_addr,
         })
+    }
+
+    pub fn local_addr(&self) -> SocketAddr {
+        self.bind_addr
     }
 }
 
