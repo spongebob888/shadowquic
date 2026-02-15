@@ -1,7 +1,7 @@
-use shadowquic::config::{TcpClientCfg, TcpServerCfg};
-use shadowquic::tcp::inbound::TcpServer;
-use shadowquic::tcp::outbound::TcpClient;
-use shadowquic::{Inbound, Manager, Outbound};
+use crate::config::{TcpClientCfg, TcpServerCfg};
+use crate::tcp::inbound::TcpServer;
+use crate::tcp::outbound::TcpClient;
+use crate::{Inbound, Manager, Outbound};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
