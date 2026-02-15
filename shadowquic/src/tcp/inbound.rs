@@ -20,7 +20,7 @@ impl TcpServer {
 
         // tokio-tfo handles socket creation and TFO configuration
         let listener = TfoListener::bind(bind_addr).await?;
-        let bind_addr = listener.local_addr().map_err(SError::Io)?;
+        let bind_addr = listener.local_addr()?;
 
         info!("TcpServer (TFO enabled) listening on {}", bind_addr);
 

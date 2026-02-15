@@ -42,10 +42,10 @@ impl TcpClient {
                 "Invalid address",
             )))?;
 
-        let mut stream = TfoStream::connect(addr).await.map_err(SError::Io)?;
+        let mut stream = TfoStream::connect(addr).await?;
 
         // Disable Nagle's algorithm for lower latency
-        stream.set_nodelay(true).map_err(SError::Io)?;
+        stream.set_nodelay(true)?;
 
         // If we are tunneling, we might need to send the destination address to the server?
         // The current TcpServer implementation in `inbound.rs` assumes the destination is the bind address
