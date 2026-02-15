@@ -20,6 +20,8 @@ pub mod shadowquic;
 pub mod socks;
 pub mod squic;
 pub mod sunnyquic;
+pub mod tcp;
+pub mod transport;
 pub mod utils;
 
 pub use msgs::SDecode;
@@ -56,6 +58,7 @@ pub type AnyUdpSend = Arc<dyn UdpSend>;
 pub type AnyUdpRecv = Box<dyn UdpRecv>;
 pub trait TcpTrait: AsyncRead + AsyncWrite + Unpin + Send + Sync {}
 impl TcpTrait for TcpStream {}
+impl TcpTrait for tokio_tfo::TfoStream {}
 
 #[async_trait]
 pub trait Inbound<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend>: Send + Sync + Unpin {
