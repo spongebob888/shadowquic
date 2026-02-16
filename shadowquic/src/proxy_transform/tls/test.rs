@@ -29,7 +29,7 @@ async fn test_jls_transform() {
         zero_rtt: true,
     };
 
-    let server_transform = JlsServer::new(server_cfg).await.unwrap();
+    let server_transform = JlsServer::new(server_cfg).unwrap();
 
     let client_cfg = JlsClientCfg {
         username: "user".to_string(),
@@ -58,7 +58,7 @@ async fn test_jls_transform() {
     });
 
     let mut stream = client_transform
-        .transform_tcp(Box::new(client_stream))
+        .connect_stream(Box::new(client_stream))
         .await
         .expect("client transform failed");
     stream

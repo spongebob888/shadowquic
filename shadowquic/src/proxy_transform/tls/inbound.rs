@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use rustls_jls::pki_types::CertificateDer;
@@ -44,7 +45,9 @@ pub struct JlsServer {
     server_cfg: Arc<ServerConfig>,
 }
 impl JlsServer {
-    pub async fn new(cfg: JlsServerCfg) -> Result<Self, SError> {
+    pub fn new(cfg: JlsServerCfg) -> Result<Self, SError> {
+        let _ = rustls_jls::crypto::ring::default_provider().install_default();
+
         let mut crypto: ServerConfig;
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let cert_der = CertificateDer::from(cert.cert);

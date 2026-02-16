@@ -17,7 +17,6 @@ pub struct TcpServer {
 impl TcpServer {
     pub async fn new(cfg: TcpServerCfg) -> Result<Self, SError> {
         let bind_addr = cfg.bind_addr;
-
         // tokio-tfo handles socket creation and TFO configuration
         let listener = TfoListener::bind(bind_addr).await?;
         let bind_addr = listener.local_addr()?;

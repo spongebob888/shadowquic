@@ -1,0 +1,19 @@
+inbound:
+    type: shimtls
+    bind-addr: "0.0.0.0:1443"
+    users:
+        - username: "87654321"
+          password: "12345678"
+        - username: "88888888"
+          password: "99999999"
+    jls-upstream:
+        addr: "cloudflare.com:443" # domain + port, domain must be the same as client
+    alpn: ["h2"]
+    zero-rtt: true
+outbound:
+    type: direct
+    dns-strategy: prefer-ipv4 # or prefer-ipv6, ipv4-only, ipv6-only
+log-level: "trace"
+
+
+

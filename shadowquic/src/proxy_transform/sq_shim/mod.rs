@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use bytes::{Bytes, BytesMut};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::tcp;
+use tokio::select;
 use tokio::sync::Mutex;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -10,15 +12,15 @@ use tokio::{
 };
 
 use crate::proxy_transform::prepend_stream;
+use crate::{AnyTcp, UdpRecv, UdpSession};
 use crate::{
     AnyUdpSend, ProxyRequest, SDecode, SEncode, TcpSession, UdpSend,
     error::{SError, SResult},
     msgs::{socks5::SocksAddr, squic::SQReq},
     proxy_transform::ProxyTransform,
 };
-use crate::{UdpRecv, UdpSession};
 
-struct SqShimServer {}
+pub(crate) struct SqShimServer {}
 
 #[async_trait::async_trait]
 impl ProxyTransform for SqShimServer {
@@ -50,30 +52,35 @@ impl ProxyTransform for SqShimServer {
     }
 }
 
-struct SqShimClient;
+pub(crate) struct SqShimClient;
 
-#[async_trait::async_trait]
-impl ProxyTransform for SqShimClient {
-    async fn transform(&self, mut proxy: ProxyRequest) -> SResult<ProxyRequest> {
-        let mut vec = Vec::new();
-
+impl SqShimClient {
+    pub async fn join(proxy: ProxyRequest, mut stream: AnyTcp) -> SResult<()> {
         match proxy {
-            ProxyRequest::Tcp(tcp_session) => {
+            ProxyRequest::Tcp(mut tcp_session) => {
                 let req = SQReq::SQConnect(tcp_session.dst.clone());
-                req.encode(&mut vec).await?;
-                Ok(ProxyRequest::Tcp(TcpSession {
-                    stream: Box::new(prepend_stream(tcp_session.stream, Bytes::from(vec))),
-                    dst: tcp_session.dst,
-                }))
+                req.encode(&mut stream).await?;
+                tokio::io::copy_bidirectional(&mut tcp_session.stream, &mut stream).await?;
+                Ok(())
             }
-            ProxyRequest::Udp(udp_session) => {
-                let req = SQReq::SQAssociatOverDatagram(udp_session.bind_addr);
-                req.encode(&mut vec).await?;
-                Ok(ProxyRequest::Tcp(TcpSession {
-                    stream: todo!(),
-                    dst: udp_session.bind_addr,
-                }))
-            }
+            ProxyRequest::Udp(mut udp_session) => loop {
+                select! {
+                    Ok((bytes, addr)) = udp_session.recv.recv_from() => {
+                        addr.encode(&mut stream).await?;
+                        (bytes.len() as u16).encode(&mut stream).await?;
+                        stream.write_all(&bytes).await?;
+                    }
+                    Ok((bytes, addr)) = async {
+                        let addr = SocksAddr::decode(&mut stream).await?;
+                        let len = u16::decode(&mut stream).await?;
+                        let mut buf = vec![0; len as usize];
+                        stream.read_exact(&mut buf).await?;
+                        Ok::<(Bytes, SocksAddr), SError>((Bytes::from(buf), addr))
+                    } => {
+                        udp_session.send.send_to(bytes, addr).await?;
+                    }
+                }
+            },
         }
     }
 }

@@ -53,6 +53,8 @@ pub struct JlsClient {
 
 impl JlsClient {
     pub fn new(cfg: JlsClientCfg) -> Self {
+        let _ = rustls_jls::crypto::ring::default_provider().install_default();
+
         let root_store = RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.into(),
         };
@@ -67,7 +69,7 @@ impl JlsClient {
             server_name: cfg.server_name,
         }
     }
-    pub async fn transform_tcp(&self, stream: AnyTcp) -> SResult<AnyTcp> {
+    pub async fn connect_stream(&self, stream: AnyTcp) -> SResult<AnyTcp> {
         let connector = TlsConnector::from(self.cfg.clone()).early_data(self.cfg.enable_early_data);
         let conn = connector
             .connect(self.server_name.clone().try_into().unwrap(), stream)
@@ -77,15 +79,15 @@ impl JlsClient {
     }
 }
 
-#[async_trait::async_trait]
-impl ProxyTransform for JlsClient {
-    async fn transform(&self, proxy: ProxyRequest) -> SResult<ProxyRequest> {
-        match proxy {
-            ProxyRequest::Tcp(mut session) => {
-                session.stream = self.transform_tcp(session.stream).await?;
-                Ok(ProxyRequest::Tcp(session))
-            }
-            p @ ProxyRequest::Udp(_) => Ok(p),
-        }
-    }
-}
+// #[async_trait::async_trait]
+// impl ProxyTransform for JlsClient {
+//     async fn transform(&self, proxy: ProxyRequest) -> SResult<ProxyRequest> {
+//         match proxy {
+//             ProxyRequest::Tcp(mut session) => {
+//                 session.stream = self.connect_stream(session.stream).await?;
+//                 Ok(ProxyRequest::Tcp(session))
+//             }
+//             p @ ProxyRequest::Udp(_) => Ok(p),
+//         }
+//     }
+// }

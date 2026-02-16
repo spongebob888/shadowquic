@@ -18,6 +18,7 @@ pub mod msgs;
 pub mod proxy_transform;
 pub mod quic;
 pub mod shadowquic;
+pub mod shimtls;
 pub mod socks;
 pub mod squic;
 pub mod sunnyquic;

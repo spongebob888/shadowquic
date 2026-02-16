@@ -7,6 +7,7 @@ use crate::{
     direct::outbound::DirectOut,
     error::SError,
     shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
+    shimtls::{ShimTlsClient, ShimTlsServer},
     socks::{inbound::SocksServer, outbound::SocksClient},
     sunnyquic::{inbound::SunnyQuicServer, outbound::SunnyQuicClient},
 };
@@ -67,6 +68,8 @@ pub enum InboundCfg {
     ShadowQuic(ShadowQuicServerCfg),
     #[serde(rename = "sunnyquic")]
     SunnyQuic(SunnyQuicServerCfg),
+    #[serde(rename = "shimtls")]
+    ShimTls(ShimTlsServerCfg),
 }
 impl InboundCfg {
     async fn build_inbound(self) -> Result<Box<dyn Inbound>, SError> {
@@ -74,6 +77,7 @@ impl InboundCfg {
             InboundCfg::Socks(cfg) => Box::new(SocksServer::new(cfg).await?),
             InboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicServer::new(cfg)?),
             InboundCfg::SunnyQuic(cfg) => Box::new(SunnyQuicServer::new(cfg)?),
+            InboundCfg::ShimTls(cfg) => Box::new(ShimTlsServer::new(cfg).await?),
         };
         Ok(r)
     }
@@ -96,6 +100,8 @@ pub enum OutboundCfg {
     ShadowQuic(ShadowQuicClientCfg),
     #[serde(rename = "sunnyquic")]
     SunnyQuic(SunnyQuicClientCfg),
+    #[serde(rename = "shimtls")]
+    ShimTls(ShimTlsClientCfg),
     Direct(DirectOutCfg),
 }
 
@@ -106,6 +112,7 @@ impl OutboundCfg {
             OutboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicClient::new(cfg)),
             OutboundCfg::SunnyQuic(cfg) => Box::new(SunnyQuicClient::new(cfg)),
             OutboundCfg::Direct(cfg) => Box::new(DirectOut::new(cfg)),
+            OutboundCfg::ShimTls(cfg) => Box::new(ShimTlsClient::new(cfg)),
         };
         Ok(r)
     }

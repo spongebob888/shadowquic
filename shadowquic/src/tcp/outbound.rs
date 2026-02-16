@@ -4,7 +4,7 @@ use tokio::io::copy_bidirectional;
 use tokio_tfo::TfoStream;
 use tracing::{Instrument, error, info, trace_span};
 
-use crate::{Outbound, ProxyRequest, TcpSession, config::TcpClientCfg, error::SError};
+use crate::{AnyTcp, Outbound, ProxyRequest, TcpSession, config::TcpClientCfg, error::SError};
 
 #[derive(Debug, Clone)]
 pub struct TcpClient {
@@ -22,7 +22,7 @@ impl TcpClient {
         Self { addr: cfg.addr }
     }
 
-    async fn handle_tcp(&self, mut tcp_session: TcpSession) -> Result<(), SError> {
+    pub(crate) async fn connect_stream(&self) -> Result<AnyTcp, SError> {
         // If we are acting as a client to a TFO server (like TcpServer we implemented),
         // we should connect to `self.addr`.
         // If `self.addr` is empty or we are in "direct" mode, we might connect to `tcp_session.dst`.
@@ -42,50 +42,40 @@ impl TcpClient {
                 "Invalid address",
             )))?;
 
-        let mut stream = TfoStream::connect(addr).await?;
+        let stream = TfoStream::connect(addr).await?;
 
         // Disable Nagle's algorithm for lower latency
         stream.set_nodelay(true)?;
 
-        // If we are tunneling, we might need to send the destination address to the server?
-        // The current TcpServer implementation in `inbound.rs` assumes the destination is the bind address
-        // and doesn't read any header. It just forwards.
-        // So this implies a basic TCP tunnel matching the simple `TcpServer`.
-
-        // Just bridge the connections.
-        copy_bidirectional(&mut tcp_session.stream, &mut stream)
-            .await
-            .map_err(SError::Io)?;
-
-        Ok(())
+        Ok(Box::new(stream))
     }
 }
 
-#[async_trait]
-impl Outbound for TcpClient {
-    async fn handle(&mut self, req: ProxyRequest) -> Result<(), SError> {
-        let span = trace_span!("tcp_client", addr = %self.addr);
-        let client = self.clone();
+// #[async_trait]
+// impl Outbound for TcpClient {
+//     async fn handle(&mut self, req: ProxyRequest) -> Result<(), SError> {
+//         let span = trace_span!("tcp_client", addr = %self.addr);
+//         let client = self.clone();
 
-        // Spawn to handle the connection concurrently, similar to SocksClient
-        tokio::spawn(
-            async move {
-                let result = match req {
-                    ProxyRequest::Tcp(session) => client.handle_tcp(session).await,
-                    // UDP not supported for simple TCP tunnel yet, or simply ignore
-                    ProxyRequest::Udp(_) => {
-                        error!("TcpClient does not support UDP");
-                        Err(SError::SocksError("UDP not supported by TcpClient".into()))
-                    }
-                };
+//         // Spawn to handle the connection concurrently, similar to SocksClient
+//         tokio::spawn(
+//             async move {
+//                 let result = match req {
+//                     ProxyRequest::Tcp(session) => client.handle_tcp(session).await,
+//                     // UDP not supported for simple TCP tunnel yet, or simply ignore
+//                     ProxyRequest::Udp(_) => {
+//                         error!("TcpClient does not support UDP");
+//                         Err(SError::SocksError("UDP not supported by TcpClient".into()))
+//                     }
+//                 };
 
-                if let Err(e) = result {
-                    error!("TcpClient error: {}", e);
-                }
-            }
-            .instrument(span),
-        );
+//                 if let Err(e) = result {
+//                     error!("TcpClient error: {}", e);
+//                 }
+//             }
+//             .instrument(span),
+//         );
 
-        Ok(())
-    }
-}
+//         Ok(())
+//     }
+// }
