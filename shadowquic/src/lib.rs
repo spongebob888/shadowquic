@@ -60,6 +60,18 @@ pub trait TcpTrait: AsyncRead + AsyncWrite + Unpin + Send + Sync {}
 impl TcpTrait for TcpStream {}
 impl TcpTrait for tokio_tfo::TfoStream {}
 impl<T: ?Sized + TcpTrait> TcpTrait for Box<T> {}
+#[async_trait::async_trait]
+impl<T: ?Sized + UdpSend> UdpSend for Arc<T> {
+    async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
+        self.as_ref().send_to(buf, addr).await
+    }
+}
+#[async_trait::async_trait]
+impl<T: ?Sized + UdpRecv> UdpRecv for Box<T> {
+    async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr), SError> {
+        self.as_mut().recv_from().await
+    }
+}
 
 #[async_trait]
 pub trait Inbound<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend>: Send + Sync + Unpin {

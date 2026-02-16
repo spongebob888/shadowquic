@@ -71,7 +71,7 @@ impl ProxyTransform for SqShimClient {
                 req.encode(&mut vec).await?;
                 Ok(ProxyRequest::Tcp(TcpSession {
                     stream: todo!(),
-                    dst: todo!(),
+                    dst: udp_session.bind_addr,
                 }))
             }
         }
@@ -155,7 +155,10 @@ impl<S: UdpSend + 'static, R: UdpRecv + 'static> AsyncRead for UdpToTcp<S, R> {
                 match res {
                     Ok(data) => this.read_buf = data,
                     Err(e) => {
-                        return std::task::Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e)));
+                        return std::task::Poll::Ready(Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            e,
+                        )));
                     }
                 }
                 continue;
