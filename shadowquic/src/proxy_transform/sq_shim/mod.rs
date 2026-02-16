@@ -103,13 +103,248 @@ impl<T: AsyncRead + Unpin + Send + Sync> UdpRecv for TcpToUdpRecv<T> {
     }
 }
 
-// struct UdpToTcp<S: UdpSend, T: UdpRecv> {
-//     udp_send: Option<S>,
-//     udp_recv: Option<T>,
-//     send_fut: Option<
-//         std::pin::Pin<Box<dyn std::future::Future<Output = (Result<usize, SError>, S)> + Send>>,
-//     >,
-//     recv_fut: Option<
-//         std::pin::Pin<Box<dyn std::future::Future<Output = (Result<(Bytes, T), SError>)> + Send>>,
-//     >,
-// }
+pub struct UdpToTcp<S, R> {
+    send: Option<S>,
+    recv: Option<R>,
+
+    // Write state
+    write_buf: BytesMut,
+    send_fut: Option<
+        std::pin::Pin<Box<dyn std::future::Future<Output = (S, BytesMut, SResult<()>)> + Send>>,
+    >,
+
+    // Read state
+    read_buf: BytesMut,
+    recv_fut:
+        Option<std::pin::Pin<Box<dyn std::future::Future<Output = (R, SResult<BytesMut>)> + Send>>>,
+}
+
+impl<S: UdpSend + 'static, R: UdpRecv + 'static> UdpToTcp<S, R> {
+    pub fn new(send: S, recv: R) -> Self {
+        Self {
+            send: Some(send),
+            recv: Some(recv),
+            write_buf: BytesMut::new(),
+            send_fut: None,
+            read_buf: BytesMut::new(),
+            recv_fut: None,
+        }
+    }
+}
+
+impl<S: UdpSend + 'static, R: UdpRecv + 'static> AsyncRead for UdpToTcp<S, R> {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        let this = self.get_mut();
+        loop {
+            if !this.read_buf.is_empty() {
+                let amt = std::cmp::min(buf.remaining(), this.read_buf.len());
+                buf.put_slice(&this.read_buf[..amt]);
+                use bytes::Buf;
+                this.read_buf.advance(amt);
+                return std::task::Poll::Ready(Ok(()));
+            }
+
+            if let Some(fut) = this.recv_fut.as_mut() {
+                let (recv, res) = std::task::ready!(fut.as_mut().poll(cx));
+                this.recv_fut = None;
+                this.recv = Some(recv);
+                match res {
+                    Ok(data) => this.read_buf = data,
+                    Err(e) => {
+                        return std::task::Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e)));
+                    }
+                }
+                continue;
+            }
+
+            if this.recv_fut.is_none() {
+                let mut recv = this.recv.take().expect("recv is missing");
+                this.recv_fut = Some(Box::pin(async move {
+                    match recv.recv_from().await {
+                        Ok((data, addr)) => {
+                            let mut buf = Vec::new();
+                            if let Err(e) = addr.encode(&mut buf).await {
+                                return (recv, Err(e));
+                            }
+                            if let Err(e) = (data.len() as u16).encode(&mut buf).await {
+                                return (recv, Err(e));
+                            }
+                            use tokio::io::AsyncWriteExt;
+                            if let Err(e) = buf.write_all(&data).await {
+                                return (recv, Err(e.into()));
+                            }
+                            // BytesMut::from(Vec) works because Vec implements Into<BytesMut>? No.
+                            // BytesMut::from(&buf[..]) works.
+                            (recv, Ok(BytesMut::from(buf.as_slice())))
+                        }
+                        Err(e) => (recv, Err(e)),
+                    }
+                }));
+            }
+        }
+    }
+}
+
+impl<S: UdpSend + 'static, R: UdpRecv + 'static> AsyncWrite for UdpToTcp<S, R> {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        if let Some(fut) = this.send_fut.as_mut() {
+            if let std::task::Poll::Ready((send, leftover, res)) = fut.as_mut().poll(cx) {
+                this.send_fut = None;
+                this.send = Some(send);
+                if let Err(e) = res {
+                    return std::task::Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e)));
+                }
+                let mut new_buf = leftover;
+                new_buf.extend_from_slice(&this.write_buf);
+                this.write_buf = new_buf;
+            }
+        }
+
+        this.write_buf.extend_from_slice(buf);
+        let ret_len = buf.len();
+
+        if this.send_fut.is_none() && !this.write_buf.is_empty() {
+            let send = this.send.take().expect("send missing");
+            let mut data = std::mem::take(&mut this.write_buf);
+
+            this.send_fut = Some(Box::pin(async move {
+                loop {
+                    let start_len = data.len();
+                    let mut slice = &data[..];
+                    let addr = match SocksAddr::decode(&mut slice).await {
+                        Ok(a) => a,
+                        Err(SError::Io(e)) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                            break;
+                        }
+                        Err(e) => return (send, data, Err(e)),
+                    };
+
+                    let len = match u16::decode(&mut slice).await {
+                        Ok(l) => l,
+                        Err(SError::Io(e)) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                            break;
+                        }
+                        Err(e) => return (send, data, Err(e)),
+                    };
+
+                    if slice.len() < len as usize {
+                        break;
+                    }
+
+                    let mut packet = vec![0u8; len as usize];
+                    use tokio::io::AsyncReadExt;
+                    if let Err(e) = slice.read_exact(&mut packet).await {
+                        return (send, data, Err(e.into()));
+                    }
+
+                    if let Err(e) = send.send_to(Bytes::from(packet), addr).await {
+                        return (send, data, Err(e));
+                    }
+
+                    let consumed = start_len - slice.len();
+                    use bytes::Buf;
+                    data.advance(consumed);
+                    if data.is_empty() {
+                        break;
+                    } // Optimization
+                }
+                (send, data, Ok(()))
+            }));
+        }
+
+        std::task::Poll::Ready(Ok(ret_len))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        let this = self.get_mut();
+        loop {
+            if let Some(fut) = this.send_fut.as_mut() {
+                match fut.as_mut().poll(cx) {
+                    std::task::Poll::Ready((send, leftover, res)) => {
+                        this.send_fut = None;
+                        this.send = Some(send);
+                        if let Err(e) = res {
+                            return std::task::Poll::Ready(Err(io::Error::new(
+                                io::ErrorKind::Other,
+                                e,
+                            )));
+                        }
+                        let mut new_buf = leftover;
+                        new_buf.extend_from_slice(&this.write_buf);
+                        this.write_buf = new_buf;
+                    }
+                    std::task::Poll::Pending => return std::task::Poll::Pending,
+                }
+            }
+
+            if this.write_buf.is_empty() {
+                return std::task::Poll::Ready(Ok(()));
+            }
+
+            // Spawn if not empty
+            let send = this.send.take().expect("send missing");
+            let mut data = std::mem::take(&mut this.write_buf);
+
+            this.send_fut = Some(Box::pin(async move {
+                loop {
+                    let start_len = data.len();
+                    let mut slice = &data[..];
+                    let addr = match SocksAddr::decode(&mut slice).await {
+                        Ok(a) => a,
+                        Err(SError::Io(e)) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                            break;
+                        }
+                        Err(e) => return (send, data, Err(e)),
+                    };
+                    let len = match u16::decode(&mut slice).await {
+                        Ok(l) => l,
+                        Err(SError::Io(e)) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                            break;
+                        }
+                        Err(e) => return (send, data, Err(e)),
+                    };
+                    if slice.len() < len as usize {
+                        break;
+                    }
+                    let mut packet = vec![0u8; len as usize];
+                    use tokio::io::AsyncReadExt;
+                    if let Err(e) = slice.read_exact(&mut packet).await {
+                        return (send, data, Err(e.into()));
+                    }
+                    if let Err(e) = send.send_to(Bytes::from(packet), addr).await {
+                        return (send, data, Err(e));
+                    }
+                    let consumed = start_len - slice.len();
+                    use bytes::Buf;
+                    data.advance(consumed);
+                    if data.is_empty() {
+                        break;
+                    }
+                }
+                (send, data, Ok(()))
+            }));
+        }
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        self.poll_flush(cx)
+    }
+}
+
+#[cfg(test)]
+mod test_udp_to_tcp;
