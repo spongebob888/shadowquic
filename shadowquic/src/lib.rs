@@ -15,13 +15,13 @@ pub mod config;
 pub mod direct;
 pub mod error;
 pub mod msgs;
+pub mod proxy_transform;
 pub mod quic;
 pub mod shadowquic;
 pub mod socks;
 pub mod squic;
 pub mod sunnyquic;
 pub mod tcp;
-pub mod transport;
 pub mod utils;
 
 pub use msgs::SDecode;
@@ -59,6 +59,7 @@ pub type AnyUdpRecv = Box<dyn UdpRecv>;
 pub trait TcpTrait: AsyncRead + AsyncWrite + Unpin + Send + Sync {}
 impl TcpTrait for TcpStream {}
 impl TcpTrait for tokio_tfo::TfoStream {}
+impl<T: ?Sized + TcpTrait> TcpTrait for Box<T> {}
 
 #[async_trait]
 pub trait Inbound<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend>: Send + Sync + Unpin {
