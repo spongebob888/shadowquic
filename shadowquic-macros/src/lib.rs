@@ -162,6 +162,7 @@ fn impl_enum_decode(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStre
 
     //eprintln!("{:#?}",fields);
     //eprintln!("{:#?}",st);
+    let id_string = struct_ident.to_string();
     let ret = quote! {
         #[async_trait::async_trait]
         impl SDecode for #struct_ident {
@@ -170,7 +171,7 @@ fn impl_enum_decode(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStre
                 #discrims
                 let ret = match disval {
                     #builder_struct_fields_def
-                    _ => return Err(SError::ProtocolViolation),
+                    _ => return Err(SError::ProtocolViolation(format!("Invalid discriminant: {} for {}", disval, #id_string)).into()),
                 };
                 Ok(ret)
             }

@@ -46,6 +46,7 @@ pub struct JlsClientCfg {
     pub protect_path: Option<std::path::PathBuf>,
 }
 
+#[derive(Debug, Clone)]
 pub struct JlsClient {
     cfg: Arc<ClientConfig>,
     server_name: String,

@@ -20,6 +20,7 @@ use crate::{
     proxy_transform::ProxyTransform,
 };
 
+#[derive(Debug)]
 pub(crate) struct SqShimServer {}
 
 #[async_trait::async_trait]
@@ -27,7 +28,11 @@ impl ProxyTransform for SqShimServer {
     async fn transform(&self, mut proxy: ProxyRequest) -> SResult<ProxyRequest> {
         let mut tcp_session = match proxy {
             ProxyRequest::Tcp(tcp_session) => tcp_session,
-            ProxyRequest::Udp(udp_session) => return Err(SError::ProtocolViolation),
+            ProxyRequest::Udp(udp_session) => {
+                return Err(SError::ProtocolViolation(
+                    "udp proxy request can't be unwrapped by shim server".into(),
+                ));
+            }
         };
 
         let req = SQReq::decode(&mut tcp_session.stream).await?;
@@ -51,6 +56,7 @@ impl ProxyTransform for SqShimServer {
         }
     }
 }
+#[derive(Debug, Clone)]
 
 pub(crate) struct SqShimClient;
 

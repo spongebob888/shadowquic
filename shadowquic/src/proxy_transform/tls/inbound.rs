@@ -41,6 +41,7 @@ pub struct JlsServerCfg {
     pub zero_rtt: bool,
 }
 
+#[derive(Debug)]
 pub struct JlsServer {
     server_cfg: Arc<ServerConfig>,
 }

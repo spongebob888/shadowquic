@@ -126,6 +126,8 @@ impl QuicConnection for Connection {
 impl QuicClient for Endpoint {
     type SC = ShadowQuicClientCfg;
     async fn new(cfg: &Self::SC, ipv6: bool) -> SResult<Self> {
+        let _ = rustls_jls::crypto::ring::default_provider().install_default();
+
         let socket;
         if ipv6 {
             socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
@@ -277,6 +279,8 @@ impl QuicServer for Endpoint {
     type C = Connection;
     type SC = ShadowQuicServerCfg;
     async fn new(cfg: &Self::SC) -> SResult<Self> {
+        let _ = rustls_jls::crypto::ring::default_provider().install_default();
+
         let mut crypto: RustlsServerConfig;
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let cert_der = CertificateDer::from(cert.cert);

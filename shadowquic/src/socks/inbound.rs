@@ -59,11 +59,13 @@ impl SocksServer {
     pub async fn authenticate(&self, mut stream: TcpStream) -> Result<TcpStream, SError> {
         let auth_req = AuthReq::decode(&mut stream).await?;
         if auth_req.version != SOCKS5_VERSION {
-            return Err(SError::ProtocolViolation);
+            return Err(SError::ProtocolViolation(
+                "unsupported socks version".into(),
+            ));
         }
         let methods = auth_req.methods;
         if methods.contents.is_empty() {
-            return Err(SError::ProtocolViolation);
+            return Err(SError::ProtocolViolation("unsupported socks method".into()));
         }
         let method = if self.users.is_empty() {
             SOCKS5_AUTH_METHOD_NONE
@@ -92,7 +94,7 @@ impl SocksServer {
             password: String::from_utf8(auth.password.contents)
                 .map_err(|_| SError::SocksError("invalid UTF-8 in password".to_string()))?,
         }) {
-            return Err(SError::SocksError("authentication failed".to_string()));
+            return Err(SError::SocksError("authentication failed".into()));
         }
         let reply = PasswordAuthReply {
             version: 0x01, // authentication version not socks version
@@ -135,7 +137,7 @@ impl SocksServer {
                 return Err(SError::ProtocolUnimpl);
             }
             _ => {
-                return Err(SError::ProtocolViolation);
+                return Err(SError::ProtocolViolation("unknown socks request".into()));
             }
         };
 
@@ -172,7 +174,9 @@ impl Inbound for SocksServer {
                 }))
             }
             _ => {
-                return Err(SError::ProtocolViolation);
+                return Err(SError::ProtocolViolation(
+                    "unknown socks request cmd".to_string(),
+                ));
             }
         }
     }

@@ -28,7 +28,7 @@ impl TcpClient {
         // If `self.addr` is empty or we are in "direct" mode, we might connect to `tcp_session.dst`.
         // But TcpClientCfg has a mandatory `addr`. So we connect to `self.addr`.
 
-        info!("TcpClient connecting to {} with TFO", self.addr);
+        info!("tcp connecting to {} with TFO", self.addr);
 
         // Resolve address if needed, but TfoStream::connect takes SocketAddr.
         // TfoStream::connect uses TFO if available.

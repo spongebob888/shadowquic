@@ -5,8 +5,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum SError {
-    #[error("Protocol Violated")]
-    ProtocolViolation,
+    #[error("Protocol Violated:{0}")]
+    ProtocolViolation(String),
     #[error("Protocol Unimplemented")]
     ProtocolUnimpl,
     #[error("IO Error:{0}")]

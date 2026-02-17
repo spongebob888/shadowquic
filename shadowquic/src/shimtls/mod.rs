@@ -1,3 +1,5 @@
+use tracing::{Instrument, instrument, trace_span};
+
 use crate::{
     Inbound, Outbound, ProxyRequest,
     config::{ShimTlsClientCfg, ShimTlsServerCfg},
@@ -10,6 +12,7 @@ use crate::{
     tcp::{inbound::TcpServer, outbound::TcpClient},
 };
 
+#[derive(Debug, Clone)]
 pub struct ShimTlsClient {
     tcp: TcpClient,
     jls: JlsClient,
@@ -24,6 +27,7 @@ impl ShimTlsClient {
         }
     }
 }
+
 pub struct ShimTlsServer {
     tcp: TcpServer,
     jls: JlsServer,
@@ -42,12 +46,14 @@ impl ShimTlsServer {
 
 #[async_trait::async_trait]
 impl Inbound for ShimTlsServer {
+    #[instrument(skip(self), name = "shimtls")]
     async fn accept(&mut self) -> Result<ProxyRequest, SError> {
         let req = self.tcp.accept().await?;
-        tracing::trace!("unwraping jls");
+        tracing::trace!("tcp accepted");
         let req = self.jls.transform(req).await?;
-        tracing::trace!("unwraping shim");
+        tracing::trace!("jls accepted");
         let req = self.shim.transform(req).await?;
+        tracing::trace!("shimtls accepted");
         Ok(req)
     }
 }
@@ -55,11 +61,20 @@ impl Inbound for ShimTlsServer {
 #[async_trait::async_trait]
 impl Outbound for ShimTlsClient {
     async fn handle(&mut self, request: ProxyRequest) -> Result<(), SError> {
-        let stream = self.tcp.connect_stream().await?;
-        let stream = self.jls.connect_stream(stream).await?;
-        tokio::spawn(async move {
-            let _ = SqShimClient::join(request, stream).await;
-        });
+        let tcp = self.tcp.clone();
+        let jls = self.jls.clone();
+        tokio::spawn(
+            async move {
+                let stream = tcp.connect_stream().await?;
+                tracing::trace!("tcp connected");
+                let stream = jls.connect_stream(stream).await?;
+                tracing::trace!("jls connected");
+                let _ = SqShimClient::join(request, stream).await;
+                tracing::trace!("tcp session ended");
+                Ok::<(), SError>(())
+            }
+            .instrument(trace_span!("shimtls", addr = %self.tcp.addr)),
+        );
         Ok(())
     }
 }
