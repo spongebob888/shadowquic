@@ -1,6 +1,6 @@
 /target
 .vscode
-/client.yaml
+/*.yaml
 .venv
 .python-version
 __pycache__

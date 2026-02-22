@@ -10,7 +10,7 @@ use crate::error::SError;
 use crate::{Inbound, ProxyRequest, TcpSession};
 
 pub struct TcpServer {
-    listener: TfoListener,
+    pub listener: TfoListener,
     bind_addr: SocketAddr,
 }
 

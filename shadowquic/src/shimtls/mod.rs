@@ -1,5 +1,3 @@
-use tracing::{Instrument, instrument, trace_span};
-
 use crate::{
     Inbound, Outbound, ProxyRequest,
     config::{ShimTlsClientCfg, ShimTlsServerCfg},
@@ -11,6 +9,8 @@ use crate::{
     },
     tcp::{inbound::TcpServer, outbound::TcpClient},
 };
+use std::sync::Arc;
+use tracing::{Instrument, instrument, trace_span};
 
 #[derive(Debug, Clone)]
 pub struct ShimTlsClient {
@@ -29,31 +29,71 @@ impl ShimTlsClient {
 }
 
 pub struct ShimTlsServer {
-    tcp: TcpServer,
+    tcp: Arc<TcpServer>,
     jls: JlsServer,
     shim: sq_shim::SqShimServer,
+    proxy_recv: tokio::sync::mpsc::Receiver<ProxyRequest>,
+    proxy_send: tokio::sync::mpsc::Sender<ProxyRequest>,
 }
 
 impl ShimTlsServer {
     pub async fn new(cfg: ShimTlsServerCfg) -> Result<Self, SError> {
+        let (proxy_send, proxy_recv) = tokio::sync::mpsc::channel::<ProxyRequest>(100);
         Ok(Self {
-            tcp: TcpServer::new(cfg.tcp_cfg).await?,
+            tcp: TcpServer::new(cfg.tcp_cfg).await?.into(),
             jls: JlsServer::new(cfg.jls_cfg)?,
             shim: sq_shim::SqShimServer {},
+            proxy_recv,
+            proxy_send,
         })
     }
 }
 
 #[async_trait::async_trait]
 impl Inbound for ShimTlsServer {
+    async fn init(&self) -> Result<(), SError> {
+        let jls = self.jls.clone();
+        let shim = self.shim.clone();
+        let listener = self.tcp.clone();
+        let proxy_send = self.proxy_send.clone();
+        let fut = async move {
+            loop {
+                let (stream, addr) = listener.listener.accept().await?;
+                tracing::trace!("tcp accepted from: {}", addr);
+                let jls = jls.clone();
+                let shim = shim.clone();
+                let proxy_send = proxy_send.clone();
+                tokio::spawn(async move {
+                    let req = jls
+                        .transform(ProxyRequest::Tcp(crate::TcpSession {
+                            stream: Box::new(stream),
+                            dst: crate::msgs::socks5::SocksAddr::from(addr),
+                        }))
+                        .await?;
+                    tracing::trace!("jls accepted");
+                    let req = shim.transform(req).await?;
+                    proxy_send
+                        .send(req)
+                        .await
+                        .map_err(|_| SError::InboundUnavailable)?;
+                    tracing::trace!("shimtls accepted");
+                    Ok(()) as Result<(), SError>
+                });
+            }
+            Ok(()) as Result<(), SError>
+        };
+        tokio::spawn(fut);
+        Ok(())
+    }
     #[instrument(skip(self), name = "shimtls")]
     async fn accept(&mut self) -> Result<ProxyRequest, SError> {
-        let req = self.tcp.accept().await?;
-        tracing::trace!("tcp accepted");
-        let req = self.jls.transform(req).await?;
-        tracing::trace!("jls accepted");
-        let req = self.shim.transform(req).await?;
-        tracing::trace!("shimtls accepted");
+        tracing::trace!("waiting for shimtls accept");
+        let req = self
+            .proxy_recv
+            .recv()
+            .await
+            .ok_or(SError::InboundUnavailable)?;
+        tracing::trace!("shimtls accept proxy request");
         Ok(req)
     }
 }

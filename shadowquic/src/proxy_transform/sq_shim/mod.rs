@@ -20,7 +20,7 @@ use crate::{
     proxy_transform::ProxyTransform,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct SqShimServer {}
 
 #[async_trait::async_trait]
@@ -36,6 +36,7 @@ impl ProxyTransform for SqShimServer {
         };
 
         let req = SQReq::decode(&mut tcp_session.stream).await?;
+        tracing::trace!("received SQReq");
         match req {
             SQReq::SQConnect(socks_addr) => {
                 tcp_session.dst = socks_addr;
@@ -66,6 +67,7 @@ impl SqShimClient {
             ProxyRequest::Tcp(mut tcp_session) => {
                 let req = SQReq::SQConnect(tcp_session.dst.clone());
                 req.encode(&mut stream).await?;
+                tracing::trace!("sent SQReq");
                 tokio::io::copy_bidirectional(&mut tcp_session.stream, &mut stream).await?;
                 Ok(())
             }

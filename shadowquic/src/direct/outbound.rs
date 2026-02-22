@@ -42,6 +42,7 @@ impl Outbound for DirectOut {
                         .ok_or(SError::DomainResolveFailed(tcp_session.dst.to_string()))?;
                     trace!("resolved to {}", dst);
                     let mut upstream = TcpStream::connect(dst).await?;
+                    trace!("upstream {} connected", dst);
                     let (_, _) = tokio::io::copy_bidirectional_with_sizes(
                         &mut tcp_session.stream,
                         &mut upstream,

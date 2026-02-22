@@ -5,6 +5,8 @@ use rustls_jls::RootCertStore;
 use rustls_jls::pki_types::CertificateDer;
 use rustls_jls::pki_types::PrivateKeyDer;
 use rustls_jls::pki_types::PrivatePkcs8KeyDer;
+use rustls_jls::version::TLS12;
+use rustls_jls::version::TLS13;
 use serde::Deserialize;
 use tokio_rustls_jls::LazyConfigAcceptor;
 use tokio_rustls_jls::TlsConnector;
@@ -59,7 +61,7 @@ impl JlsClient {
         let root_store = RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.into(),
         };
-        let mut crypto = rustls_jls::ClientConfig::builder()
+        let mut crypto = rustls_jls::ClientConfig::builder_with_protocol_versions(&[&TLS13])
             .with_root_certificates(root_store)
             .with_no_client_auth();
         crypto.alpn_protocols = cfg.alpn.iter().map(|x| x.to_owned().into_bytes()).collect();
@@ -71,10 +73,12 @@ impl JlsClient {
         }
     }
     pub async fn connect_stream(&self, stream: AnyTcp) -> SResult<AnyTcp> {
+        tracing::trace!("connecting to jls: {}", self.server_name);
         let connector = TlsConnector::from(self.cfg.clone()).early_data(self.cfg.enable_early_data);
         let conn = connector
             .connect(self.server_name.clone().try_into().unwrap(), stream)
             .await?;
+        tracing::trace!("jls connected");
 
         Ok(Box::new(conn))
     }

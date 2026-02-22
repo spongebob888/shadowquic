@@ -41,7 +41,7 @@ pub struct JlsServerCfg {
     pub zero_rtt: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct JlsServer {
     server_cfg: Arc<ServerConfig>,
 }
@@ -88,10 +88,13 @@ impl JlsServer {
 
         let conn = conn.into_stream(self.server_cfg.clone());
         if !conn.is_jls() {
+            tracing::warn!("jls auth failed, start forwarding");
             conn.start_jls_forward().await?;
             return Err(SError::RustlsError("Jls forward ended".into()));
         }
+        tracing::trace!("accepting jls");
         let conn = conn.await?;
+        tracing::trace!("jls accepted");
         Ok(Box::new(conn))
     }
 }

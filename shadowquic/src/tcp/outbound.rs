@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use std::net::{SocketAddr, ToSocketAddrs};
-use tokio::io::copy_bidirectional;
+use tokio::{io::copy_bidirectional, net::TcpStream};
 use tokio_tfo::TfoStream;
 use tracing::{Instrument, error, info, trace_span};
 

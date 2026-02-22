@@ -47,6 +47,7 @@ impl SocksServer {
         socket.set_reuse_address(true)?;
         socket.set_nonblocking(true)?;
         socket.bind(&cfg.bind_addr.into())?;
+        socket.set_tcp_nodelay(true)?;
         socket.listen(256)?;
         let listener = TcpListener::from_std(socket.into())
             .map_err(|e| SError::SocksError(format!("failed to create TcpListener: {e}")))?;
