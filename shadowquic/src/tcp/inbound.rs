@@ -2,12 +2,19 @@ use std::net::SocketAddr;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use serde::Deserialize;
 use tokio_tfo::TfoListener;
 use tracing::{error, info};
 
-use crate::config::TcpServerCfg;
 use crate::error::SError;
 use crate::{Inbound, ProxyRequest, TcpSession};
+
+#[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct TcpServerCfg {
+    pub bind_addr: SocketAddr,
+}
+
 
 pub struct TcpServer {
     pub listener: TfoListener,

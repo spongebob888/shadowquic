@@ -1,19 +1,8 @@
 use serde::Deserialize;
 use std::net::SocketAddr;
 
-use crate::proxy_transform::tls::{inbound::JlsServerCfg, outbound::JlsClientCfg};
+use crate::{proxy_transform::tls::{inbound::JlsServerCfg, outbound::JlsClientCfg}, tcp::{inbound::TcpServerCfg, outbound::TcpClientCfg}};
 
-#[derive(Deserialize, Clone, Debug)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct TcpServerCfg {
-    pub bind_addr: SocketAddr,
-}
-
-#[derive(Deserialize, Clone, Debug)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct TcpClientCfg {
-    pub addr: String,
-}
 
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]

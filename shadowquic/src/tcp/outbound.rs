@@ -1,10 +1,17 @@
 use async_trait::async_trait;
+use serde::Deserialize;
 use std::net::{SocketAddr, ToSocketAddrs};
 use tokio::{io::copy_bidirectional, net::TcpStream};
 use tokio_tfo::TfoStream;
 use tracing::{Instrument, error, info, trace_span};
 
-use crate::{AnyTcp, Outbound, ProxyRequest, TcpSession, config::TcpClientCfg, error::SError};
+use crate::{AnyTcp, Outbound, ProxyRequest, TcpSession, error::SError};
+
+#[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct TcpClientCfg {
+    pub addr: String,
+}
 
 #[derive(Debug, Clone)]
 pub struct TcpClient {
@@ -50,32 +57,3 @@ impl TcpClient {
         Ok(Box::new(stream))
     }
 }
-
-// #[async_trait]
-// impl Outbound for TcpClient {
-//     async fn handle(&mut self, req: ProxyRequest) -> Result<(), SError> {
-//         let span = trace_span!("tcp_client", addr = %self.addr);
-//         let client = self.clone();
-
-//         // Spawn to handle the connection concurrently, similar to SocksClient
-//         tokio::spawn(
-//             async move {
-//                 let result = match req {
-//                     ProxyRequest::Tcp(session) => client.handle_tcp(session).await,
-//                     // UDP not supported for simple TCP tunnel yet, or simply ignore
-//                     ProxyRequest::Udp(_) => {
-//                         error!("TcpClient does not support UDP");
-//                         Err(SError::SocksError("UDP not supported by TcpClient".into()))
-//                     }
-//                 };
-
-//                 if let Err(e) = result {
-//                     error!("TcpClient error: {}", e);
-//                 }
-//             }
-//             .instrument(span),
-//         );
-
-//         Ok(())
-//     }
-// }

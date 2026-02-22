@@ -14,10 +14,10 @@ use crate::{
 
 mod shadowquic;
 mod sunnyquic;
-mod tcp;
+mod shimtls;
 pub use crate::config::shadowquic::*;
 pub use crate::config::sunnyquic::*;
-pub use crate::config::tcp::*;
+pub use crate::config::shimtls::*;
 
 /// Overall configuration of shadowquic.
 ///
