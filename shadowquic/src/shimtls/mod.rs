@@ -7,7 +7,7 @@ use crate::{
         sq_shim::{self, SqShimClient},
         tls::{inbound::JlsServer, outbound::JlsClient},
     },
-    tcp::{inbound::TcpServer, outbound::TcpClient},
+    proxy_transform::tcp::{inbound::TcpServer, outbound::TcpClient},
 };
 use std::sync::Arc;
 use tracing::{Instrument, instrument, trace_span};
@@ -58,17 +58,13 @@ impl Inbound for ShimTlsServer {
         let proxy_send = self.proxy_send.clone();
         let fut = async move {
             loop {
-                let (stream, addr) = listener.listener.accept().await?;
-                tracing::trace!("tcp accepted from: {}", addr);
+                let req = listener.accept().await?;
                 let jls = jls.clone();
                 let shim = shim.clone();
                 let proxy_send = proxy_send.clone();
                 tokio::spawn(async move {
                     let req = jls
-                        .transform(ProxyRequest::Tcp(crate::TcpSession {
-                            stream: Box::new(stream),
-                            dst: crate::msgs::socks5::SocksAddr::from(addr),
-                        }))
+                        .transform(req)
                         .await?;
                     tracing::trace!("jls accepted");
                     let req = shim.transform(req).await?;

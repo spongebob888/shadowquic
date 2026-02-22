@@ -22,7 +22,6 @@ pub mod shimtls;
 pub mod socks;
 pub mod squic;
 pub mod sunnyquic;
-pub mod tcp;
 pub mod utils;
 
 pub use msgs::SDecode;

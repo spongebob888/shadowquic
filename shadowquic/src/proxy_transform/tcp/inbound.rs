@@ -39,11 +39,7 @@ impl TcpServer {
     pub fn local_addr(&self) -> SocketAddr {
         self.bind_addr
     }
-}
-
-#[async_trait]
-impl Inbound for TcpServer {
-    async fn accept(&mut self) -> Result<ProxyRequest, SError> {
+    pub async fn accept(&self) -> Result<ProxyRequest, SError> {
         match self.listener.accept().await {
             Ok((stream, _)) => {
                 // For now, we assume the destination is the same as the bind address
@@ -63,6 +59,7 @@ impl Inbound for TcpServer {
         }
     }
 }
+
 
 #[cfg(test)]
 mod tests {

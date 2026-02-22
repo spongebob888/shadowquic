@@ -7,6 +7,7 @@ use crate::{ProxyRequest, TcpTrait, error::SResult};
 
 pub mod sq_shim;
 pub mod tls;
+pub mod tcp;
 
 #[async_trait::async_trait]
 pub trait ProxyTransform {

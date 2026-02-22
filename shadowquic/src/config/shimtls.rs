@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::net::SocketAddr;
 
-use crate::{proxy_transform::tls::{inbound::JlsServerCfg, outbound::JlsClientCfg}, tcp::{inbound::TcpServerCfg, outbound::TcpClientCfg}};
+use crate::{proxy_transform::tls::{inbound::JlsServerCfg, outbound::JlsClientCfg}, proxy_transform::tcp::{inbound::TcpServerCfg, outbound::TcpClientCfg}};
 
 
 #[derive(Deserialize, Clone, Debug)]
