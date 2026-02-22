@@ -3,11 +3,8 @@ use crate::{
     config::{ShimTlsClientCfg, ShimTlsServerCfg},
     error::SError,
     proxy_transform::{
-        ProxyTransform,
-        sq_shim::{self, SqShimClient},
-        tls::{inbound::JlsServer, outbound::JlsClient},
+        ProxyTransform, sq_shim::{self, SqShimClient, SqShimServer}, tcp::{inbound::TcpServer, outbound::TcpClient}, tls::{inbound::JlsServer, outbound::JlsClient}
     },
-    proxy_transform::tcp::{inbound::TcpServer, outbound::TcpClient},
 };
 use std::sync::Arc;
 use tracing::{Instrument, instrument, trace_span};
@@ -16,14 +13,14 @@ use tracing::{Instrument, instrument, trace_span};
 pub struct ShimTlsClient {
     tcp: TcpClient,
     jls: JlsClient,
-    shim: sq_shim::SqShimClient,
+    shim: SqShimClient,
 }
 impl ShimTlsClient {
     pub fn new(cfg: ShimTlsClientCfg) -> Self {
         Self {
             tcp: TcpClient::new(cfg.tcp_cfg),
             jls: JlsClient::new(cfg.jls_cfg),
-            shim: sq_shim::SqShimClient {},
+            shim: SqShimClient {},
         }
     }
 }
@@ -31,7 +28,7 @@ impl ShimTlsClient {
 pub struct ShimTlsServer {
     tcp: Arc<TcpServer>,
     jls: JlsServer,
-    shim: sq_shim::SqShimServer,
+    shim: SqShimServer,
     proxy_recv: tokio::sync::mpsc::Receiver<ProxyRequest>,
     proxy_send: tokio::sync::mpsc::Sender<ProxyRequest>,
 }
@@ -42,7 +39,7 @@ impl ShimTlsServer {
         Ok(Self {
             tcp: TcpServer::new(cfg.tcp_cfg).await?.into(),
             jls: JlsServer::new(cfg.jls_cfg)?,
-            shim: sq_shim::SqShimServer {},
+            shim: SqShimServer {},
             proxy_recv,
             proxy_send,
         })
