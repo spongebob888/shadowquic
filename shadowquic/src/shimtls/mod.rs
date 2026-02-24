@@ -4,9 +4,9 @@ use crate::{
     error::SError,
     proxy_transform::{
         ProxyJoin, ProxyTransform, StreamConnector,
+        jls::{inbound::JlsServer, outbound::JlsClient},
         sq_shim::{self, SqShimClient, SqShimServer},
         tcp::{inbound::TcpServer, outbound::TcpClient},
-        tls::{inbound::JlsServer, outbound::JlsClient},
     },
 };
 use std::sync::Arc;

@@ -5,9 +5,9 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, Chain};
 
 use crate::{AnyTcp, ProxyRequest, TcpTrait, error::SResult};
 
+pub mod jls;
 pub mod sq_shim;
 pub mod tcp;
-pub mod tls;
 
 #[async_trait::async_trait]
 pub trait ProxyTransform {
