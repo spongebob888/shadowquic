@@ -3,7 +3,10 @@ use crate::{
     config::{ShimTlsClientCfg, ShimTlsServerCfg},
     error::SError,
     proxy_transform::{
-        ProxyTransform, sq_shim::{self, SqShimClient, SqShimServer}, tcp::{inbound::TcpServer, outbound::TcpClient}, tls::{inbound::JlsServer, outbound::JlsClient}
+        ProxyJoin, ProxyTransform, StreamConnector,
+        sq_shim::{self, SqShimClient, SqShimServer},
+        tcp::{inbound::TcpServer, outbound::TcpClient},
+        tls::{inbound::JlsServer, outbound::JlsClient},
     },
 };
 use std::sync::Arc;
@@ -60,9 +63,7 @@ impl Inbound for ShimTlsServer {
                 let shim = shim.clone();
                 let proxy_send = proxy_send.clone();
                 tokio::spawn(async move {
-                    let req = jls
-                        .transform(req)
-                        .await?;
+                    let req = jls.transform(req).await?;
                     tracing::trace!("jls accepted");
                     let req = shim.transform(req).await?;
                     proxy_send
@@ -102,7 +103,7 @@ impl Outbound for ShimTlsClient {
                 tracing::trace!("tcp connected");
                 let stream = jls.connect_stream(stream).await?;
                 tracing::trace!("jls connected");
-                let _ = SqShimClient::join(request, stream).await;
+                let _ = SqShimClient {}.join(request, stream).await;
                 tracing::trace!("tcp session ended");
                 Ok::<(), SError>(())
             }

@@ -7,6 +7,7 @@ use super::{
 use crate::{
     TcpTrait,
     config::{AuthUser, JlsUpstream},
+    proxy_transform::StreamConnector,
 };
 
 impl TcpTrait for tokio::io::DuplexStream {}

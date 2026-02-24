@@ -24,6 +24,7 @@ use crate::config::default_zero_rtt;
 use crate::error::SError;
 use crate::error::SResult;
 use crate::proxy_transform::ProxyTransform;
+use crate::proxy_transform::StreamConnector;
 
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -72,7 +73,10 @@ impl JlsClient {
             server_name: cfg.server_name,
         }
     }
-    pub async fn connect_stream(&self, stream: AnyTcp) -> SResult<AnyTcp> {
+}
+#[async_trait::async_trait]
+impl StreamConnector for JlsClient {
+    async fn connect_stream(&self, stream: AnyTcp) -> SResult<AnyTcp> {
         tracing::trace!("connecting to jls: {}", self.server_name);
         let connector = TlsConnector::from(self.cfg.clone()).early_data(self.cfg.enable_early_data);
         let conn = connector

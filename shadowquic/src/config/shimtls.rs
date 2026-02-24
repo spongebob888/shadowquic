@@ -1,8 +1,10 @@
 use serde::Deserialize;
 use std::net::SocketAddr;
 
-use crate::{proxy_transform::tls::{inbound::JlsServerCfg, outbound::JlsClientCfg}, proxy_transform::tcp::{inbound::TcpServerCfg, outbound::TcpClientCfg}};
-
+use crate::{
+    proxy_transform::tcp::{inbound::TcpServerCfg, outbound::TcpClientCfg},
+    proxy_transform::tls::{inbound::JlsServerCfg, outbound::JlsClientCfg},
+};
 
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]

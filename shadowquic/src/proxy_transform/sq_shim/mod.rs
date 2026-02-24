@@ -11,7 +11,7 @@ use tokio::{
     sync::RwLock,
 };
 
-use crate::proxy_transform::prepend_stream;
+use crate::proxy_transform::{ProxyJoin, prepend_stream};
 use crate::{AnyTcp, UdpRecv, UdpSession};
 use crate::{
     AnyUdpSend, ProxyRequest, SDecode, SEncode, TcpSession, UdpSend,
@@ -61,8 +61,9 @@ impl ProxyTransform for SqShimServer {
 
 pub(crate) struct SqShimClient;
 
-impl SqShimClient {
-    pub async fn join(proxy: ProxyRequest, mut stream: AnyTcp) -> SResult<()> {
+#[async_trait::async_trait]
+impl ProxyJoin for SqShimClient {
+    async fn join(&self, proxy: ProxyRequest, mut stream: AnyTcp) -> SResult<()> {
         match proxy {
             ProxyRequest::Tcp(mut tcp_session) => {
                 let req = SQReq::SQConnect(tcp_session.dst.clone());

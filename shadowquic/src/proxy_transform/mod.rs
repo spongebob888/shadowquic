@@ -3,15 +3,25 @@ use std::{io::Cursor, pin::Pin};
 use bytes::Bytes;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, Chain};
 
-use crate::{ProxyRequest, TcpTrait, error::SResult};
+use crate::{AnyTcp, ProxyRequest, TcpTrait, error::SResult};
 
 pub mod sq_shim;
-pub mod tls;
 pub mod tcp;
+pub mod tls;
 
 #[async_trait::async_trait]
 pub trait ProxyTransform {
     async fn transform(&self, proxy: ProxyRequest) -> SResult<ProxyRequest>;
+}
+
+#[async_trait::async_trait]
+pub trait StreamConnector {
+    async fn connect_stream(&self, proxy: AnyTcp) -> SResult<AnyTcp>;
+}
+
+#[async_trait::async_trait]
+pub trait ProxyJoin {
+    async fn join(&self, proxy: ProxyRequest, stream: AnyTcp) -> SResult<()>;
 }
 
 impl<U: tokio::io::AsyncRead + Unpin + Send + Sync, T: TcpTrait> TcpTrait for PrependStream<U, T> {}

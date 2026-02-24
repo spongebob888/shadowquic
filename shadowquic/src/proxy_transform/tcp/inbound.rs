@@ -15,7 +15,6 @@ pub struct TcpServerCfg {
     pub bind_addr: SocketAddr,
 }
 
-
 pub struct TcpServer {
     pub listener: TfoListener,
     bind_addr: SocketAddr,
@@ -59,7 +58,6 @@ impl TcpServer {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
