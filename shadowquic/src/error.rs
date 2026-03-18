@@ -42,3 +42,9 @@ impl From<rustls_jls::Error> for SError {
         SError::RustlsError(err.to_string())
     }
 }
+
+impl From<quinn::rustls::Error> for SError {
+    fn from(err: quinn::rustls::Error) -> Self {
+        SError::RustlsError(err.to_string())
+    }
+}

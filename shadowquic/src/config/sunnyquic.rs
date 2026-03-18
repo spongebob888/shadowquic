@@ -3,9 +3,9 @@ use std::{net::SocketAddr, path::PathBuf};
 use serde::Deserialize;
 
 use crate::config::{
-    AuthUser, CongestionControl, default_alpn, default_congestion_control, default_gso,
-    default_initial_mtu, default_keep_alive_interval, default_min_mtu, default_mtu_discovery,
-    default_over_stream, default_zero_rtt,
+    AuthUser, CongestionControl, default_alpn, default_brutal_down, default_brutal_up,
+    default_congestion_control, default_gso, default_initial_mtu, default_keep_alive_interval,
+    default_min_mtu, default_mtu_discovery, default_over_stream, default_zero_rtt, deserialize_bps,
 };
 
 pub(crate) fn default_multipath_num() -> u32 {
@@ -113,6 +113,8 @@ impl Default for SunnyQuicClientCfg {
             mtu_discovery: default_mtu_discovery(),
             #[cfg(target_os = "android")]
             protect_path: Default::default(),
+            brutal_down: 0,
+            brutal_up: 0,
         }
     }
 }
@@ -202,6 +204,12 @@ pub struct SunnyQuicClientCfg {
     #[cfg(target_os = "android")]
     #[serde(default)]
     pub protect_path: Option<std::path::PathBuf>,
+
+    #[serde(default = "default_brutal_up", deserialize_with = "deserialize_bps")]
+    pub brutal_up: u64,
+
+    #[serde(default = "default_brutal_down", deserialize_with = "deserialize_bps")]
+    pub brutal_down: u64,
 }
 
 type QuicPath = String;

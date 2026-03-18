@@ -178,6 +178,14 @@ pub fn default_gso() -> bool {
     true
 }
 
+pub fn default_brutal_up() -> u64 {
+    1_000_000
+}
+
+pub fn default_brutal_down() -> u64 {
+    1_000_000
+}
+
 pub fn default_mtu_discovery() -> bool {
     true
 }
@@ -189,6 +197,7 @@ pub enum CongestionControl {
     Bbr,
     Cubic,
     NewReno,
+    Brutal,
 }
 /// Configuration of direct outbound
 /// Example:

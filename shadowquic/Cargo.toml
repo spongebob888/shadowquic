@@ -23,8 +23,12 @@ tracing = "0.1.44"
 time = { version = "=0.3.46", features = ["macros", "local-offset"] }
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt", "ansi", "time", "local-time"]}
 #quinn = { package = "quinn", git = "https://github.com/spongebob888/quinn-jls", tag = "quinn-0.11.7-0.3.1", default-features = false, features = ["runtime-tokio", "rustls-ring"],optional = true}
-quinn = { package = "quinn-jls",version = "0.11.7-0.3.1", default-features = false, features = ["runtime-tokio", "rustls-ring"],optional = true}
+#quinn = { package = "quinn-jls",version = "0.11.7-0.3.1", default-features = false, features = ["runtime-tokio", "rustls-ring"],optional = true}
+quinn = { package = "quinn", git = "https://github.com/hrimfaxi/quinn-jls.git", branch = "brutal", default-features = false, features = ["runtime-tokio", "rustls-ring"], optional = true }
 
+
+brutal-iroh = { git = "https://github.com/hrimfaxi/brutal_quinn.git", branch = "master" }
+brutal-jls = { git = "https://github.com/hrimfaxi/brutal_quinn.git", branch = "master" }
 
 #rustls_jls = { package = "rustls", git = "https://github.com/spongebob888/rustls-jls", tag = "v/0.23.25-1.2.1", default-features = false, features = ["std","ring"],optional = true}
 rustls_jls = { package = "rustls-jls", version = "0.23.25-1.2.1", default-features = false, features = ["std","ring"],optional = true}
@@ -46,7 +50,8 @@ qunreliable = { version = "0.4", default-features = false, optional = true}
 rustls = { version = "0.23", default-features = false, features = ["std","ring"], optional = true}
 rustls-native-certs = {version = "0.8.3", optional = true}
 
-iroh-quinn ={ version = "0.16.1",optional = true, default-features = false, features = ["rustls-ring","runtime-tokio"]}
+#iroh-quinn ={ version = "0.16.1",optional = true, default-features = false, features = ["rustls-ring","runtime-tokio"]}
+iroh-quinn ={ git = "https://github.com/hrimfaxi/iroh_quinn", branch = "brutal", optional = true, default-features = false, features = ["rustls-ring","runtime-tokio"]}
 notify = { version = "8.2.0", features = ["serde"], optional = true}
 arc-swap = { version = "1.8.1", optional = true }
 
