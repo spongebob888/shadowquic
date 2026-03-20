@@ -342,7 +342,7 @@ dependencies = [
 [[package]]
 name = "brutal-core"
 version = "0.1.0"
-source = "git+https://github.com/hrimfaxi/brutal_quinn.git?branch=master#84791e8405769f3c83d45628a15adc2da18a2eec"
+source = "git+https://github.com/hrimfaxi/brutal_quinn.git?branch=master#5036c28f825b8f7fd6801a5e6758c8036e8731f5"
 dependencies = [
  "tracing",
 ]
@@ -350,7 +350,7 @@ dependencies = [
 [[package]]
 name = "brutal-iroh"
 version = "0.1.0"
-source = "git+https://github.com/hrimfaxi/brutal_quinn.git?branch=master#84791e8405769f3c83d45628a15adc2da18a2eec"
+source = "git+https://github.com/hrimfaxi/brutal_quinn.git?branch=master#5036c28f825b8f7fd6801a5e6758c8036e8731f5"
 dependencies = [
  "brutal-core",
  "iroh-quinn",
@@ -361,7 +361,7 @@ dependencies = [
 [[package]]
 name = "brutal-jls"
 version = "0.1.0"
-source = "git+https://github.com/hrimfaxi/brutal_quinn.git?branch=master#84791e8405769f3c83d45628a15adc2da18a2eec"
+source = "git+https://github.com/hrimfaxi/brutal_quinn.git?branch=master#5036c28f825b8f7fd6801a5e6758c8036e8731f5"
 dependencies = [
  "brutal-core",
  "quinn-proto 0.11.10 (git+https://github.com/hrimfaxi/quinn-jls.git?branch=brutal)",
@@ -1653,7 +1653,7 @@ checksum = "d98f6fed1fde3f8c21bc40a1abb88dd75e67924f9cffc3ef95607bad8017f8e2"
 [[package]]
 name = "iroh-quinn"
 version = "0.16.1"
-source = "git+https://github.com/hrimfaxi/iroh_quinn?branch=brutal#23863c55b82cf4c6c6c56ec8585bb4653f8f051b"
+source = "git+https://github.com/hrimfaxi/iroh_quinn?branch=brutal#ecf409465020fcd2c64f08ae695c141af7dd328f"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -1673,7 +1673,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.15.1"
-source = "git+https://github.com/hrimfaxi/iroh_quinn?branch=brutal#23863c55b82cf4c6c6c56ec8585bb4653f8f051b"
+source = "git+https://github.com/hrimfaxi/iroh_quinn?branch=brutal#ecf409465020fcd2c64f08ae695c141af7dd328f"
 dependencies = [
  "bytes",
  "derive_more",
@@ -1699,7 +1699,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.8.0"
-source = "git+https://github.com/hrimfaxi/iroh_quinn?branch=brutal#23863c55b82cf4c6c6c56ec8585bb4653f8f051b"
+source = "git+https://github.com/hrimfaxi/iroh_quinn?branch=brutal#ecf409465020fcd2c64f08ae695c141af7dd328f"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -2516,7 +2516,7 @@ dependencies = [
 [[package]]
 name = "quinn"
 version = "0.11.7"
-source = "git+https://github.com/hrimfaxi/quinn-jls.git?branch=brutal#11e7c657a7be940c323d3459f620da9a6ac779c1"
+source = "git+https://github.com/hrimfaxi/quinn-jls.git?branch=brutal#5d79e57d6921dc6e302ff470608b331192a50526"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2554,7 +2554,7 @@ dependencies = [
 [[package]]
 name = "quinn-proto"
 version = "0.11.10"
-source = "git+https://github.com/hrimfaxi/quinn-jls.git?branch=brutal#11e7c657a7be940c323d3459f620da9a6ac779c1"
+source = "git+https://github.com/hrimfaxi/quinn-jls.git?branch=brutal#5d79e57d6921dc6e302ff470608b331192a50526"
 dependencies = [
  "bytes",
  "getrandom 0.3.4",
@@ -2592,7 +2592,7 @@ dependencies = [
 [[package]]
 name = "quinn-udp"
 version = "0.5.10"
-source = "git+https://github.com/hrimfaxi/quinn-jls.git?branch=brutal#11e7c657a7be940c323d3459f620da9a6ac779c1"
+source = "git+https://github.com/hrimfaxi/quinn-jls.git?branch=brutal#5d79e57d6921dc6e302ff470608b331192a50526"
 dependencies = [
  "cfg_aliases",
  "libc",
