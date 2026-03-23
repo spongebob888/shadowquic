@@ -18,3 +18,7 @@ readme = "README.md"
 
 
 [workspace.dependencies]
+
+[patch."https://github.com/hrimfaxi/iroh_quinn"]
+iroh-quinn = { git = "https://github.com/happytrudy/iroh_quinn", branch = "brutal" }
+iroh-quinn-proto = { git = "https://github.com/happytrudy/iroh_quinn", branch = "brutal" }
