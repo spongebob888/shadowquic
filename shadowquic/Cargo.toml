@@ -16,12 +16,12 @@ sunnyquic-gm-quic = ["dep:gm-quic","dep:qevent","dep:qbase","dep:qunreliable", "
 sunnyquic-iroh-quinn = ["dep:iroh-quinn", "dep:rustls", "dep:rustls-native-certs","dep:arc-swap","dep:notify"]
 
 [dependencies]
-anyhow = "1.0.100"
+anyhow = "1.0.102"
 thiserror = "2.0.18"
-tokio = {version = "1.49.0", features = ["io-util", "net","rt","macros","rt-multi-thread"]}
+tokio = {version = "1.50.0", features = ["io-util", "net","rt","macros","rt-multi-thread"]}
 tracing = "0.1.44"
-time = { version = "=0.3.46", features = ["macros", "local-offset"] }
-tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt", "ansi", "time", "local-time"]}
+time = { version = "=0.3.47", features = ["macros", "local-offset"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "ansi", "time", "local-time"]}
 #quinn = { package = "quinn", git = "https://github.com/spongebob888/quinn-jls", tag = "quinn-0.11.7-0.3.1", default-features = false, features = ["runtime-tokio", "rustls-ring"],optional = true}
 quinn = { package = "quinn-jls",version = "0.11.7-0.3.1", default-features = false, features = ["runtime-tokio", "rustls-ring"],optional = true}
 
@@ -37,7 +37,7 @@ yaml-rust2 = "0.11.0"
 serde = { version = "1.0.228", features = ["derive"]}
 clap = { version = "4", features = ["derive"] }
 educe = "0.6.0"
-socket2 = "0.6.2"
+socket2 = "0.6.3"
 
 gm-quic = { version = "0.4", default-features = false, optional = true}
 qevent = { version = "0.4", default-features = false, optional = true}
@@ -48,10 +48,10 @@ rustls-native-certs = {version = "0.8.3", optional = true}
 
 iroh-quinn ={ version = "0.16.1",optional = true, default-features = false, features = ["rustls-ring","runtime-tokio"]}
 notify = { version = "8.2.0", features = ["serde"], optional = true}
-arc-swap = { version = "1.8.1", optional = true }
+arc-swap = { version = "1.9.0", optional = true }
 
 console-subscriber = { version = "0.5.0", optional = true }
-serde-saphyr = "0.0.18"
+serde-saphyr = "0.0.23"
 ring = "0.17.14"
 
 [target.'cfg(target_os="android")'.dependencies]
@@ -59,6 +59,6 @@ sendfd = { version = "0.4.4", features = ["tokio"] }
 
 [dev-dependencies]
 fast-socks5 = "1.0.0"
-rand = "0.9.2"
+rand = "0.10.0"
 
 
