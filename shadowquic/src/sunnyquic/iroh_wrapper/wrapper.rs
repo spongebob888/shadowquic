@@ -1,61 +1,68 @@
-use std::{io, net::SocketAddr, ops::Deref, sync::Arc, time::Duration};
-
-use async_trait::async_trait;
-use brutal_jls::BrutalConfig;
-use bytes::Bytes;
-use quinn::rustls::{
-    RootCertStore,
-    pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
+use std::{
+    io,
+    net::{SocketAddr, ToSocketAddrs},
+    ops::Deref,
+    sync::Arc,
+    time::Duration,
 };
-use quinn::{
+
+use super::brutal::BrutalConfig;
+use async_trait::async_trait;
+use bytes::Bytes;
+use iroh_quinn::{
     ClientConfig, MtuDiscoveryConfig, SendDatagramError, TransportConfig, VarInt,
     congestion::{BbrConfig, CubicConfig, NewRenoConfig},
     crypto::rustls::QuicClientConfig,
 };
+use rustls::{
+    RootCertStore,
+    pki_types::{CertificateDer, pem::PemObject},
+};
 use socket2::{Domain, Protocol, Socket, Type};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, trace, warn};
 
-use quinn::rustls::ServerConfig as RustlsServerConfig;
+use rustls::ServerConfig as RustlsServerConfig;
 
-use quinn::crypto::rustls::QuicServerConfig;
+use iroh_quinn::crypto::rustls::QuicServerConfig;
 
 use crate::{
-    config::{CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg},
-    error::SResult,
+    config::{CongestionControl, SunnyQuicClientCfg, SunnyQuicServerCfg},
+    error::{SError, SResult},
     quic::{
         MAX_DATAGRAM_WINDOW, MAX_SEND_WINDOW, MAX_STREAM_WINDOW, QuicClient, QuicConnection,
         QuicErrorRepr, QuicServer,
     },
+    sunnyquic::dynamic_cert::DynamicCertResolver,
 };
 
-pub type Connection = quinn::Connection;
-pub struct Endpoint {
-    inner: quinn::Endpoint,
-    zero_rtt: bool,
+pub type Connection = iroh_quinn::Connection;
+pub struct Endpoint<SC> {
+    inner: iroh_quinn::Endpoint,
+    cfg: Arc<SC>,
 }
-impl Deref for Endpoint {
-    type Target = quinn::Endpoint;
+impl<SC> Deref for Endpoint<SC> {
+    type Target = iroh_quinn::Endpoint;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-pub use Endpoint as EndClient;
-pub use Endpoint as EndServer;
+pub type EndClient = Endpoint<SunnyQuicClientCfg>;
+pub type EndServer = Endpoint<SunnyQuicServerCfg>;
 #[async_trait]
 impl QuicConnection for Connection {
-    type RecvStream = quinn::RecvStream;
-    type SendStream = quinn::SendStream;
+    type RecvStream = iroh_quinn::RecvStream;
+    type SendStream = iroh_quinn::SendStream;
     async fn open_bi(&self) -> Result<(Self::SendStream, Self::RecvStream, u64), QuicErrorRepr> {
-        let rate: f32 =
-            (self.stats().path.lost_packets as f32) / ((self.stats().path.sent_packets + 1) as f32);
-        info!(
-            "packet_loss_rate:{:.2}%, rtt:{:?}, mtu:{}",
-            rate * 100.0,
-            self.rtt(),
-            self.stats().path.current_mtu,
-        );
+        // let rate: f32 =
+        //     (self.stats().path.lost_packets as f32) / ((self.stats().path.sent_packets + 1) as f32);
+        // info!(
+        //     "packet_loss_rate:{:.2}%, rtt:{:?}, mtu:{}",
+        //     rate * 100.0,
+        //     self.rtt(),
+        //     self.stats().path.current_mtu,
+        // );
         let (send, recv) = self.open_bi().await?;
 
         let id = send.id().index();
@@ -65,14 +72,14 @@ impl QuicConnection for Connection {
     async fn accept_bi(&self) -> Result<(Self::SendStream, Self::RecvStream, u64), QuicErrorRepr> {
         let (send, recv) = self.accept_bi().await?;
 
-        let rate: f32 =
-            (self.stats().path.lost_packets as f32) / ((self.stats().path.sent_packets + 1) as f32);
-        info!(
-            "packet_loss_rate:{:.2}%, rtt:{:?}, mtu:{}",
-            rate * 100.0,
-            self.rtt(),
-            self.stats().path.current_mtu,
-        );
+        // let rate: f32 =
+        //     (self.stats().path.lost_packets as f32) / ((self.stats().path.sent_packets + 1) as f32);
+        // info!(
+        //     "packet_loss_rate:{:.2}%, rtt:{:?}, mtu:{}",
+        //     rate * 100.0,
+        //     self.rtt(),
+        //     self.stats().path.current_mtu,
+        // );
 
         let id = send.id().index();
         Ok((send, recv, id))
@@ -124,8 +131,8 @@ impl QuicConnection for Connection {
 }
 
 #[async_trait]
-impl QuicClient for Endpoint {
-    type SC = ShadowQuicClientCfg;
+impl QuicClient for Endpoint<SunnyQuicClientCfg> {
+    type SC = SunnyQuicClientCfg;
     async fn new(cfg: &Self::SC, ipv6: bool) -> SResult<Self> {
         let socket;
         if ipv6 {
@@ -164,16 +171,16 @@ impl QuicClient for Endpoint {
     }
     async fn connect(&self, addr: SocketAddr, server_name: &str) -> Result<Self::C, QuicErrorRepr> {
         let conn = self.inner.connect(addr, server_name)?;
-        let conn = if self.zero_rtt {
+        let mut accepted_0rtt = None;
+        let conn = if self.cfg.zero_rtt {
             match conn.into_0rtt() {
                 Ok((x, accepted)) => {
-                    let conn_clone = x.clone();
+                    let _conn_clone = x.clone();
+                    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+                    accepted_0rtt = Some(rx);
                     tokio::spawn(async move {
                         debug!("zero rtt accepted: {}", accepted.await);
-                        if conn_clone.is_jls() == Some(false) {
-                            error!("JLS hijacked or wrong pwd/iv");
-                            conn_clone.close(0u8.into(), b"");
-                        }
+                        tx.send(()).unwrap_or(());
                     });
                     trace!("trying 0-rtt quic connection");
                     x
@@ -189,39 +196,103 @@ impl QuicClient for Endpoint {
             trace!("1-rtt quic connection established");
             x
         };
-        if conn.is_jls() == Some(false) {
-            error!("JLS hijacked or wrong pwd/iv");
-            conn.close(0u8.into(), b"");
-            return Err(QuicErrorRepr::JlsAuthFailed);
-        }
+        tokio::spawn(add_extra_path(
+            conn.clone(),
+            self.cfg.extra_paths.clone(),
+            accepted_0rtt,
+        ));
         Ok(conn)
     }
 
     fn new_with_socket(cfg: &Self::SC, socket: std::net::UdpSocket) -> SResult<Self> {
-        let runtime =
-            quinn::default_runtime().ok_or_else(|| io::Error::other("no async runtime found"))?;
-        let mut end =
-            quinn::Endpoint::new(quinn::EndpointConfig::default(), None, socket, runtime)?;
+        let runtime = iroh_quinn::default_runtime()
+            .ok_or_else(|| io::Error::other("no async runtime found"))?;
+        let end = iroh_quinn::Endpoint::new(
+            iroh_quinn::EndpointConfig::default(),
+            None,
+            socket,
+            runtime,
+        )?;
         end.set_default_client_config(gen_client_cfg(cfg));
         Ok(Endpoint {
             inner: end,
-            zero_rtt: cfg.zero_rtt,
+            cfg: Arc::new(cfg.to_owned()),
         })
     }
 
     type C = Connection;
 }
 
-pub fn gen_client_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
-    let root_store = RootCertStore {
-        roots: webpki_roots::TLS_SERVER_ROOTS.into(),
-    };
-    let mut crypto = quinn::rustls::ClientConfig::builder()
+async fn add_extra_path(
+    conn: Connection,
+    extra_paths: Vec<String>,
+    mut accepted_0rtt: Option<tokio::sync::oneshot::Receiver<()>>,
+) -> Result<(), QuicErrorRepr> {
+    for path in extra_paths {
+        let mut addrs_iter = path.to_socket_addrs().map_err(|e| {
+            QuicErrorRepr::QuicConnect(format!("invalid multipath address {}: {}", path, e))
+        })?;
+        let path_addr = addrs_iter.next().ok_or_else(|| {
+            QuicErrorRepr::QuicConnect(format!("no valid socket address found for {}", path))
+        })?;
+        // We must wait for server hello before knowning whether multipath is enabled
+        if let Some(x) = &mut accepted_0rtt {
+            let _ = x.await;
+        }
+        if !conn.is_multipath_enabled() {
+            warn!(
+                "multipath not enabled in quic connection, can't add path {}",
+                path
+            );
+            break;
+        }
+        let conn = conn.clone();
+        let path = path.clone();
+        let fut = async move {
+            for ii in 0..5 {
+                let to_open = conn.open_path_ensure(path_addr, Default::default()).await;
+                match to_open {
+                    Ok(p) => {
+                        debug!("added multipath path to {path}: {:?}", p.id());
+                        break;
+                    }
+                    Err(e) => {
+                        if ii == 4 {
+                            warn!("failed to add multipath path {}: {e}", path);
+                            break;
+                        }
+                        debug!("failed to add multipath path {path}: {e}, try again");
+
+                        tokio::time::sleep(Duration::from_millis(2000)).await;
+                    }
+                }
+            }
+        };
+        tokio::spawn(fut);
+    }
+    Ok(())
+}
+
+pub fn gen_client_cfg(cfg: &SunnyQuicClientCfg) -> iroh_quinn::ClientConfig {
+    let mut root_store = RootCertStore::empty();
+    for cert in
+        rustls_native_certs::load_native_certs().expect("failed to load OS root certificates")
+    {
+        root_store.add(cert).unwrap();
+    }
+
+    if let Some(path) = &cfg.cert_path {
+        let der_cert = CertificateDer::pem_file_iter(path)
+            .unwrap_or_else(|_| panic!("certificate not found:{:?}", path))
+            .filter_map(|x| x.ok());
+        root_store.add_parsable_certificates(der_cert);
+    }
+
+    let mut crypto = rustls::ClientConfig::builder()
         .with_root_certificates(root_store)
         .with_no_client_auth();
     crypto.alpn_protocols = cfg.alpn.iter().map(|x| x.to_owned().into_bytes()).collect();
     crypto.enable_early_data = cfg.zero_rtt;
-    crypto.jls_config = quinn::rustls::jls::JlsClientConfig::new(&cfg.password, &cfg.username);
     let mut tp_cfg = TransportConfig::default();
 
     let mtudis = if cfg.mtu_discovery {
@@ -238,12 +309,8 @@ pub fn gen_client_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
         .max_concurrent_uni_streams(500u32.into())
         .mtu_discovery_config(mtudis)
         .min_mtu(cfg.min_mtu)
-        .initial_mtu(cfg.initial_mtu)
-        .enable_segmentation_offload(cfg.gso);
-
-    if !cfg.gso {
-        tracing::warn!("disabling QUIC segmentation offload (GSO)");
-    }
+        .enable_segmentation_offload(cfg.gso)
+        .initial_mtu(cfg.initial_mtu);
 
     // Only increase receive window to maximize download speed
     tp_cfg.stream_receive_window(MAX_STREAM_WINDOW.try_into().unwrap());
@@ -253,6 +320,7 @@ pub fn gen_client_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
     } else {
         None
     });
+    tp_cfg.max_concurrent_multipath_paths(cfg.max_path_num);
 
     match cfg.congestion_control {
         CongestionControl::Cubic => {
@@ -286,18 +354,22 @@ pub fn gen_client_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
 }
 
 #[async_trait]
-impl QuicServer for Endpoint {
+impl QuicServer for Endpoint<SunnyQuicServerCfg> {
     type C = Connection;
-    type SC = ShadowQuicServerCfg;
+    type SC = SunnyQuicServerCfg;
     async fn new(cfg: &Self::SC) -> SResult<Self> {
         let mut crypto: RustlsServerConfig;
-        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-        let cert_der = CertificateDer::from(cert.cert);
-        let priv_key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
-        crypto =
-            RustlsServerConfig::builder_with_protocol_versions(&[&quinn::rustls::version::TLS13])
-                .with_no_client_auth()
-                .with_single_cert(vec![cert_der], PrivateKeyDer::Pkcs8(priv_key))?;
+
+        let resolver = DynamicCertResolver::new(&cfg.key_path.clone(), &cfg.cert_path.clone())?;
+
+        tokio::spawn(
+            resolver
+                .clone()
+                .watch_cert_and_update(cfg.key_path.clone(), cfg.cert_path.clone()),
+        );
+        crypto = RustlsServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
+            .with_no_client_auth()
+            .with_cert_resolver(Arc::new(resolver.clone()));
         crypto.alpn_protocols = cfg
             .alpn
             .iter()
@@ -307,18 +379,7 @@ impl QuicServer for Endpoint {
         crypto.max_early_data_size = if cfg.zero_rtt { u32::MAX } else { 0 };
         crypto.send_half_rtt_data = cfg.zero_rtt;
 
-        let mut jls_config = quinn::rustls::jls::JlsServerConfig::default();
-        for user in &cfg.users {
-            jls_config = jls_config.add_user(user.password.clone(), user.username.clone());
-        }
-        if let Some(sni) = &cfg.server_name {
-            jls_config = jls_config.with_server_name(sni.clone());
-        }
-        jls_config = jls_config
-            .with_rate_limit(cfg.jls_upstream.rate_limit)
-            .with_upstream_addr(cfg.jls_upstream.addr.clone())
-            .enable(true);
-        crypto.jls_config = jls_config.into();
+        for _user in &cfg.users {}
 
         let mut tp_cfg = TransportConfig::default();
 
@@ -336,13 +397,8 @@ impl QuicServer for Endpoint {
             .max_concurrent_uni_streams(1000u32.into())
             .mtu_discovery_config(mtudis)
             .min_mtu(cfg.min_mtu)
-            .initial_mtu(cfg.initial_mtu)
-            .enable_segmentation_offload(cfg.gso);
-
-        if !cfg.gso {
-            tracing::warn!("disabling QUIC segmentation offload (GSO)");
-        }
-
+            .enable_segmentation_offload(cfg.gso)
+            .initial_mtu(cfg.initial_mtu);
         match cfg.congestion_control {
             CongestionControl::Brutal(ref brutal) => {
                 tracing::info!(?brutal, "using brutal congestion control");
@@ -369,36 +425,33 @@ impl QuicServer for Endpoint {
                 tp_cfg.congestion_controller_factory(Arc::new(new_reno))
             }
         };
-        let mut config = quinn::ServerConfig::with_crypto(Arc::new(
+        let mut config = iroh_quinn::ServerConfig::with_crypto(Arc::new(
             QuicServerConfig::try_from(crypto).expect("rustls config can't created"),
         ));
         tp_cfg.send_window(MAX_SEND_WINDOW);
         tp_cfg.stream_receive_window(MAX_STREAM_WINDOW.try_into().unwrap());
         tp_cfg.datagram_send_buffer_size(MAX_DATAGRAM_WINDOW.try_into().unwrap());
         tp_cfg.datagram_receive_buffer_size(Some(MAX_DATAGRAM_WINDOW as usize));
+        tp_cfg.max_concurrent_multipath_paths(cfg.max_path_num);
 
         config.transport_config(Arc::new(tp_cfg));
 
-        let endpoint = quinn::Endpoint::server(config, cfg.bind_addr)?;
+        let endpoint = iroh_quinn::Endpoint::server(config, cfg.bind_addr)?;
         Ok(Endpoint {
             inner: endpoint,
-            zero_rtt: cfg.zero_rtt,
+            cfg: Arc::new(cfg.to_owned()),
         })
     }
     async fn accept(&self) -> Result<Self::C, QuicErrorRepr> {
         match self.deref().accept().await {
             Some(conn) => {
                 let conn = conn.accept()?;
-                let connection = if self.zero_rtt {
+                let connection = if self.cfg.zero_rtt {
                     match conn.into_0rtt() {
                         Ok((conn, accepted)) => {
-                            let conn_clone = conn.clone();
+                            let _conn_clone = conn.clone();
                             tokio::spawn(async move {
                                 debug!("zero rtt accepted:{}", accepted.await);
-                                if conn_clone.is_jls() == Some(false) {
-                                    error!("JLS hijacked or wrong pwd/iv");
-                                    conn_clone.close(0u8.into(), b"");
-                                }
                             });
                             conn
                         }
@@ -407,11 +460,6 @@ impl QuicServer for Endpoint {
                 } else {
                     conn.await?
                 };
-                if connection.is_jls() == Some(false) {
-                    error!("JLS hijacked or wrong pwd/iv");
-                    connection.close(0u8.into(), b"");
-                    return Err(QuicErrorRepr::JlsAuthFailed);
-                }
                 Ok(connection)
             }
             None => {
@@ -421,20 +469,26 @@ impl QuicServer for Endpoint {
     }
 }
 
-impl From<quinn::ConnectionError> for QuicErrorRepr {
-    fn from(value: quinn::ConnectionError) -> Self {
+impl From<iroh_quinn::ConnectionError> for QuicErrorRepr {
+    fn from(value: iroh_quinn::ConnectionError) -> Self {
         QuicErrorRepr::QuicConnection(format!("{}", value))
     }
 }
 
-impl From<quinn::ConnectError> for QuicErrorRepr {
-    fn from(value: quinn::ConnectError) -> Self {
+impl From<iroh_quinn::ConnectError> for QuicErrorRepr {
+    fn from(value: iroh_quinn::ConnectError) -> Self {
         QuicErrorRepr::QuicConnect(format!("{}", value))
     }
 }
 
-impl From<quinn::SendDatagramError> for QuicErrorRepr {
-    fn from(value: quinn::SendDatagramError) -> Self {
+impl From<iroh_quinn::SendDatagramError> for QuicErrorRepr {
+    fn from(value: iroh_quinn::SendDatagramError) -> Self {
         QuicErrorRepr::QuicSendDatagramError(format!("{}", value))
+    }
+}
+
+impl From<rustls::Error> for SError {
+    fn from(value: rustls::Error) -> Self {
+        SError::RustlsError(value.to_string())
     }
 }

@@ -333,10 +333,15 @@ outbound:
         server-name: "localhost"
         congestion-control: 
             brutal:
-                bandwidth: 10000000
+                bandwidth: 1000
 
 "###;
         let cfg: Result<ShadowQuicClientCfg, _> = serde_saphyr::from_str(cfgstr);
-        assert!(cfg.is_ok());
+        match cfg.unwrap().congestion_control {
+            CongestionControl::Brutal(params) => {
+                assert_eq!(params.bandwidth, 1000);
+            }
+            _ => panic!("expected brutal congestion control"),
+        }
     }
 }

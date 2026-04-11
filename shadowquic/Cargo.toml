@@ -11,9 +11,9 @@ readme = { workspace = true}
 [features]
 default = ["shadowquic-quinn", "sunnyquic-iroh-quinn"]
 tokio-console = ["dep:console-subscriber","tokio/tracing"]
-shadowquic-quinn = ["dep:quinn","dep:rustls_jls"]
+shadowquic-quinn = ["dep:quinn","dep:rustls_jls", "dep:quinn_proto"]
 sunnyquic-gm-quic = ["dep:gm-quic","dep:qevent","dep:qbase","dep:qunreliable", "dep:rustls","dep:rustls-native-certs","dep:arc-swap","dep:notify"]
-sunnyquic-iroh-quinn = ["dep:iroh-quinn", "dep:rustls", "dep:rustls-native-certs","dep:arc-swap","dep:notify"]
+sunnyquic-iroh-quinn = ["dep:iroh-quinn", "dep:rustls", "dep:rustls-native-certs","dep:arc-swap","dep:notify", "dep:iroh-quinn-proto"]
 
 [dependencies]
 anyhow = "1.0.100"
@@ -22,18 +22,18 @@ tokio = {version = "1.49.0", features = ["io-util", "net","rt","macros","rt-mult
 tracing = "0.1.44"
 time = { version = "=0.3.46", features = ["macros", "local-offset"] }
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt", "ansi", "time", "local-time"]}
-quinn = { package = "quinn", git = "https://github.com/spongebob888/quinn-jls", tag = "quinn-0.11.7-0.3.1", default-features = false, features = ["runtime-tokio", "rustls-ring"],optional = true}
-#quinn = { package = "quinn-jls",version = "0.11.7-0.3.1", default-features = false, features = ["runtime-tokio", "rustls-ring"],optional = true}
-#quinn = { package = "quinn", git = "https://github.com/hrimfaxi/quinn-jls", branch = "brutal", default-features = false, features = ["runtime-tokio", "rustls-ring"], optional = true }
-#quinn = { path = "/home/hrimfaxi/quinn-jls/quinn", default-features = false, features = ["runtime-tokio", "rustls-ring"], optional = true }
+quinn = { package = "quinn-jls", version = "0.11.7-0.3.1", default-features = false, features = ["runtime-tokio", "rustls-ring"],optional = true}
+
+#quinn_proto = { package = "quinn-proto", git = "https://github.com/spongebob888/quinn-jls", tag = "quinn-0.11.7-0.3.1", default-features = false, features = ["rustls-ring"],optional = true}
+#quinn = { package = "quinn", git = "file:///home/liu/ws/quinn-jls", branch="jls-dev", default-features = false, features = ["runtime-tokio", "rustls-ring"],optional = true}
+quinn_proto = { package = "quinn-proto-jls", version = "0.11.10-0.3.1", default-features = false, features = ["rustls-ring"],optional = true}
+
+#quinn_proto = { package = "quinn-proto", git = "file:///home/liu/ws/quinn-jls", branch="jls-dev", default-features = false, features = ["rustls-ring"],optional = true}
+
+#brutal-core = { git = "https://github.com/hrimfaxi/brutal_quinn.git", branch = "master" }
+brutal-core = { version = "0.1.0" }
 
 
-brutal-iroh = { git = "https://github.com/hrimfaxi/brutal_quinn.git", branch = "master" }
-brutal-jls = { git = "https://github.com/hrimfaxi/brutal_quinn.git", branch = "master" }
-#brutal-iroh = { path = "/home/hrimfaxi/brutal_quinn/brutal-iroh" }
-#brutal-jls = { path = "/home/hrimfaxi/brutal_quinn/brutal-jls"}
-
-#rustls_jls = { package = "rustls", git = "https://github.com/spongebob888/rustls-jls", tag = "v/0.23.25-1.2.1", default-features = false, features = ["std","ring"],optional = true}
 rustls_jls = { package = "rustls-jls", version = "0.23.25-1.2.1", default-features = false, features = ["std","ring"],optional = true}
 rcgen = { version = "0.14", default-features = false, features = ["crypto","ring"] }
 bytes = "1.11.0"
@@ -53,10 +53,12 @@ qunreliable = { version = "0.4", default-features = false, optional = true}
 rustls = { version = "0.23", default-features = false, features = ["std","ring"], optional = true}
 rustls-native-certs = {version = "0.8.3", optional = true}
 
-iroh-quinn = { git = "https://github.com/hrimfaxi/iroh_quinn", branch = "main", package = "noq", optional = true, default-features = false, features = ["rustls-ring", "runtime-tokio"] }
-#iroh-quinn ={ version = "0.16.1",optional = true, default-features = false, features = ["rustls-ring","runtime-tokio"]}
-#iroh-quinn ={ git = "https://github.com/hrimfaxi/iroh_quinn", branch = "brutal", optional = true, default-features = false, features = ["rustls-ring","runtime-tokio"]}
-#iroh-quinn ={ package = "iroh-quinn", path = "/home/hrimfaxi/iroh_quinn/quinn", optional = true, default-features = false, features = ["rustls-ring","runtime-tokio"]}
+# iroh-quinn = { git = "https://github.com/hrimfaxi/iroh_quinn", branch = "main", package = "noq", optional = true, default-features = false, features = ["rustls-ring", "runtime-tokio"] }
+# iroh-quinn-proto = { git = "https://github.com/hrimfaxi/iroh_quinn", branch = "main", package = "noq-proto", optional = true, default-features = false, features = ["rustls-ring"] }
+
+iroh-quinn ={ version = "0.16.1",optional = true, default-features = false, features = ["rustls-ring","runtime-tokio"]}
+iroh-quinn-proto ={ version = "0.15.1",optional = true, default-features = false, features = ["rustls-ring"]}
+
 
 notify = { version = "8.2.0", features = ["serde"], optional = true}
 arc-swap = { version = "1.8.1", optional = true }
