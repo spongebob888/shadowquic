@@ -18,9 +18,9 @@ sunnyquic-iroh-quinn = ["dep:iroh-quinn", "dep:rustls", "dep:rustls-native-certs
 [dependencies]
 anyhow = "1.0.100"
 thiserror = "2.0.18"
-tokio = {version = "1.49.0", features = ["io-util", "net","rt","macros","rt-multi-thread"]}
+tokio = {version = "1.51.1", features = ["io-util", "net","rt","macros","rt-multi-thread"]}
 tracing = "0.1.44"
-time = { version = "=0.3.46", features = ["macros", "local-offset"] }
+time = { version = "=0.3.47", features = ["macros", "local-offset"] }
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt", "ansi", "time", "local-time"]}
 quinn = { package = "quinn-jls", version = "0.3.3", default-features = false, features = ["runtime-tokio", "rustls-ring"],optional = true}
 quinn_proto = { package = "quinn-proto-jls", version = "0.3.3", default-features = false, features = ["rustls-ring"],optional = true}
@@ -55,10 +55,10 @@ iroh-quinn-proto ={ version = "0.15.1",optional = true, default-features = false
 
 
 notify = { version = "8.2.0", features = ["serde"], optional = true}
-arc-swap = { version = "1.8.1", optional = true }
+arc-swap = { version = "1.9.1", optional = true }
 
 console-subscriber = { version = "0.5.0", optional = true }
-serde-saphyr = "0.0.18"
+serde-saphyr = "0.0.23"
 ring = "0.17.14"
 
 [target.'cfg(target_os="android")'.dependencies]
@@ -66,6 +66,6 @@ sendfd = { version = "0.4.4", features = ["tokio"] }
 
 [dev-dependencies]
 fast-socks5 = "1.0.0"
-rand = "0.9.2"
+rand = "0.10.1"
 
 
