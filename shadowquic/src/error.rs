@@ -37,14 +37,14 @@ pub type SResult<T> = result::Result<T, SError>;
 // #[error(transparent)]
 // pub struct QuicError(#[from] QuicErrorRepr);
 
-impl From<rustls_jls::Error> for SError {
-    fn from(err: rustls_jls::Error) -> Self {
-        SError::RustlsError(err.to_string())
-    }
-}
-
-// impl From<quinn::rustls::Error> for SError {
-//     fn from(err: quinn::rustls::Error) -> Self {
+// impl From<rustls_jls::Error> for SError {
+//     fn from(err: rustls_jls::Error) -> Self {
 //         SError::RustlsError(err.to_string())
 //     }
 // }
+
+impl From<quinn::rustls::Error> for SError {
+    fn from(err: quinn::rustls::Error) -> Self {
+        SError::RustlsError(err.to_string())
+    }
+}
