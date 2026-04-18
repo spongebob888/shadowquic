@@ -74,9 +74,7 @@ impl SunnyQuicClient {
 
             tokio::spawn(async move {
                 let mark_pending = || {
-                    if !hop_requested_clone.swap(true, Ordering::SeqCst) {
-                        debug!("marking port hop as pending");
-                    }
+                    hop_requested_clone.swap(true, Ordering::SeqCst);
                 };
 
                 mark_pending();
@@ -86,7 +84,7 @@ impl SunnyQuicClient {
                         let mut rng = rand::rng();
                         rng.random_range(MIN_PORT_HOP_INTERVAL..=interval)
                     };
-                    debug!("scheduled port hop request in {} seconds", wait_time);
+                    // debug!("scheduled port hop request in {} seconds", wait_time);
 
                     tokio::select! {
                         _ = tokio::time::sleep(Duration::from_secs(wait_time)) => {
@@ -139,9 +137,7 @@ impl SunnyQuicClient {
             Some(port_hop) => {
                 let mut rng = rand::rng();
                 let (start, end) = (port_hop.range.start, port_hop.range.end);
-                let port = rng.random_range(start..=end);
-                debug!("selected random port {} (range: {}-{})", port, start, end);
-                port
+                rng.random_range(start..=end)
             }
             None => base_port,
         };
