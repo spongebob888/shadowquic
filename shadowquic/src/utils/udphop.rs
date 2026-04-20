@@ -131,6 +131,7 @@ impl UdpHopClientProxy {
             Arc::new(UdpSocket::bind(if is_ipv6 { "[::]:0" } else { "0.0.0.0:0" }).await?);
         let current_task = spawn_internet_receiver(
             current_socket.clone(),
+            current_target,
             local_socket.clone(),
             quinn_addr.clone(),
         );
@@ -187,6 +188,7 @@ impl UdpHopClientProxy {
 
                 let new_task = spawn_internet_receiver(
                     new_socket.clone(),
+                    new_target,
                     local_socket_hop.clone(),
                     quinn_addr_hop.clone(),
                 );
@@ -261,6 +263,7 @@ impl UdpHopClientProxy {
 
 fn spawn_internet_receiver(
     socket: Arc<UdpSocket>,
+    expected_peer: SocketAddr,
     local_socket: Arc<UdpSocket>,
     quinn_addr: Arc<RwLock<Option<SocketAddr>>>,
 ) -> JoinHandle<()> {
@@ -268,7 +271,15 @@ fn spawn_internet_receiver(
         let mut buf = [0u8; 65535];
         loop {
             match socket.recv_from(&mut buf).await {
-                Ok((len, _peer_addr)) => {
+                Ok((len, peer_addr)) => {
+                    if peer_addr != expected_peer {
+                        error!(
+                            "Dropping UDP hop packet from unexpected peer {}, expected {}",
+                            peer_addr, expected_peer
+                        );
+                        continue;
+                    }
+
                     let qa = quinn_addr.read().await;
                     if let Some(addr) = *qa
                         && let Err(e) = local_socket.send_to(&buf[..len], addr).await
