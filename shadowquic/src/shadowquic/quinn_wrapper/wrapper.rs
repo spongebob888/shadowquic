@@ -131,19 +131,27 @@ impl QuicConnection for Connection {
 impl QuicClient for Endpoint {
     type SC = ShadowQuicClientCfg;
     async fn new(cfg: &Self::SC, ipv6: bool) -> SResult<Self> {
-        let socket;
-        if ipv6 {
-            socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
+        let try_create_dual_stack = || {
+            let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
+            socket.set_only_v6(false)?;
             let bind_addr: SocketAddr = "[::]:0".parse().unwrap();
-            if let Err(e) = socket.set_only_v6(false) {
-                tracing::warn!(%e, "unable to make socket dual-stack");
-            }
             socket.bind(&bind_addr.into())?;
+            Ok(socket) as Result<Socket, io::Error>
+        };
+        let socket = if let Ok(socket) = try_create_dual_stack() {
+            trace!("dual stack udp socket created");
+            socket
+        } else if ipv6 {
+            let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
+            let bind_addr: SocketAddr = "[::]:0".parse().unwrap();
+            socket.bind(&bind_addr.into())?;
+            socket
         } else {
-            socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+            let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
             let bind_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
             socket.bind(&bind_addr.into())?;
-        }
+            socket
+        };
 
         #[cfg(target_os = "android")]
         if let Some(path) = &cfg.protect_path {
