@@ -1,5 +1,5 @@
 use rand::Rng;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UdpSocket;
@@ -30,10 +30,38 @@ struct ProxyState {
 
 pub struct UdpHopAddr {
     pub host: String,
-    pub ports: Vec<u16>,
+    pub ports: PortUnion,
 }
 
 impl UdpHopAddr {
+    pub fn min_port(&self) -> Option<u16> {
+        self.ports.min_port()
+    }
+
+    pub fn max_port(&self) -> Option<u16> {
+        self.ports.max_port()
+    }
+
+    pub fn hop_enabled_with_interval(&self, hop_interval: u32) -> bool {
+        self.ports.count() > 1 || hop_interval > 0
+    }
+
+    pub fn first_resolved_addrs(&self) -> std::io::Result<Vec<SocketAddr>> {
+        let port = self.min_port().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "empty port set")
+        })?;
+
+        let host_port = format!("{}:{}", self.host, port);
+        host_port.to_socket_addrs().map(|iter| iter.collect())
+    }
+
+    pub fn first_resolved_addr(&self) -> std::io::Result<SocketAddr> {
+        self.first_resolved_addrs()?
+            .into_iter()
+            .next()
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "host not found"))
+    }
+
     pub fn parse(s: &str) -> Result<Self, String> {
         let parts: Vec<&str> = s.rsplitn(2, ':').collect();
         if parts.len() != 2 {
@@ -42,8 +70,7 @@ impl UdpHopAddr {
 
         let port_str = parts[0];
         let host = parts[1].to_string();
-        let port_union: PortUnion = port_str.parse()?;
-        let ports = port_union.ports();
+        let ports: PortUnion = port_str.parse()?;
 
         Ok(Self { host, ports })
     }
@@ -100,7 +127,13 @@ impl UdpHopClientProxy {
 
         let quinn_addr = Arc::new(RwLock::new(None));
 
-        let current_target_port = addr.ports[rand::rng().random_range(0..addr.ports.len())];
+        let current_target_port = {
+            let mut rng = rand::rng();
+            addr.ports.random_port(&mut rng).ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "empty port set")
+            })?
+        };
+
         let mut current_target = base_addr;
         current_target.set_port(current_target_port);
 
@@ -111,11 +144,14 @@ impl UdpHopClientProxy {
             quinn_addr.clone(),
         );
 
+        let min_port = addr.ports.min_port().unwrap_or(0);
+        let max_port = addr.ports.max_port().unwrap_or(0);
+
         info!(
             "UdpHop initialized with {} target ports (from {} to {})",
-            addr.ports.len(),
-            addr.ports.first().unwrap_or(&0),
-            addr.ports.last().unwrap_or(&0)
+            addr.ports.count(),
+            min_port,
+            max_port
         );
 
         let state = Arc::new(RwLock::new(ProxyState {
@@ -127,18 +163,26 @@ impl UdpHopClientProxy {
             draining: Vec::new(),
         }));
 
-        let ports = addr.ports.clone();
-
         let state_hop = state.clone();
         let local_socket_hop = local_socket.clone();
         let quinn_addr_hop = quinn_addr.clone();
+        let ports = addr.ports.clone();
 
         tokio::spawn(async move {
             loop {
                 let interval = select_hop_interval_ms(min_hop_interval, max_hop_interval);
                 tokio::time::sleep(Duration::from_millis(interval)).await;
 
-                let new_port = ports[rand::rng().random_range(0..ports.len())];
+                let new_port = {
+                    let mut rng = rand::rng();
+                    match ports.random_port(&mut rng) {
+                        Some(port) => port,
+                        None => {
+                            error!("UDP hop port set is empty");
+                            continue;
+                        }
+                    }
+                };
                 let mut new_target = base_addr;
                 new_target.set_port(new_port);
 

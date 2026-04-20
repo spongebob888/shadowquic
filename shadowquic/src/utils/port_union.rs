@@ -1,3 +1,4 @@
+use rand::Rng;
 use std::str::FromStr;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -7,17 +8,41 @@ pub struct PortRange {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PortUnion(pub Vec<PortRange>);
+pub struct PortUnion(Vec<PortRange>);
 
 impl PortUnion {
-    pub fn ports(&self) -> Vec<u16> {
-        let mut ports = Vec::new();
-        for r in &self.0 {
-            for port in r.start..=r.end {
-                ports.push(port);
-            }
+    pub fn min_port(&self) -> Option<u16> {
+        self.0.first().map(|r| r.start)
+    }
+
+    pub fn max_port(&self) -> Option<u16> {
+        self.0.last().map(|r| r.end)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = u16> + '_ {
+        self.0.iter().flat_map(|r| r.start..=r.end)
+    }
+
+    pub fn count(&self) -> usize {
+        self.0.iter().map(|r| (r.end - r.start) as usize + 1).sum()
+    }
+
+    pub fn random_port<R: Rng + ?Sized>(&self, rng: &mut R) -> Option<u16> {
+        let total = self.count();
+        if total == 0 {
+            return None;
         }
-        ports
+
+        let mut idx = rng.random_range(0..total);
+        for r in &self.0 {
+            let len = (r.end - r.start) as usize + 1;
+            if idx < len {
+                return Some(r.start + idx as u16);
+            }
+            idx -= len;
+        }
+
+        None
     }
 
     pub fn contains(&self, port: u16) -> bool {
@@ -28,6 +53,7 @@ impl PortUnion {
         if self.0.is_empty() {
             return self;
         }
+
         self.0.sort_by(|a, b| {
             if a.start == b.start {
                 a.end.cmp(&b.end)
@@ -35,6 +61,7 @@ impl PortUnion {
                 a.start.cmp(&b.start)
             }
         });
+
         let mut normalized = vec![self.0[0].clone()];
         for current in self.0.into_iter().skip(1) {
             let last = normalized.last_mut().unwrap();
@@ -46,6 +73,7 @@ impl PortUnion {
                 normalized.push(current);
             }
         }
+
         PortUnion(normalized)
     }
 }
@@ -68,6 +96,7 @@ impl FromStr for PortUnion {
             if part.is_empty() {
                 continue;
             }
+
             if part.contains('-') {
                 let mut bounds = part.splitn(2, '-');
                 let start_str = bounds.next().unwrap().trim();
@@ -79,9 +108,11 @@ impl FromStr for PortUnion {
                 let mut end = end_str
                     .parse::<u16>()
                     .map_err(|_| format!("invalid port: {}", end_str))?;
+
                 if start > end {
                     std::mem::swap(&mut start, &mut end);
                 }
+
                 ranges.push(PortRange { start, end });
             } else {
                 let port = part

@@ -74,31 +74,27 @@ impl SunnyQuicClient {
             .or(self.config.min_hop_interval)
             .unwrap_or(0);
 
-        if let Ok(udphop_addr) = crate::utils::udphop::UdpHopAddr::parse(&self.config.addr) {
-            udphop_addr.ports.len() > 1 || hop_interval > 0
-        } else {
-            false
-        }
+        crate::utils::udphop::UdpHopAddr::parse(&self.config.addr)
+            .map(|addr| addr.hop_enabled_with_interval(hop_interval))
+            .unwrap_or(false)
     }
 
     fn resolve_addrs(&self) -> Vec<SocketAddr> {
-        let addrs: Vec<_> =
+        let addrs =
             if let Ok(udphop_addr) = crate::utils::udphop::UdpHopAddr::parse(&self.config.addr) {
-                let host_port = format!("{}:{}", udphop_addr.host, udphop_addr.ports[0]);
-                host_port
-                    .to_socket_addrs()
-                    .unwrap_or_else(|_| panic!("resolve quic addr faile: {}", self.config.addr))
-                    .collect()
+                udphop_addr
+                    .first_resolved_addrs()
+                    .unwrap_or_else(|_| panic!("resolve quic addr failed: {}", self.config.addr))
             } else {
                 self.config
                     .addr
                     .to_socket_addrs()
-                    .unwrap_or_else(|_| panic!("resolve quic addr faile: {}", self.config.addr))
+                    .unwrap_or_else(|_| panic!("resolve quic addr failed: {}", self.config.addr))
                     .collect()
             };
 
         if addrs.is_empty() {
-            panic!("resolve quic addr faile: {}", self.config.addr);
+            panic!("resolve quic addr failed: {}", self.config.addr);
         }
 
         addrs
@@ -116,7 +112,7 @@ impl SunnyQuicClient {
 
                 if let Ok(udphop_addr) = crate::utils::udphop::UdpHopAddr::parse(&self.config.addr)
                 {
-                    if udphop_addr.ports.len() > 1 || hop_interval > 0 {
+                    if udphop_addr.hop_enabled_with_interval(hop_interval) {
                         let min_interval = self
                             .config
                             .min_hop_interval
@@ -142,19 +138,18 @@ impl SunnyQuicClient {
                         }
                     }
 
-                    let host_port = format!("{}:{}", udphop_addr.host, udphop_addr.ports[0]);
-                    host_port
-                        .to_socket_addrs()
-                        .unwrap_or_else(|_| panic!("resolve quic addr faile: {}", self.config.addr))
-                        .next()
-                        .unwrap_or_else(|| panic!("resolve quic addr faile: {}", self.config.addr))
+                    udphop_addr.first_resolved_addr().unwrap_or_else(|_| {
+                        panic!("resolve quic addr failed: {}", self.config.addr)
+                    })
                 } else {
                     self.config
                         .addr
                         .to_socket_addrs()
-                        .unwrap_or_else(|_| panic!("resolve quic addr faile: {}", self.config.addr))
+                        .unwrap_or_else(|_| {
+                            panic!("resolve quic addr failed: {}", self.config.addr)
+                        })
                         .next()
-                        .unwrap_or_else(|| panic!("resolve quic addr faile: {}", self.config.addr))
+                        .unwrap_or_else(|| panic!("resolve quic addr failed: {}", self.config.addr))
                 }
             })
             .await
