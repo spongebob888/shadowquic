@@ -121,6 +121,108 @@ where
     deserializer.deserialize_any(BpsVisitor)
 }
 
+pub fn parse_duration_str(s: &str) -> Result<Option<u32>, String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Ok(None);
+    }
+
+    let (num_part, mul) = if let Some(stripped) = s.strip_suffix("ms") {
+        (stripped, 1u32)
+    } else if let Some(stripped) = s.strip_suffix('s') {
+        (stripped, 1000u32)
+    } else if let Some(stripped) = s.strip_suffix('m') {
+        (stripped, 60_000u32)
+    } else if let Some(stripped) = s.strip_suffix('h') {
+        (stripped, 3_600_000u32)
+    } else if let Some(stripped) = s.strip_suffix('d') {
+        (stripped, 86_400_000u32)
+    } else {
+        (s, 1u32)
+    };
+
+    let num_part = num_part.trim();
+    let ms = if num_part.contains('.') {
+        let f: f64 = num_part
+            .parse()
+            .map_err(|_| format!("invalid duration: {}", s))?;
+        if f < 0.0 {
+            return Err("duration cannot be negative".into());
+        }
+        let ms_f = f * mul as f64;
+        if ms_f > u32::MAX as f64 {
+            return Err("duration exceeds u32::MAX".into());
+        }
+        ms_f.round() as u64
+    } else {
+        let num: u64 = num_part
+            .parse()
+            .map_err(|_| format!("invalid duration: {}", s))?;
+        num.checked_mul(mul as u64)
+            .ok_or_else(|| "duration overflow".to_string())?
+    };
+
+    if ms > u32::MAX as u64 {
+        return Err("duration exceeds u32::MAX".into());
+    }
+
+    Ok(Some(ms as u32))
+}
+
+fn deserialize_duration_ms<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct OptDurationMs;
+
+    impl<'de> serde::de::Visitor<'de> for OptDurationMs {
+        type Value = Option<u32>;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("integer or duration string like 30s, 500ms")
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            if v > u32::MAX as u64 {
+                return Err(E::custom("duration exceeds u32::MAX"));
+            }
+            Ok(Some(v as u32))
+        }
+
+        fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            if v < 0 {
+                return Err(E::custom("duration cannot be negative"));
+            }
+            if v > u32::MAX as i64 {
+                return Err(E::custom("duration exceeds u32::MAX"));
+            }
+            Ok(Some(v as u32))
+        }
+
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            parse_duration_str(v).map_err(E::custom)
+        }
+    }
+
+    deserializer.deserialize_any(OptDurationMs)
+}
+
 /// Configuration of shadowquic inbound
 ///
 /// Example:
@@ -344,11 +446,11 @@ pub struct ShadowQuicClientCfg {
     #[serde(default)]
     pub cipher_suite_preference: Option<Vec<CipherSuitePreference>>,
 
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_duration_ms")]
     pub hop_interval: Option<u32>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_duration_ms")]
     pub min_hop_interval: Option<u32>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_duration_ms")]
     pub max_hop_interval: Option<u32>,
 
     /// Android Only. the unix socket path for protecting android socket
