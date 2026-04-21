@@ -4,28 +4,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::sync::RwLock;
-use tokio::task::JoinHandle;
-use tokio::time::Instant;
 use tracing::{debug, error, info, warn};
 
 use crate::utils::port_union::PortUnion;
 
-const DRAINING_SECS: u64 = 10;
-
-struct ManagedSocket {
-    socket: Arc<UdpSocket>,
-    task: JoinHandle<()>,
-}
-
-struct DrainingSocket {
-    managed: ManagedSocket,
-    expires_at: Instant,
-}
-
 struct ProxyState {
-    current: ManagedSocket,
     current_target_port: u16,
-    draining: Vec<DrainingSocket>,
 }
 
 pub struct UdpHopAddr {
@@ -92,6 +76,41 @@ fn select_hop_interval_ms(min_hop_interval: u32, max_hop_interval: u32) -> u64 {
     rand::rng().random_range(min_interval..=max_interval) as u64
 }
 
+async fn pick_reachable_base_addr(host_addrs: &[SocketAddr]) -> std::io::Result<SocketAddr> {
+    let mut candidates_v6 = Vec::new();
+    let mut candidates_v4 = Vec::new();
+
+    for addr in host_addrs.iter().copied() {
+        if addr.is_ipv6() {
+            candidates_v6.push(addr);
+        } else if addr.is_ipv4() {
+            candidates_v4.push(addr);
+        }
+    }
+
+    for addr in candidates_v6.iter().chain(candidates_v4.iter()) {
+        let bind_addr = if addr.is_ipv6() {
+            "[::]:0"
+        } else {
+            "0.0.0.0:0"
+        };
+
+        let sock = match UdpSocket::bind(bind_addr).await {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        if sock.connect(*addr).await.is_ok() {
+            return Ok(*addr);
+        }
+    }
+
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AddrNotAvailable,
+        "no reachable resolved address",
+    ))
+}
+
 impl UdpHopClientProxy {
     pub async fn start(
         addr: &UdpHopAddr,
@@ -109,12 +128,20 @@ impl UdpHopClientProxy {
             ));
         }
 
-        let base_addr = host_addrs[0];
+        let base_addr = pick_reachable_base_addr(&host_addrs).await?;
         let is_ipv6 = base_addr.is_ipv6();
 
+        info!(
+            "UdpHop selected reachable base address {} (family: {})",
+            base_addr,
+            if base_addr.is_ipv6() { "IPv6" } else { "IPv4" }
+        );
         let local_socket =
             Arc::new(UdpSocket::bind(if is_ipv6 { "[::1]:0" } else { "127.0.0.1:0" }).await?);
         let local_port = local_socket.local_addr()?;
+
+        let internet_socket =
+            Arc::new(UdpSocket::bind(if is_ipv6 { "[::]:0" } else { "0.0.0.0:0" }).await?);
 
         let quinn_addr = Arc::new(RwLock::new(None));
 
@@ -124,17 +151,6 @@ impl UdpHopClientProxy {
                 std::io::Error::new(std::io::ErrorKind::InvalidInput, "empty port set")
             })?
         };
-
-        let mut current_target = base_addr;
-        current_target.set_port(current_target_port);
-        let current_socket =
-            Arc::new(UdpSocket::bind(if is_ipv6 { "[::]:0" } else { "0.0.0.0:0" }).await?);
-        let current_task = spawn_internet_receiver(
-            current_socket.clone(),
-            current_target.ip(),
-            local_socket.clone(),
-            quinn_addr.clone(),
-        );
 
         let min_port = addr.ports.min_port().unwrap_or(0);
         let max_port = addr.ports.max_port().unwrap_or(0);
@@ -147,17 +163,44 @@ impl UdpHopClientProxy {
         );
 
         let state = Arc::new(RwLock::new(ProxyState {
-            current: ManagedSocket {
-                socket: current_socket,
-                task: current_task,
-            },
             current_target_port,
-            draining: Vec::new(),
         }));
 
+        let expected_ip = base_addr.ip();
+        let internet_socket_recv = internet_socket.clone();
+        let local_socket_recv = local_socket.clone();
+        let quinn_addr_recv = quinn_addr.clone();
+
+        tokio::spawn(async move {
+            let mut buf = [0u8; 65535];
+            loop {
+                match internet_socket_recv.recv_from(&mut buf).await {
+                    Ok((len, peer_addr)) => {
+                        if peer_addr.ip() != expected_ip {
+                            debug!(
+                                "Dropping UDP hop packet from unexpected peer IP {}, expected {}",
+                                peer_addr.ip(),
+                                expected_ip
+                            );
+                            continue;
+                        }
+
+                        let qa = quinn_addr_recv.read().await;
+                        if let Some(addr) = *qa
+                            && let Err(e) = local_socket_recv.send_to(&buf[..len], addr).await
+                        {
+                            error!("Failed to forward packet to local Quinn: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        debug!("UDP hop receiver exited: {}", e);
+                        break;
+                    }
+                }
+            }
+        });
+
         let state_hop = state.clone();
-        let local_socket_hop = local_socket.clone();
-        let quinn_addr_hop = quinn_addr.clone();
         let ports = addr.ports.clone();
 
         tokio::spawn(async move {
@@ -165,61 +208,45 @@ impl UdpHopClientProxy {
                 let interval = select_hop_interval_ms(min_hop_interval, max_hop_interval);
                 tokio::time::sleep(Duration::from_millis(interval)).await;
 
+                let mut st = state_hop.write().await;
+                let current = st.current_target_port;
+
                 let new_port = {
                     let mut rng = rand::rng();
-                    match ports.random_port(&mut rng) {
-                        Some(port) => port,
-                        None => {
-                            error!("UDP hop port set is empty");
-                            continue;
+                    let mut selected = current;
+
+                    for _ in 0..8 {
+                        match ports.random_port(&mut rng) {
+                            Some(port) => {
+                                selected = port;
+                                if port != current || ports.count() <= 1 {
+                                    break;
+                                }
+                            }
+                            None => {
+                                error!("UDP hop port set is empty");
+                                selected = current;
+                                break;
+                            }
                         }
                     }
+
+                    selected
                 };
-                let mut new_target = base_addr;
-                new_target.set_port(new_port);
-                let new_socket =
-                    match UdpSocket::bind(if is_ipv6 { "[::]:0" } else { "0.0.0.0:0" }).await {
-                        Ok(s) => Arc::new(s),
-                        Err(e) => {
-                            error!("Failed to bind new socket for hop: {}", e);
-                            continue;
-                        }
-                    };
 
-                let new_task = spawn_internet_receiver(
-                    new_socket.clone(),
-                    new_target.ip(),
-                    local_socket_hop.clone(),
-                    quinn_addr_hop.clone(),
-                );
-
-                let mut st = state_hop.write().await;
-
-                cleanup_draining_sockets(&mut st.draining);
-
-                let old_current = std::mem::replace(
-                    &mut st.current,
-                    ManagedSocket {
-                        socket: new_socket,
-                        task: new_task,
-                    },
-                );
-
-                st.draining.push(DrainingSocket {
-                    managed: old_current,
-                    expires_at: Instant::now() + Duration::from_secs(DRAINING_SECS),
-                });
+                if new_port == st.current_target_port {
+                    debug!("UDP hop selected the same target port: {}", new_port);
+                    continue;
+                }
 
                 st.current_target_port = new_port;
-
-                debug!(
-                    "Hopped to new socket, new target port: {}, draining old socket for {}s",
-                    new_port, DRAINING_SECS
-                );
+                debug!("Hopped to new target port: {}", new_port);
             }
         });
 
         let state_local = state.clone();
+        let internet_socket_send = internet_socket.clone();
+
         tokio::spawn(async move {
             let mut buf = [0u8; 65535];
             loop {
@@ -232,7 +259,6 @@ impl UdpHopClientProxy {
                         drop(qa);
 
                         let st = state_local.read().await;
-                        let socket = st.current.socket.clone();
                         let mut target = base_addr;
                         target.set_port(st.current_target_port);
                         drop(st);
@@ -244,7 +270,7 @@ impl UdpHopClientProxy {
                             );
                         }
 
-                        if let Err(e) = socket.send_to(&buf[..len], target).await {
+                        if let Err(e) = internet_socket_send.send_to(&buf[..len], target).await {
                             error!("Failed to forward packet to internet: {}", e);
                         }
                     }
@@ -256,57 +282,12 @@ impl UdpHopClientProxy {
             }
         });
 
-        info!("UdpHop proxy started on {}", local_port);
+        info!(
+            "UdpHop proxy started on {}, internet socket {}",
+            local_port,
+            internet_socket.local_addr()?
+        );
+
         Ok(local_port)
-    }
-}
-
-fn spawn_internet_receiver(
-    socket: Arc<UdpSocket>,
-    expected_ip: std::net::IpAddr,
-    local_socket: Arc<UdpSocket>,
-    quinn_addr: Arc<RwLock<Option<SocketAddr>>>,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut buf = [0u8; 65535];
-        loop {
-            match socket.recv_from(&mut buf).await {
-                Ok((len, peer_addr)) => {
-                    if peer_addr.ip() != expected_ip {
-                        debug!(
-                            "Dropping UDP hop packet from unexpected peer IP {}, expected {}",
-                            peer_addr.ip(),
-                            expected_ip
-                        );
-                        continue;
-                    }
-
-                    let qa = quinn_addr.read().await;
-                    if let Some(addr) = *qa
-                        && let Err(e) = local_socket.send_to(&buf[..len], addr).await
-                    {
-                        error!("Failed to forward packet to local Quinn: {}", e);
-                    }
-                }
-                Err(e) => {
-                    debug!("UDP hop receiver exited: {}", e);
-                    break;
-                }
-            }
-        }
-    })
-}
-
-fn cleanup_draining_sockets(draining: &mut Vec<DrainingSocket>) {
-    let now = Instant::now();
-    let mut i = 0;
-
-    while i < draining.len() {
-        if draining[i].expires_at <= now {
-            draining[i].managed.task.abort();
-            draining.swap_remove(i);
-        } else {
-            i += 1;
-        }
     }
 }
