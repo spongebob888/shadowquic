@@ -14,6 +14,9 @@ use crate::{
 };
 
 mod serde_utils;
+#[cfg(feature = "tproxy")]
+use crate::tproxy::inbound::TproxyServer;
+
 mod shadowquic;
 mod sunnyquic;
 pub use crate::config::serde_utils::*;
@@ -69,13 +72,18 @@ pub enum InboundCfg {
     ShadowQuic(ShadowQuicServerCfg),
     #[serde(rename = "sunnyquic")]
     SunnyQuic(SunnyQuicServerCfg),
+    #[cfg(feature = "tproxy")]
+    #[serde(rename = "tproxy")]
+    Tproxy(TproxyServerCfg),
 }
 impl InboundCfg {
     async fn build_inbound(self) -> Result<Box<dyn Inbound>, SError> {
         let r: Box<dyn Inbound> = match self {
             InboundCfg::Socks(cfg) => Box::new(SocksServer::new(cfg).await?),
-            InboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicServer::new(cfg).await?),
+            InboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicServer::new(cfg)。await?),
             InboundCfg::SunnyQuic(cfg) => Box::new(SunnyQuicServer::new(cfg).await?),
+            #[cfg(feature = "tproxy")]
+            InboundCfg::Tproxy(cfg) => Box::new(TproxyServer::new(cfg).await?),
         };
         Ok(r)
     }
@@ -131,6 +139,20 @@ pub struct SocksServerCfg {
     /// Left empty to disable authentication
     #[serde(default = "Vec::new")]
     pub users: Vec<AuthUser>,
+}
+
+/// Tproxy inbound configuration
+///
+/// Example:
+/// ```yaml
+/// bind-addr: "0.0.0.0:1089" # or "[::]:1089" for dualstack
+/// ```
+#[cfg(feature = "tproxy")]
+#[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct TproxyServerCfg {
+    /// Server binding address. e.g. `0.0.0.0:1089`, `[::1]:1089`
+    pub bind_addr: SocketAddr,
 }
 
 /// user authentication

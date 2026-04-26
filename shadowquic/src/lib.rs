@@ -22,6 +22,8 @@ pub mod socks;
 pub mod squic;
 pub mod sunnyquic;
 pub mod utils;
+#[cfg(feature = "tproxy")]
+pub mod tproxy;
 
 pub use msgs::SDecode;
 pub use msgs::SEncode;
