@@ -179,6 +179,10 @@ pub struct ShadowQuicServerCfg {
     /// For stable udp network, it's better to disable it and set a proper initial mtu
     #[serde(default = "default_mtu_discovery")]
     pub mtu_discovery: bool,
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[serde(default)]
+    pub fwmark: Option<u32>,
 }
 
 /// Jls upstream configuration
@@ -214,6 +218,8 @@ impl Default for ShadowQuicServerCfg {
             server_name: None,
             gso: default_gso(),
             mtu_discovery: default_mtu_discovery(),
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            fwmark: None,
         }
     }
 }
@@ -235,6 +241,8 @@ impl Default for ShadowQuicClientCfg {
             gso: default_gso(),
             mtu_discovery: default_mtu_discovery(),
             cipher_suite_preference: None,
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            fwmark: None,
             #[cfg(target_os = "android")]
             protect_path: Default::default(),
         }
@@ -335,6 +343,10 @@ pub struct ShadowQuicClientCfg {
     /// If unset, use rustls/ring default preference order.
     #[serde(default)]
     pub cipher_suite_preference: Option<Vec<CipherSuitePreference>>,
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[serde(default)]
+    pub fwmark: Option<u32>,
 
     /// Android Only. the unix socket path for protecting android socket
     #[cfg(target_os = "android")]

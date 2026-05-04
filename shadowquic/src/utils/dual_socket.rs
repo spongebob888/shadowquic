@@ -81,3 +81,36 @@ pub fn to_ipv4_mapped(mut addr: SocketAddr) -> SocketAddr {
     addr.set_ip(ip);
     addr
 }
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn try_apply_fwmark(socket: &Socket, mark: u32) {
+    tracing::info!("setting socket fwmark to {}", mark);
+    socket.set_mark(mark).unwrap_or_else(|e| {
+        tracing::warn!(
+            "failed to set fwmark {} on socket: {}. \
+                the socket will continue without fwmark; \
+                ensure CAP_NET_ADMIN capability is granted if fwmark is required.",
+            mark,
+            e
+        );
+    });
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn create_marked_udp_socket(
+    addr: SocketAddr,
+    mark: u32,
+) -> std::io::Result<std::net::UdpSocket> {
+    let domain = match addr {
+        SocketAddr::V4(_) => Domain::IPV4,
+        SocketAddr::V6(_) => Domain::IPV6,
+    };
+
+    let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
+    socket.set_reuse_address(true)?;
+    socket.set_nonblocking(true)?;
+    try_apply_fwmark(&socket, mark);
+    socket.bind(&addr.into())?;
+
+    Ok(socket.into())
+}

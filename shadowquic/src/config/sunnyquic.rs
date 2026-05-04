@@ -75,6 +75,10 @@ pub struct SunnyQuicServerCfg {
     /// Brutal server configuration
     #[serde(default)]
     pub brutal: Option<BrutalParams>,
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[serde(default)]
+    pub fwmark: Option<u32>,
 }
 
 impl Default for SunnyQuicServerCfg {
@@ -94,6 +98,8 @@ impl Default for SunnyQuicServerCfg {
             mtu_discovery: default_mtu_discovery(),
             gso: default_gso(),
             brutal: None,
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            fwmark: None,
         }
     }
 }
@@ -118,6 +124,8 @@ impl Default for SunnyQuicClientCfg {
             gso: default_gso(),
             mtu_discovery: default_mtu_discovery(),
             cipher_suite_preference: None,
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            fwmark: None,
             #[cfg(target_os = "android")]
             protect_path: Default::default(),
         }
@@ -209,6 +217,10 @@ pub struct SunnyQuicClientCfg {
     /// If unset, use rustls/ring default preference order.
     #[serde(default)]
     pub cipher_suite_preference: Option<Vec<CipherSuitePreference>>,
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[serde(default)]
+    pub fwmark: Option<u32>,
 
     /// Android Only. the unix socket path for protecting android socket
     #[cfg(target_os = "android")]
