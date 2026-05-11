@@ -13,9 +13,12 @@ use iroh_quinn::{
     ClientConfig, MtuDiscoveryConfig, SendDatagramError, TransportConfig, VarInt,
     congestion::{BbrConfig, CubicConfig, NewRenoConfig},
 };
+#[cfg(feature = "aws-lc-rs")]
+use rustls::crypto::aws_lc_rs as crypto_provider;
+#[cfg(all(feature = "ring", not(feature = "aws-lc-rs")))]
+use rustls::crypto::ring as crypto_provider;
 use rustls::{
     RootCertStore,
-    crypto::ring,
     pki_types::{CertificateDer, pem::PemObject},
 };
 use socket2::{Domain, Protocol, Socket, Type};
@@ -286,10 +289,10 @@ async fn add_extra_path(
 fn to_rustls_cipher_suite(suite: &CipherSuitePreference) -> rustls::SupportedCipherSuite {
     match suite {
         CipherSuitePreference::Chacha20Poly1305 => {
-            ring::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256
+            crypto_provider::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256
         }
-        CipherSuitePreference::Aes128Gcm => ring::cipher_suite::TLS13_AES_128_GCM_SHA256,
-        CipherSuitePreference::Aes256Gcm => ring::cipher_suite::TLS13_AES_256_GCM_SHA384,
+        CipherSuitePreference::Aes128Gcm => crypto_provider::cipher_suite::TLS13_AES_128_GCM_SHA256,
+        CipherSuitePreference::Aes256Gcm => crypto_provider::cipher_suite::TLS13_AES_256_GCM_SHA384,
     }
 }
 
@@ -312,7 +315,7 @@ pub fn gen_client_cfg(cfg: &SunnyQuicClientCfg) -> iroh_quinn::ClientConfig {
 
     let builder = if let Some(cipher_suite_preference) = &cfg.cipher_suite_preference {
         let normalized = normalize_cipher_suite_preference(cipher_suite_preference);
-        let mut provider = ring::default_provider();
+        let mut provider = crypto_provider::default_provider();
         provider.cipher_suites = normalized.iter().map(to_rustls_cipher_suite).collect();
 
         rustls::ClientConfig::builder_with_provider(Arc::new(provider))
