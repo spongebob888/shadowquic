@@ -97,6 +97,7 @@ impl Inbound for TproxyServer {
             tokio::select! {
                 res = self.tcp_listener.accept() => {
                     let (stream, _) = res?;
+                    tracing::info!("accepted tcp connection from {}", stream.peer_addr().unwrap());
                     let orig_dst = stream.local_addr().map_err(|e| SError::SocksError(e.to_string()))?;
                     let dst = SocksAddr {
                         addr: match orig_dst.ip() {
@@ -302,6 +303,7 @@ async fn handle_udp_tproxy(
                 let tx = if let Some(tx) = sessions.get(&client_addr) {
                     tx.clone()
                 } else {
+                    tracing::info!("accepted udp connection from {}", client_addr);
                     let (tx, rx) = channel(1024);
                     let send = Arc::new(TproxyUdpSend {
                         client_addr,
