@@ -9,6 +9,12 @@ use std::time::Duration;
 
 use crate::error::{SError, SResult};
 
+#[cfg(all(feature = "ring", not(feature = "aws-lc-rs")))]
+use rustls::crypto::ring::sign::any_supported_type;
+
+#[cfg(feature = "aws-lc-rs")]
+use rustls::crypto::aws_lc_rs::sign::any_supported_type;
+
 #[derive(Clone, Debug)]
 pub(crate) struct DynamicCertResolver {
     cert: Arc<ArcSwap<CertifiedKey>>,
@@ -36,12 +42,9 @@ impl DynamicCertResolver {
             .map_err(|x| SError::RustlsError(x.to_string()))?;
 
         // Create CertifiedKey
-        #[cfg(all(feature = "ring", not(feature = "aws-lc-rs")))]
-        let key = rustls::crypto::ring::sign::any_supported_type(&priv_key)
+        let key = any_supported_type(&priv_key)
             .map_err(|_| SError::RustlsError("invalid private key".to_string()))?;
-        #[cfg(feature = "aws-lc-rs")]
-        let key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&priv_key)
-            .map_err(|_| SError::RustlsError("invalid private key".to_string()))?;
+
         let certified_key = CertifiedKey::new(cert_der, key);
         Ok(certified_key)
     }

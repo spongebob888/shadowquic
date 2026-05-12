@@ -18,7 +18,12 @@ mod iroh_wrapper;
 #[cfg(feature = "sunnyquic-iroh-quinn")]
 pub use iroh_wrapper::{Connection, EndClient, EndServer};
 
-///
+#[cfg(all(feature = "ring", not(feature = "aws-lc-rs")))]
+use ring::digest;
+
+#[cfg(feature = "aws-lc-rs")]
+use aws_lc_rs::digest;
+
 #[cfg(all(
     not(feature = "sunnyquic-iroh-quinn"),
     not(feature = "sunnyquic-gm-quic")
@@ -35,17 +40,8 @@ pub use unimplemented::{Connection, EndClient, EndServer};
 pub fn gen_sunny_user_hash(username: &str, password: &str) -> SunnyCredential {
     let hash_in = username.to_string() + ":" + password;
     let hash_bytes_input = hash_in.into_bytes();
-    #[cfg(all(feature = "ring", not(feature = "aws-lc-rs")))]
     let hash_bytes = {
-        let out = ring::digest::digest(&ring::digest::SHA256, hash_bytes_input.as_ref());
-        let mut arr = [0u8; SUNNY_QUIC_AUTH_LEN];
-        let len = arr.len().min(out.as_ref().len());
-        arr[..len].copy_from_slice(&out.as_ref()[..len]);
-        arr
-    };
-    #[cfg(feature = "aws-lc-rs")]
-    let hash_bytes = {
-        let out = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, hash_bytes_input.as_ref());
+        let out = digest::digest(&digest::SHA256, hash_bytes_input.as_ref());
         let mut arr = [0u8; SUNNY_QUIC_AUTH_LEN];
         let len = arr.len().min(out.as_ref().len());
         arr[..len].copy_from_slice(&out.as_ref()[..len]);
