@@ -35,10 +35,12 @@ use crate::{
         MAX_DATAGRAM_WINDOW, MAX_SEND_WINDOW, MAX_STREAM_WINDOW, QuicClient, QuicConnection,
         QuicErrorRepr, QuicServer,
     },
+    rebind::Rebindable,
     sunnyquic::dynamic_cert::DynamicCertResolver,
 };
 
 pub type Connection = iroh_quinn::Connection;
+#[derive(Clone)]
 pub struct Endpoint<SC> {
     inner: iroh_quinn::Endpoint,
     cfg: Arc<SC>,
@@ -48,6 +50,12 @@ impl<SC> Deref for Endpoint<SC> {
 
     fn deref(&self) -> &Self::Target {
         &self.inner
+    }
+}
+
+impl<SC> Rebindable for Endpoint<SC> {
+    fn rebind(&self, socket: std::net::UdpSocket) -> Result<(), std::io::Error> {
+        self.inner.rebind(socket)
     }
 }
 

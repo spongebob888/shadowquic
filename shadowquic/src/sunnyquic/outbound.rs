@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use std::{
-    net::{ToSocketAddrs, UdpSocket},
+    net::{SocketAddr, ToSocketAddrs},
     sync::Arc,
 };
 use tokio::sync::{OnceCell, SetOnce};
@@ -13,6 +13,7 @@ use crate::{
     config::SunnyQuicClientCfg,
     error::SError,
     quic::{QuicClient, QuicConnection},
+    rebind::{RebindConfig, RebindEndpoint},
     squic::{auth_sunny, outbound::handle_request},
     sunnyquic::gen_sunny_user_hash,
 };
@@ -24,8 +25,9 @@ pub type SunnyQuicConn = SQConn<<EndClient as QuicClient>::C>;
 pub struct SunnyQuicClient {
     pub quic_conn: Option<SunnyQuicConn>,
     pub config: SunnyQuicClientCfg,
-    pub quic_end: OnceCell<EndClient>,
+    pub quic_end: OnceCell<RebindEndpoint<EndClient>>,
 }
+
 impl SunnyQuicClient {
     pub fn new(cfg: SunnyQuicClientCfg) -> Self {
         Self {
@@ -34,38 +36,52 @@ impl SunnyQuicClient {
             config: cfg,
         }
     }
+
     pub async fn init_endpoint(&self, ipv6: bool) -> Result<EndClient, SError> {
         EndClient::new(&self.config, ipv6).await
     }
-    pub fn new_with_socket(cfg: SunnyQuicClientCfg, socket: UdpSocket) -> Result<Self, SError> {
-        Ok(Self {
-            quic_end: OnceCell::from(EndClient::new_with_socket(&cfg, socket)?),
-            quic_conn: None,
-            config: cfg,
-        })
-    }
 
-    pub async fn get_conn(&self) -> Result<SunnyQuicConn, SError> {
-        let addr = self
+    fn resolve_addrs(&self) -> Vec<SocketAddr> {
+        let addrs: Vec<SocketAddr> = self
             .config
             .addr
             .to_socket_addrs()
-            .unwrap_or_else(|_| panic!("resolve quic addr faile: {}", self.config.addr))
-            .next()
-            .unwrap_or_else(|| panic!("resolve quic addr faile: {}", self.config.addr));
-        let end = self
+            .unwrap_or_else(|_| panic!("resolve quic addr failed: {}", self.config.addr))
+            .collect();
+        if addrs.is_empty() {
+            panic!("resolve quic addr failed: {}", self.config.addr);
+        }
+        addrs
+    }
+
+    async fn connect_addr(&self, addr: SocketAddr) -> Result<SunnyQuicConn, SError> {
+        let rebind = self
             .quic_end
             .get_or_init(|| async {
-                match self.init_endpoint(true).await {
-                    Ok(ep) => ep,
-                    Err(_) => self
-                        .init_endpoint(false)
-                        .await
-                        .expect("error during initialize quic endpoint"),
-                }
+                let (end, is_ipv6) = match self.init_endpoint(true).await {
+                    Ok(end) => (end, true),
+                    Err(_) => {
+                        let end = self
+                            .init_endpoint(false)
+                            .await
+                            .expect("error during initialize quic endpoint");
+                        (end, false)
+                    }
+                };
+
+                RebindEndpoint::with_rebind(
+                    end,
+                    RebindConfig {
+                        interval_ms: self.config.rebind_interval,
+                        min_ms: self.config.min_rebind_interval,
+                        max_ms: self.config.max_rebind_interval,
+                    },
+                    is_ipv6,
+                )
             })
             .await;
-        let conn = QuicClient::connect(end, addr, &self.config.server_name).await?;
+
+        let conn = QuicClient::connect(rebind.endpoint(), addr, &self.config.server_name).await?;
 
         let conn = SQConn {
             conn,
@@ -90,6 +106,25 @@ impl SunnyQuicClient {
         });
         Ok(conn)
     }
+
+    pub async fn get_conn(&self) -> Result<SunnyQuicConn, SError> {
+        let addrs = self.resolve_addrs();
+        let mut last_err = None;
+
+        for addr in addrs {
+            match self.connect_addr(addr).await {
+                Ok(conn) => return Ok(conn),
+                Err(e) => {
+                    error!("connect to {} failed: {}", addr, e);
+                    last_err = Some(e);
+                }
+            }
+        }
+
+        Err(last_err
+            .unwrap_or_else(|| panic!("no usable quic target address: {}", self.config.addr)))
+    }
+
     async fn prepare_conn(&mut self) -> Result<(), SError> {
         // delete connection if closed.
         self.quic_conn.take_if(|x| {
@@ -105,6 +140,7 @@ impl SunnyQuicClient {
         Ok(())
     }
 }
+
 #[async_trait]
 impl Outbound for SunnyQuicClient {
     async fn handle(&mut self, req: crate::ProxyRequest) -> Result<(), crate::error::SError> {

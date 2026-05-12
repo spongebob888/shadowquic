@@ -1,6 +1,7 @@
 use std::{io, net::SocketAddr, ops::Deref, sync::Arc, time::Duration};
 
 use super::brutal::BrutalConfig;
+
 use async_trait::async_trait;
 use bytes::Bytes;
 use quinn::rustls::{
@@ -30,9 +31,11 @@ use crate::{
         MAX_DATAGRAM_WINDOW, MAX_SEND_WINDOW, MAX_STREAM_WINDOW, QuicClient, QuicConnection,
         QuicErrorRepr, QuicServer,
     },
+    rebind::Rebindable,
 };
 
 pub type Connection = quinn::Connection;
+#[derive(Clone)]
 pub struct Endpoint {
     inner: quinn::Endpoint,
     zero_rtt: bool,
@@ -42,6 +45,12 @@ impl Deref for Endpoint {
 
     fn deref(&self) -> &Self::Target {
         &self.inner
+    }
+}
+
+impl Rebindable for Endpoint {
+    fn rebind(&self, socket: std::net::UdpSocket) -> Result<(), std::io::Error> {
+        self.inner.rebind(socket)
     }
 }
 

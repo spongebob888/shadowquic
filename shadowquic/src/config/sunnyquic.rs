@@ -6,7 +6,7 @@ use crate::config::{
     AuthUser, BrutalParams, CipherSuitePreference, CongestionControl, HasCipherSuitePreference,
     default_alpn, default_congestion_control, default_gso, default_initial_mtu,
     default_keep_alive_interval, default_min_mtu, default_mtu_discovery, default_over_stream,
-    default_zero_rtt,
+    default_zero_rtt, deserialize_duration_ms,
 };
 
 pub(crate) fn default_multipath_num() -> u32 {
@@ -118,6 +118,9 @@ impl Default for SunnyQuicClientCfg {
             gso: default_gso(),
             mtu_discovery: default_mtu_discovery(),
             cipher_suite_preference: None,
+            rebind_interval: None,
+            min_rebind_interval: None,
+            max_rebind_interval: None,
             #[cfg(target_os = "android")]
             protect_path: Default::default(),
         }
@@ -209,6 +212,13 @@ pub struct SunnyQuicClientCfg {
     /// If unset, use rustls/ring default preference order.
     #[serde(default)]
     pub cipher_suite_preference: Option<Vec<CipherSuitePreference>>,
+
+    #[serde(default, deserialize_with = "deserialize_duration_ms")]
+    pub rebind_interval: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_duration_ms")]
+    pub min_rebind_interval: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_duration_ms")]
+    pub max_rebind_interval: Option<u32>,
 
     /// Android Only. the unix socket path for protecting android socket
     #[cfg(target_os = "android")]

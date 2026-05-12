@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use std::{
-    net::{ToSocketAddrs, UdpSocket},
+    net::{SocketAddr, ToSocketAddrs},
     sync::Arc,
 };
 use tokio::sync::{OnceCell, SetOnce};
@@ -9,7 +9,11 @@ use super::quinn_wrapper::EndClient;
 use tracing::{error, info};
 
 use crate::{
-    Outbound, config::ShadowQuicClientCfg, error::SError, quic::QuicClient,
+    Outbound,
+    config::ShadowQuicClientCfg,
+    error::SError,
+    quic::QuicClient,
+    rebind::{RebindConfig, RebindEndpoint},
     squic::outbound::handle_request,
 };
 
@@ -20,7 +24,7 @@ pub type ShadowQuicConn = SQConn<<EndClient as QuicClient>::C>;
 pub struct ShadowQuicClient {
     pub quic_conn: Option<ShadowQuicConn>,
     pub config: ShadowQuicClientCfg,
-    pub quic_end: OnceCell<EndClient>,
+    pub quic_end: OnceCell<RebindEndpoint<EndClient>>,
 }
 impl ShadowQuicClient {
     pub fn new(cfg: ShadowQuicClientCfg) -> Self {
@@ -33,32 +37,48 @@ impl ShadowQuicClient {
     pub async fn init_endpoint(&self, ipv6: bool) -> Result<EndClient, SError> {
         EndClient::new(&self.config, ipv6).await
     }
-    pub fn new_with_socket(cfg: ShadowQuicClientCfg, socket: UdpSocket) -> Result<Self, SError> {
-        Ok(Self {
-            quic_end: OnceCell::from(EndClient::new_with_socket(&cfg, socket)?),
-            quic_conn: None,
-            config: cfg,
-        })
-    }
 
-    pub async fn get_conn(&self) -> Result<ShadowQuicConn, SError> {
-        let addr = self
+    fn resolve_addrs(&self) -> Vec<SocketAddr> {
+        let addrs: Vec<SocketAddr> = self
             .config
             .addr
             .to_socket_addrs()
-            .unwrap_or_else(|_| panic!("resolve quic addr faile: {}", self.config.addr))
-            .next()
-            .unwrap_or_else(|| panic!("resolve quic addr faile: {}", self.config.addr));
-        let conn = self
+            .unwrap_or_else(|_| panic!("resolve quic addr failed: {}", self.config.addr))
+            .collect();
+        if addrs.is_empty() {
+            panic!("resolve quic addr failed: {}", self.config.addr);
+        }
+        addrs
+    }
+
+    async fn connect_addr(&self, addr: SocketAddr) -> Result<ShadowQuicConn, SError> {
+        let rebind = self
             .quic_end
             .get_or_init(|| async {
-                self.init_endpoint(addr.is_ipv6())
-                    .await
-                    .expect("error during initialize quic endpoint")
+                let (end, is_ipv6) = match self.init_endpoint(true).await {
+                    Ok(end) => (end, true),
+                    Err(_) => {
+                        let end = self
+                            .init_endpoint(false)
+                            .await
+                            .expect("error during initialize quic endpoint");
+                        (end, false)
+                    }
+                };
+
+                RebindEndpoint::with_rebind(
+                    end,
+                    RebindConfig {
+                        interval_ms: self.config.rebind_interval,
+                        min_ms: self.config.min_rebind_interval,
+                        max_ms: self.config.max_rebind_interval,
+                    },
+                    is_ipv6,
+                )
             })
-            .await
-            .connect(addr, &self.config.server_name)
-            .await?;
+            .await;
+
+        let conn = QuicClient::connect(rebind.endpoint(), addr, &self.config.server_name).await?;
 
         let conn = SQConn {
             conn,
@@ -69,6 +89,7 @@ impl ShadowQuicClient {
                 inner: Default::default(),
             },
         };
+
         let conn_clone = conn.clone();
         tokio::spawn(async move {
             let _ = handle_udp_packet_recv(conn_clone)
@@ -77,6 +98,25 @@ impl ShadowQuicClient {
         });
         Ok(conn)
     }
+
+    pub async fn get_conn(&self) -> Result<ShadowQuicConn, SError> {
+        let addrs = self.resolve_addrs();
+        let mut last_err = None;
+
+        for addr in addrs {
+            match self.connect_addr(addr).await {
+                Ok(conn) => return Ok(conn),
+                Err(e) => {
+                    error!("connect to {} failed: {}", addr, e);
+                    last_err = Some(e);
+                }
+            }
+        }
+
+        Err(last_err
+            .unwrap_or_else(|| panic!("no usable quic target address: {}", self.config.addr)))
+    }
+
     async fn prepare_conn(&mut self) -> Result<(), SError> {
         // delete connection if closed.
         self.quic_conn.take_if(|x| {
@@ -92,6 +132,7 @@ impl ShadowQuicClient {
         Ok(())
     }
 }
+
 #[async_trait]
 impl Outbound for ShadowQuicClient {
     async fn handle(&mut self, req: crate::ProxyRequest) -> Result<(), crate::error::SError> {

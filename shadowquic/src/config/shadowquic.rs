@@ -121,6 +121,104 @@ where
     deserializer.deserialize_any(BpsVisitor)
 }
 
+pub fn parse_duration_str(s: &str) -> Result<Option<u32>, String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Ok(None);
+    }
+
+    let (num_part, mul) = if let Some(stripped) = s.strip_suffix("ms") {
+        (stripped, 1u32)
+    } else if let Some(stripped) = s.strip_suffix('s') {
+        (stripped, 1000u32)
+    } else if let Some(stripped) = s.strip_suffix('m') {
+        (stripped, 60_000u32)
+    } else if let Some(stripped) = s.strip_suffix('h') {
+        (stripped, 3_600_000u32)
+    } else if let Some(stripped) = s.strip_suffix('d') {
+        (stripped, 86_400_000u32)
+    } else {
+        (s, 1u32)
+    };
+
+    let num_part = num_part.trim();
+    let ms = if num_part.contains('.') {
+        let f: f64 = num_part
+            .parse()
+            .map_err(|_| format!("invalid duration: {}", s))?;
+        if f < 0.0 {
+            return Err("duration cannot be negative".into());
+        }
+        let ms_f = f * mul as f64;
+        if ms_f > u32::MAX as f64 {
+            return Err("duration exceeds u32::MAX".into());
+        }
+        ms_f.round() as u64
+    } else {
+        let num: u64 = num_part
+            .parse()
+            .map_err(|_| format!("invalid duration: {}", s))?;
+        num.checked_mul(mul as u64)
+            .ok_or_else(|| "duration overflow".to_string())?
+    };
+
+    if ms > u32::MAX as u64 {
+        return Err("duration exceeds u32::MAX".into());
+    }
+
+    Ok(Some(ms as u32))
+}
+
+pub fn format_duration(ms: u32) -> String {
+    if ms >= 86_400_000 && ms.is_multiple_of(86_400_000) {
+        format!("{}d", ms / 86_400_000)
+    } else if ms >= 3_600_000 && ms.is_multiple_of(3_600_000) {
+        format!("{}h", ms / 3_600_000)
+    } else if ms >= 60_000 && ms.is_multiple_of(60_000) {
+        format!("{}m", ms / 60_000)
+    } else if ms >= 1_000 && ms.is_multiple_of(1_000) {
+        format!("{}s", ms / 1_000)
+    } else {
+        format!("{}ms", ms)
+    }
+}
+
+pub fn deserialize_duration_ms<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct OptDurationMs;
+    impl<'de> serde::de::Visitor<'de> for OptDurationMs {
+        type Value = Option<u32>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("integer or duration string like 30s, 500ms")
+        }
+        fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            if v > u32::MAX as u64 {
+                return Err(E::custom("duration exceeds u32::MAX"));
+            }
+
+            Ok(Some(v as u32))
+        }
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            parse_duration_str(v).map_err(E::custom)
+        }
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(None)
+        }
+    }
+    deserializer.deserialize_any(OptDurationMs)
+}
+
 /// Configuration of shadowquic inbound
 ///
 /// Example:
@@ -235,6 +333,9 @@ impl Default for ShadowQuicClientCfg {
             gso: default_gso(),
             mtu_discovery: default_mtu_discovery(),
             cipher_suite_preference: None,
+            rebind_interval: None,
+            min_rebind_interval: None,
+            max_rebind_interval: None,
             #[cfg(target_os = "android")]
             protect_path: Default::default(),
         }
@@ -335,6 +436,13 @@ pub struct ShadowQuicClientCfg {
     /// If unset, use rustls/ring default preference order.
     #[serde(default)]
     pub cipher_suite_preference: Option<Vec<CipherSuitePreference>>,
+
+    #[serde(default, deserialize_with = "deserialize_duration_ms")]
+    pub rebind_interval: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_duration_ms")]
+    pub min_rebind_interval: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_duration_ms")]
+    pub max_rebind_interval: Option<u32>,
 
     /// Android Only. the unix socket path for protecting android socket
     #[cfg(target_os = "android")]
