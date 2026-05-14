@@ -125,7 +125,7 @@ async fn test_shadowquic_overdatagram() -> Result<()> {
 async fn spawn_socks_client(socks_port: u16) -> Result<()> {
     let opt: Opt = Opt {
         socks_server: SocketAddr::new("127.0.0.1".parse().unwrap(), socks_port),
-        target_server: String::from("dns.google.com"),
+        target_server: String::from("one.one.one.one"),
         target_port: None,
         query_domain: String::from("www.gstatic.com"),
         username: None,
