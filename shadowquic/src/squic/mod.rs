@@ -25,13 +25,12 @@ use tokio::{
 use tracing::{Instrument, Level, debug, error, event, info, trace};
 
 use crate::{
-    AnyUdpRecv, AnyUdpSend,
+    AnyUdpRecv, AnyUdpSend, UdpSend,
     error::{SError, SResult},
-    msgs::squic::SunnyCredential,
     msgs::{
         SDecode, SEncode,
         socks5::SocksAddr,
-        squic::{SQPacketDatagramHeader, SQReq, SQUdpControlHeader},
+        squic::{SQPacketDatagramHeader, SQReq, SQUdpControlHeader, SunnyCredential},
     },
     quic::QuicConnection,
 };
@@ -79,9 +78,14 @@ impl<T: QuicConnection> Deref for SQConn<T> {
     }
 }
 
+pub(crate) struct NotifyBuffer {
+    pub(crate) notify: Sender<()>,
+    pub(crate) buffer: Vec<Bytes>,
+}
+
 // Use watch channel here. Notify is not suitable here
 // see https://github.com/tokio-rs/tokio/issues/3757
-type IDStoreVal<T> = Result<T, Sender<()>>;
+type IDStoreVal<T> = Result<T, NotifyBuffer>;
 /// IDStore is a thread-safe store for managing UDP sockets and their associated ids.
 /// It uses a HashMap to store the mapping between ids and the destination addresses as well as associated sockets.
 /// It also uses an atomic counter to generate unique ids for new sockets.
@@ -97,17 +101,22 @@ where
 {
     async fn get_socket_or_notify(&self, id: u16) -> Result<T, Receiver<()>> {
         if let Some(r) = self.inner.read().await.get(&id) {
-            r.clone().map_err(|x| x.subscribe())
+            r.as_ref().map_err(|x| x.notify.subscribe()).cloned()
         } else {
             // Need to recheck
             // During change from read lock to write lock, hashmap may be modified
             match self.inner.write().await.entry(id) {
-                Entry::Occupied(occupied_entry) => {
-                    occupied_entry.get().clone().map_err(|x| x.subscribe())
-                }
+                Entry::Occupied(occupied_entry) => occupied_entry
+                    .get()
+                    .as_ref()
+                    .map_err(|x| x.notify.subscribe())
+                    .cloned(),
                 Entry::Vacant(vacant_entry) => {
                     let (s, r) = channel(());
-                    vacant_entry.insert(Err(s));
+                    vacant_entry.insert(Err(NotifyBuffer {
+                        notify: s,
+                        buffer: Vec::new(),
+                    }));
                     Err(r)
                 }
             }
@@ -140,7 +149,8 @@ where
             }
         }
     }
-    async fn store_socket(&self, id: u16, val: T) {
+    #[allow(dead_code)]
+    async fn store_socket(&self, id: u16, val: T) -> Option<Vec<Bytes>> {
         let mut h = self.inner.write().await;
         trace!("receiving side alive socket number: {}", h.len());
         let r = h.get_mut(&id);
@@ -157,8 +167,11 @@ where
                             panic!("should be notify"); // should never happen
                         }
                         Err(n) => {
-                            n.send(()).unwrap();
+                            n.notify.send(()).unwrap_or_else(|_| {
+                                debug!("id:{} notifier without subscriber", id)
+                            });
                             event!(Level::TRACE, "notify socket id:{}", id);
+                            return Some(n.buffer);
                         }
                     }
                 }
@@ -166,6 +179,7 @@ where
         } else {
             h.insert(id, Ok(val));
         }
+        None
     }
     async fn fetch_new_id(&self, val: T) -> u16 {
         let mut inner = self.inner.write().await;
@@ -181,6 +195,77 @@ where
             }
         }
         r
+    }
+}
+
+impl IDStore {
+    async fn feed_datagram(&self, id: u16, packet: Bytes) -> SResult<()> {
+        if let Some(Ok((socket, addr))) = self.inner.read().await.get(&id) {
+            socket.send_to(packet, addr.clone()).await?;
+            Ok(())
+        } else {
+            // Need to recheck
+            // During change from read lock to write lock, hashmap may be modified
+            match self.inner.write().await.entry(id) {
+                Entry::Occupied(mut entry) => match entry.get_mut() {
+                    Ok((socket, addr)) => {
+                        socket.send_to(packet, addr.clone()).await?;
+                        Ok(())
+                    }
+                    Err(notify) => {
+                        notify.buffer.push(packet);
+                        Ok(())
+                    }
+                },
+                Entry::Vacant(vacant_entry) => {
+                    let (s, _r) = channel(());
+                    vacant_entry.insert(Err(NotifyBuffer {
+                        notify: s,
+                        buffer: vec![packet],
+                    }));
+                    Ok(())
+                }
+            }
+        }
+    }
+    async fn store_socket_with_prelude(
+        &self,
+        id: u16,
+        val: (Arc<dyn UdpSend>, SocksAddr),
+    ) -> SResult<()> {
+        let mut h = self.inner.write().await;
+        trace!("receiving side alive socket number: {}", h.len());
+        let r = h.get_mut(&id);
+        if let Some(s) = r {
+            match s {
+                Ok(_) => {
+                    error!("id:{} already exists", id);
+                }
+                Err(_) => {
+                    let (socket, addr) = val.clone();
+                    let notify = replace(s, Ok(val));
+                    //let _ = notify.map_err(|x| x.notify_one());
+                    match notify {
+                        Ok(_) => {
+                            panic!("should be notify"); // should never happen
+                        }
+                        Err(n) => {
+                            for bytes in n.buffer {
+                                socket.send_to(bytes, addr.clone()).await?;
+                            }
+
+                            n.notify.send(()).unwrap_or_else(|_| {
+                                debug!("id:{} notifier without subscriber", id)
+                            });
+                            event!(Level::TRACE, "notify socket id:{}", id);
+                        }
+                    }
+                }
+            }
+        } else {
+            h.insert(id, Ok(val));
+        }
+        Ok(())
     }
 }
 
@@ -239,12 +324,20 @@ struct AssociateRecvSession {
     id_map: HashMap<u16, SocksAddr>,
 }
 impl AssociateRecvSession {
-    pub async fn store_socket(&mut self, id: u16, dst: SocksAddr, socks: AnyUdpSend) {
+    pub async fn store_socket(
+        &mut self,
+        id: u16,
+        dst: SocksAddr,
+        socks: AnyUdpSend,
+    ) -> SResult<()> {
         if let hash_map::Entry::Vacant(e) = self.id_map.entry(id) {
-            self.id_store.store_socket(id, (socks, dst.clone())).await;
+            self.id_store
+                .store_socket_with_prelude(id, (socks, dst.clone()))
+                .await?;
             trace!("recv session: insert id:{}, addr:{}", id, dst);
             e.insert(dst);
         }
+        Ok(())
     }
 }
 
@@ -354,7 +447,10 @@ pub async fn handle_udp_recv_ctrl<C: QuicConnection>(
     loop {
         let SQUdpControlHeader { id, dst } = SQUdpControlHeader::decode(&mut recv).await?;
         trace!("udp control header received: id:{},dst:{}", id, dst);
-        session.store_socket(id, dst, udp_socket.clone()).await;
+        let _ = session
+            .store_socket(id, dst, udp_socket.clone())
+            .await
+            .map_err(|e| error!("failed to writing data to udp socket:{e}"));
     }
     #[allow(unreachable_code)]
     Ok(())
@@ -366,7 +462,6 @@ pub async fn handle_udp_recv_ctrl<C: QuicConnection>(
 /// This function is symetrical for both clients and servers.
 pub async fn handle_udp_packet_recv<C: QuicConnection>(conn: SQConn<C>) -> Result<(), SError> {
     let id_store = conn.recv_id_store.clone();
-
     wait_sunny_auth(&conn).await?;
     loop {
         tokio::select! {
@@ -375,32 +470,8 @@ pub async fn handle_udp_packet_recv<C: QuicConnection>(conn: SQConn<C>) -> Resul
                 let b = BytesMut::from(b);
                 let mut cur = Cursor::new(b);
                 let SQPacketDatagramHeader{id} = SQPacketDatagramHeader::decode(&mut cur).await?;
-
-                match id_store.get_socket_or_notify(id).await {
-                 Ok((udp,addr)) =>  {
-                    let pos = cur.position() as usize;
-                    let b = cur.into_inner().freeze();
-                    udp.send_to(b.slice(pos..b.len()), addr.clone()).await?;
-                }
-                Err(mut notify) =>  {
-                    let id_store = id_store.clone();
-                    let src_addr = conn.remote_address();
-                    event!(Level::TRACE, "resolving datagram id:{}",id);
-                    // Might spawn too many tasks
-                    tokio::spawn(async move {
-                        // It's safe to sender to be dropped
-                        let _ = notify.changed().await.map_err(|_|debug!("id:{} notifier dropped",id));
-                        // session may be closed
-                        let (udp,addr) = id_store.try_get_socket(id).await.ok_or(SError::UDPSessionClosed("UDP session closed".to_string()))?;
-                        info!("udp over datagram: id:{}: {}->{}",id, src_addr, addr);
-                        let pos = cur.position() as usize;
-                        let b = cur.into_inner().freeze();
-                        let _ = udp.clone().send_to(b.slice(pos..b.len()), addr.clone()).await
-                        .map_err(|x|error!("{}",x));
-                        Ok(()) as Result<(), SError>
-                     }.in_current_span());
-                }
-            }
+                let pos = cur.position() as usize;
+                id_store.feed_datagram(id, cur.into_inner().split_off(pos).freeze()).await?;
             }
 
             r = async {
