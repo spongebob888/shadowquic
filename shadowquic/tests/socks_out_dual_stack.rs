@@ -17,7 +17,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 #[tokio::test]
 async fn test_tcp() {
     let socks_server = "127.0.0.1:1033";
-    let target_addr = "8.8.8.8";
+    let target_addr = "1.1.1.1";
     let target_port = 53;
     let mut config = Config::default();
     config.set_skip_auth(false);
@@ -42,7 +42,7 @@ async fn test_tcp() {
     // Read the response
     let mut response = vec![0u8; response_len];
     s.read_exact(&mut response).await.unwrap();
-    info!("from tcp 8.8.8.8:53: {:?}", &response[0..response_len]);
+    info!("from tcp 1.1.1.1:53: {:?}", &response[0..response_len]);
     assert_eq!(response[0], 0x13);
     assert_eq!(response[1], 0x37);
 
@@ -62,7 +62,7 @@ async fn test_tcp() {
         .await
         .unwrap();
     let (len, _) = socks.recv_from(&mut recv).await.unwrap();
-    info!("from udp 8.8.8.8:53: {:?}", &recv[0..len]);
+    info!("from udp 1.1.1.1:53: {:?}", &recv[0..len]);
     assert_eq!(recv[0], 0x13);
     assert_eq!(recv[1], 0x37);
 }
