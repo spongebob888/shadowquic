@@ -216,7 +216,7 @@ pub fn default_brutal_ack_compensate() -> bool {
 /// congestion-control:
 ///   brutal:
 ///     bandwidth: 10000000 # default 10000000 bps
-///
+/// ```
 /// For Brutal, the bandwidth is the uploading bandwidth.
 /// If you want to
 /// set the downloading bandwidth,  set the bandwidth of the peer(e.g. it's the server for the client)
@@ -254,7 +254,7 @@ pub struct DirectOutCfg {
     pub dns_strategy: DnsStrategy,
 }
 /// DNS resolution strategy
-/// Default is `prefer-ipv4``
+/// Default is `prefer-ipv4`
 /// - `prefer-ipv4`: try to use ipv4 first, if no ipv4 address, use ipv6
 /// - `prefer-ipv6`: try to use ipv6 first, if no ipv6 address, use ipv4
 /// - `ipv4-only`: only use ipv4 address
