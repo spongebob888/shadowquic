@@ -53,7 +53,7 @@ $ shadowquic -c server.yaml
 
 Example config [server.yaml](./shadowquic/config_examples/server.yaml)
 
-Configuration detail can be found in [Documentation](https://spongebob888.github.io/shadowquic/shadowquic/config/struct.Config.html)
+Configuration detail can be found in [Documentation](https://spongebob888.github.io/shadowquic/configuration/)
 ## Other Clients
 - [husi](https://github.com/xchacha20-poly1305/husi)
 - nekobox: [usage](./document/clients/windows.md)
