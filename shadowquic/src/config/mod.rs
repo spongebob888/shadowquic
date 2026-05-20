@@ -255,6 +255,7 @@ pub struct DirectOutCfg {
 }
 /// DNS resolution strategy
 /// Default is `prefer-ipv4`
+/// 
 /// - `prefer-ipv4`: try to use ipv4 first, if no ipv4 address, use ipv6
 /// - `prefer-ipv6`: try to use ipv6 first, if no ipv6 address, use ipv4
 /// - `ipv4-only`: only use ipv4 address
