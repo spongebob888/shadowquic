@@ -1,0 +1,71 @@
+name: MkDocs
+on:
+  push:
+    branches: [main]
+    paths:
+      - "shadowquic/src/config/**"
+      - "assets/sites/**"
+      - ".github/workflows/mkdocs.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# A separate concurrency group from doc.yml so both can coexist while
+# you decide which one drives the default Pages site. When you're ready to
+# make this the canonical deploy, disable .github/workflows/doc.yml.
+concurrency:
+  group: deploy-mkdocs
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Rust (nightly for rustdoc JSON)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Configure cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: assets/sites/uv.lock
+
+      - name: Setup pages
+        uses: actions/configure-pages@v6
+
+      - name: Generate configuration reference
+        # gen_docs.py drives `cargo +nightly rustdoc ... --output-format json`
+        # internally, then writes assets/sites/docs/configuration/**.
+        working-directory: assets/sites
+        run: uv run python gen_docs.py --clean
+
+      - name: Build MkDocs site
+        working-directory: assets/sites
+        run: uv run mkdocs build --strict
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: assets/sites/site
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
