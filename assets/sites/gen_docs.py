@@ -237,6 +237,27 @@ _DEFAULT_BODY_RE = re.compile(
 )
 
 
+def collect_enum_variant_tags(index: dict[str, Item]) -> dict[str, str]:
+    """Map `EnumName::VariantName` -> the serde tag string (e.g. kebab-case).
+
+    Used to translate default expressions like `CongestionControl::Bbr` into the
+    on-the-wire YAML value (`bbr`) when rendering a field's default.
+    """
+    out: dict[str, str] = {}
+    for item in index.values():
+        if not item.is_config or "enum" not in item.inner:
+            continue
+        container = parse_container_serde(item.attrs)
+        for vid in item.inner["enum"]["variants"]:
+            v = index.get(str(vid))
+            if v is None or not v.name:
+                continue
+            vserde = parse_field_serde(v.attrs)
+            tag = vserde.rename or apply_rename_all(v.name, container.rename_all)
+            out[f"{item.name}::{v.name}"] = tag
+    return out
+
+
 def collect_default_fn_values(repo_root: Path) -> dict[str, str]:
     """Scan src/config/*.rs for `pub fn default_xxx() -> T { expr }` bodies.
 
@@ -273,6 +294,8 @@ class RenderContext:
     page_for_type: dict[int, str]  # type id -> markdown path (relative to docs/)
     default_values: dict[str, str]
     pages_dir_for: dict[int, Path]  # type id -> directory containing the page
+    enum_variant_tags: dict[str, str] = field(default_factory=dict)
+    # ^ "EnumName::VariantName" -> kebab-case (or whatever serde tag) value
 
     def link_for_type(self, type_id: int, from_page: Path) -> str | None:
         """Return a relative href from `from_page` to the page documenting type_id."""
@@ -282,6 +305,26 @@ class RenderContext:
         # Both are relative to DOCS_ROOT.
         rel = os.path.relpath(target, start=str(from_page.parent))
         return rel.replace(os.sep, "/")
+
+
+_ENUM_VARIANT_EXPR_RE = re.compile(r"^([A-Z][A-Za-z0-9_]*)::([A-Z][A-Za-z0-9_]*)$")
+
+
+def render_default_value(expr: str, ctx: RenderContext) -> str:
+    """Pretty-print a default expression for display in the YAML schema.
+
+    Currently only rewrites `EnumName::VariantName` constructors into their
+    serde tag value (`CongestionControl::Bbr` -> `bbr`). Anything else is
+    returned unchanged.
+    """
+    if not expr:
+        return expr
+    m = _ENUM_VARIANT_EXPR_RE.match(expr.strip())
+    if m:
+        key = f"{m.group(1)}::{m.group(2)}"
+        if key in ctx.enum_variant_tags:
+            return ctx.enum_variant_tags[key]
+    return expr
 
 
 def render_type(ty: dict, ctx: RenderContext, from_page: Path) -> str:
@@ -411,9 +454,8 @@ def emit_struct_page(
         meta: list[str] = [f"- **Type:** {type_md}", f"- **Required:** {required_md}"]
         if fserde.default_fn:
             val = ctx.default_values.get(fserde.default_fn)
-            meta.append(
-                f"- **Default:** `{val}`" if val else f"- **Default:** `{fserde.default_fn}()`"
-            )
+            display = render_default_value(val, ctx) if val else f"{fserde.default_fn}()"
+            meta.append(f"- **Default:** `{display}`")
         elif fserde.has_default and not is_option_type:
             meta.append("- **Default:** *(type default)*")
         body.append("\n".join(meta) + "\n")
@@ -731,6 +773,7 @@ def main(argv: list[str] | None = None) -> int:
         page_for_type=page_for_type,
         default_values=defaults,
         pages_dir_for={p.item_id: (DOCS_ROOT / p.rel_path).parent for p in pages},
+        enum_variant_tags=collect_enum_variant_tags(index),
     )
 
     # Wipe & recreate
