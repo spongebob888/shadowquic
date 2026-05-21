@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::config::{
     AuthUser, BrutalParams, CipherSuitePreference, CongestionControl, HasCipherSuitePreference,
-    default_alpn, default_congestion_control, default_gso, default_initial_mtu,
+    SocketOpt, default_alpn, default_congestion_control, default_gso, default_initial_mtu,
     default_keep_alive_interval, default_min_mtu, default_mtu_discovery, default_over_stream,
     default_zero_rtt,
 };
@@ -118,7 +118,7 @@ impl Default for SunnyQuicClientCfg {
             gso: default_gso(),
             mtu_discovery: default_mtu_discovery(),
             cipher_suite_preference: None,
-            #[cfg(target_os = "android")]
+            socket_opt: Default::default(),
             protect_path: Default::default(),
         }
     }
@@ -209,9 +209,10 @@ pub struct SunnyQuicClientCfg {
     /// If unset, use rustls/ring default preference order.
     #[serde(default)]
     pub cipher_suite_preference: Option<Vec<CipherSuitePreference>>,
+    #[serde(flatten)]
+    pub socket_opt: SocketOpt,
 
     /// Android Only. the unix socket path for protecting android socket
-    #[cfg(target_os = "android")]
     #[serde(default)]
     pub protect_path: Option<std::path::PathBuf>,
 }

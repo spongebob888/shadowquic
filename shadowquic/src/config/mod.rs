@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use tracing::{Level, warn};
 
 use crate::{
@@ -11,8 +11,10 @@ use crate::{
     sunnyquic::{inbound::SunnyQuicServer, outbound::SunnyQuicClient},
 };
 
+mod serde_utils;
 mod shadowquic;
 mod sunnyquic;
+pub use crate::config::serde_utils::*;
 pub use crate::config::shadowquic::*;
 pub use crate::config::sunnyquic::*;
 
@@ -150,6 +152,22 @@ pub struct SocksClientCfg {
     pub username: Option<String>,
     /// SOCKS5 password, optional
     pub password: Option<String>,
+}
+
+/// Socket options
+#[derive(Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct SocketOpt {
+    pub fw_mark: Option<u32>,
+    pub bind_interface: Option<Interface>,
+}
+
+/// Interface
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum Interface {
+    Address(IpAddr),
+    Device(String),
 }
 
 pub fn default_initial_mtu() -> u16 {
@@ -342,7 +360,7 @@ impl LogLevel {
 
 #[cfg(test)]
 mod test {
-    use crate::config::{CongestionControl, ShadowQuicClientCfg};
+    use crate::config::{CongestionControl, Interface, ShadowQuicClientCfg};
 
     use super::Config;
     use super::{CipherSuitePreference, normalize_cipher_suite_preference};
@@ -393,6 +411,23 @@ outbound:
         }
     }
 
+    #[test]
+    fn test_socketopt() {
+        let cfgstr = r###"
+        username: "test"
+        password: "test"
+        addr: "127.0.0.1:1080"
+        server-name: "localhost"
+        bind-interface: "eth0"
+
+"###;
+        let cfg: Result<ShadowQuicClientCfg, _> = serde_saphyr::from_str(cfgstr);
+
+        assert_eq!(
+            cfg.unwrap().socket_opt.bind_interface.unwrap(),
+            Interface::Device("eth0".to_string())
+        );
+    }
     #[test]
     fn normalize_cipher_suite_preference_preserves_first_seen_order_and_removes_duplicates() {
         let input = vec![

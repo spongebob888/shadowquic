@@ -1,6 +1,9 @@
-use std::net::{SocketAddr, UdpSocket};
+use std::{
+    net::{SocketAddr, UdpSocket},
+    sync::Arc,
+};
 
-use crate::error::SResult;
+use crate::{error::SResult, utils::socket_opt::SocketFactory};
 use async_trait::async_trait;
 use bytes::Bytes;
 use thiserror::Error;
@@ -22,10 +25,13 @@ pub const MAX_DATAGRAM_WINDOW: u64 = MAX_WINDOW_BASE * 2;
 pub trait QuicClient: Send + Sync {
     type C: QuicConnection;
     type SC: Clone + Send + Sync + 'static;
-    async fn new(cfg: &Self::SC, ipv6: bool) -> SResult<Self>
+    async fn new(cfg: &Self::SC) -> SResult<Self>
     where
         Self: Sized;
-    fn new_with_socket(cfg: &Self::SC, socket: UdpSocket) -> SResult<Self>
+    async fn new_with_socket_factory(
+        cfg: &Self::SC,
+        socket_factory: Arc<dyn SocketFactory>,
+    ) -> SResult<Self>
     where
         Self: Sized;
     async fn connect(&self, addr: SocketAddr, server_name: &str) -> Result<Self::C, QuicErrorRepr>;

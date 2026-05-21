@@ -8,9 +8,9 @@ pub mod outbound;
 #[cfg(any(feature = "sunnyquic-gm-quic", feature = "sunnyquic-iroh-quinn"))]
 pub(crate) mod dynamic_cert;
 
-#[cfg(feature = "sunnyquic-gm-quic")]
+#[cfg(all(feature = "sunnyquic-gm-quic", not(feature = "sunnyquic-iroh-quinn")))]
 mod gm_quic_wrapper;
-#[cfg(feature = "sunnyquic-gm-quic")]
+#[cfg(all(feature = "sunnyquic-gm-quic", not(feature = "sunnyquic-iroh-quinn")))]
 pub use gm_quic_wrapper::{Connection, EndClient, EndServer};
 
 #[cfg(feature = "sunnyquic-iroh-quinn")]

@@ -4,121 +4,18 @@ use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
 
+use super::deserialize_bps;
 use crate::config::{
-    AuthUser, CipherSuitePreference, CongestionControl, HasCipherSuitePreference, default_alpn,
-    default_brutal_ack_compensate, default_brutal_bandwidth, default_brutal_cwnd_gain,
-    default_brutal_min_ack_rate, default_brutal_min_sample_count, default_brutal_min_window,
-    default_congestion_control, default_gso, default_initial_mtu, default_keep_alive_interval,
-    default_min_mtu, default_mtu_discovery, default_over_stream, default_zero_rtt,
+    AuthUser, CipherSuitePreference, CongestionControl, HasCipherSuitePreference, SocketOpt,
+    default_alpn, default_brutal_ack_compensate, default_brutal_bandwidth,
+    default_brutal_cwnd_gain, default_brutal_min_ack_rate, default_brutal_min_sample_count,
+    default_brutal_min_window, default_congestion_control, default_gso, default_initial_mtu,
+    default_keep_alive_interval, default_min_mtu, default_mtu_discovery, default_over_stream,
+    default_zero_rtt,
 };
 
 pub fn default_rate_limit() -> u64 {
     u64::MAX
-}
-
-pub fn parse_bps(input: &str) -> Result<u64, String> {
-    let s = input.trim();
-
-    if s.is_empty() {
-        return Err("empty bandwidth string".to_string());
-    }
-
-    let (num_str, multiplier) = match s.as_bytes().last().copied() {
-        Some(b'K') | Some(b'k') => (&s[..s.len() - 1], 1024f64),
-        Some(b'M') | Some(b'm') => (&s[..s.len() - 1], 1024f64 * 1024f64),
-        Some(b'G') | Some(b'g') => (&s[..s.len() - 1], 1024f64 * 1024f64 * 1024f64),
-        Some(b'0'..=b'9') => (s, 1f64),
-        _ => return Err(format!("invalid bandwidth suffix: {input}")),
-    };
-
-    let value: f64 = num_str
-        .trim()
-        .parse()
-        .map_err(|_| format!("invalid bandwidth number: {input}"))?;
-
-    if !value.is_finite() {
-        return Err(format!("invalid bandwidth number: {input}"));
-    }
-
-    if value < 0.0 {
-        return Err(format!("bandwidth must be non-negative: {input}"));
-    }
-
-    let result = value * multiplier;
-
-    if result > u64::MAX as f64 {
-        return Err(format!("bandwidth value overflow: {input}"));
-    }
-
-    Ok(result.round() as u64)
-}
-
-pub fn deserialize_bps<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct BpsVisitor;
-
-    impl<'de> Visitor<'de> for BpsVisitor {
-        type Value = u64;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("an integer bps value or a string like \"30M\" or \"1.5G\"")
-        }
-
-        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(value)
-        }
-
-        fn visit_u32<E>(self, value: u32) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(value as u64)
-        }
-
-        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            if value < 0 {
-                return Err(E::custom("bandwidth must be non-negative"));
-            }
-            Ok(value as u64)
-        }
-
-        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            parse_bps(value).map_err(E::custom)
-        }
-
-        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            parse_bps(&value).map_err(E::custom)
-        }
-
-        fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            if !value.is_finite() {
-                return Err(E::custom("bandwidth must be finite"));
-            }
-            if value < 0.0 {
-                return Err(E::custom("bandwidth must be non-negative"));
-            }
-            Ok(value.round() as u64)
-        }
-    }
-
-    deserializer.deserialize_any(BpsVisitor)
 }
 
 /// Configuration of shadowquic inbound
@@ -235,7 +132,7 @@ impl Default for ShadowQuicClientCfg {
             gso: default_gso(),
             mtu_discovery: default_mtu_discovery(),
             cipher_suite_preference: None,
-            #[cfg(target_os = "android")]
+            socket_opt: Default::default(),
             protect_path: Default::default(),
         }
     }
@@ -337,9 +234,12 @@ pub struct ShadowQuicClientCfg {
     pub cipher_suite_preference: Option<Vec<CipherSuitePreference>>,
 
     /// Android Only. the unix socket path for protecting android socket
-    #[cfg(target_os = "android")]
     #[serde(default)]
     pub protect_path: Option<std::path::PathBuf>,
+
+    /// Socket options like bind interface and fwmark
+    #[serde(flatten)]
+    pub socket_opt: SocketOpt,
 }
 
 impl HasCipherSuitePreference for ShadowQuicClientCfg {
