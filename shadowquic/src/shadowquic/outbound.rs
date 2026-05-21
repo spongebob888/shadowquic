@@ -9,8 +9,12 @@ use super::quinn_wrapper::EndClient;
 use tracing::{error, info};
 
 use crate::{
-    Outbound, config::ShadowQuicClientCfg, error::SError, quic::QuicClient,
+    Outbound,
+    config::ShadowQuicClientCfg,
+    error::SError,
+    quic::QuicClient,
     squic::outbound::handle_request,
+    utils::socket_opt::{SocketFactory, UdpSocketFactory},
 };
 
 use crate::squic::{IDStore, SQConn, handle_udp_packet_recv};
@@ -21,24 +25,24 @@ pub struct ShadowQuicClient {
     pub quic_conn: Option<ShadowQuicConn>,
     pub config: ShadowQuicClientCfg,
     pub quic_end: OnceCell<EndClient>,
+    pub socket_factory: Arc<dyn SocketFactory>,
 }
 impl ShadowQuicClient {
     pub fn new(cfg: ShadowQuicClientCfg) -> Self {
         Self {
             quic_conn: None,
             quic_end: OnceCell::new(),
+            socket_factory: Arc::new(UdpSocketFactory {
+                addr: cfg.addr.clone(),
+                interface: cfg.socket_opt.bind_interface.clone(),
+                fw_mark: cfg.socket_opt.fw_mark,
+                protect_path: cfg.protect_path.clone(),
+            }),
             config: cfg,
         }
     }
-    pub async fn init_endpoint(&self, ipv6: bool) -> Result<EndClient, SError> {
-        EndClient::new(&self.config, ipv6).await
-    }
-    pub fn new_with_socket(cfg: ShadowQuicClientCfg, socket: UdpSocket) -> Result<Self, SError> {
-        Ok(Self {
-            quic_end: OnceCell::from(EndClient::new_with_socket(&cfg, socket)?),
-            quic_conn: None,
-            config: cfg,
-        })
+    pub async fn init_endpoint(&self) -> Result<EndClient, SError> {
+        EndClient::new(&self.config).await
     }
 
     pub async fn get_conn(&self) -> Result<ShadowQuicConn, SError> {
@@ -52,7 +56,7 @@ impl ShadowQuicClient {
         let conn = self
             .quic_end
             .get_or_init(|| async {
-                self.init_endpoint(addr.is_ipv6())
+                self.init_endpoint()
                     .await
                     .expect("error during initialize quic endpoint")
             })

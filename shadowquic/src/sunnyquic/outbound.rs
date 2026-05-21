@@ -15,6 +15,7 @@ use crate::{
     quic::{QuicClient, QuicConnection},
     squic::{auth_sunny, outbound::handle_request},
     sunnyquic::gen_sunny_user_hash,
+    utils::socket_opt::{SocketFactory, UdpSocketFactory},
 };
 
 use crate::squic::{IDStore, SQConn, handle_udp_packet_recv};
@@ -25,24 +26,24 @@ pub struct SunnyQuicClient {
     pub quic_conn: Option<SunnyQuicConn>,
     pub config: SunnyQuicClientCfg,
     pub quic_end: OnceCell<EndClient>,
+    pub socket_factory: Arc<dyn SocketFactory>,
 }
 impl SunnyQuicClient {
     pub fn new(cfg: SunnyQuicClientCfg) -> Self {
         Self {
             quic_conn: None,
             quic_end: OnceCell::new(),
+            socket_factory: Arc::new(UdpSocketFactory {
+                addr: cfg.addr.clone(),
+                interface: cfg.socket_opt.bind_interface.clone(),
+                fw_mark: cfg.socket_opt.fw_mark,
+                protect_path: cfg.protect_path.clone(),
+            }),
             config: cfg,
         }
     }
-    pub async fn init_endpoint(&self, ipv6: bool) -> Result<EndClient, SError> {
-        EndClient::new(&self.config, ipv6).await
-    }
-    pub fn new_with_socket(cfg: SunnyQuicClientCfg, socket: UdpSocket) -> Result<Self, SError> {
-        Ok(Self {
-            quic_end: OnceCell::from(EndClient::new_with_socket(&cfg, socket)?),
-            quic_conn: None,
-            config: cfg,
-        })
+    pub async fn init_endpoint(&self) -> Result<EndClient, SError> {
+        EndClient::new(&self.config).await
     }
 
     pub async fn get_conn(&self) -> Result<SunnyQuicConn, SError> {
@@ -56,13 +57,9 @@ impl SunnyQuicClient {
         let end = self
             .quic_end
             .get_or_init(|| async {
-                match self.init_endpoint(true).await {
-                    Ok(ep) => ep,
-                    Err(_) => self
-                        .init_endpoint(false)
-                        .await
-                        .expect("error during initialize quic endpoint"),
-                }
+                self.init_endpoint()
+                    .await
+                    .expect("error during initialize quic endpoint")
             })
             .await;
         let conn = QuicClient::connect(end, addr, &self.config.server_name).await?;

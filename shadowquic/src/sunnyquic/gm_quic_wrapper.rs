@@ -45,7 +45,7 @@ impl QuicClient for gm_quic::prelude::QuicClient {
     type C = Connection;
     type SC = SunnyQuicClientCfg;
 
-    async fn new(cfg: &SunnyQuicClientCfg, ipv6: bool) -> crate::error::SResult<Self> {
+    async fn new(cfg: &SunnyQuicClientCfg) -> crate::error::SResult<Self> {
         let mut roots = RootCertStore::empty();
         //roots.add_parsable_certificates(rustls_native_certs::load_native_certs().certs);
         if let Some(path) = &cfg.cert_path {
@@ -86,11 +86,11 @@ impl QuicClient for gm_quic::prelude::QuicClient {
         Ok(client.build())
     }
 
-    fn new_with_socket(
-        cfg: &SunnyQuicClientCfg,
-        socket: std::net::UdpSocket,
+    async fn new_with_socket_factory(
+        cfg: &Self::SC,
+        _socket_factory: Arc<dyn crate::utils::socket_opt::SocketFactory>,
     ) -> crate::error::SResult<Self> {
-        unimplemented!()
+        Self::new(cfg).await
     }
 
     async fn connect(

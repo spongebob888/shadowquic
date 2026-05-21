@@ -19,7 +19,7 @@ impl QuicClient for EndClient {
     type SC = crate::config::SunnyQuicClientCfg;
     type C = Connection;
 
-    async fn new(_cfg: &Self::SC, _ipv6: bool) -> crate::error::SResult<Self> {
+    async fn new(_cfg: &Self::SC) -> crate::error::SResult<Self> {
         unimplemented!()
     }
 
@@ -31,9 +31,9 @@ impl QuicClient for EndClient {
         unimplemented!()
     }
 
-    fn new_with_socket(
+    async fn new_with_socket_factory(
         _cfg: &Self::SC,
-        _socket: std::net::UdpSocket,
+        _socket_factory: std::sync::Arc<dyn crate::utils::socket_opt::SocketFactory>,
     ) -> crate::error::SResult<Self> {
         unimplemented!()
     }

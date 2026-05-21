@@ -48,3 +48,9 @@ impl From<quinn::rustls::Error> for SError {
         SError::RustlsError(err.to_string())
     }
 }
+
+impl From<Box<dyn std::error::Error + 'static + Send + Sync>> for SError {
+    fn from(err: Box<dyn std::error::Error + 'static + Send + Sync>) -> Self {
+        SError::Io(io::Error::other(err))
+    }
+}

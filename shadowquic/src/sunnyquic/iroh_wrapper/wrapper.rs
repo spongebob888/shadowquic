@@ -22,6 +22,7 @@ use rustls::{
     pki_types::{CertificateDer, pem::PemObject},
 };
 use socket2::{Domain, Protocol, Socket, Type};
+use std::net::UdpSocket;
 use tracing::{debug, trace, warn};
 
 use rustls::ServerConfig as RustlsServerConfig;
@@ -39,6 +40,7 @@ use crate::{
         QuicErrorRepr, QuicServer,
     },
     sunnyquic::dynamic_cert::DynamicCertResolver,
+    utils::socket_opt::SocketFactory,
 };
 
 pub type Connection = iroh_quinn::Connection;
@@ -139,48 +141,17 @@ impl QuicConnection for Connection {
 #[async_trait]
 impl QuicClient for Endpoint<SunnyQuicClientCfg> {
     type SC = SunnyQuicClientCfg;
-    async fn new(cfg: &Self::SC, ipv6: bool) -> SResult<Self> {
-        let try_create_dual_stack = || {
-            let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
-            socket.set_only_v6(false)?;
-            let bind_addr: SocketAddr = "[::]:0".parse().unwrap();
-            socket.bind(&bind_addr.into())?;
-            Ok(socket) as Result<Socket, io::Error>
-        };
-        let socket = if let Ok(socket) = try_create_dual_stack() {
-            trace!("dual stack udp socket created");
-            socket
-        } else if ipv6 {
-            let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
-            let bind_addr: SocketAddr = "[::]:0".parse().unwrap();
-            socket.bind(&bind_addr.into())?;
-            socket
-        } else {
-            let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
-            let bind_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
-            socket.bind(&bind_addr.into())?;
-            socket
-        };
-        #[cfg(target_os = "android")]
-        if let Some(path) = &cfg.protect_path {
-            use crate::utils::protect_socket::protect_socket_with_retry;
-            use std::os::fd::AsRawFd;
-
-            tracing::debug!("trying protect socket");
-            tokio::time::timeout(
-                tokio::time::Duration::from_secs(5),
-                protect_socket_with_retry(path, socket.as_raw_fd()),
-            )
-            .await
-            .map_err(|_| io::Error::other("protecting socket timeout"))
-            .and_then(|x| x)
-            .map_err(|e| {
-                tracing::error!("error during protecing socket:{}", e);
-                e
-            })?;
-        }
-
-        Self::new_with_socket(cfg, socket.into())
+    async fn new(cfg: &Self::SC) -> SResult<Self> {
+        Self::new_with_socket_factory(
+            cfg,
+            Arc::new(crate::utils::socket_opt::UdpSocketFactory {
+                addr: cfg.addr.clone(),
+                interface: cfg.socket_opt.bind_interface.clone(),
+                fw_mark: cfg.socket_opt.fw_mark,
+                protect_path: cfg.protect_path.clone(),
+            }),
+        )
+        .await
     }
     async fn connect(&self, addr: SocketAddr, server_name: &str) -> Result<Self::C, QuicErrorRepr> {
         let conn = self.inner.connect(addr, server_name)?;
@@ -217,13 +188,20 @@ impl QuicClient for Endpoint<SunnyQuicClientCfg> {
         Ok(conn)
     }
 
-    fn new_with_socket(cfg: &Self::SC, socket: std::net::UdpSocket) -> SResult<Self> {
+    async fn new_with_socket_factory(
+        cfg: &Self::SC,
+        socket_factory: Arc<dyn SocketFactory>,
+    ) -> SResult<Self> {
+        let socket = socket_factory
+            .create_socket()
+            .await
+            .map_err(|e| SError::Io(e))?;
         let runtime = iroh_quinn::default_runtime()
             .ok_or_else(|| io::Error::other("no async runtime found"))?;
         let end = iroh_quinn::Endpoint::new(
             iroh_quinn::EndpointConfig::default(),
             None,
-            socket,
+            UdpSocket::from(socket),
             runtime,
         )?;
         end.set_default_client_config(gen_client_cfg(cfg));
