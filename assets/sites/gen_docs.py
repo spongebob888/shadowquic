@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate shadowquic's MkDocs configuration reference from rustdoc JSON.
+"""Generate shadowquic's Zensical configuration reference from rustdoc JSON.
 
 Pipeline:
 
@@ -14,7 +14,7 @@ Pipeline:
                           |
                           v
          assets/sites/docs/configuration/**/*.md
-         assets/sites/mkdocs.yml  (nav block rewritten in place)
+         assets/sites/zensical.toml  (nav block rewritten in place)
 """
 
 from __future__ import annotations
@@ -848,10 +848,7 @@ NAV_END = "# <<< generated nav"
 
 
 def render_nav(pages: list[PageSpec]) -> str:
-    """Render a `nav:` YAML block matching the page layout."""
-    lines = ["nav:"]
-    lines.append("  - Home: index.md")
-
+    """Render a `nav = [...]` TOML block matching the page layout."""
     # Group pages by their second path component (configuration/<group>/...).
     cfg_pages = [p for p in pages if p.rel_path.startswith("configuration/")]
 
@@ -862,35 +859,49 @@ def render_nav(pages: list[PageSpec]) -> str:
     outbound_pages = [p for p in cfg_pages if p.rel_path.startswith("configuration/outbound/")]
     shared_pages = [p for p in cfg_pages if p.rel_path.startswith("configuration/shared/")]
 
-    lines.append("  - Configuration:")
-    lines.append(f"      - Overview: {overview.rel_path}")
+    lines = ["nav = ["]
+    lines.append('  { "Home" = "index.md" },')
+    lines.append('  { "Configuration" = [')
+    lines.append(f'    {{ "Overview" = "{overview.rel_path}" }},')
+
     if inbound_pages:
-        lines.append("      - Inbound:")
-        for p in inbound_pages:
+        lines.append('    { "Inbound" = [')
+        for i, p in enumerate(inbound_pages):
             label = "Overview" if p.rel_path.endswith("/index.md") else p.nav_label
-            lines.append(f"          - {label}: {p.rel_path}")
+            comma = "," if i < len(inbound_pages) - 1 else ""
+            lines.append(f'      {{ "{label}" = "{p.rel_path}" }}{comma}')
+        lines.append('    ] },')
+
     if outbound_pages:
-        lines.append("      - Outbound:")
-        for p in outbound_pages:
+        lines.append('    { "Outbound" = [')
+        for i, p in enumerate(outbound_pages):
             label = "Overview" if p.rel_path.endswith("/index.md") else p.nav_label
-            lines.append(f"          - {label}: {p.rel_path}")
+            comma = "," if i < len(outbound_pages) - 1 else ""
+            lines.append(f'      {{ "{label}" = "{p.rel_path}" }}{comma}')
+        lines.append('    ] },')
+
     if shared_pages:
-        lines.append("      - Shared types:")
-        for p in shared_pages:
-            lines.append(f"          - {p.nav_label}: {p.rel_path}")
+        lines.append('    { "Shared types" = [')
+        for i, p in enumerate(shared_pages):
+            comma = "," if i < len(shared_pages) - 1 else ""
+            lines.append(f'      {{ "{p.nav_label}" = "{p.rel_path}" }}{comma}')
+        lines.append('    ] }')
+
+    lines.append('  ] }')
+    lines.append("]")
     return "\n".join(lines) + "\n"
 
 
-def patch_mkdocs_nav(mkdocs_yml: Path, new_nav_block: str) -> None:
-    text = mkdocs_yml.read_text()
+def patch_zensical_nav(zensical_toml: Path, new_nav_block: str) -> None:
+    text = zensical_toml.read_text()
     if NAV_BEGIN not in text or NAV_END not in text:
         raise SystemExit(
-            f"{mkdocs_yml} must contain `{NAV_BEGIN}` and `{NAV_END}` markers."
+            f"{zensical_toml} must contain `{NAV_BEGIN}` and `{NAV_END}` markers."
         )
     head, _, rest = text.partition(NAV_BEGIN)
     _, _, tail = rest.partition(NAV_END)
     new_text = head + NAV_BEGIN + "\n" + new_nav_block + NAV_END + tail
-    mkdocs_yml.write_text(new_text)
+    zensical_toml.write_text(new_text)
 
 
 # ----------------------------------------------------------------------------
@@ -1019,9 +1030,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wrote {out_path.relative_to(REPO_ROOT)}", file=sys.stderr)
 
     # Update nav
-    patch_mkdocs_nav(SITE_ROOT / "mkdocs.yml", render_nav(pages))
+    patch_zensical_nav(SITE_ROOT / "zensical.toml", render_nav(pages))
     print(
-        f"updated nav in {(SITE_ROOT / 'mkdocs.yml').relative_to(REPO_ROOT)}",
+        f"updated nav in {(SITE_ROOT / 'zensical.toml').relative_to(REPO_ROOT)}",
         file=sys.stderr,
     )
 
