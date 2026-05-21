@@ -239,13 +239,17 @@ _DEFAULT_BODY_RE = re.compile(
 
 def collect_enum_variant_tags(
     index: dict[str, Item], src: SourceAttrs
-) -> dict[str, str]:
-    """Map `EnumName::VariantName` -> the serde tag string (e.g. kebab-case).
+) -> tuple[dict[str, str], dict[int, str]]:
+    """Walk every config enum and return two maps.
 
-    Used to translate default expressions like `CongestionControl::Bbr` into the
-    on-the-wire YAML value (`bbr`) when rendering a field's default.
+    - `EnumName::VariantName -> serde tag` (used to translate Rust expressions
+      like `CongestionControl::Bbr` into the on-the-wire YAML value).
+    - `enum rustdoc id -> default variant tag`, populated from the
+      `#[default]` attribute on the variant. Used when a struct field has
+      `#[serde(default)]` and we want to show what value it resolves to.
     """
-    out: dict[str, str] = {}
+    variant_tags: dict[str, str] = {}
+    enum_defaults_by_id: dict[int, str] = {}
     for item in index.values():
         if not item.is_config or "enum" not in item.inner:
             continue
@@ -254,10 +258,13 @@ def collect_enum_variant_tags(
             v = index.get(str(vid))
             if v is None or not v.name:
                 continue
-            vserde = parse_field_serde(attrs_for_member(v, item.name, src))
+            v_attrs = attrs_for_member(v, item.name, src)
+            vserde = parse_field_serde(v_attrs)
             tag = vserde.rename or apply_rename_all(v.name, container.rename_all)
-            out[f"{item.name}::{v.name}"] = tag
-    return out
+            variant_tags[f"{item.name}::{v.name}"] = tag
+            if any("#[default]" in a or a.strip() == "#[default]" for a in v_attrs):
+                enum_defaults_by_id[int(item.id)] = tag
+    return variant_tags, enum_defaults_by_id
 
 
 def collect_default_fn_values(repo_root: Path) -> dict[str, str]:
@@ -411,6 +418,8 @@ class RenderContext:
     src_attrs: SourceAttrs = field(default_factory=SourceAttrs)
     enum_variant_tags: dict[str, str] = field(default_factory=dict)
     # ^ "EnumName::VariantName" -> kebab-case (or whatever serde tag) value
+    enum_defaults_by_id: dict[int, str] = field(default_factory=dict)
+    # ^ rustdoc enum id -> tag of the variant marked `#[default]`
 
     def link_for_type(self, type_id: int, from_page: Path) -> str | None:
         """Return a relative href from `from_page` to the page documenting type_id."""
@@ -648,7 +657,17 @@ def emit_struct_page(
             display = render_default_value(val, ctx) if val else f"{fserde.default_fn}()"
             meta.append(f"- **Default:** `{display}`")
         elif fserde.has_default and not is_option_type:
-            meta.append("- **Default:** *(type default)*")
+            # `#[serde(default)]` -> use the type's Default impl. For enums we
+            # parsed `#[default]` on a variant, so we know the resolved value.
+            enum_default = None
+            if isinstance(ty, dict) and "resolved_path" in ty:
+                tid = ty["resolved_path"].get("id")
+                if tid is not None:
+                    enum_default = ctx.enum_defaults_by_id.get(int(tid))
+            if enum_default is not None:
+                meta.append(f"- **Default:** `{enum_default}`")
+            else:
+                meta.append("- **Default:** *(type default)*")
         body.append("\n".join(meta) + "\n")
 
         desc_md = rewrite_doc_links(f.docs or "", f.links, ctx, page_path).rstrip()
@@ -960,13 +979,15 @@ def main(argv: list[str] | None = None) -> int:
     pages = plan_pages(index)
 
     page_for_type = {p.item_id: p.rel_path for p in pages}
+    variant_tags, enum_defaults_by_id = collect_enum_variant_tags(index, src_attrs)
     ctx = RenderContext(
         index=index,
         page_for_type=page_for_type,
         default_values=defaults,
         pages_dir_for={p.item_id: (DOCS_ROOT / p.rel_path).parent for p in pages},
         src_attrs=src_attrs,
-        enum_variant_tags=collect_enum_variant_tags(index, src_attrs),
+        enum_variant_tags=variant_tags,
+        enum_defaults_by_id=enum_defaults_by_id,
     )
 
     # Wipe & recreate
