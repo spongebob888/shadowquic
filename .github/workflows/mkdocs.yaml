@@ -1,4 +1,4 @@
-name: MkDocs
+name: Zensical
 on:
   push:
     branches: [main]
@@ -17,7 +17,7 @@ permissions:
 # you decide which one drives the default Pages site. When you're ready to
 # make this the canonical deploy, disable .github/workflows/doc.yml.
 concurrency:
-  group: deploy-mkdocs
+  group: deploy-zensical
   cancel-in-progress: false
 
 jobs:
@@ -49,9 +49,9 @@ jobs:
         working-directory: assets/sites
         run: uv run python gen_docs.py --clean
 
-      - name: Build MkDocs site
+      - name: Build Zensical site
         working-directory: assets/sites
-        run: uv run mkdocs build --strict
+        run: uv run zensical build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5

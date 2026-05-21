@@ -1,11 +1,11 @@
 # shadowquic documentation site
 
-A MkDocs Material site whose configuration reference is generated from the
+A Zensical static site whose configuration reference is generated from the
 doc comments on the structs and enums in `shadowquic/src/config/`.
 
 The generator (`gen_docs.py`) drives `cargo +nightly rustdoc` to emit JSON,
 then walks the `Config` / `InboundCfg` / `OutboundCfg` type graph and writes
-per-type markdown pages plus an updated `nav:` block in `mkdocs.yml`.
+per-type markdown pages plus an updated `nav = [...]` block in `zensical.toml`.
 
 ## Layout
 
@@ -14,7 +14,7 @@ assets/sites/
 ├── README.md          this file
 ├── pyproject.toml     python deps (managed by uv)
 ├── uv.lock            locked dep versions (committed)
-├── mkdocs.yml         site config; `nav:` is rewritten by the generator
+├── zensical.toml      site config; `nav` is rewritten by the generator
 ├── gen_docs.py        rustdoc JSON -> markdown generator
 └── docs/              generated markdown (overwritten on each run)
     ├── index.md
@@ -43,11 +43,11 @@ cd assets/sites
 # Regenerate markdown + nav from the Rust sources.
 uv run python gen_docs.py
 
-# Live preview at http://127.0.0.1:8000
-uv run mkdocs serve
+# Live preview at http://localhost:8000
+uv run zensical serve
 
 # Or, produce a static site under assets/sites/site/
-uv run mkdocs build
+uv run zensical build
 ```
 
 The generator also works from the repo root:
@@ -67,7 +67,7 @@ uv --project assets/sites run python assets/sites/gen_docs.py
 3. For each top-level type a markdown page is written under
    `docs/configuration/...`; field types that resolve to another config
    type become internal links.
-4. The `nav:` block of `mkdocs.yml` is rewritten between
+4. The `nav` block of `zensical.toml` is rewritten between
    `# >>> generated nav` / `# <<< generated nav` markers.
 
 If you add a new variant to `InboundCfg` / `OutboundCfg` or a new config
