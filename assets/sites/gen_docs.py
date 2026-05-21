@@ -99,37 +99,7 @@ class Item:
                     out.append(a["other"])
             elif isinstance(a, str):
                 out.append(a)
-
-        # Read from source file if span is available to extract serde/helper attributes
-        span = self.raw.get("span")
-        if span and span.get("filename"):
-            filepath = REPO_ROOT / span["filename"]
-            if filepath.exists():
-                try:
-                    lines = filepath.read_text().splitlines()
-                    begin_line = span["begin"][0]  # 1-indexed
-                    idx = begin_line - 2
-                    collected_attrs = []
-                    while idx >= 0:
-                        line = lines[idx].strip()
-                        if not line:
-                            idx -= 1
-                            continue
-                        if line.startswith("///") or line.startswith("//") or line.startswith("*") or line.startswith("/*") or line.startswith("*/"):
-                            idx -= 1
-                            continue
-                        if line.startswith("#["):
-                            collected_attrs.append(line)
-                            idx -= 1
-                            continue
-                        # Stop if we hit any other non-empty line
-                        break
-                    for attr in reversed(collected_attrs):
-                        out.append(attr)
-                except Exception:
-                    pass
         return out
-
 
     @property
     def filename(self) -> str:
