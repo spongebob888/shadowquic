@@ -237,7 +237,9 @@ _DEFAULT_BODY_RE = re.compile(
 )
 
 
-def collect_enum_variant_tags(index: dict[str, Item]) -> dict[str, str]:
+def collect_enum_variant_tags(
+    index: dict[str, Item], src: SourceAttrs
+) -> dict[str, str]:
     """Map `EnumName::VariantName` -> the serde tag string (e.g. kebab-case).
 
     Used to translate default expressions like `CongestionControl::Bbr` into the
@@ -247,12 +249,12 @@ def collect_enum_variant_tags(index: dict[str, Item]) -> dict[str, str]:
     for item in index.values():
         if not item.is_config or "enum" not in item.inner:
             continue
-        container = parse_container_serde(item.attrs)
+        container = parse_container_serde(attrs_for_container(item, src))
         for vid in item.inner["enum"]["variants"]:
             v = index.get(str(vid))
             if v is None or not v.name:
                 continue
-            vserde = parse_field_serde(v.attrs)
+            vserde = parse_field_serde(attrs_for_member(v, item.name, src))
             tag = vserde.rename or apply_rename_all(v.name, container.rename_all)
             out[f"{item.name}::{v.name}"] = tag
     return out
@@ -270,6 +272,118 @@ def collect_default_fn_values(repo_root: Path) -> dict[str, str]:
         for m in _DEFAULT_BODY_RE.finditer(text):
             out[m.group(1)] = m.group(2).rstrip(";").strip()
     return out
+
+
+# ----------------------------------------------------------------------------
+# source-side attribute scan
+# ----------------------------------------------------------------------------
+#
+# Recent nightly rustdoc no longer surfaces non-rustc attributes (`#[serde(...)]`,
+# `#[default]`, etc.) in the JSON `attrs` field. Without those, every variant
+# falls back to its PascalCase Rust name. We recover the attributes by parsing
+# the source files directly with a deliberately small line-by-line state
+# machine. Good enough for the well-formed config module we own; not a general
+# Rust parser.
+
+
+@dataclass
+class SourceAttrs:
+    container: dict[str, list[str]] = field(default_factory=dict)
+    member: dict[tuple[str, str], list[str]] = field(default_factory=dict)
+
+
+def _strip_line_comment(line: str) -> str:
+    # Naive but adequate for our config files (no `//` inside string literals).
+    idx = line.find("//")
+    return line if idx < 0 else line[:idx]
+
+
+def parse_source_attrs(repo_root: Path) -> SourceAttrs:
+    """Return container & member attribute strings recovered from src/config/*.rs."""
+    out = SourceAttrs()
+
+    container_decl = re.compile(
+        r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(struct|enum)\s+([A-Za-z_]\w*)\b"
+    )
+    field_decl = re.compile(r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?([a-z_]\w*)\s*:")
+    variant_decl = re.compile(r"^\s*([A-Z][A-Za-z0-9_]*)\s*[\(\{,=]?")
+
+    for path in (repo_root / "shadowquic" / "src" / "config").glob("*.rs"):
+        text = path.read_text()
+        pending: list[str] = []
+        container_name: str | None = None
+        container_kind: str | None = None
+        body_depth = -1  # brace depth where the container body lives
+        depth = 0  # brace depth at *start* of current line
+
+        for raw in text.split("\n"):
+            line = _strip_line_comment(raw)
+            stripped = line.strip()
+            opens = line.count("{")
+            closes = line.count("}")
+
+            if not stripped:
+                depth += opens - closes
+                continue
+
+            if stripped.startswith("#["):
+                pending.append(stripped)
+                depth += opens - closes
+                continue
+
+            if container_name is None:
+                m = container_decl.match(stripped)
+                if m:
+                    container_kind = m.group(1)
+                    container_name = m.group(2)
+                    out.container[container_name] = pending[:]
+                    pending.clear()
+                    body_depth = depth + 1
+                else:
+                    # Anything else at the top level invalidates pending attrs.
+                    pending.clear()
+            else:
+                # Inside a container: look for member decls at the body's depth.
+                if depth == body_depth:
+                    if container_kind == "struct":
+                        m = field_decl.match(stripped)
+                        if m and m.group(1) not in ("pub",):
+                            out.member[(container_name, m.group(1))] = pending[:]
+                            pending.clear()
+                    elif container_kind == "enum":
+                        m = variant_decl.match(stripped)
+                        if m:
+                            out.member[(container_name, m.group(1))] = pending[:]
+                            pending.clear()
+
+            depth += opens - closes
+
+            # Pop out of the container.
+            if container_name is not None and depth < body_depth:
+                container_name = None
+                container_kind = None
+                body_depth = -1
+                pending.clear()
+
+    return out
+
+
+def attrs_for_container(item: Item, src: SourceAttrs) -> list[str]:
+    if item.attrs:
+        return item.attrs
+    if item.name and item.name in src.container:
+        return src.container[item.name]
+    return []
+
+
+def attrs_for_member(
+    member: Item, container_name: str | None, src: SourceAttrs
+) -> list[str]:
+    if member.attrs:
+        return member.attrs
+    if container_name and member.name:
+        return src.member.get((container_name, member.name), [])
+    return []
 
 
 # ----------------------------------------------------------------------------
@@ -294,6 +408,7 @@ class RenderContext:
     page_for_type: dict[int, str]  # type id -> markdown path (relative to docs/)
     default_values: dict[str, str]
     pages_dir_for: dict[int, Path]  # type id -> directory containing the page
+    src_attrs: SourceAttrs = field(default_factory=SourceAttrs)
     enum_variant_tags: dict[str, str] = field(default_factory=dict)
     # ^ "EnumName::VariantName" -> kebab-case (or whatever serde tag) value
 
@@ -374,31 +489,107 @@ def render_type(ty: dict, ctx: RenderContext, from_page: Path) -> str:
 # ----------------------------------------------------------------------------
 
 
+_LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]\s|\d+\.\s)")
+_HEADING_RE = re.compile(r"^\s*#{1,6}\s")
+_FENCE_RE = re.compile(r"^\s*(```|~~~)")
+
+
+def normalize_block_breaks(docs: str) -> str:
+    """Insert blank lines so rustdoc `///` blocks parse as proper markdown.
+
+    Rust developers commonly write::
+
+        /// Default is `foo`.
+        /// - first
+        /// - second
+
+    which strict CommonMark renders as one paragraph because there is no blank
+    line between the prose and the list. This walks the text and inserts a
+    blank line before any list item, heading, or fenced code block whose
+    previous non-blank line is *not* itself part of the same block.
+    """
+    if not docs:
+        return docs
+
+    out: list[str] = []
+    in_fence = False
+    prev_kind = "blank"  # blank | text | list | fence | heading
+
+    for line in docs.splitlines():
+        is_fence = bool(_FENCE_RE.match(line))
+        if in_fence:
+            out.append(line)
+            if is_fence:
+                in_fence = False
+                prev_kind = "blank"  # closing fence acts as a hard break
+            else:
+                prev_kind = "fence"
+            continue
+
+        is_list = bool(_LIST_ITEM_RE.match(line))
+        is_heading = bool(_HEADING_RE.match(line))
+        is_blank = line.strip() == ""
+
+        def insert_break_if_needed(prev: str, current: str) -> None:
+            if prev == "blank":
+                return
+            if current == "list" and prev == "list":
+                return
+            out.append("")
+
+        if is_fence:
+            insert_break_if_needed(prev_kind, "fence")
+            out.append(line)
+            in_fence = True
+            prev_kind = "fence"
+        elif is_list:
+            insert_break_if_needed(prev_kind, "list")
+            out.append(line)
+            prev_kind = "list"
+        elif is_heading:
+            insert_break_if_needed(prev_kind, "heading")
+            out.append(line)
+            prev_kind = "heading"
+        elif is_blank:
+            out.append(line)
+            prev_kind = "blank"
+        else:
+            out.append(line)
+            prev_kind = "text"
+
+    return "\n".join(out)
+
+
 def rewrite_doc_links(
     docs: str,
     links: dict[str, int],
     ctx: RenderContext,
     from_page: Path,
 ) -> str:
-    """Resolve `[`TypeName`]` references in a doc comment to real links."""
-    if not docs or not links:
+    """Resolve `[`TypeName`]` references in a doc comment to real links.
+
+    Also normalizes blank lines around block elements so rustdoc-style
+    comments (no blank line before lists/fences) render correctly.
+    """
+    if not docs:
         return docs
-    # Build replacement table: for each link key we know, append a reference
-    # definition or rewrite inline.
-    out = docs
-    appended_refs: list[str] = []
-    for label, type_id in links.items():
-        href = ctx.link_for_type(int(type_id), from_page)
-        if not href:
-            continue
-        # Inline-rewrite `[`TypeName`]` -> `[`TypeName`](href)`. The label
-        # already includes the surrounding backticks.
-        pat = re.compile(r"\[" + re.escape(label) + r"\](?!\()")
-        out = pat.sub(f"[{label}]({href})", out)
-        # As a safety net, also queue a reference definition.
-        appended_refs.append(f"[{label}]: {href}")
-    if appended_refs:
-        out = out + "\n\n" + "\n".join(appended_refs) + "\n"
+
+    out = normalize_block_breaks(docs)
+
+    if links:
+        appended_refs: list[str] = []
+        for label, type_id in links.items():
+            href = ctx.link_for_type(int(type_id), from_page)
+            if not href:
+                continue
+            # Inline-rewrite `[`TypeName`]` -> `[`TypeName`](href)`. The label
+            # already includes the surrounding backticks.
+            pat = re.compile(r"\[" + re.escape(label) + r"\](?!\()")
+            out = pat.sub(f"[{label}]({href})", out)
+            # As a safety net, also queue a reference definition.
+            appended_refs.append(f"[{label}]: {href}")
+        if appended_refs:
+            out = out + "\n\n" + "\n".join(appended_refs) + "\n"
     return out
 
 
@@ -415,7 +606,7 @@ def emit_struct_page(
     extra_intro: str = "",
 ) -> str:
     """Return the markdown body for a struct page."""
-    serde = parse_container_serde(item.attrs)
+    serde = parse_container_serde(attrs_for_container(item, ctx.src_attrs))
     body: list[str] = []
     body.append(f"# {title}\n")
     if extra_intro:
@@ -432,7 +623,7 @@ def emit_struct_page(
         f = ctx.index.get(str(fid))
         if f is None:
             continue
-        fserde = parse_field_serde(f.attrs)
+        fserde = parse_field_serde(attrs_for_member(f, item.name, ctx.src_attrs))
         if fserde.skip:
             continue
         yaml_name = fserde.rename or apply_rename_all(f.name or "", serde.rename_all)
@@ -474,7 +665,7 @@ def emit_enum_page(
     ctx: RenderContext,
     extra_intro: str = "",
 ) -> str:
-    serde = parse_container_serde(item.attrs)
+    serde = parse_container_serde(attrs_for_container(item, ctx.src_attrs))
     body: list[str] = []
     body.append(f"# {title}\n")
     if extra_intro:
@@ -497,7 +688,7 @@ def emit_enum_page(
         v = ctx.index.get(str(vid))
         if v is None:
             continue
-        vserde = parse_field_serde(v.attrs)
+        vserde = parse_field_serde(attrs_for_member(v, item.name, ctx.src_attrs))
         tag_name = vserde.rename or apply_rename_all(v.name or "", serde.rename_all)
 
         # Inner type for tuple variants
@@ -765,6 +956,7 @@ def main(argv: list[str] | None = None) -> int:
 
     index = load_index(json_path)
     defaults = collect_default_fn_values(REPO_ROOT)
+    src_attrs = parse_source_attrs(REPO_ROOT)
     pages = plan_pages(index)
 
     page_for_type = {p.item_id: p.rel_path for p in pages}
@@ -773,7 +965,8 @@ def main(argv: list[str] | None = None) -> int:
         page_for_type=page_for_type,
         default_values=defaults,
         pages_dir_for={p.item_id: (DOCS_ROOT / p.rel_path).parent for p in pages},
-        enum_variant_tags=collect_enum_variant_tags(index),
+        src_attrs=src_attrs,
+        enum_variant_tags=collect_enum_variant_tags(index, src_attrs),
     )
 
     # Wipe & recreate
