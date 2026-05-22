@@ -21,7 +21,6 @@ use rustls::{
     RootCertStore,
     pki_types::{CertificateDer, pem::PemObject},
 };
-use socket2::{Domain, Protocol, Socket, Type};
 use std::net::UdpSocket;
 use tracing::{debug, trace, warn};
 
@@ -192,10 +191,7 @@ impl QuicClient for Endpoint<SunnyQuicClientCfg> {
         cfg: &Self::SC,
         socket_factory: Arc<dyn SocketFactory>,
     ) -> SResult<Self> {
-        let socket = socket_factory
-            .create_socket()
-            .await
-            .map_err(|e| SError::Io(e))?;
+        let socket = socket_factory.create_socket().await.map_err(SError::Io)?;
         let runtime = iroh_quinn::default_runtime()
             .ok_or_else(|| io::Error::other("no async runtime found"))?;
         let end = iroh_quinn::Endpoint::new(

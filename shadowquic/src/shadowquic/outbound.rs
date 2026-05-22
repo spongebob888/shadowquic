@@ -1,8 +1,5 @@
 use async_trait::async_trait;
-use std::{
-    net::{ToSocketAddrs, UdpSocket},
-    sync::Arc,
-};
+use std::{net::ToSocketAddrs, sync::Arc};
 use tokio::sync::{OnceCell, SetOnce};
 
 use super::quinn_wrapper::EndClient;

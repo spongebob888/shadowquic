@@ -11,7 +11,6 @@ use quinn::{
     ClientConfig, MtuDiscoveryConfig, SendDatagramError, TransportConfig, VarInt,
     congestion::{BbrConfig, CubicConfig, NewRenoConfig},
 };
-use socket2::{Domain, Protocol, Socket, Type};
 use tracing::{debug, error, info, trace, warn};
 
 use quinn::rustls::ServerConfig as RustlsServerConfig;
@@ -28,7 +27,7 @@ use crate::{
         CipherSuitePreference, CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg,
         maybe_warn_cipher_suite_on_weak_arch, normalize_cipher_suite_preference,
     },
-    error::{SError, SResult},
+    error::SResult,
     quic::{
         MAX_DATAGRAM_WINDOW, MAX_SEND_WINDOW, MAX_STREAM_WINDOW, QuicClient, QuicConnection,
         QuicErrorRepr, QuicServer,

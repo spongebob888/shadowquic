@@ -1,8 +1,6 @@
 use std::net::SocketAddr;
 
-use serde::de::{self, Visitor};
-use serde::{Deserialize, Deserializer, Serialize};
-use std::fmt;
+use serde::{Deserialize, Serialize};
 
 use super::deserialize_bps;
 use crate::config::{
