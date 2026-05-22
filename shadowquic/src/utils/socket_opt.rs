@@ -139,14 +139,19 @@ mod tests {
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         {
             if let Err(e) = res {
-                // Setting non-zero SO_MARK typically requires CAP_NET_ADMIN.
-                // It should either succeed or fail with PermissionDenied/EPERM/EACCES.
+                // Setting non-zero SO_MARK behavior varies by runtime/kernel (including cross/qemu).
+                // It may fail with permission, unsupported, or invalid argument style errors.
                 let kind = e.kind();
                 let os_err = e.raw_os_error();
                 assert!(
                     kind == std::io::ErrorKind::PermissionDenied
+                        || kind == std::io::ErrorKind::Unsupported
+                        || kind == std::io::ErrorKind::InvalidInput
                         || os_err == Some(1) // EPERM
                         || os_err == Some(13) // EACCES
+                        || os_err == Some(22) // EINVAL
+                        || os_err == Some(92) // ENOPROTOOPT
+                        || os_err == Some(95) // EOPNOTSUPP
                 );
             }
         }
