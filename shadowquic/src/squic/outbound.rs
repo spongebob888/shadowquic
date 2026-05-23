@@ -132,9 +132,10 @@ async fn print_stats<C: QuicConnection>(sq_conn: &SQConn<C>) -> SResult<()> {
     {
         let mut last_print = LAST_PRINT.lock().await;
         if let Some(last) = *last_print
-            && last.elapsed() < Duration::from_secs(10) {
-                return Ok(());
-            }
+            && last.elapsed() < Duration::from_secs(10)
+        {
+            return Ok(());
+        }
         *last_print = Some(std::time::Instant::now());
     }
 
