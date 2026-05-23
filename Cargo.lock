@@ -3126,6 +3126,7 @@ dependencies = [
  "bytes",
  "clap",
  "console-subscriber",
+ "crabtime",
  "educe",
  "fast-socks5",
  "gm-quic",

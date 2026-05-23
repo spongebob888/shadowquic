@@ -209,38 +209,37 @@ pub struct UdpReqHeader {
     pub dst: SocksAddr,
 }
 
-#[async_trait::async_trait]
-impl SDecode for u8 {
-    async fn decode<T: AsyncRead + Unpin + Send>(s: &mut T) -> Result<Self, SError> {
-        let mut buf = [0u8];
-        s.read_exact(&mut buf).await?;
-        Ok(buf[0])
+#[crabtime::function]
+fn gen_num_type_sencode(components: Vec<String>) {
+    for component in components {
+        crabtime::output! {
+        #[async_trait::async_trait]
+        impl SEncode for {{component}} {
+            async fn encode<T: AsyncWrite + Unpin + Send>(&self, s: &mut T) -> Result<(), SError> {
+                s.write_all(&self.to_be_bytes()).await?;
+                Ok(())
+            }
+        }
+                }
+    }
+}
+gen_num_type_sencode!(["u8", "u16", "u32", "u64", "u128", "f64"]);
+
+#[crabtime::function]
+fn gen_num_type_sdecode(components: Vec<String>) {
+    for component in components {
+        crabtime::output! {
+        #[async_trait::async_trait]
+        impl SDecode for {{component}} {
+            async fn decode<T: AsyncRead + Unpin + Send>(s: &mut T) -> Result<Self, SError> {
+                let mut buf = [0u8; std::mem::size_of::<{{component}}>()];
+                s.read_exact(&mut buf).await?;
+                let val = {{component}}::from_be_bytes(buf);
+                Ok(val)
+            }
+        }
+                }
     }
 }
 
-#[async_trait::async_trait]
-impl SEncode for u8 {
-    async fn encode<T: AsyncWrite + Unpin + Send>(&self, s: &mut T) -> Result<(), SError> {
-        let buf = [*self];
-        s.write_all(&buf).await?;
-        Ok(())
-    }
-}
-
-#[async_trait::async_trait]
-impl SDecode for u16 {
-    async fn decode<T: AsyncRead + Unpin + Send>(s: &mut T) -> Result<Self, SError> {
-        let mut buf = [0u8; 2];
-        s.read_exact(&mut buf).await?;
-        let val = u16::from_be_bytes(buf);
-        Ok(val)
-    }
-}
-
-#[async_trait::async_trait]
-impl SEncode for u16 {
-    async fn encode<T: AsyncWrite + Unpin + Send>(&self, s: &mut T) -> Result<(), SError> {
-        s.write_u16(*self).await?;
-        Ok(())
-    }
-}
+gen_num_type_sdecode!(["u8", "u16", "u32", "u64", "u128", "f64"]);

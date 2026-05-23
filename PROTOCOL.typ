@@ -8,21 +8,53 @@ Authentication is provided by JLS protocol.
 = Command
 Each proxy request is started with a command carried by a bistream. Only client can initiate a command.
 
-```plain
-+-------+---------------+
-|  CMD  |   SOCKSADDR   |
-+-------+---------------+
-|   1   |   Variable    |
-+-------+---------------+
-```
+
 There are three types of command indicated by `CMD` field:
 - `0x01` : TCP Connect
+  ```plain
+  +-------+---------------+
+  |  CMD  |   SOCKSADDR   |
+  +-------+---------------+
+  |   1   |   Variable    |
+  +-------+---------------+
+  ```
 - `0x03` : UDP Association over datagram extension
+  ```plain
+  +-------+---------------+
+  |  CMD  |   SOCKSADDR   |
+  +-------+---------------+
+  |   1   |   Variable    |
+  +-------+---------------+
+  ```
   - The SOCKSADDR carries the binding address indicating which
     address and port client is listening on the remote. It is *NOT*
     the destination address.
-- `0x04` : UDP Association over unistream
 
+- `0x04` : UDP Association over unistream
+  ```plain
+  +-------+---------------+
+  |  CMD  |   SOCKSADDR   |
+  +-------+---------------+
+  |   1   |   Variable    |
+  +-------+---------------+
+  ```
+- `0x05` : SunnyQUIC authentication
+  ```plain
+  +-------+---------------+
+  |  CMD  |   AUTH_HASH   |
+  +-------+---------------+
+  |   1   |       64      |
+  +-------+---------------+
+  ```
+- `0xFF` : Customized Extensions
+  - User can customize protocol by adding 8 byte new opcode as subcommand
+  ```plain
+  +-------+---------------+
+  |  CMD  |   OPCODE      |
+  +-------+---------------+
+  |   1   |       8       |
+  +-------+---------------+
+  ```
 
 `SOCKSADDR` field is socks address format:
 ```plain
@@ -236,6 +268,14 @@ Namely for each unistream, CONTEXT ID is sent only once right after this stream 
 +---------------+--------------+
 ```
 If datagrams are carried by QUIC datagram extension, the payload is sent directly without length field (only with `Context ID`).
+
+
+== Custom commands
+In order to provide flexiblity, we define `0xFF` to be _customized extensions_. User can define the own subcommand to extend protocol usage.
+
+
+
+
 
 = SunnyQUIC
 *SunnyQUIC* is the twin protocol of *ShadowQUIC*. It is nearly the same as *ShadowQUIC*. The only
