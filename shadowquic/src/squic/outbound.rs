@@ -126,6 +126,18 @@ pub async fn get_peer_conn_stats<C: QuicConnection>(
     Ok(response)
 }
 async fn print_stats<C: QuicConnection>(sq_conn: &SQConn<C>) -> SResult<()> {
+    static LAST_PRINT: std::sync::LazyLock<tokio::sync::Mutex<Option<std::time::Instant>>> =
+        std::sync::LazyLock::new(|| tokio::sync::Mutex::new(None));
+
+    {
+        let mut last_print = LAST_PRINT.lock().await;
+        if let Some(last) = *last_print
+            && last.elapsed() < Duration::from_secs(10) {
+                return Ok(());
+            }
+        *last_print = Some(std::time::Instant::now());
+    }
+
     let stats = sq_conn.get_conn_stats().ok_or(SError::ProtocolUnimpl)?;
     info!(
         "[uplink] packet_loss_rate:{:.2}%, rtt:{:.0}ms, mtu:{}",
