@@ -131,7 +131,6 @@ impl SocksClient {
     async fn handle_tcp(&self, mut tcp_session: TcpSession) -> Result<(), SError> {
         tracing::info!("connect to socks server: {}", self.cfg.addr);
         let socket = self.tcp_socket_factory.create_socket().await?;
-        socket.set_nonblocking(true)?;
         let std_stream: std::net::TcpStream = socket.into();
         let tokio_socket = tokio::net::TcpSocket::from_std_stream(std_stream);
         let addr = self.cfg.addr.to_socket_addrs()?.next().ok_or_else(|| {
@@ -160,7 +159,6 @@ impl SocksClient {
     async fn handle_udp(&self, mut udp_session: UdpSession) -> Result<(), SError> {
         tracing::info!("connect to socks server: {}", self.cfg.addr);
         let socket = self.tcp_socket_factory.create_socket().await?;
-        socket.set_nonblocking(true)?;
         let std_stream: std::net::TcpStream = socket.into();
         let tokio_socket = tokio::net::TcpSocket::from_std_stream(std_stream);
         let addr = self.cfg.addr.to_socket_addrs()?.next().ok_or_else(|| {
@@ -195,6 +193,7 @@ impl SocksClient {
             interface: self.cfg.socket_opt.bind_interface.clone(),
             fw_mark: self.cfg.socket_opt.fw_mark,
             protect_path: None,
+            try_dual_stack: false,
         };
         let socket = udp_socket_factory.create_socket().await?;
         socket.set_nonblocking(true)?;

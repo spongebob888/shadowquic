@@ -17,6 +17,7 @@ pub struct UdpSocketFactory {
     pub interface: Option<Interface>,
     pub fw_mark: Option<u32>,
     pub protect_path: Option<PathBuf>,
+    pub try_dual_stack: bool,
 }
 #[async_trait::async_trait]
 impl SocketFactory for UdpSocketFactory {
@@ -46,7 +47,9 @@ impl SocketFactory for UdpSocketFactory {
                 socket.bind(&bind_addr.into())?;
                 Ok(socket) as Result<Socket, io::Error>
             };
-            if let Ok(socket) = try_create_dual_stack() {
+            if self.try_dual_stack
+                && let Ok(socket) = try_create_dual_stack()
+            {
                 tracing::trace!("dual stack udp socket created");
                 socket
             } else if ipv6 {
@@ -61,7 +64,7 @@ impl SocketFactory for UdpSocketFactory {
                 socket
             }
         };
-
+        socket.set_nonblocking(true)?;
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         {
             if let Some(fw_mark) = self.fw_mark {
@@ -136,6 +139,7 @@ impl SocketFactory for TcpSocketFactory {
                 socket
             }
         };
+        socket.set_nonblocking(true)?;
 
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         {
@@ -185,6 +189,7 @@ mod tests {
             interface: None,
             fw_mark: None,
             protect_path: None,
+            try_dual_stack: true,
         };
         let socket = factory.create_socket().await.unwrap();
         assert!(socket.local_addr().is_ok());
@@ -195,6 +200,7 @@ mod tests {
             interface: Some(Interface::Address("127.0.0.1".parse().unwrap())),
             fw_mark: None,
             protect_path: None,
+            try_dual_stack: true,
         };
         let socket_ip = factory_ip.create_socket().await.unwrap();
         assert_eq!(
@@ -208,6 +214,7 @@ mod tests {
             interface: None,
             fw_mark: Some(123),
             protect_path: None,
+            try_dual_stack: true,
         };
 
         let res = factory_mark.create_socket().await;

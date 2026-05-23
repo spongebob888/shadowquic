@@ -141,6 +141,7 @@ impl QuicClient for Endpoint {
                 interface: cfg.socket_opt.bind_interface.clone(),
                 fw_mark: cfg.socket_opt.fw_mark,
                 protect_path: cfg.protect_path.clone(),
+                try_dual_stack: true,
             }),
         )
         .await
