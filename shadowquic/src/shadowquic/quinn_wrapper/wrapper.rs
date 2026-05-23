@@ -28,6 +28,7 @@ use crate::{
         maybe_warn_cipher_suite_on_weak_arch, normalize_cipher_suite_preference,
     },
     error::SResult,
+    msgs::squic::ConnStats,
     quic::{
         MAX_DATAGRAM_WINDOW, MAX_SEND_WINDOW, MAX_STREAM_WINDOW, QuicClient, QuicConnection,
         QuicErrorRepr, QuicServer,
@@ -55,14 +56,6 @@ impl QuicConnection for Connection {
     type RecvStream = quinn::RecvStream;
     type SendStream = quinn::SendStream;
     async fn open_bi(&self) -> Result<(Self::SendStream, Self::RecvStream, u64), QuicErrorRepr> {
-        let rate: f32 =
-            (self.stats().path.lost_packets as f32) / ((self.stats().path.sent_packets + 1) as f32);
-        info!(
-            "packet_loss_rate:{:.2}%, rtt:{:?}, mtu:{}",
-            rate * 100.0,
-            self.rtt(),
-            self.stats().path.current_mtu,
-        );
         let (send, recv) = self.open_bi().await?;
 
         let id = send.id().index();
@@ -127,6 +120,15 @@ impl QuicConnection for Connection {
     }
     fn close(&self, error_code: u64, reason: &[u8]) {
         self.close(VarInt::from_u64(error_code).unwrap(), reason);
+    }
+    fn get_conn_stats(&self) -> Option<ConnStats> {
+        let stats = self.stats();
+        Some(ConnStats {
+            lost_packets: stats.path.lost_packets,
+            sent_packets: stats.path.sent_packets,
+            rtt: self.rtt().as_secs_f64() * 1000.0,
+            current_mtu: stats.path.current_mtu,
+        })
     }
 }
 

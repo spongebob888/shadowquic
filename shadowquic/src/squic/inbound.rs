@@ -10,11 +10,11 @@ use tracing::{Instrument, Level, event, info, trace, trace_span};
 
 use crate::{
     ProxyRequest, TcpSession, TcpTrait, UdpSession,
-    error::SError,
+    error::{SError, SResult},
     msgs::{
-        SDecode,
+        SDecode, SEncode,
         socks5::SocksAddr,
-        squic::{SQReq, SunnyCredential},
+        squic::{ExtOpcodeConn, SQExtError, SQExtOpcode, SQReq, SunnyCredential},
     },
     quic::QuicConnection,
     squic::wait_sunny_auth,
@@ -128,13 +128,34 @@ impl<C: QuicConnection> SQServerConn<C> {
                     return Err(SError::SunnyAuthError("Wrong password/username".into()));
                 }
             }
+            SQReq::SQExtension(ext_opcode) => {
+                wait_sunny_auth(&self.inner).await?;
+                self.handle_extension(ext_opcode, send, recv).await?;
+            }
             _ => {
                 unimplemented!()
             }
         }
         Ok(())
     }
+    pub(crate) async fn handle_extension(
+        &self,
+        ext_opcode: SQExtOpcode,
+        mut send: C::SendStream,
+        mut _recv: C::RecvStream,
+    ) -> SResult<()> {
+        match ext_opcode {
+            SQExtOpcode::Conn(conn_opcode) => match conn_opcode {
+                ExtOpcodeConn::GetConnStats => {
+                    let stats = self.inner.get_conn_stats().ok_or(SQExtError::NotAvailable);
+                    stats.encode(&mut send).await?;
+                }
+            },
+        }
+        Ok(())
+    }
 }
+
 #[derive(Debug)]
 pub struct Unsplit<S, R> {
     pub s: S,

@@ -209,38 +209,35 @@ pub struct UdpReqHeader {
     pub dst: SocksAddr,
 }
 
-#[async_trait::async_trait]
-impl SDecode for u8 {
-    async fn decode<T: AsyncRead + Unpin + Send>(s: &mut T) -> Result<Self, SError> {
-        let mut buf = [0u8];
-        s.read_exact(&mut buf).await?;
-        Ok(buf[0])
-    }
+macro_rules! gen_num_type_sencode {
+    ($($t:ty),*) => {
+        $(
+            #[async_trait::async_trait]
+            impl SEncode for $t {
+                async fn encode<T: AsyncWrite + Unpin + Send>(&self, s: &mut T) -> Result<(), SError> {
+                    s.write_all(&self.to_be_bytes()).await?;
+                    Ok(())
+                }
+            }
+        )*
+    };
+}
+gen_num_type_sencode!(u8, u16, u32, u64, u128, f64);
+
+macro_rules! gen_num_type_sdecode {
+    ($($t:ty),*) => {
+        $(
+            #[async_trait::async_trait]
+            impl SDecode for $t {
+                async fn decode<T: AsyncRead + Unpin + Send>(s: &mut T) -> Result<Self, SError> {
+                    let mut buf = [0u8; std::mem::size_of::<$t>()];
+                    s.read_exact(&mut buf).await?;
+                    let val = <$t>::from_be_bytes(buf);
+                    Ok(val)
+                }
+            }
+        )*
+    };
 }
 
-#[async_trait::async_trait]
-impl SEncode for u8 {
-    async fn encode<T: AsyncWrite + Unpin + Send>(&self, s: &mut T) -> Result<(), SError> {
-        let buf = [*self];
-        s.write_all(&buf).await?;
-        Ok(())
-    }
-}
-
-#[async_trait::async_trait]
-impl SDecode for u16 {
-    async fn decode<T: AsyncRead + Unpin + Send>(s: &mut T) -> Result<Self, SError> {
-        let mut buf = [0u8; 2];
-        s.read_exact(&mut buf).await?;
-        let val = u16::from_be_bytes(buf);
-        Ok(val)
-    }
-}
-
-#[async_trait::async_trait]
-impl SEncode for u16 {
-    async fn encode<T: AsyncWrite + Unpin + Send>(&self, s: &mut T) -> Result<(), SError> {
-        s.write_u16(*self).await?;
-        Ok(())
-    }
-}
+gen_num_type_sdecode!(u8, u16, u32, u64, u128, f64);

@@ -11,6 +11,7 @@ sleep(0.5)
 out = sp.run(["curl",
                "http://echo.free.beeceptor.com",
                 "-v",
+                "-4",
                 "--trace-time",
                 "--socks5",
                 "127.0.0.1:1089"],

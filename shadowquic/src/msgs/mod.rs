@@ -62,3 +62,38 @@ impl<const N: usize> SDecode for [u8; N] {
         Ok(data)
     }
 }
+
+#[async_trait::async_trait]
+impl<T: SEncode + Send + Sync, E: SEncode + Send + Sync> SEncode for Result<T, E> {
+    async fn encode<W: AsyncWrite + Unpin + Send>(&self, s: &mut W) -> Result<(), SError> {
+        match self {
+            Ok(val) => {
+                0u8.encode(s).await?;
+                val.encode(s).await?;
+            }
+            Err(val) => {
+                1u8.encode(s).await?;
+                val.encode(s).await?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl<T: SDecode, E: SDecode> SDecode for Result<T, E> {
+    async fn decode<R: AsyncRead + Unpin + Send>(s: &mut R) -> Result<Self, SError> {
+        let tag = u8::decode(s).await?;
+        match tag {
+            0 => {
+                let val = T::decode(s).await?;
+                Ok(Ok(val))
+            }
+            1 => {
+                let val = E::decode(s).await?;
+                Ok(Err(val))
+            }
+            _ => Err(SError::ProtocolViolation),
+        }
+    }
+}
