@@ -1,11 +1,11 @@
 use std::time::Duration;
 
+use shadowquic::Inbound;
 use shadowquic::config::{
     AuthUser, CongestionControl, JlsUpstream, ShadowQuicClientCfg, ShadowQuicServerCfg,
     default_initial_mtu,
 };
 use shadowquic::shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient};
-use shadowquic::Inbound;
 use shadowquic::squic::outbound::get_peer_conn_stats;
 
 use tracing::Level;
@@ -13,8 +13,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::test]
 async fn main() {
-    let filter = tracing_subscriber::filter::Targets::new()
-        .with_target("shadowquic", Level::INFO);
+    let filter = tracing_subscriber::filter::Targets::new().with_target("shadowquic", Level::INFO);
 
     let _ = tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
@@ -60,7 +59,10 @@ async fn main() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // 3. Connect client and get SQConn
-    let conn = sq_client.get_conn().await.expect("Failed to connect client");
+    let conn = sq_client
+        .get_conn()
+        .await
+        .expect("Failed to connect client");
 
     // Wait a brief moment to ensure connection handshake is complete
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -69,9 +71,17 @@ async fn main() {
     let stats_res = get_peer_conn_stats(&conn).await;
 
     // 5. Verify the result
-    assert!(stats_res.is_ok(), "get_peer_conn_stats returned an error: {:?}", stats_res.err());
+    assert!(
+        stats_res.is_ok(),
+        "get_peer_conn_stats returned an error: {:?}",
+        stats_res.err()
+    );
     let inner_res = stats_res.unwrap();
-    assert!(inner_res.is_ok(), "inner result was an error: {:?}", inner_res.err());
+    assert!(
+        inner_res.is_ok(),
+        "inner result was an error: {:?}",
+        inner_res.err()
+    );
 
     let stats = inner_res.unwrap();
     println!(

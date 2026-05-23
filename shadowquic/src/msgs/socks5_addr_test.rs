@@ -112,24 +112,26 @@ async fn test_size_tagged_struct_encode_decode() {
         value_u32: 0x12345678,
         value_u8: 0x9A,
     };
-    
+
     let mut buf = Vec::new();
     <SizeTaggedStruct as super::SEncode>::encode(&original, &mut buf)
         .await
         .expect("encode failed");
-        
+
     // Buffer should be 4 bytes (for size tag) + 4 bytes (for value_u32) + 1 byte (for value_u8) = 9 bytes.
     // The size tag (first 4 bytes) should encode the size of the payload: 5 bytes.
     assert_eq!(buf.len(), 9);
     assert_eq!(u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]), 5);
-    assert_eq!(u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]), 0x12345678);
+    assert_eq!(
+        u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]),
+        0x12345678
+    );
     assert_eq!(buf[8], 0x9A);
-    
+
     let mut reader = Cursor::new(&buf);
     let decoded = <SizeTaggedStruct as super::SDecode>::decode(&mut reader)
         .await
         .expect("decode failed");
-        
+
     assert_eq!(original, decoded);
 }
-

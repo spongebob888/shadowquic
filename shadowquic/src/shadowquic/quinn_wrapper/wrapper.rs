@@ -127,7 +127,7 @@ impl QuicConnection for Connection {
             lost_packets: stats.path.lost_packets,
             sent_packets: stats.path.sent_packets,
             rtt: self.rtt().as_secs_f64() * 1000.0,
-            current_mtu: stats.path.current_mtu as u16,
+            current_mtu: stats.path.current_mtu,
         })
     }
 }
