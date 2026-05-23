@@ -158,11 +158,35 @@ pub struct SocksClientCfg {
 #[derive(Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SocketOpt {
+    /// fw_mark on linux
     pub fw_mark: Option<u32>,
+    /// binding interface of this outgoing packet.
+    ///
+    /// If `bind_interface` is set, the outgoing packet will be sent from the
+    /// specified interface. Recommend to use to cooporate with other tun based proxy like sing-box/mihomo
+    ///
+    /// Example:
+    /// ```yaml
+    /// # by ip address
+    /// bind-interface: "127.0.0.1"
+    /// # by interface name
+    /// bind-interface: "eth0"
+    /// ```
     pub bind_interface: Option<Interface>,
 }
 
-/// Interface
+/// binding interface of this outgoing packet.
+///
+/// If `bind_interface` is set, the outgoing packet will be sent from the
+/// specified interface. Recommend to use to cooporate with other tun based proxy like sing-box/mihomo
+///
+/// Example:
+/// ```yaml
+/// # by ip address
+/// bind-interface: "127.0.0.1"
+/// # by interface name
+/// bind-interface: "eth0"
+/// ```
 #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum Interface {
@@ -281,10 +305,14 @@ pub struct DirectOutCfg {
 #[derive(Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum DnsStrategy {
+    /// try to use ipv4 first, if no ipv4 address, use ipv6
     #[default]
     PreferIpv4,
+    /// try to use ipv6 first, if no ipv6 address, use ipv4
     PreferIpv6,
+    /// only use ipv4 address
     Ipv4Only,
+    /// only use ipv6 address  
     Ipv6Only,
 }
 
