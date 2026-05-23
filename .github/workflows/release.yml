@@ -263,7 +263,7 @@ jobs:
           command: test
           args: --all --release --target ${{ matrix.target }} ${{ matrix.extra-args }}
         env:
-          CROSS_CONTAINER_OPTS: "--network host"
+          CROSS_CONTAINER_OPTS: "--network host --user root"
           RUSTFLAGS: ${{ matrix.rustflags }}
 
       - name: Cargo build
