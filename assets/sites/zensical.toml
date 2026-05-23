@@ -14,25 +14,27 @@ nav = [
     { "Overview" = "configuration/index.md" },
     { "Inbound" = [
       { "Overview" = "configuration/inbound/index.md" },
-      { "SOCKS5 server" = "configuration/inbound/socks.md" },
+      { "Socks server" = "configuration/inbound/socks.md" },
       { "ShadowQuic server" = "configuration/inbound/shadowquic.md" },
       { "SunnyQuic server" = "configuration/inbound/sunnyquic.md" }
     ] },
     { "Outbound" = [
       { "Overview" = "configuration/outbound/index.md" },
-      { "SOCKS5 outbound" = "configuration/outbound/socks.md" },
+      { "Socks outbound" = "configuration/outbound/socks.md" },
       { "ShadowQuic outbound" = "configuration/outbound/shadowquic.md" },
       { "SunnyQuic outbound" = "configuration/outbound/sunnyquic.md" },
       { "Direct outbound" = "configuration/outbound/direct.md" }
     ] },
     { "Shared types" = [
-      { "User authentication" = "configuration/shared/authuser.md" },
+      { "Log level" = "configuration/shared/loglevel.md" },
+      { "Auth user" = "configuration/shared/authuser.md" },
       { "JLS upstream" = "configuration/shared/jlsupstream.md" },
       { "Congestion control" = "configuration/shared/congestioncontrol.md" },
-      { "Brutal parameters" = "configuration/shared/brutalparams.md" },
+      { "Brutal params" = "configuration/shared/brutalparams.md" },
+      { "Socket opt" = "configuration/shared/socketopt.md" },
       { "Cipher suite preference" = "configuration/shared/ciphersuitepreference.md" },
       { "DNS strategy" = "configuration/shared/dnsstrategy.md" },
-      { "Log level" = "configuration/shared/loglevel.md" }
+      { "Interface" = "configuration/shared/interface.md" }
     ] }
   ] }
 ]

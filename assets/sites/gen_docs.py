@@ -626,6 +626,41 @@ def emit_struct_page(
         body.append(docs_md.rstrip() + "\n")
 
     body.append("## Fields\n")
+    _emit_struct_fields(item, serde, ctx, body, page_path, depth=0)
+    return "\n".join(body) + "\n"
+
+
+def _resolve_struct_target(ty: dict | None, ctx: RenderContext) -> Item | None:
+    """If `ty` is a resolved_path to a config struct, return that struct."""
+    if not isinstance(ty, dict) or "resolved_path" not in ty:
+        return None
+    tid = ty["resolved_path"].get("id")
+    if tid is None:
+        return None
+    target = ctx.index.get(str(tid))
+    if target is None or not target.is_config or "struct" not in target.inner:
+        return None
+    return target
+
+
+def _emit_struct_fields(
+    item: Item,
+    container_serde: SerdeContainer,
+    ctx: RenderContext,
+    body: list[str],
+    page_path: Path,
+    depth: int,
+    inlined_from: list[str] | None = None,
+) -> None:
+    """Emit each field of a struct as a heading section.
+
+    Fields tagged `#[serde(flatten)]` whose type is another known config
+    struct are expanded inline using *that* struct's serde container rules,
+    so the rendered docs match the on-the-wire YAML shape.
+    """
+    if depth > 8:  # paranoia: don't loop forever on cyclic schemas
+        return
+    inlined_from = inlined_from or []
 
     fields = item.inner["struct"]["kind"]["plain"]["fields"]
     for fid in fields:
@@ -635,21 +670,43 @@ def emit_struct_page(
         fserde = parse_field_serde(attrs_for_member(f, item.name, ctx.src_attrs))
         if fserde.skip:
             continue
-        yaml_name = fserde.rename or apply_rename_all(f.name or "", serde.rename_all)
 
         ty = f.inner.get("struct_field")
+
+        # `#[serde(flatten)]`: don't render this field. Recurse into the
+        # carried struct so its fields appear as if declared here.
+        if fserde.flatten:
+            target = _resolve_struct_target(ty, ctx)
+            if target is not None and target.name and target.name not in inlined_from:
+                inner_serde = parse_container_serde(
+                    attrs_for_container(target, ctx.src_attrs)
+                )
+                _emit_struct_fields(
+                    target,
+                    inner_serde,
+                    ctx,
+                    body,
+                    page_path,
+                    depth=depth + 1,
+                    inlined_from=inlined_from + [target.name],
+                )
+                continue
+            # Fallthrough: render as a regular field if we can't resolve.
+
+        yaml_name = fserde.rename or apply_rename_all(
+            f.name or "", container_serde.rename_all
+        )
         type_md = render_type(ty, ctx, page_path) if isinstance(ty, dict) else "`?`"
 
         is_option_type = False
         if isinstance(ty, dict) and "resolved_path" in ty:
-            is_option_type = (ty["resolved_path"].get("path") or "").split("::")[-1] == "Option"
+            is_option_type = (
+                (ty["resolved_path"].get("path") or "").split("::")[-1] == "Option"
+            )
 
         required = not (fserde.has_default or is_option_type)
         required_md = "no" if not required else "**yes**"
 
-        # Per-field section: heading + metadata list + full-markdown description.
-        # A heading per field is the only reliable way to render multi-paragraph
-        # content (notably fenced code blocks) inside the docs.
         body.append(f"### `{yaml_name}`\n")
         meta: list[str] = [f"- **Type:** {type_md}", f"- **Required:** {required_md}"]
         if fserde.default_fn:
@@ -657,8 +714,6 @@ def emit_struct_page(
             display = render_default_value(val, ctx) if val else f"{fserde.default_fn}()"
             meta.append(f"- **Default:** `{display}`")
         elif fserde.has_default and not is_option_type:
-            # `#[serde(default)]` -> use the type's Default impl. For enums we
-            # parsed `#[default]` on a variant, so we know the resolved value.
             enum_default = None
             if isinstance(ty, dict) and "resolved_path" in ty:
                 tid = ty["resolved_path"].get("id")
@@ -673,8 +728,6 @@ def emit_struct_page(
         desc_md = rewrite_doc_links(f.docs or "", f.links, ctx, page_path).rstrip()
         if desc_md:
             body.append(desc_md + "\n")
-
-    return "\n".join(body) + "\n"
 
 
 def emit_enum_page(
@@ -744,12 +797,156 @@ class PageSpec:
     intro: str = ""
 
 
-def plan_pages(index: dict[str, Item]) -> list[PageSpec]:
+def _walk_referenced_config_types(ty, index: dict[str, Item]):
+    """Yield names of config-resident types referenced inside a rustdoc Type."""
+    if not isinstance(ty, dict):
+        return
+    if "resolved_path" in ty:
+        rp = ty["resolved_path"]
+        target = index.get(str(rp.get("id"))) if rp.get("id") is not None else None
+        if target is not None and target.is_config and target.name:
+            yield target.name
+        args = rp.get("args")
+        if isinstance(args, dict) and "angle_bracketed" in args:
+            for a in args["angle_bracketed"].get("args", []):
+                if isinstance(a, dict) and "type" in a:
+                    yield from _walk_referenced_config_types(a["type"], index)
+
+
+def discover_config_types(index: dict[str, Item], roots: list[str]) -> list[Item]:
+    """BFS from each root through fields/variants and return reachable config types.
+
+    Result is in discovery order, with `roots` first.
+    """
+    by_name = {it.name: it for it in index.values() if it.is_config and it.name}
+    seen: set[str] = set()
+    out: list[Item] = []
+    queue: list[str] = list(roots)
+    while queue:
+        name = queue.pop(0)
+        if name in seen:
+            continue
+        seen.add(name)
+        item = by_name.get(name)
+        if item is None:
+            continue
+        out.append(item)
+        if "struct" in item.inner:
+            for fid in item.inner["struct"]["kind"]["plain"]["fields"]:
+                f = index.get(str(fid))
+                if f is None:
+                    continue
+                ty = f.inner.get("struct_field")
+                for ref in _walk_referenced_config_types(ty, index):
+                    if ref not in seen:
+                        queue.append(ref)
+        elif "enum" in item.inner:
+            for vid in item.inner["enum"]["variants"]:
+                v = index.get(str(vid))
+                if v is None:
+                    continue
+                kind = v.inner["variant"]["kind"]
+                if isinstance(kind, dict) and "tuple" in kind:
+                    for fid in kind["tuple"]:
+                        f = index.get(str(fid))
+                        if f is None:
+                            continue
+                        ty = f.inner.get("struct_field")
+                        for ref in _walk_referenced_config_types(ty, index):
+                            if ref not in seen:
+                                queue.append(ref)
+    return out
+
+
+def _enum_tuple_variant_targets(
+    enum_item: Item,
+    index: dict[str, Item],
+    src: SourceAttrs,
+) -> dict[str, tuple[str, str]]:
+    """For each tuple-variant of an enum, return a map of carried-type name to
+    (variant tag, variant friendly label)."""
+    out: dict[str, tuple[str, str]] = {}
+    container = parse_container_serde(attrs_for_container(enum_item, src))
+    for vid in enum_item.inner["enum"]["variants"]:
+        v = index.get(str(vid))
+        if v is None:
+            continue
+        kind = v.inner["variant"]["kind"]
+        if not (isinstance(kind, dict) and "tuple" in kind and kind["tuple"]):
+            continue
+        f = index.get(str(kind["tuple"][0]))
+        if f is None:
+            continue
+        ty = f.inner.get("struct_field")
+        if not (isinstance(ty, dict) and "resolved_path" in ty):
+            continue
+        target_id = ty["resolved_path"].get("id")
+        target = index.get(str(target_id)) if target_id is not None else None
+        if target is None or not target.name:
+            continue
+        vserde = parse_field_serde(attrs_for_member(v, enum_item.name, src))
+        tag = vserde.rename or apply_rename_all(v.name or "", container.rename_all)
+        # Variant name is the brand (e.g. `ShadowQuic`, `SunnyQuic`), so keep
+        # its casing rather than camel-splitting into "Shadow quic".
+        out[target.name] = (tag, v.name or "")
+    return out
+
+
+_CAMEL_SPLIT_RE = re.compile(r"[A-Z][a-z0-9]*|[A-Z]+(?=[A-Z]|$)|\d+")
+
+# Acronyms in our config type names that should be uppercased even when split
+# from the surrounding camel-case identifier. Keys are lowercase tokens.
+_ACRONYMS = {
+    "jls": "JLS",
+    "dns": "DNS",
+    "tls": "TLS",
+    "mtu": "MTU",
+    "url": "URL",
+    "ip": "IP",
+    "udp": "UDP",
+    "tcp": "TCP",
+    "rtt": "RTT",
+}
+
+
+def _capitalize_token(token: str, first: bool) -> str:
+    low = token.lower()
+    if low in _ACRONYMS:
+        return _ACRONYMS[low]
+    return token if first else low
+
+
+def _friendly_label(name: str) -> str:
+    """Turn `BrutalParams` / `SocksServerCfg` into a human-readable label.
+
+    Common acronyms are preserved (so `DnsStrategy` -> `DNS strategy`,
+    `JlsUpstream` -> `JLS upstream`).
+    """
+    if not name:
+        return name
+    if name.endswith("Cfg"):
+        name = name[: -len("Cfg")]
+    parts = _CAMEL_SPLIT_RE.findall(name) or [name]
+    if not parts:
+        return name
+    out = [_capitalize_token(parts[0], first=True)]
+    for p in parts[1:]:
+        out.append(_capitalize_token(p, first=False))
+    return " ".join(out)
+
+
+def plan_pages(
+    index: dict[str, Item],
+    src_attrs: SourceAttrs,
+) -> list[PageSpec]:
     """Decide which config items get their own page.
 
-    Ordering matters: the page_for_type map is built from this list, and
-    later pages refer to earlier ones via that map (which is built before
-    rendering).
+    Discovers the page set by walking the type graph from `Config` /
+    `InboundCfg` / `OutboundCfg`. Tuple-variant targets of the two
+    dispatcher enums become inbound/outbound pages; everything else
+    reachable becomes a shared page. Adding a new struct/enum to
+    `shadowquic/src/config/` is a no-op for this generator — re-running
+    picks it up automatically.
     """
     by_name: dict[str, Item] = {
         it.name: it for it in index.values() if it.is_config and it.name
@@ -760,80 +957,84 @@ def plan_pages(index: dict[str, Item]) -> list[PageSpec]:
             raise SystemExit(f"missing expected config type: {name}")
         return by_name[name]
 
-    pages: list[PageSpec] = []
+    config = need("Config")
+    inbound = need("InboundCfg")
+    outbound = need("OutboundCfg")
 
-    # Top-level config
+    inbound_targets = _enum_tuple_variant_targets(inbound, index, src_attrs)
+    outbound_targets = _enum_tuple_variant_targets(outbound, index, src_attrs)
+
+    # BFS the full graph, including every variant target so we can classify them.
+    discovered = discover_config_types(
+        index,
+        roots=["Config", "InboundCfg", "OutboundCfg"],
+    )
+
+    pages: list[PageSpec] = []
+    placed: set[str] = set()
+
     pages.append(PageSpec(
         title="Config",
         nav_label="Overview",
         rel_path="configuration/index.md",
-        item_id=int(need("Config").id),
+        item_id=int(config.id),
         intro="Top-level configuration object. Every shadowquic config file deserializes into this struct.",
     ))
+    placed.add("Config")
 
-    # Inbound dispatcher + variants
     pages.append(PageSpec(
         title="Inbound",
         nav_label="Overview",
         rel_path="configuration/inbound/index.md",
-        item_id=int(need("InboundCfg").id),
+        item_id=int(inbound.id),
         intro="Selects an inbound listener. Pick a variant via the `type` key.",
     ))
-    inbound_variants = [
-        ("SocksServerCfg", "SOCKS5 server", "configuration/inbound/socks.md"),
-        ("ShadowQuicServerCfg", "ShadowQuic server", "configuration/inbound/shadowquic.md"),
-        ("SunnyQuicServerCfg", "SunnyQuic server", "configuration/inbound/sunnyquic.md"),
-    ]
-    for tname, label, path in inbound_variants:
-        if tname in by_name:
-            pages.append(PageSpec(
-                title=label,
-                nav_label=label,
-                rel_path=path,
-                item_id=int(by_name[tname].id),
-            ))
+    placed.add("InboundCfg")
 
-    # Outbound dispatcher + variants
+    # Inbound variants, in the order rustdoc reports them.
+    for it in discovered:
+        if it.name in inbound_targets and it.name not in placed:
+            tag, label = inbound_targets[it.name]
+            pages.append(PageSpec(
+                title=f"{label} server",
+                nav_label=f"{label} server",
+                rel_path=f"configuration/inbound/{tag}.md",
+                item_id=int(it.id),
+            ))
+            placed.add(it.name)
+
     pages.append(PageSpec(
         title="Outbound",
         nav_label="Overview",
         rel_path="configuration/outbound/index.md",
-        item_id=int(need("OutboundCfg").id),
+        item_id=int(outbound.id),
         intro="Selects the upstream the inbound forwards to. Pick a variant via the `type` key.",
     ))
-    outbound_variants = [
-        ("SocksClientCfg", "SOCKS5 outbound", "configuration/outbound/socks.md"),
-        ("ShadowQuicClientCfg", "ShadowQuic outbound", "configuration/outbound/shadowquic.md"),
-        ("SunnyQuicClientCfg", "SunnyQuic outbound", "configuration/outbound/sunnyquic.md"),
-        ("DirectOutCfg", "Direct outbound", "configuration/outbound/direct.md"),
-    ]
-    for tname, label, path in outbound_variants:
-        if tname in by_name:
-            pages.append(PageSpec(
-                title=label,
-                nav_label=label,
-                rel_path=path,
-                item_id=int(by_name[tname].id),
-            ))
+    placed.add("OutboundCfg")
 
-    # Shared / supporting types
-    shared = [
-        ("AuthUser", "User authentication"),
-        ("JlsUpstream", "JLS upstream"),
-        ("CongestionControl", "Congestion control"),
-        ("BrutalParams", "Brutal parameters"),
-        ("CipherSuitePreference", "Cipher suite preference"),
-        ("DnsStrategy", "DNS strategy"),
-        ("LogLevel", "Log level"),
-    ]
-    for tname, label in shared:
-        if tname in by_name:
+    for it in discovered:
+        if it.name in outbound_targets and it.name not in placed:
+            tag, label = outbound_targets[it.name]
             pages.append(PageSpec(
-                title=label,
-                nav_label=label,
-                rel_path=f"configuration/shared/{tname.lower()}.md",
-                item_id=int(by_name[tname].id),
+                title=f"{label} outbound",
+                nav_label=f"{label} outbound",
+                rel_path=f"configuration/outbound/{tag}.md",
+                item_id=int(it.id),
             ))
+            placed.add(it.name)
+
+    # Everything else reachable from the roots becomes a shared type page.
+    for it in discovered:
+        if it.name in placed or not it.name:
+            continue
+        label = _friendly_label(it.name)
+        pages.append(PageSpec(
+            title=label,
+            nav_label=label,
+            rel_path=f"configuration/shared/{it.name.lower()}.md",
+            item_id=int(it.id),
+        ))
+        placed.add(it.name)
 
     return pages
 
@@ -987,7 +1188,7 @@ def main(argv: list[str] | None = None) -> int:
     index = load_index(json_path)
     defaults = collect_default_fn_values(REPO_ROOT)
     src_attrs = parse_source_attrs(REPO_ROOT)
-    pages = plan_pages(index)
+    pages = plan_pages(index, src_attrs)
 
     page_for_type = {p.item_id: p.rel_path for p in pages}
     variant_tags, enum_defaults_by_id = collect_enum_variant_tags(index, src_attrs)
