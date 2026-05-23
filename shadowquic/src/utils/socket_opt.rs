@@ -71,7 +71,82 @@ impl SocketFactory for UdpSocketFactory {
 
         if let Some(Interface::Device(ref device_name)) = self.interface {
             crate::utils::platform::bind_device(&socket, device_name)?;
-            tracing::debug!("socket bound to device {}", device_name);
+            tracing::debug!("udp socket bound to device {}", device_name);
+        }
+
+        #[cfg(target_os = "android")]
+        if let Some(path) = &self.protect_path {
+            use crate::utils::protect_socket::protect_socket_with_retry;
+            use std::os::fd::AsRawFd;
+
+            tracing::debug!("trying protect socket");
+            tokio::time::timeout(
+                tokio::time::Duration::from_secs(5),
+                protect_socket_with_retry(path, socket.as_raw_fd()),
+            )
+            .await
+            .map_err(|_| io::Error::other("protecting socket timeout"))
+            .and_then(|x| x)
+            .map_err(|e| {
+                tracing::error!("error during protecing socket:{}", e);
+                e
+            })?;
+        }
+
+        Ok(socket)
+    }
+}
+
+pub struct TcpSocketFactory {
+    pub addr: String,
+    pub interface: Option<Interface>,
+    pub fw_mark: Option<u32>,
+    pub protect_path: Option<PathBuf>,
+}
+#[async_trait::async_trait]
+impl SocketFactory for TcpSocketFactory {
+    async fn create_socket(&self) -> std::io::Result<socket2::Socket> {
+        let addr = self
+            .addr
+            .to_socket_addrs()
+            .unwrap_or_else(|_| panic!("resolve tcp addr faile: {}", self.addr))
+            .next()
+            .unwrap_or_else(|| panic!("resolve tcp addr faile: {}", self.addr));
+        let socket = if let Some(Interface::Address(ip)) = self.interface {
+            let domain = if ip.is_ipv4() {
+                Domain::IPV4
+            } else {
+                Domain::IPV6
+            };
+            let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
+            let bind_addr = SocketAddr::new(ip, 0);
+            socket.bind(&bind_addr.into())?;
+            socket
+        } else {
+            let ipv6 = addr.is_ipv6();
+            if ipv6 {
+                let socket = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
+                let bind_addr: SocketAddr = "[::]:0".parse().unwrap();
+                socket.bind(&bind_addr.into())?;
+                socket
+            } else {
+                let socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))?;
+                let bind_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
+                socket.bind(&bind_addr.into())?;
+                socket
+            }
+        };
+
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        {
+            if let Some(fw_mark) = self.fw_mark {
+                socket.set_mark(fw_mark)?;
+            }
+        }
+
+        if let Some(Interface::Device(ref device_name)) = self.interface {
+            crate::utils::platform::bind_device(&socket, device_name)?;
+            tracing::debug!("tcp socket bound to device {}", device_name);
         }
 
         #[cfg(target_os = "android")]
@@ -149,6 +224,52 @@ mod tests {
         #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
         {
             // On unsupported platforms, the mark option is ignored, so it should succeed
+            assert!(res.is_ok());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tcp_socket_factory_creation() {
+        // Create factory with no special options
+        let factory = TcpSocketFactory {
+            addr: "127.0.0.1:0".to_string(),
+            interface: None,
+            fw_mark: None,
+            protect_path: None,
+        };
+        let socket = factory.create_socket().await.unwrap();
+        assert!(socket.local_addr().is_ok());
+
+        // Create factory with interface address
+        let factory_ip = TcpSocketFactory {
+            addr: "127.0.0.1:0".to_string(),
+            interface: Some(Interface::Address("127.0.0.1".parse().unwrap())),
+            fw_mark: None,
+            protect_path: None,
+        };
+        let socket_ip = factory_ip.create_socket().await.unwrap();
+        assert_eq!(
+            socket_ip.local_addr().unwrap().as_socket().unwrap().ip(),
+            "127.0.0.1".parse::<IpAddr>().unwrap()
+        );
+
+        // Create factory with firewall mark (only on supported platforms)
+        let factory_mark = TcpSocketFactory {
+            addr: "127.0.0.1:0".to_string(),
+            interface: None,
+            fw_mark: Some(123),
+            protect_path: None,
+        };
+
+        let res = factory_mark.create_socket().await;
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        {
+            if let Err(e) = res {
+                assert!(e.raw_os_error().is_some());
+            }
+        }
+        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
+        {
             assert!(res.is_ok());
         }
     }

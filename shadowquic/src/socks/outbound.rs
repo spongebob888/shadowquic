@@ -8,6 +8,7 @@ use crate::{
         SOCKS5_VERSION,
     },
     socks::UdpSocksWrap,
+    utils::socket_opt::{SocketFactory, TcpSocketFactory, UdpSocketFactory},
 };
 use tokio::{
     io::{AsyncReadExt, copy_bidirectional_with_sizes},
@@ -26,17 +27,24 @@ use crate::{
     msgs::{SDecode, SEncode},
 };
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SocksClient {
-    pub addr: String,
-    pub username: Option<String>,
-    pub password: Option<String>,
+    pub cfg: SocksClientCfg,
+    pub(crate) tcp_socket_factory: Arc<dyn SocketFactory>,
+}
+
+impl std::fmt::Debug for SocksClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SocksClient")
+            .field("cfg", &self.cfg)
+            .finish()
+    }
 }
 
 #[async_trait]
 impl Outbound for SocksClient {
     async fn handle(&mut self, req: ProxyRequest) -> Result<(), SError> {
-        let span = trace_span!("socks", server = self.addr);
+        let span = trace_span!("socks", server = self.cfg.addr);
         let client = self.clone();
         let fut = async move {
             match req {
@@ -58,14 +66,19 @@ impl Outbound for SocksClient {
 
 impl SocksClient {
     pub fn new(cfg: SocksClientCfg) -> Self {
+        let tcp_socket_factory = Arc::new(TcpSocketFactory {
+            addr: cfg.addr.clone(),
+            interface: cfg.socket_opt.bind_interface.clone(),
+            fw_mark: cfg.socket_opt.fw_mark,
+            protect_path: None,
+        });
         Self {
-            addr: cfg.addr,
-            username: cfg.username,
-            password: cfg.password,
+            cfg,
+            tcp_socket_factory,
         }
     }
     async fn authenticate(&self, mut tcp: TcpStream) -> Result<TcpStream, SError> {
-        let method = if self.username.is_some() {
+        let method = if self.cfg.username.is_some() {
             SOCKS5_AUTH_METHOD_PASSWORD
         } else {
             SOCKS5_AUTH_METHOD_NONE
@@ -88,7 +101,7 @@ impl SocksClient {
                 "authenticate method not supported".into(),
             ));
         }
-        if let Some(username) = &self.username {
+        if let Some(username) = &self.cfg.username {
             let auth = PasswordAuthReq {
                 version: 0x01, // This is password auth version not socks version
                 username: VarVec {
@@ -96,8 +109,9 @@ impl SocksClient {
                     contents: username.as_bytes().to_vec(),
                 },
                 password: VarVec {
-                    len: self.password.as_ref().unwrap().len() as u8,
+                    len: self.cfg.password.as_ref().unwrap().len() as u8,
                     contents: self
+                        .cfg
                         .password
                         .as_ref()
                         .ok_or(SError::SocksError("password not provided".into()))?
@@ -115,8 +129,18 @@ impl SocksClient {
     }
 
     async fn handle_tcp(&self, mut tcp_session: TcpSession) -> Result<(), SError> {
-        tracing::info!("connect to socks server: {}", self.addr);
-        let tcp = TcpStream::connect(self.addr.clone()).await?;
+        tracing::info!("connect to socks server: {}", self.cfg.addr);
+        let socket = self.tcp_socket_factory.create_socket().await?;
+        socket.set_nonblocking(true)?;
+        let std_stream: std::net::TcpStream = socket.into();
+        let tokio_socket = tokio::net::TcpSocket::from_std_stream(std_stream);
+        let addr = self.cfg.addr.to_socket_addrs()?.next().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "socks server address not found",
+            )
+        })?;
+        let tcp = tokio_socket.connect(addr).await?;
         tcp.set_nodelay(true)?;
         let mut tcp = self.authenticate(tcp).await?;
         let socksreq = CmdReq {
@@ -134,8 +158,18 @@ impl SocksClient {
     }
 
     async fn handle_udp(&self, mut udp_session: UdpSession) -> Result<(), SError> {
-        tracing::info!("connect to socks server: {}", self.addr);
-        let tcp = TcpStream::connect(self.addr.clone()).await?;
+        tracing::info!("connect to socks server: {}", self.cfg.addr);
+        let socket = self.tcp_socket_factory.create_socket().await?;
+        socket.set_nonblocking(true)?;
+        let std_stream: std::net::TcpStream = socket.into();
+        let tokio_socket = tokio::net::TcpSocket::from_std_stream(std_stream);
+        let addr = self.cfg.addr.to_socket_addrs()?.next().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "socks server address not found",
+            )
+        })?;
+        let tcp = tokio_socket.connect(addr).await?;
         tcp.set_nodelay(true)?;
 
         let mut tcp = self.authenticate(tcp).await?;
@@ -155,13 +189,17 @@ impl SocksClient {
             .expect("socks server return a unresolvable address")
             .next()
             .expect("socks server return a unresolvable address");
-        let bind_addr = if peer_addr.is_ipv4() {
-            "0.0.0.0:0"
-        } else {
-            "[::]:0"
-        };
 
-        let socket = UdpSocket::bind(bind_addr).await?;
+        let udp_socket_factory = UdpSocketFactory {
+            addr: peer_addr.to_string(),
+            interface: self.cfg.socket_opt.bind_interface.clone(),
+            fw_mark: self.cfg.socket_opt.fw_mark,
+            protect_path: None,
+        };
+        let socket = udp_socket_factory.create_socket().await?;
+        socket.set_nonblocking(true)?;
+        let std_socket: std::net::UdpSocket = socket.into();
+        let socket = UdpSocket::from_std(std_socket)?;
         socket.connect(peer_addr).await?;
         let mut upstream = UdpSocksWrap(Arc::new(socket), OnceCell::new_with(Some(peer_addr)));
 

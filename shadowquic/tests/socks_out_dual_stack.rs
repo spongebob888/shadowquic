@@ -118,6 +118,7 @@ async fn spawn_socks() {
         addr: "127.0.0.1:1070".into(),
         username: Some("test".into()),
         password: Some("test".into()),
+        socket_opt: Default::default(),
     });
 
     let client = Manager {

@@ -152,6 +152,9 @@ pub struct SocksClientCfg {
     pub username: Option<String>,
     /// SOCKS5 password, optional
     pub password: Option<String>,
+    /// Socket options like bind interface and fwmark
+    #[serde(flatten)]
+    pub socket_opt: SocketOpt,
 }
 
 /// Socket options
