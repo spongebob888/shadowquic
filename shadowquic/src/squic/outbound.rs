@@ -1,15 +1,18 @@
 use bytes::Bytes;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 
 use tokio::io::AsyncReadExt;
 use tracing::Instrument;
 use tracing::{Level, debug, error, info, span, trace};
 
+use crate::error::SResult;
+use crate::msgs::squic::{ConnStats, ExtOpcodeConn, SQExtError, SQExtOpcode};
 use crate::{
     ProxyRequest,
     error::SError,
-    msgs::{SEncode, socks5::SocksAddr, squic::SQReq},
+    msgs::{SDecode, SEncode, socks5::SocksAddr, squic::SQReq},
     quic::QuicConnection,
     squic::{handle_udp_recv_ctrl, handle_udp_send},
 };
@@ -23,6 +26,13 @@ pub async fn handle_request<C: QuicConnection>(
 ) -> Result<(), SError> {
     let (mut send, recv, id) = QuicConnection::open_bi(&conn.conn).await?;
     let _span = span!(Level::TRACE, "bistream", id = id);
+    let conn_clone = conn.clone();
+    tokio::spawn(
+        async move {
+            let _ = print_stats(&conn_clone).await;
+        }
+        .in_current_span(),
+    );
     let fut = async move {
         match req {
             crate::ProxyRequest::Tcp(mut tcp_session) => {
@@ -104,6 +114,41 @@ pub async fn connect_tcp<C: QuicConnection>(
     trace!("req header sent");
 
     Ok(Unsplit { s: send, r: recv })
+}
+
+pub async fn get_peer_conn_stats<C: QuicConnection>(
+    sq_conn: &SQConn<C>,
+) -> SResult<Result<ConnStats, SQExtError>> {
+    let (mut send, mut recv, _id) = sq_conn.open_bi().await?;
+    let req = SQReq::SQExtension(SQExtOpcode::Conn(ExtOpcodeConn::GetConnStats));
+    req.encode(&mut send).await?;
+    let response = Result::<ConnStats, SQExtError>::decode(&mut recv).await?;
+    Ok(response)
+}
+async fn print_stats<C: QuicConnection>(sq_conn: &SQConn<C>) -> SResult<()> {
+    let stats = sq_conn.get_conn_stats().ok_or(SError::ProtocolUnimpl)?;
+    info!(
+        "[uplink] packet_loss_rate:{:.2}%, rtt:{:.0}ms, mtu:{}",
+        stats.lost_packets as f32 / (stats.sent_packets + 1) as f32 * 100.0,
+        stats.rtt,
+        stats.current_mtu,
+    );
+
+    let stats = tokio::time::timeout(Duration::from_secs(10), get_peer_conn_stats(sq_conn)).await;
+    let stats = match stats {
+        Ok(Ok(Ok(s))) => s,
+        _ => {
+            trace!("[downlink] failed to get peer conn stats. Api may not be implemented");
+            return Err(SError::ProtocolUnimpl);
+        }
+    };
+    info!(
+        "[downlink] packet_loss_rate:{:.2}%, rtt:{:.0}ms, mtu:{}",
+        stats.lost_packets as f32 / (stats.sent_packets + 1) as f32 * 100.0,
+        stats.rtt,
+        stats.current_mtu,
+    );
+    Ok(())
 }
 
 /// associate a udp socket in the remote server

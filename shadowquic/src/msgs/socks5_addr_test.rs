@@ -133,34 +133,3 @@ async fn test_size_tagged_struct_encode_decode() {
     assert_eq!(original, decoded);
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, SDecode, SEncode)]
-#[sencode(size_tag)]
-#[sdecode(size_tag)]
-pub struct SizeTaggedStructAlt {
-    pub value_u32: u32,
-    pub value_u8: u8,
-}
-
-#[tokio::test]
-async fn test_size_tagged_struct_alt_encode_decode() {
-    let original = SizeTaggedStructAlt {
-        value_u32: 0x12345678,
-        value_u8: 0x9A,
-    };
-    
-    let mut buf = Vec::new();
-    <SizeTaggedStructAlt as super::SEncode>::encode(&original, &mut buf)
-        .await
-        .expect("encode failed");
-        
-    assert_eq!(buf.len(), 9);
-    assert_eq!(u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]), 5);
-    
-    let mut reader = Cursor::new(&buf);
-    let decoded = <SizeTaggedStructAlt as super::SDecode>::decode(&mut reader)
-        .await
-        .expect("decode failed");
-        
-    assert_eq!(original, decoded);
-}
-

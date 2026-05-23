@@ -36,15 +36,20 @@ pub enum ExtOpcodeConn {
     /// Get connection stats
     GetConnStats = 0x0,
 }
-
-/// Adding size tag manually mainly for future compatibility
 #[derive(PartialEq, SEncode, SDecode)]
 #[size_tag]
-pub struct ConnStatsResponse {
+pub struct ConnStats {
     pub lost_packets: u64,
     pub sent_packets: u64,
+    /// In unit of milliseconds
     pub rtt: f64,
     pub current_mtu: u16,
+}
+#[derive(PartialEq)]
+#[repr(u8)]
+#[derive(SEncode, SDecode, Debug)]
+pub enum SQExtError {
+    NotAvailable = 0x0,
 }
 
 #[derive(SEncode, SDecode)]

@@ -34,6 +34,7 @@ use crate::{
         maybe_warn_cipher_suite_on_weak_arch, normalize_cipher_suite_preference,
     },
     error::{SError, SResult},
+    msgs::squic::ConnStats,
     quic::{
         MAX_DATAGRAM_WINDOW, MAX_SEND_WINDOW, MAX_STREAM_WINDOW, QuicClient, QuicConnection,
         QuicErrorRepr, QuicServer,

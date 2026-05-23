@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, sync::Arc};
 
-use crate::{error::SResult, utils::socket_opt::SocketFactory};
+use crate::{error::SResult, msgs::squic::ConnStats, utils::socket_opt::SocketFactory};
 use async_trait::async_trait;
 use bytes::Bytes;
 use thiserror::Error;
@@ -57,6 +57,9 @@ pub trait QuicConnection: Send + Sync + Clone + 'static {
     fn close_reason(&self) -> Option<QuicErrorRepr>;
     fn remote_address(&self) -> SocketAddr;
     fn peer_id(&self) -> u64;
+    fn get_conn_stats(&self) -> Option<ConnStats> {
+        None
+    }
 }
 
 #[derive(Error, Debug)]
