@@ -209,41 +209,35 @@ pub struct UdpReqHeader {
     pub dst: SocksAddr,
 }
 
-#[crabtime::function]
-fn gen_num_type_sencode(components: Vec<String>) {
-    // crabtime generate unused variable
-    #![allow(dead_code)]
-    for component in components {
-        crabtime::output! {
-        #[async_trait::async_trait]
-        impl SEncode for {{component}} {
-            async fn encode<T: AsyncWrite + Unpin + Send>(&self, s: &mut T) -> Result<(), SError> {
-                s.write_all(&self.to_be_bytes()).await?;
-                Ok(())
-            }
-        }
+macro_rules! gen_num_type_sencode {
+    ($($t:ty),*) => {
+        $(
+            #[async_trait::async_trait]
+            impl SEncode for $t {
+                async fn encode<T: AsyncWrite + Unpin + Send>(&self, s: &mut T) -> Result<(), SError> {
+                    s.write_all(&self.to_be_bytes()).await?;
+                    Ok(())
                 }
-    }
+            }
+        )*
+    };
 }
-gen_num_type_sencode!(["u8", "u16", "u32", "u64", "u128", "f64"]);
+gen_num_type_sencode!(u8, u16, u32, u64, u128, f64);
 
-#[crabtime::function]
-fn gen_num_type_sdecode(components: Vec<String>) {
-    // crabtime generate unused variable
-    #![allow(dead_code)]
-    for component in components {
-        crabtime::output! {
-        #[async_trait::async_trait]
-        impl SDecode for {{component}} {
-            async fn decode<T: AsyncRead + Unpin + Send>(s: &mut T) -> Result<Self, SError> {
-                let mut buf = [0u8; std::mem::size_of::<{{component}}>()];
-                s.read_exact(&mut buf).await?;
-                let val = {{component}}::from_be_bytes(buf);
-                Ok(val)
-            }
-        }
+macro_rules! gen_num_type_sdecode {
+    ($($t:ty),*) => {
+        $(
+            #[async_trait::async_trait]
+            impl SDecode for $t {
+                async fn decode<T: AsyncRead + Unpin + Send>(s: &mut T) -> Result<Self, SError> {
+                    let mut buf = [0u8; std::mem::size_of::<$t>()];
+                    s.read_exact(&mut buf).await?;
+                    let val = <$t>::from_be_bytes(buf);
+                    Ok(val)
                 }
-    }
+            }
+        )*
+    };
 }
 
-gen_num_type_sdecode!(["u8", "u16", "u32", "u64", "u128", "f64"]);
+gen_num_type_sdecode!(u8, u16, u32, u64, u128, f64);
