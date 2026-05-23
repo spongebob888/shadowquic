@@ -60,7 +60,7 @@ use quote::quote;
 /// and then encodes the content based on the value of disriminant.
 /// For enum variants, at most one field is supported. Named field/or tuple field is not supported for enum.
 ///  `#[repr(*)]` is required for enum to specify the type of discriminant.
-#[proc_macro_derive(SEncode)]
+#[proc_macro_derive(SEncode, attributes(size_tag))]
 pub fn derive_encode(input: TokenStream) -> TokenStream {
     let ast = syn::parse_macro_input!(input as syn::DeriveInput);
 
@@ -185,12 +185,32 @@ fn impl_struct_encode(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenSt
     let fields = get_fields_from_derive_input(st)?;
     let builder_struct_fields_def = generate_struct_encode_fields(fields)?;
 
+    let has_size_tag = st.attrs.iter().any(|attr| attr.path().is_ident("size_tag"));
+
+    let body = if has_size_tag {
+        quote! {
+            use tokio::io::AsyncWriteExt;
+            let mut buf = Vec::new();
+            {
+                let s = &mut buf;
+                #builder_struct_fields_def
+            }
+            let len = buf.len() as u32;
+            len.encode(s).await?;
+            s.write_all(&buf).await?;
+        }
+    } else {
+        quote! {
+            #builder_struct_fields_def
+        }
+    };
+
     //eprintln!("{:#?}",st);
     let ret = quote! {
         #[async_trait::async_trait]
         impl SEncode for #struct_ident {
             async fn encode<T: tokio::io::AsyncWrite + Unpin + Send>(&self, s: &mut T) -> Result<(), SError> {
-                #builder_struct_fields_def
+                #body
                 Ok(())
             }
         }
@@ -373,7 +393,7 @@ fn generate_struct_encode_fields(fields: &StructFields) -> syn::Result<proc_macr
 /// For struct, it decodes each field in order. For enum, it first decodes a u8/u16... defined by `#[repr(*)]` as discriminant and then decodes the content based on the value of disriminant.
 /// For enum variants, at most one field is supported. Named field/or tuple field is not supported for enum.
 /// `#[repr(*)]` is required for enum to specify the type of discriminant.
-#[proc_macro_derive(SDecode)]
+#[proc_macro_derive(SDecode, attributes(size_tag))]
 pub fn derive_decode(input: TokenStream) -> TokenStream {
     let ast = syn::parse_macro_input!(input as syn::DeriveInput);
 
@@ -396,14 +416,34 @@ fn impl_struct_decode(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenSt
     let fields = get_fields_from_derive_input(st)?;
     let builder_struct_fields_def = generate_decode_fields(fields)?;
 
+    let has_size_tag = st.attrs.iter().any(|attr| attr.path().is_ident("size_tag"));
+
+    let body = if has_size_tag {
+        quote! {
+            use tokio::io::AsyncReadExt;
+            let len = u32::decode(s).await? as usize;
+            let mut buf = vec![0u8; len];
+            s.read_exact(&mut buf).await?;
+            let mut reader = &buf[..];
+            let s = &mut reader;
+            Ok(Self {
+                #builder_struct_fields_def
+            })
+        }
+    } else {
+        quote! {
+            Ok(Self {
+                #builder_struct_fields_def
+            })
+        }
+    };
+
     //eprintln!("{:#?}",st);
     let ret = quote! {
         #[async_trait::async_trait]
         impl SDecode for #struct_ident {
             async fn decode<T: tokio::io::AsyncRead + Unpin + Send>(s: &mut T) -> Result<Self, SError> {
-               Ok(Self {
-                #builder_struct_fields_def
-               })
+               #body
             }
         }
     };

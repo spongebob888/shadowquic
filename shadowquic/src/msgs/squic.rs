@@ -36,7 +36,10 @@ pub enum ExtOpcodeConn {
     /// Get connection stats
     GetConnStats = 0x0,
 }
+
+/// Adding size tag manually mainly for future compatibility
 #[derive(PartialEq, SEncode, SDecode)]
+#[size_tag]
 pub struct ConnStatsResponse {
     pub lost_packets: u64,
     pub sent_packets: u64,
