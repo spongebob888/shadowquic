@@ -211,6 +211,8 @@ pub struct UdpReqHeader {
 
 #[crabtime::function]
 fn gen_num_type_sencode(components: Vec<String>) {
+    // crabtime generate unused variable
+    #![allow(dead_code)]
     for component in components {
         crabtime::output! {
         #[async_trait::async_trait]
@@ -227,6 +229,8 @@ gen_num_type_sencode!(["u8", "u16", "u32", "u64", "u128", "f64"]);
 
 #[crabtime::function]
 fn gen_num_type_sdecode(components: Vec<String>) {
+    // crabtime generate unused variable
+    #![allow(dead_code)]
     for component in components {
         crabtime::output! {
         #[async_trait::async_trait]
