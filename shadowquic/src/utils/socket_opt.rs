@@ -140,13 +140,18 @@ mod tests {
         {
             if let Err(e) = res {
                 // Setting non-zero SO_MARK typically requires CAP_NET_ADMIN.
-                // It should either succeed or fail with PermissionDenied/EPERM/EACCES.
+                // Depending on kernel/emulation capabilities, it may also be unsupported.
                 let kind = e.kind();
                 let os_err = e.raw_os_error();
                 assert!(
                     kind == std::io::ErrorKind::PermissionDenied
+                        || kind == std::io::ErrorKind::Unsupported
                         || os_err == Some(1) // EPERM
                         || os_err == Some(13) // EACCES
+                        || os_err == Some(92) // ENOPROTOOPT
+                        || os_err == Some(95) // EOPNOTSUPP
+                        || os_err == Some(22), // EINVAL
+                    "unexpected SO_MARK error kind={kind:?} raw_os_error={os_err:?}"
                 );
             }
         }
