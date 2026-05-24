@@ -65,6 +65,67 @@ def build_rustdoc_json(repo_root: Path) -> Path:
 
 
 # ----------------------------------------------------------------------------
+# PROTOCOL.typ -> SVG -> protocol page
+# ----------------------------------------------------------------------------
+
+
+PROTOCOL_NAV_LABEL = "Protocol"
+PROTOCOL_REL_DIR = "protocol"  # docs/protocol/
+PROTOCOL_SOURCE_NAME = "PROTOCOL.typ"
+PROTOCOL_PDF_NAME = "PROTOCOL.pdf"
+
+
+def build_protocol_pages(repo_root: Path) -> list[Path]:
+    """Render `PROTOCOL.typ` to one SVG per page under `docs/protocol/`.
+
+    Returns the paths (relative to docs/) of the generated SVGs in page order.
+    The current `typst compile` build available on most distros doesn't yet
+    enable the experimental HTML target, so we use SVG and embed each page in
+    a generated markdown file.
+    """
+    src = repo_root / PROTOCOL_SOURCE_NAME
+    if not src.exists():
+        raise SystemExit(f"missing {src}")
+
+    out_dir = DOCS_ROOT / PROTOCOL_REL_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # Wipe any prior pages so deletions in PROTOCOL.typ don't leave stragglers.
+    for stale in out_dir.glob("page-*.svg"):
+        stale.unlink()
+
+    pattern = out_dir / "page-{p}.svg"
+    cmd = ["typst", "compile", str(src), str(pattern)]
+    print(f"$ {' '.join(cmd)}", file=sys.stderr)
+    res = subprocess.run(cmd)
+    if res.returncode != 0:
+        raise SystemExit(f"typst compile failed with exit {res.returncode}")
+
+    pages = sorted(out_dir.glob("page-*.svg"), key=lambda p: int(re.search(r"(\d+)", p.stem).group(1)))
+    return pages
+
+
+def write_protocol_page(svg_pages: list[Path], pdf_link: str | None) -> Path:
+    """Write `docs/protocol/index.md` embedding each SVG page in order."""
+    out_path = DOCS_ROOT / PROTOCOL_REL_DIR / "index.md"
+    body: list[str] = ["# shadowquic protocol\n"]
+    body.append(
+        "Specification of the wire protocol between shadowquic clients and servers. "
+        "Rendered from "
+        "[`PROTOCOL.typ`](https://github.com/spongebob888/shadowquic/blob/main/PROTOCOL.typ).\n"
+    )
+    if pdf_link:
+        body.append(f"[Download PDF]({pdf_link})\n")
+    for i, svg in enumerate(svg_pages, start=1):
+        rel = svg.name  # SVGs sit alongside this index.md
+        body.append(
+            f'![Page {i}]({rel}){{ .protocol-page loading=lazy }}'
+        )
+        body.append("")
+    out_path.write_text("\n".join(body) + "\n")
+    return out_path
+
+
+# ----------------------------------------------------------------------------
 # rustdoc JSON helpers
 # ----------------------------------------------------------------------------
 
@@ -1048,7 +1109,7 @@ NAV_BEGIN = "# >>> generated nav"
 NAV_END = "# <<< generated nav"
 
 
-def render_nav(pages: list[PageSpec]) -> str:
+def render_nav(pages: list[PageSpec], include_protocol: bool = False) -> str:
     """Render a `nav = [...]` TOML block matching the page layout."""
     # Group pages by their second path component (configuration/<group>/...).
     cfg_pages = [p for p in pages if p.rel_path.startswith("configuration/")]
@@ -1088,7 +1149,11 @@ def render_nav(pages: list[PageSpec]) -> str:
             lines.append(f'      {{ "{p.nav_label}" = "{p.rel_path}" }}{comma}')
         lines.append('    ] }')
 
-    lines.append('  ] }')
+    if include_protocol:
+        lines.append('  ] },')
+        lines.append(f'  {{ "{PROTOCOL_NAV_LABEL}" = "{PROTOCOL_REL_DIR}/index.md" }}')
+    else:
+        lines.append('  ] }')
     lines.append("]")
     return "\n".join(lines) + "\n"
 
@@ -1172,6 +1237,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="wipe docs/configuration before regenerating",
     )
+    parser.add_argument(
+        "--skip-protocol",
+        action="store_true",
+        help="don't render PROTOCOL.typ; useful when typst isn't installed",
+    )
     args = parser.parse_args(argv)
 
     if args.json:
@@ -1230,8 +1300,31 @@ def main(argv: list[str] | None = None) -> int:
         out_path.write_text(body)
         print(f"wrote {out_path.relative_to(REPO_ROOT)}", file=sys.stderr)
 
+    # Protocol spec (PROTOCOL.typ -> SVG pages -> markdown)
+    include_protocol = False
+    if not args.skip_protocol:
+        if shutil.which("typst") is None:
+            print(
+                "warn: `typst` not found on PATH; skipping PROTOCOL.typ render. "
+                "Install typst or pass --skip-protocol to silence.",
+                file=sys.stderr,
+            )
+        else:
+            svg_pages = build_protocol_pages(REPO_ROOT)
+            pdf_link = (
+                f"https://github.com/spongebob888/shadowquic/raw/main/{PROTOCOL_PDF_NAME}"
+                if (REPO_ROOT / PROTOCOL_PDF_NAME).exists()
+                else None
+            )
+            out_path = write_protocol_page(svg_pages, pdf_link)
+            print(f"wrote {out_path.relative_to(REPO_ROOT)}", file=sys.stderr)
+            include_protocol = True
+
     # Update nav
-    patch_zensical_nav(SITE_ROOT / "zensical.toml", render_nav(pages))
+    patch_zensical_nav(
+        SITE_ROOT / "zensical.toml",
+        render_nav(pages, include_protocol=include_protocol),
+    )
     print(
         f"updated nav in {(SITE_ROOT / 'zensical.toml').relative_to(REPO_ROOT)}",
         file=sys.stderr,

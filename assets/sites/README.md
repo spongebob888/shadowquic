@@ -30,6 +30,9 @@ assets/sites/
 - A nightly Rust toolchain (`rustup install nightly`) — rustdoc's JSON
   output is nightly-only.
 - [uv](https://docs.astral.sh/uv/) for Python tooling.
+- [typst](https://github.com/typst/typst) (`brew install typst`) — used to
+  render `PROTOCOL.typ` to per-page SVGs that are embedded in the site.
+  Pass `--skip-protocol` to `gen_docs.py` if you don't have it installed.
 
 ## Regenerate and preview
 

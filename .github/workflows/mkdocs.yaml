@@ -40,6 +40,9 @@ jobs:
           enable-cache: true
           cache-dependency-glob: assets/sites/uv.lock
 
+      - name: Install typst
+        uses: typst-community/setup-typst@v4
+
       - name: Setup pages
         uses: actions/configure-pages@v6
 

@@ -36,7 +36,8 @@ nav = [
       { "DNS strategy" = "configuration/shared/dnsstrategy.md" },
       { "Interface" = "configuration/shared/interface.md" }
     ] }
-  ] }
+  ] },
+  { "Protocol" = "protocol/index.md" }
 ]
 # <<< generated nav
 
