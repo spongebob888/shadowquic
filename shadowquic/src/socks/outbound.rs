@@ -129,7 +129,7 @@ impl SocksClient {
     }
 
     async fn handle_tcp(&self, mut tcp_session: TcpSession) -> Result<(), SError> {
-        tracing::info!("connect to socks server: {}", self.cfg.addr);
+        tracing::info!(server = %self.cfg.addr, "connect to socks server");
         let socket = self.tcp_socket_factory.create_socket().await?;
         let std_stream: std::net::TcpStream = socket.into();
         let tokio_socket = tokio::net::TcpSocket::from_std_stream(std_stream);

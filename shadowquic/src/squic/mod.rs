@@ -285,7 +285,7 @@ impl<W: AsyncWrite> AssociateSendSession<W> {
         } else {
             let id = self.id_store.fetch_new_id(()).await;
             self.dst_map.insert(addr.clone(), id);
-            trace!("send session: insert id:{}, addr:{}", id, addr);
+            debug!(context_id = id, dst = %addr, "send session insert");
             (id, true)
         }
     }
@@ -334,7 +334,7 @@ impl AssociateRecvSession {
             self.id_store
                 .store_socket_with_prelude(id, (socks, dst.clone()))
                 .await?;
-            trace!("recv session: insert id:{}, addr:{}", id, dst);
+            debug!(context_id = id, dst = %dst, "recv session insert");
             e.insert(dst);
         }
         Ok(())
@@ -446,7 +446,7 @@ pub async fn handle_udp_recv_ctrl<C: QuicConnection>(
     };
     loop {
         let SQUdpControlHeader { id, dst } = SQUdpControlHeader::decode(&mut recv).await?;
-        trace!("udp control header received: id:{},dst:{}", id, dst);
+        info!(context_id = id, dst = %dst, "udp control header received");
         let _ = session
             .store_socket(id, dst, udp_socket.clone())
             .await
@@ -478,11 +478,11 @@ pub async fn handle_udp_packet_recv<C: QuicConnection>(conn: SQConn<C>) -> Resul
                 let (mut uni_stream, _id) = conn.accept_uni().await?;
                 trace!("unistream accepted");
                 let SQPacketDatagramHeader{id} = SQPacketDatagramHeader::decode(&mut uni_stream).await?;
-                event!(Level::TRACE, "resolving datagram id:{}",id);
+                trace!(context_id = id, "resolving datagram id");
 
                 let (udp,addr) = id_store.get_socket_or_wait(id).await?;
 
-                info!("udp over stream: id:{}: {}->{}",id, conn.remote_address(), addr);
+                info!(context_id = id, peer_addr = %conn.remote_address(), dst = %addr, "udp over stream");
                 Ok((uni_stream,udp.clone(),addr.clone())) as Result<(C::RecvStream,AnyUdpSend,SocksAddr),SError>
             } => {
 

@@ -5,7 +5,7 @@ use tokio::sync::mpsc::{Receiver, Sender, channel};
 
 use tokio::io::AsyncReadExt;
 use tracing::Instrument;
-use tracing::{Level, debug, error, info, span, trace};
+use tracing::{Level, error, info, span, trace};
 
 use crate::error::SResult;
 use crate::msgs::squic::{ConnStats, ExtOpcodeConn, SQExtError, SQExtOpcode};
@@ -36,11 +36,11 @@ pub async fn handle_request<C: QuicConnection>(
     let fut = async move {
         match req {
             crate::ProxyRequest::Tcp(mut tcp_session) => {
-                debug!("bistream opened for tcp dst:{}", tcp_session.dst.clone());
+                info!(dst = %tcp_session.dst, "bistream opened for tcp");
                 //let _enter = _span.enter();
                 let req = SQReq::SQConnect(tcp_session.dst.clone());
                 req.encode(&mut send).await?;
-                trace!("tcp connect req header sent");
+                trace!(dst = %tcp_session.dst, "tcp connect req header sent");
 
                 let u = tokio::io::copy_bidirectional(
                     &mut Unsplit { s: send, r: recv },
@@ -53,10 +53,7 @@ pub async fn handle_request<C: QuicConnection>(
                 );
             }
             crate::ProxyRequest::Udp(udp_session) => {
-                info!(
-                    "bistream opened for udp dst:{}",
-                    udp_session.bind_addr.clone()
-                );
+                info!(bind_addr = %udp_session.bind_addr, "bistream opened for udp association");
                 let req = if over_stream {
                     SQReq::SQAssociatOverStream(udp_session.bind_addr.clone())
                 } else {
@@ -107,11 +104,11 @@ pub async fn connect_tcp<C: QuicConnection>(
 
     let (mut send, recv, _id) = conn.open_bi().await?;
 
-    info!("bistream opened for tcp dst:{}", dst.clone());
+    info!(dst = %dst, "bistream opened for tcp");
     //let _enter = _span.enter();
     let req = SQReq::SQConnect(dst.clone());
     req.encode(&mut send).await?;
-    trace!("req header sent");
+    trace!("tcp connect req header sent");
 
     Ok(Unsplit { s: send, r: recv })
 }
@@ -176,7 +173,7 @@ pub async fn associate_udp<C: QuicConnection>(
 
     let (mut send, recv, _id) = conn.open_bi().await?;
 
-    info!("bistream opened for udp dst:{}", dst.clone());
+    info!(bind_addr = %dst, "bistream opened for udp association");
 
     let req = if over_stream {
         SQReq::SQAssociatOverStream(dst.clone())

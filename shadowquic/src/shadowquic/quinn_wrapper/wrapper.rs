@@ -166,13 +166,13 @@ impl QuicClient for Endpoint {
                 }
                 Err(e) => {
                     let x = e.await?;
-                    trace!("1-rtt quic connection established");
+                    debug!("1-rtt quic connection established");
                     x
                 }
             }
         } else {
             let x = conn.await?;
-            trace!("1-rtt quic connection established");
+            debug!("1-rtt quic connection established");
             x
         };
         if conn.is_jls() == Some(false) {

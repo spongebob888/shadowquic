@@ -16,7 +16,7 @@ use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 
 use anyhow::Result;
-use tracing::{Instrument, trace, trace_span};
+use tracing::{Instrument, info, info_span};
 
 use super::UdpSocksWrap;
 
@@ -140,7 +140,6 @@ impl SocksServer {
         };
 
         reply.encode(&mut s).await?;
-        trace!("socks request accepted: {}", req.dst);
         Ok((s, req, socket))
     }
 }
@@ -149,20 +148,25 @@ impl SocksServer {
 impl Inbound for SocksServer {
     async fn accept(&mut self) -> Result<ProxyRequest, SError> {
         let (stream, addr) = self.listener.accept().await?;
-        let span = trace_span!("socks", src = addr.to_string());
+        let span = info_span!("socks", src = addr.to_string());
+        let _enter = span.enter();
         // ipv4 may be mapped for dual stack socket
         let local_addr = to_ipv4_mapped(stream.local_addr().unwrap());
 
         let (s, req, socket) = self
             .handle_socks(stream, local_addr)
-            .instrument(span)
+            .in_current_span()
             .await?;
         match req.cmd {
-            SOCKS5_CMD_TCP_CONNECT => Ok(ProxyRequest::Tcp(TcpSession {
-                stream: Box::new(s),
-                dst: req.dst,
-            })),
+            SOCKS5_CMD_TCP_CONNECT => {
+                info!(dst = %req.dst, "tcp connect request accepted");
+                Ok(ProxyRequest::Tcp(TcpSession {
+                    stream: Box::new(s),
+                    dst: req.dst,
+                }))
+            }
             SOCKS5_CMD_UDP_ASSOCIATE => {
+                info!(bind_dst = %req.dst, "udp associate request accepted");
                 let socket = Arc::new(socket.unwrap());
                 Ok(ProxyRequest::Udp(UdpSession {
                     send: Arc::new(UdpSocksWrap(socket.clone(), Default::default())),

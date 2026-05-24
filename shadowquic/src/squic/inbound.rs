@@ -6,7 +6,7 @@ use tokio::{
     select,
     sync::mpsc::{Sender, channel},
 };
-use tracing::{Instrument, Level, event, info, trace, trace_span};
+use tracing::{Instrument, info, trace, trace_span};
 
 use crate::{
     ProxyRequest, TcpSession, TcpTrait, UdpSession,
@@ -32,11 +32,7 @@ pub struct SQServerConn<C: QuicConnection> {
 impl<C: QuicConnection> SQServerConn<C> {
     pub async fn handle_connection(self, req_send: Sender<ProxyRequest>) -> Result<(), SError> {
         let conn = &self.inner;
-        event!(
-            Level::INFO,
-            "incoming from {} accepted",
-            conn.remote_address()
-        );
+        info!(peer_address = %conn.remote_address(), "incoming connection accepted");
         let conn_clone = self.inner.clone();
         tokio::spawn(async move {
             let _ = handle_udp_packet_recv(conn_clone).in_current_span().await;
@@ -73,11 +69,7 @@ impl<C: QuicConnection> SQServerConn<C> {
         match req {
             SQReq::SQConnect(dst) => {
                 wait_sunny_auth(&self.inner).await?;
-                info!(
-                    "connect request: {}->{} accepted",
-                    self.inner.remote_address(),
-                    dst.clone()
-                );
+                info!(dst = %dst, "tcp connect request accepted");
                 let tcp: TcpSession = TcpSession {
                     stream: Box::new(Unsplit { s: send, r: recv }),
                     dst,
@@ -90,7 +82,7 @@ impl<C: QuicConnection> SQServerConn<C> {
             ref req @ (SQReq::SQAssociatOverDatagram(ref dst)
             | SQReq::SQAssociatOverStream(ref dst)) => {
                 wait_sunny_auth(&self.inner).await?;
-                info!("association request to {} accepted", dst.clone());
+                info!(bind_addr = %dst, "udp associate request accepted");
                 let (local_send, udp_recv) = channel::<(Bytes, SocksAddr)>(10);
                 let (udp_send, local_recv) = channel::<(Bytes, SocksAddr)>(10);
                 let udp: UdpSession = UdpSession {
