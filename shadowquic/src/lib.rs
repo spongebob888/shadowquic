@@ -24,6 +24,8 @@ pub mod utils;
 
 pub use msgs::SDecode;
 pub use msgs::SEncode;
+
+use crate::utils::udp_dst::get_udp_first_dst;
 pub enum ProxyRequest<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend> {
     Tcp(TcpSession<T>),
     Udp(UdpSession<I, O>),
@@ -49,6 +51,22 @@ pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
     /// Control stream, should be kept alive during session.
     stream: Option<AnyTcp>,
     bind_addr: SocksAddr,
+    first_dst: Option<SocksAddr>,
+}
+impl UdpSession<AnyUdpRecv, AnyUdpSend> {
+    async fn get_first_dst(self) -> Result<Self, SError> {
+        if self.first_dst.is_some() {
+            return Ok(self);
+        }
+        let (recv, dst) = get_udp_first_dst(self.recv).await?;
+        Ok(UdpSession {
+            recv,
+            send: self.send,
+            stream: self.stream,
+            bind_addr: self.bind_addr,
+            first_dst: Some(dst),
+        })
+    }
 }
 
 pub type AnyTcp = Box<dyn TcpTrait>;
@@ -87,6 +105,7 @@ impl UdpRecv for Receiver<(Bytes, SocksAddr)> {
         Ok(r)
     }
 }
+
 pub struct Manager {
     pub inbound: Box<dyn Inbound>,
     pub outbound: Box<dyn Outbound>,

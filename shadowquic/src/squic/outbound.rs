@@ -53,9 +53,11 @@ pub async fn handle_request<C: QuicConnection>(
                 );
             }
             crate::ProxyRequest::Udp(udp_session) => {
+                let udp_session = udp_session.get_first_dst().await?;
                 info!(
-                    "bistream opened for udp dst:{}",
-                    udp_session.bind_addr.clone()
+                    "bistream opened for udp bind_dst:{}, first_dst:{}",
+                    udp_session.bind_addr.clone(),
+                    udp_session.first_dst.unwrap()
                 );
                 let req = if over_stream {
                     SQReq::SQAssociatOverStream(udp_session.bind_addr.clone())

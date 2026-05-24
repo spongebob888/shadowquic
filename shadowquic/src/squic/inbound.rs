@@ -98,6 +98,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                     recv: Box::new(udp_recv),
                     stream: None,
                     bind_addr: dst.clone(),
+                    first_dst: None,
                 };
                 let local_send = Arc::new(local_send);
                 req_send

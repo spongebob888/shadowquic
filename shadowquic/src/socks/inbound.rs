@@ -169,6 +169,7 @@ impl Inbound for SocksServer {
                     recv: Box::new(UdpSocksWrap(socket, Default::default())),
                     bind_addr: req.dst,
                     stream: Some(Box::new(s)),
+                    first_dst: None,
                 }))
             }
             _ => {
