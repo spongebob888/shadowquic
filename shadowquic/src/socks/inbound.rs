@@ -148,7 +148,7 @@ impl SocksServer {
 impl Inbound for SocksServer {
     async fn accept(&mut self) -> Result<ProxyRequest, SError> {
         let (stream, addr) = self.listener.accept().await?;
-        let span = info_span!("socks", src = addr.to_string());
+        let span = info_span!("socks", src = %addr);
         let _enter = span.enter();
         // ipv4 may be mapped for dual stack socket
         let local_addr = to_ipv4_mapped(stream.local_addr().unwrap());
