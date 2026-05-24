@@ -322,20 +322,20 @@ The response can be expressed by RUST data struct,```rust Result<ConnStats, ExtE
 ```rust
 pub struct ConnStats {
     /// The length of the this data, 8+8+8+2=26
-    pub len: u32
+    pub len: u32,
     pub lost_packets: u64,
     pub sent_packets: u64,
     /// In unit of milliseconds
     pub rtt: f64,
     pub current_mtu: u16,
 }
-// 1 byte tag for enum variant
+/// 1 byte tag for enum variant
 #[repr(u8)]
 pub enum SQExtError {
     NotAvailable = 0x0,
 }
 
-// 1 byte tag for enum variant
+/// 1 byte tag for enum variant
 #[repr(u8)]
 pub enum Result<ConnStats, ExtError> {
   Ok(ConnStats)=0x0,
