@@ -1,4 +1,27 @@
 #set par(justify: true)
+
+#let protocol-table(columns, ..cells) = {
+  let cell-list = cells.pos()
+  let cols-count = if type(columns) == array { columns.len() } else { columns }
+  let styled-cells = cell-list
+    .enumerate()
+    .map(((i, cell)) => {
+      let row = calc.floor(i / cols-count)
+      if row == 0 {
+        cell
+      } else {
+        text(size: 0.85em, cell)
+      }
+    })
+  table(
+    columns: columns,
+    align: center + horizon,
+    fill: (col, row) => if row == 0 { rgb("#f0f4f8") } else { none },
+    stroke: 0.5pt + rgb("#d0d7de"),
+    ..styled-cells
+  )
+}
+
 = Introduction
 *ShadowQUIC* is 0-RTT QUIC based proxy with SNI camouflage.
 
@@ -11,59 +34,61 @@ Each proxy request is started with a command carried by a bistream. Only client 
 
 There are three types of command indicated by `CMD` field:
 - `0x01` : TCP Connect
-  ```plain
-  +-------+---------------+
-  |  CMD  |   SOCKSADDR   |
-  +-------+---------------+
-  |   1   |   Variable    |
-  +-------+---------------+
-  ```
+  #protocol-table(
+    (1fr, 3fr),
+    [*`CMD`*],
+    [*`SOCKSADDR`*],
+    [1],
+    [Variable],
+  )
 - `0x03` : UDP Association over datagram extension
-  ```plain
-  +-------+---------------+
-  |  CMD  |   SOCKSADDR   |
-  +-------+---------------+
-  |   1   |   Variable    |
-  +-------+---------------+
-  ```
+  #protocol-table(
+    (1fr, 3fr),
+    [*`CMD`*],
+    [*`SOCKSADDR`*],
+    [1],
+    [Variable],
+  )
   - The SOCKSADDR carries the binding address indicating which
     address and port client is listening on the remote. It is *NOT*
     the destination address.
 
 - `0x04` : UDP Association over unistream
-  ```plain
-  +-------+---------------+
-  |  CMD  |   SOCKSADDR   |
-  +-------+---------------+
-  |   1   |   Variable    |
-  +-------+---------------+
-  ```
+  #protocol-table(
+    (1fr, 3fr),
+    [*`CMD`*],
+    [*`SOCKSADDR`*],
+    [1],
+    [Variable],
+  )
 - `0x05` : SunnyQUIC authentication
-  ```plain
-  +-------+---------------+
-  |  CMD  |   AUTH_HASH   |
-  +-------+---------------+
-  |   1   |       64      |
-  +-------+---------------+
-  ```
+  #protocol-table(
+    (1fr, 3fr),
+    [*`CMD`*],
+    [*`AUTH_HASH`*],
+    [1],
+    [64],
+  )
 - `0xFF` : Customized Extensions
   - User can customize protocol by adding 8 byte new opcode as subcommand
-  ```plain
-  +-------+---------------+
-  |  CMD  |   OPCODE      |
-  +-------+---------------+
-  |   1   |       8       |
-  +-------+---------------+
-  ```
+  #protocol-table(
+    (1fr, 3fr),
+    [*`CMD`*],
+    [*`OPCODE`*],
+    [1],
+    [8],
+  )
 
 `SOCKSADDR` field is socks address format:
-```plain
-+---------+-----------+--------+
-|  ATYP   |   ADDR    |  PORT  |
-+---------+-----------+--------+
-|    1    | Variable  |    2   |
-+---------+-----------+--------+
-```
+#protocol-table(
+  (1fr, 2fr, 1fr),
+  [*`ATYP`*],
+  [*`ADDR`*],
+  [*`PORT`*],
+  [1],
+  [Variable],
+  [2],
+)
 - ATYP   address type of following address
   - IP V4 address: `0x01`
   - DOMAINNAME: `0x03`
@@ -84,7 +109,7 @@ The UDP proxy scheme is greatly different from common protocol like TUIC/hysteri
 #import "@preview/cetz:0.5.0"
 
 #figure(
-  cetz.canvas(length: 1cm, {
+  scale(83%, cetz.canvas(length: 1cm, {
     import cetz.draw: *
 
     let col-client = 2
@@ -202,19 +227,19 @@ The UDP proxy scheme is greatly different from common protocol like TUIC/hysteri
       padding: 0.2,
       text(size: 7pt, fill: red)[_control stream closed → UDP association terminated_],
     )
-  }),
-  caption: [UDP Association data transfer process],
+  })),
+  caption: [UDP Association data transfer process. CID = 1 means `Context ID = 1`],
 )
 
 
 The design has heavily considerred #link("https://www.rfc-editor.org/rfc/rfc9298.html")[RFC 9298]
-```plain
-+---------------+--------------+
-|   SOCKSADDR   |  CONTEXT ID  |
-+---------------+--------------+
-|   Variable    |      2       |
-+---------------+--------------+
-```
+#protocol-table(
+  (3fr, 2fr),
+  [*`SOCKSADDR`*],
+  [*`CONTEXT ID`*],
+  [Variable],
+  [2],
+)
 UDP Associate command is carried by bistream called *control stream*.
 For each datagram received from local socket or remote socket a control header
 consists of `SOCKSADDR` and `CONTEXT ID` is sent.
@@ -223,7 +248,7 @@ The `CONTEXT ID` is used to identify the datagram stream of this destination
 (even for receiving the returning packet of destination server).
 
 When receving datagram from destination, the destination address must be the same as sending address.
-If outgoing packet is domain address type, the receving packet must destination address must be the same.
+If outgoing packet is domain address type, the receving packet must use doamin as destination too. Resolved IP address is *NOT* allowed.
 
 For each connection, implementation must maintain two `CONTEXT ID` spaces.
 One is for client to server direction. The other is for server to client direction.
@@ -247,31 +272,104 @@ For each datagram from local socket or remote socket the `SOCKSADDR` and
 `CONTEXT ID` pair will be sent *at least once* for each new `CONTEXT ID`.
 
 === Associate Over Stream
-```plain
-+---------------+--------------+--------------+--------------+--------------+-----+
-|  CONTEXT ID   |     LEN      |    PAYLOAD   |     LEN      |    PAYLOAD   | ... |
-+---------------+--------------+--------------+--------------+--------------+-----+
-|      2        |      2       |   Variable   |      2       |   Variable   | ... |
-+---------------+--------------+--------------+--------------+--------------+-----+
-```
+#protocol-table(
+  (2fr, 1fr, 2fr, 1fr, 2fr, 1fr),
+  [*`CONTEXT ID`*],
+  [*`LEN`*],
+  [*`PAYLOAD`*],
+  [*`LEN`*],
+  [*`PAYLOAD`*],
+  [*`...`*],
+  [2],
+  [2],
+  [Variable],
+  [2],
+  [Variable],
+  [...],
+)
 
 If the datagram is carried by QUIC unistream, a 2 byte length tag is prepended to the payload. For the following datagram with the same context id, unistream could be reused,
 and context id is not needed to be sent. Only LEN field and PAYLOAD will be sent.
 Namely for each unistream, CONTEXT ID is sent only once right after this stream is opened,
 
 === Associate Over Datagram
-```plain
-+---------------+--------------+
-|  CONTEXT ID   |    PAYLOAD   |
-+---------------+--------------+
-|      2        |   Variable   |
-+---------------+--------------+
-```
+#protocol-table(
+  (1fr, 2fr),
+  [*`CONTEXT ID`*],
+  [*`PAYLOAD`*],
+  [2],
+  [Variable],
+)
 If datagrams are carried by QUIC datagram extension, the payload is sent directly without length field (only with `Context ID`).
 
 
 == Custom commands
-In order to provide flexiblity, we define `0xFF` to be _customized extensions_. User can define the own subcommand to extend protocol usage.
+In order to provide flexiblity, we define `0xFF` to be _customized extensions_. Users can define their own subcommand to extend protocol usage.
+
+Here is an example of subcommand `Conn`. `Conn` subcommand can accept one byte parameter, Here 0x0 means GetConnStats. The stream will return QUIC connection stats in this bistream.
+
+#protocol-table(
+  (1fr, 1fr, 1fr),
+  [*`CMD(0xff)`*],
+  [*`OPCODE(0x1)`*],
+  [*`GetConnStats(0x0)`*],
+  [1],
+  [8],
+  [1],
+)
+
+The response can be expressed by RUST data struct,```rust Result<ConnStats, ExtError>```:
+```rust
+pub struct ConnStats {
+    /// The length of the this data, 8+8+8+2=26
+    pub len: u32
+    pub lost_packets: u64,
+    pub sent_packets: u64,
+    /// In unit of milliseconds
+    pub rtt: f64,
+    pub current_mtu: u16,
+}
+// 1 byte tag for enum variant
+#[repr(u8)]
+pub enum SQExtError {
+    NotAvailable = 0x0,
+}
+
+// 1 byte tag for enum variant
+#[repr(u8)]
+pub enum Result<ConnStats, ExtError> {
+  Ok(ConnStats)=0x0,
+  Err(ExtError)=0x1,
+}
+```
+
+Note that the length of `ConnStats` is encoded in u32 and prepended to the message content. The length field is mainly for future compatibility
+
+Here is the serialized bytes stream of response ```rust Ok(ConnStats)```
+
+#protocol-table(
+  (1fr, 1fr, 1fr, 1fr, 1fr, 1fr),
+  [*`Ok(0x0)`*],
+  [*`len(0x1a)`*],
+  [*`lost_packets`*],
+  [*`sent_packets`*],
+  [*`rtt`*],
+  [*`current_mtu`*],
+  [1],
+  [4],
+  [8],
+  [8],
+  [8],
+  [2],
+)
+
+
+
+=== Subcommand `OPCODE`
+Here is the list of supported subcommands
+- `Conn(0x1)`: connection subcommand, used to deal with per connection operation.
+
+
 
 
 
@@ -285,13 +383,13 @@ The underlying connection is native QUIC connection.
 == Authentication
 SunnyQUIC adds a new _authentication_ command. The command is carried by the bistream.
 
-```plain
-+-------+---------------+
-|  CMD  |   AUTH_HASH   |
-+-------+---------------+
-|   1   |       64      |
-+-------+---------------+
-```
+#protocol-table(
+  (1fr, 3fr),
+  [*`CMD`*],
+  [*`AUTH_HASH`*],
+  [1],
+  [64],
+)
 The `CMD` field is `0x5` for authentication command, The `AUTH_HASH` field is truncated 64byte hash:
 `SHA256(username:password)[0..64]`
 
