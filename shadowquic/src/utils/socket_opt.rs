@@ -277,12 +277,17 @@ mod tests {
             while !ip_node.is_null() {
                 let node = unsafe { &*ip_node };
                 let str_bytes = &node.IpAddress.String;
-                let null_pos = str_bytes.iter().position(|&b| b == 0).unwrap_or(str_bytes.len());
+                let null_pos = str_bytes
+                    .iter()
+                    .position(|&b| b == 0)
+                    .unwrap_or(str_bytes.len());
                 let ip_str = std::str::from_utf8(&str_bytes[..null_pos]).unwrap_or("");
                 if ip_str == local_ipv4_str.as_str() {
                     let name_bytes = &a.AdapterName;
-                    let null_pos =
-                        name_bytes.iter().position(|&b| b == 0).unwrap_or(name_bytes.len());
+                    let null_pos = name_bytes
+                        .iter()
+                        .position(|&b| b == 0)
+                        .unwrap_or(name_bytes.len());
                     return std::str::from_utf8(&name_bytes[..null_pos])
                         .ok()
                         .map(str::to_string);
