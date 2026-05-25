@@ -262,7 +262,9 @@ mod tests {
     /// returned GUID string is accepted by `if_nametoindex` on Windows.
     #[cfg(target_os = "windows")]
     fn get_default_interface_name() -> Option<String> {
-        use windows::Win32::NetworkManagement::IpHelper::{GetAdaptersInfo, IP_ADAPTER_INFO};
+        use windows::Win32::NetworkManagement::IpHelper::{
+            GetAdaptersInfo, IP_ADAPTER_INFO, IP_ADDR_STRING,
+        };
         let local_ip = get_local_ip()?;
         let local_ipv4_str = match local_ip {
             std::net::IpAddr::V4(v4) => v4.to_string(),
@@ -287,7 +289,7 @@ mod tests {
         while !adapter.is_null() {
             let a = unsafe { &*adapter };
             // Walk the singly-linked IP-address list for this adapter.
-            let mut ip_node = &a.IpAddressList as *const _;
+            let mut ip_node: *const IP_ADDR_STRING = &a.IpAddressList as *const _;
             while !ip_node.is_null() {
                 let node = unsafe { &*ip_node };
                 let str_bytes = &node.IpAddress.String;
@@ -302,9 +304,10 @@ mod tests {
                         .iter()
                         .position(|&b| b == 0)
                         .unwrap_or(name_bytes.len());
-                    return std::str::from_utf8(&name_bytes[..null_pos])
-                        .ok()
-                        .map(str::to_string);
+                    let name_u8 = unsafe {
+                        std::slice::from_raw_parts(name_bytes.as_ptr() as *const u8, null_pos)
+                    };
+                    return std::str::from_utf8(name_u8).ok().map(str::to_string);
                 }
                 ip_node = unsafe { (*ip_node).Next };
             }
