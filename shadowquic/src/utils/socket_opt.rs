@@ -74,7 +74,7 @@ impl SocketFactory for UdpSocketFactory {
 
         if let Some(Interface::Device(ref device_name)) = self.interface {
             if addr.ip().is_loopback() {
-                tracing::debug!(
+                tracing::trace!(
                     "skipping bind_device for udp socket to loopback destination {}",
                     addr
                 );
@@ -157,7 +157,7 @@ impl SocketFactory for TcpSocketFactory {
 
         if let Some(Interface::Device(ref device_name)) = self.interface {
             if addr.ip().is_loopback() {
-                tracing::debug!(
+                tracing::trace!(
                     "skipping bind_device for tcp socket to loopback destination {}",
                     addr
                 );
