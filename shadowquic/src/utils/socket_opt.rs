@@ -73,8 +73,15 @@ impl SocketFactory for UdpSocketFactory {
         }
 
         if let Some(Interface::Device(ref device_name)) = self.interface {
-            crate::utils::platform::bind_device(&socket, device_name)?;
-            tracing::debug!("udp socket bound to device {}", device_name);
+            if addr.ip().is_loopback() {
+                tracing::trace!(
+                    "skipping bind_device for udp socket to loopback destination {}",
+                    addr
+                );
+            } else {
+                crate::utils::platform::bind_device(&socket, device_name)?;
+                tracing::debug!("udp socket bound to device {}", device_name);
+            }
         }
 
         #[cfg(target_os = "android")]
@@ -149,8 +156,15 @@ impl SocketFactory for TcpSocketFactory {
         }
 
         if let Some(Interface::Device(ref device_name)) = self.interface {
-            crate::utils::platform::bind_device(&socket, device_name)?;
-            tracing::debug!("tcp socket bound to device {}", device_name);
+            if addr.ip().is_loopback() {
+                tracing::trace!(
+                    "skipping bind_device for tcp socket to loopback destination {}",
+                    addr
+                );
+            } else {
+                crate::utils::platform::bind_device(&socket, device_name)?;
+                tracing::debug!("tcp socket bound to device {}", device_name);
+            }
         }
 
         #[cfg(target_os = "android")]
@@ -279,5 +293,136 @@ mod tests {
         {
             assert!(res.is_ok());
         }
+    }
+
+    // Pick a real, existing non-loopback network interface name on Linux by
+    // reading /sys/class/net. Returns None if no such interface is available
+    // (in which case the test is skipped).
+    #[cfg(target_os = "linux")]
+    fn first_non_loopback_interface() -> Option<String> {
+        std::fs::read_dir("/sys/class/net")
+            .ok()?
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .find(|name| name != "lo")
+    }
+
+    // Verify that when an outbound interface (Interface::Device) is configured
+    // with a *real* non-loopback interface, sockets targeting a loopback
+    // address still work. Without the loopback skip in create_socket(), the
+    // socket would be restricted to the named device by SO_BINDTODEVICE and
+    // would not be able to reach 127.0.0.1, so the end-to-end send/recv below
+    // would time out.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn test_udp_socket_factory_device_loopback() {
+        let Some(iface) = first_non_loopback_interface() else {
+            eprintln!("no non-loopback interface available; skipping");
+            return;
+        };
+
+        // Bind a receiver on loopback.
+        let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let recv_addr = receiver.local_addr().unwrap();
+
+        let factory = UdpSocketFactory {
+            addr: recv_addr.to_string(),
+            interface: Some(Interface::Device(iface.clone())),
+            fw_mark: None,
+            protect_path: None,
+            try_dual_stack: false,
+        };
+        let socket = factory
+            .create_socket()
+            .await
+            .expect("create_socket must succeed for loopback destination");
+        let std_socket: std::net::UdpSocket = socket.into();
+        let sender = tokio::net::UdpSocket::from_std(std_socket).unwrap();
+
+        // If bind_device had been applied for the non-loopback interface, this
+        // send would fail (Network unreachable) because loopback traffic does
+        // not flow through that device. The loopback skip in create_socket()
+        // is what makes this work.
+        sender
+            .send_to(b"hello", recv_addr)
+            .await
+            .expect("send to loopback must succeed when bind_device is skipped");
+
+        let mut buf = [0u8; 16];
+        let (n, _) = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            receiver.recv_from(&mut buf),
+        )
+        .await
+        .expect("receive must not time out")
+        .unwrap();
+        assert_eq!(&buf[..n], b"hello");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn test_tcp_socket_factory_device_loopback() {
+        let Some(iface) = first_non_loopback_interface() else {
+            eprintln!("no non-loopback interface available; skipping");
+            return;
+        };
+
+        // Start a TCP listener on loopback.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listen_addr = listener.local_addr().unwrap();
+
+        let factory = TcpSocketFactory {
+            addr: listen_addr.to_string(),
+            interface: Some(Interface::Device(iface.clone())),
+            fw_mark: None,
+            protect_path: None,
+        };
+        let socket = factory
+            .create_socket()
+            .await
+            .expect("create_socket must succeed for loopback destination");
+
+        // Initiate a non-blocking connect on the socket2 Socket directly.
+        // create_socket() already set it non-blocking, so the call typically
+        // returns WouldBlock/InProgress and the connection completes
+        // asynchronously. If bind_device had been applied to a non-loopback
+        // interface, the connect would fail synchronously (ENETUNREACH) and no
+        // SYN would reach the listener, so the accept below would time out.
+        let _ = socket.connect(&listen_addr.into());
+
+        let accept = tokio::time::timeout(std::time::Duration::from_secs(2), listener.accept())
+            .await
+            .expect("accept must not time out (bind_device must be skipped for loopback)");
+        assert!(accept.is_ok(), "loopback connect must succeed");
+    }
+
+    // On non-Linux platforms, retain a basic smoke test that exercises the
+    // loopback-skip path with a nonexistent device name: create_socket must
+    // still succeed because bind_device is skipped for loopback destinations.
+    #[cfg(not(target_os = "linux"))]
+    #[tokio::test]
+    async fn test_udp_socket_factory_device_loopback() {
+        let factory = UdpSocketFactory {
+            addr: "127.0.0.1:0".to_string(),
+            interface: Some(Interface::Device("nonexistent_device_name_123".to_string())),
+            fw_mark: None,
+            protect_path: None,
+            try_dual_stack: false,
+        };
+        let socket = factory.create_socket().await.unwrap();
+        assert!(socket.local_addr().is_ok());
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[tokio::test]
+    async fn test_tcp_socket_factory_device_loopback() {
+        let factory = TcpSocketFactory {
+            addr: "127.0.0.1:0".to_string(),
+            interface: Some(Interface::Device("nonexistent_device_name_123".to_string())),
+            fw_mark: None,
+            protect_path: None,
+        };
+        let socket = factory.create_socket().await.unwrap();
+        assert!(socket.local_addr().is_ok());
     }
 }
