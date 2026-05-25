@@ -73,8 +73,15 @@ impl SocketFactory for UdpSocketFactory {
         }
 
         if let Some(Interface::Device(ref device_name)) = self.interface {
-            crate::utils::platform::bind_device(&socket, device_name)?;
-            tracing::debug!("udp socket bound to device {}", device_name);
+            if addr.ip().is_loopback() {
+                tracing::debug!(
+                    "skipping bind_device for udp socket to loopback destination {}",
+                    addr
+                );
+            } else {
+                crate::utils::platform::bind_device(&socket, device_name)?;
+                tracing::debug!("udp socket bound to device {}", device_name);
+            }
         }
 
         #[cfg(target_os = "android")]
@@ -149,8 +156,15 @@ impl SocketFactory for TcpSocketFactory {
         }
 
         if let Some(Interface::Device(ref device_name)) = self.interface {
-            crate::utils::platform::bind_device(&socket, device_name)?;
-            tracing::debug!("tcp socket bound to device {}", device_name);
+            if addr.ip().is_loopback() {
+                tracing::debug!(
+                    "skipping bind_device for tcp socket to loopback destination {}",
+                    addr
+                );
+            } else {
+                crate::utils::platform::bind_device(&socket, device_name)?;
+                tracing::debug!("tcp socket bound to device {}", device_name);
+            }
         }
 
         #[cfg(target_os = "android")]
@@ -279,5 +293,36 @@ mod tests {
         {
             assert!(res.is_ok());
         }
+    }
+
+    // Verify that when an outbound interface (Interface::Device) is configured,
+    // creating a socket whose destination is a loopback address still succeeds,
+    // because bind-to-device must be skipped for loopback traffic (loopback
+    // traffic always flows through the `lo` interface, not the configured one).
+    #[tokio::test]
+    async fn test_udp_socket_factory_device_loopback() {
+        let factory = UdpSocketFactory {
+            addr: "127.0.0.1:0".to_string(),
+            interface: Some(Interface::Device("nonexistent_device_name_123".to_string())),
+            fw_mark: None,
+            protect_path: None,
+            try_dual_stack: false,
+        };
+        // Should succeed: bind_device is skipped for loopback destination.
+        let socket = factory.create_socket().await.unwrap();
+        assert!(socket.local_addr().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_tcp_socket_factory_device_loopback() {
+        let factory = TcpSocketFactory {
+            addr: "127.0.0.1:0".to_string(),
+            interface: Some(Interface::Device("nonexistent_device_name_123".to_string())),
+            fw_mark: None,
+            protect_path: None,
+        };
+        // Should succeed: bind_device is skipped for loopback destination.
+        let socket = factory.create_socket().await.unwrap();
+        assert!(socket.local_addr().is_ok());
     }
 }
