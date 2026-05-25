@@ -297,7 +297,10 @@ mod tests {
                     .iter()
                     .position(|&b| b == 0)
                     .unwrap_or(str_bytes.len());
-                let ip_str = std::str::from_utf8(&str_bytes[..null_pos]).unwrap_or("");
+                let str_u8 = unsafe {
+                    std::slice::from_raw_parts(str_bytes.as_ptr() as *const u8, null_pos)
+                };
+                let ip_str = std::str::from_utf8(str_u8).unwrap_or("");
                 if ip_str == local_ipv4_str.as_str() {
                     let name_bytes = &a.AdapterName;
                     let null_pos = name_bytes
