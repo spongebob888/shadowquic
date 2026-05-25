@@ -205,6 +205,95 @@ mod tests {
         None
     }
 
+    /// Returns the name of the interface whose address matches the local routing IP.
+    /// Uses `getifaddrs` to enumerate all interfaces on macOS.
+    #[cfg(target_os = "macos")]
+    fn get_default_interface_name() -> Option<String> {
+        use std::ffi::CStr;
+        let local_ip = get_local_ip()?;
+        let local_ipv4 = match local_ip {
+            std::net::IpAddr::V4(v4) => v4,
+            _ => return None,
+        };
+        let mut addrs: *mut libc::ifaddrs = std::ptr::null_mut();
+        if unsafe { libc::getifaddrs(&mut addrs) } != 0 {
+            return None;
+        }
+        let mut result = None;
+        let mut cur = addrs;
+        while !cur.is_null() {
+            let ifa = unsafe { &*cur };
+            if !ifa.ifa_addr.is_null()
+                && unsafe { (*ifa.ifa_addr).sa_family } as u32 == libc::AF_INET as u32
+            {
+                let sin = ifa.ifa_addr as *const libc::sockaddr_in;
+                let s_addr = unsafe { (*sin).sin_addr.s_addr };
+                let addr = std::net::Ipv4Addr::from(s_addr.to_ne_bytes());
+                if addr == local_ipv4 {
+                    result = unsafe { CStr::from_ptr(ifa.ifa_name) }
+                        .to_str()
+                        .ok()
+                        .map(str::to_string);
+                    break;
+                }
+            }
+            cur = unsafe { (*cur).ifa_next };
+        }
+        unsafe { libc::freeifaddrs(addrs) };
+        result
+    }
+
+    /// Returns the adapter GUID name of the interface whose IP matches the local
+    /// routing IP.  Uses `GetAdaptersInfo` from the Windows IP-Helper API; the
+    /// returned GUID string is accepted by `if_nametoindex` on Windows.
+    #[cfg(target_os = "windows")]
+    fn get_default_interface_name() -> Option<String> {
+        use windows::Win32::NetworkManagement::IpHelper::{GetAdaptersInfo, IP_ADAPTER_INFO};
+        let local_ip = get_local_ip()?;
+        let local_ipv4_str = match local_ip {
+            std::net::IpAddr::V4(v4) => v4.to_string(),
+            _ => return None,
+        };
+        let mut size: u32 = 16384;
+        let mut buf = vec![0u8; size as usize];
+        // First attempt; if the buffer is too small the function updates `size`
+        // and we retry once with the grown buffer.
+        let rc =
+            unsafe { GetAdaptersInfo(Some(buf.as_mut_ptr() as *mut IP_ADAPTER_INFO), &mut size) };
+        if rc != 0 {
+            buf.resize(size as usize, 0);
+            let rc2 = unsafe {
+                GetAdaptersInfo(Some(buf.as_mut_ptr() as *mut IP_ADAPTER_INFO), &mut size)
+            };
+            if rc2 != 0 {
+                return None;
+            }
+        }
+        let mut adapter = buf.as_ptr() as *const IP_ADAPTER_INFO;
+        while !adapter.is_null() {
+            let a = unsafe { &*adapter };
+            // Walk the singly-linked IP-address list for this adapter.
+            let mut ip_node = &a.IpAddressList as *const _;
+            while !ip_node.is_null() {
+                let node = unsafe { &*ip_node };
+                let str_bytes = &node.IpAddress.String;
+                let null_pos = str_bytes.iter().position(|&b| b == 0).unwrap_or(str_bytes.len());
+                let ip_str = std::str::from_utf8(&str_bytes[..null_pos]).unwrap_or("");
+                if ip_str == local_ipv4_str.as_str() {
+                    let name_bytes = &a.AdapterName;
+                    let null_pos =
+                        name_bytes.iter().position(|&b| b == 0).unwrap_or(name_bytes.len());
+                    return std::str::from_utf8(&name_bytes[..null_pos])
+                        .ok()
+                        .map(str::to_string);
+                }
+                ip_node = unsafe { (*ip_node).Next };
+            }
+            adapter = unsafe { (*adapter).Next };
+        }
+        None
+    }
+
     #[tokio::test]
     async fn test_udp_socket_factory_creation() {
         // Create factory with no special options
@@ -449,6 +538,166 @@ mod tests {
     /// capability is absent the test accepts the OS-level permission error.
     #[tokio::test]
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    async fn test_tcp_socket_factory_bind_device() {
+        let iface = match get_default_interface_name() {
+            Some(name) => name,
+            None => return, // skip: no default interface found
+        };
+
+        let factory = TcpSocketFactory {
+            addr: "1.1.1.1:80".to_string(),
+            interface: Some(Interface::Device(iface.clone())),
+            fw_mark: None,
+            protect_path: None,
+        };
+
+        let socket = match factory.create_socket().await {
+            Ok(s) => s,
+            Err(e) => {
+                assert!(
+                    e.raw_os_error().is_some(),
+                    "unexpected error binding to device {iface}: {e}"
+                );
+                return;
+            }
+        };
+
+        let std_stream: std::net::TcpStream = socket.into();
+        let tokio_socket = tokio::net::TcpSocket::from_std_stream(std_stream);
+        let target: std::net::SocketAddr = "1.1.1.1:80".parse().unwrap();
+        let _ = tokio::time::timeout(
+            tokio::time::Duration::from_secs(5),
+            tokio_socket.connect(target),
+        )
+        .await;
+    }
+
+    /// macOS: bind UDP socket to the default network device and send a DNS query
+    /// to 1.1.1.1:53.  Uses `IP_BOUND_IF` / `IPV6_BOUND_IF` via `bind_device`.
+    /// Accepts an OS-level error when the process lacks the required privilege.
+    #[tokio::test]
+    #[cfg(target_os = "macos")]
+    async fn test_udp_socket_factory_bind_device() {
+        let iface = match get_default_interface_name() {
+            Some(name) => name,
+            None => return, // skip: no default interface found
+        };
+
+        let factory = UdpSocketFactory {
+            addr: "1.1.1.1:53".to_string(),
+            interface: Some(Interface::Device(iface.clone())),
+            fw_mark: None,
+            protect_path: None,
+            try_dual_stack: false,
+        };
+
+        let socket = match factory.create_socket().await {
+            Ok(s) => s,
+            Err(e) => {
+                assert!(
+                    e.raw_os_error().is_some(),
+                    "unexpected error binding to device {iface}: {e}"
+                );
+                return;
+            }
+        };
+
+        let std_socket: std::net::UdpSocket = socket.into();
+        let tokio_socket = tokio::net::UdpSocket::from_std(std_socket).unwrap();
+
+        let dns_query: &[u8] = &[
+            0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, b'o',
+            b'n', b'e', 0x03, b'o', b'n', b'e', 0x03, b'o', b'n', b'e', 0x03, b'o', b'n', b'e',
+            0x00, 0x00, 0x01, 0x00, 0x01,
+        ];
+        let _ = tokio_socket.send_to(dns_query, "1.1.1.1:53").await;
+    }
+
+    /// macOS: bind TCP socket to the default network device and attempt a
+    /// connection to 1.1.1.1:80.  Accepts an OS-level error when the process
+    /// lacks the required privilege.
+    #[tokio::test]
+    #[cfg(target_os = "macos")]
+    async fn test_tcp_socket_factory_bind_device() {
+        let iface = match get_default_interface_name() {
+            Some(name) => name,
+            None => return, // skip: no default interface found
+        };
+
+        let factory = TcpSocketFactory {
+            addr: "1.1.1.1:80".to_string(),
+            interface: Some(Interface::Device(iface.clone())),
+            fw_mark: None,
+            protect_path: None,
+        };
+
+        let socket = match factory.create_socket().await {
+            Ok(s) => s,
+            Err(e) => {
+                assert!(
+                    e.raw_os_error().is_some(),
+                    "unexpected error binding to device {iface}: {e}"
+                );
+                return;
+            }
+        };
+
+        let std_stream: std::net::TcpStream = socket.into();
+        let tokio_socket = tokio::net::TcpSocket::from_std_stream(std_stream);
+        let target: std::net::SocketAddr = "1.1.1.1:80".parse().unwrap();
+        let _ = tokio::time::timeout(
+            tokio::time::Duration::from_secs(5),
+            tokio_socket.connect(target),
+        )
+        .await;
+    }
+
+    /// Windows: bind UDP socket to the default network device (adapter GUID) and
+    /// send a DNS query to 1.1.1.1:53.  Uses `IP_UNICAST_IF` via `bind_device`.
+    /// Accepts an OS-level error when the process lacks the required privilege.
+    #[tokio::test]
+    #[cfg(target_os = "windows")]
+    async fn test_udp_socket_factory_bind_device() {
+        let iface = match get_default_interface_name() {
+            Some(name) => name,
+            None => return, // skip: no default interface found
+        };
+
+        let factory = UdpSocketFactory {
+            addr: "1.1.1.1:53".to_string(),
+            interface: Some(Interface::Device(iface.clone())),
+            fw_mark: None,
+            protect_path: None,
+            try_dual_stack: false,
+        };
+
+        let socket = match factory.create_socket().await {
+            Ok(s) => s,
+            Err(e) => {
+                assert!(
+                    e.raw_os_error().is_some(),
+                    "unexpected error binding to device {iface}: {e}"
+                );
+                return;
+            }
+        };
+
+        let std_socket: std::net::UdpSocket = socket.into();
+        let tokio_socket = tokio::net::UdpSocket::from_std(std_socket).unwrap();
+
+        let dns_query: &[u8] = &[
+            0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, b'o',
+            b'n', b'e', 0x03, b'o', b'n', b'e', 0x03, b'o', b'n', b'e', 0x03, b'o', b'n', b'e',
+            0x00, 0x00, 0x01, 0x00, 0x01,
+        ];
+        let _ = tokio_socket.send_to(dns_query, "1.1.1.1:53").await;
+    }
+
+    /// Windows: bind TCP socket to the default network device (adapter GUID) and
+    /// attempt a connection to 1.1.1.1:80.  Accepts an OS-level error when the
+    /// process lacks the required privilege.
+    #[tokio::test]
+    #[cfg(target_os = "windows")]
     async fn test_tcp_socket_factory_bind_device() {
         let iface = match get_default_interface_name() {
             Some(name) => name,
