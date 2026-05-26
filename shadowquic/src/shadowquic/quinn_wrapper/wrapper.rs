@@ -1,3 +1,4 @@
+use std::os::unix::net::UnixDatagram;
 use std::{io, net::SocketAddr, ops::Deref, sync::Arc, time::Duration};
 
 use super::brutal::BrutalConfig;
@@ -25,7 +26,7 @@ use quinn::rustls::crypto::ring as crypto_provider;
 use crate::{
     config::{
         CipherSuitePreference, CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg,
-        maybe_warn_cipher_suite_on_weak_arch, normalize_cipher_suite_preference,
+        StatsConfig, maybe_warn_cipher_suite_on_weak_arch, normalize_cipher_suite_preference,
     },
     error::SResult,
     msgs::squic::ConnStats,
@@ -36,10 +37,64 @@ use crate::{
     utils::socket_opt::{SocketFactory, UdpSocketFactory},
 };
 
-pub type Connection = quinn::Connection;
+pub struct StatsReporter {
+    sock: Option<Arc<UnixDatagram>>,
+    path: Option<std::path::PathBuf>,
+    upstream_id: String,
+    peer: String,
+}
+
+impl Clone for StatsReporter {
+    fn clone(&self) -> Self {
+        Self {
+            sock: self.sock.clone(),
+            path: self.path.clone(),
+            upstream_id: self.upstream_id.clone(),
+            peer: self.peer.clone(),
+        }
+    }
+}
+
+impl StatsReporter {
+    pub fn new(cfg: Option<&StatsConfig>, peer: String) -> Self {
+        let (path, upstream_id) = match cfg {
+            Some(c) => (c.socket_path.clone(), c.upstream_id.clone()),
+            None => (None, None),
+        };
+        let sock = path
+            .as_ref()
+            .and_then(|_| UnixDatagram::unbound().ok().map(Arc::new));
+        Self {
+            sock,
+            path,
+            upstream_id: upstream_id.unwrap_or_else(|| peer.clone()),
+            peer,
+        }
+    }
+
+    pub fn report(&self, rtt_ms: f64, loss_rate: f64, mtu: u16) {
+        let (Some(sock), Some(path)) = (&self.sock, &self.path) else {
+            return;
+        };
+        let payload = format!(
+            r#"{{"upstream_id":"{}","peer":"{}","rtt_ms":{:.3},"loss_rate":{:.4},"mtu":{}}}
+"#,
+            self.upstream_id, self.peer, rtt_ms, loss_rate, mtu
+        );
+        let _ = sock.send_to(payload.as_bytes(), path);
+    }
+}
+
+#[derive(Clone)]
+pub struct Connection {
+    inner: quinn::Connection,
+    reporter: StatsReporter,
+}
+
 pub struct Endpoint {
     inner: quinn::Endpoint,
     zero_rtt: bool,
+    stats_config: Option<StatsConfig>,
 }
 impl Deref for Endpoint {
     type Target = quinn::Endpoint;
@@ -56,22 +111,34 @@ impl QuicConnection for Connection {
     type RecvStream = quinn::RecvStream;
     type SendStream = quinn::SendStream;
     async fn open_bi(&self) -> Result<(Self::SendStream, Self::RecvStream, u64), QuicErrorRepr> {
-        let (send, recv) = self.open_bi().await?;
-
+        let rate: f32 = (self.inner.stats().path.lost_packets as f32)
+            / ((self.inner.stats().path.sent_packets + 1) as f32);
+        let rtt_ms = self.inner.rtt().as_secs_f64() * 1000.0;
+        let mtu = self.inner.stats().path.current_mtu;
+        self.reporter.report(rtt_ms, rate as f64, mtu);
+        info!(
+            "packet_loss_rate:{:.2}%, rtt:{:.3}ms, mtu:{}",
+            rate * 100.0,
+            rtt_ms,
+            mtu,
+        );
+        let (send, recv) = self.inner.open_bi().await?;
         let id = send.id().index();
         Ok((send, recv, id))
     }
 
     async fn accept_bi(&self) -> Result<(Self::SendStream, Self::RecvStream, u64), QuicErrorRepr> {
-        let (send, recv) = self.accept_bi().await?;
-
-        let rate: f32 =
-            (self.stats().path.lost_packets as f32) / ((self.stats().path.sent_packets + 1) as f32);
+        let (send, recv) = self.inner.accept_bi().await?;
+        let rate: f32 = (self.inner.stats().path.lost_packets as f32)
+            / ((self.inner.stats().path.sent_packets + 1) as f32);
+        let rtt_ms = self.inner.rtt().as_secs_f64() * 1000.0;
+        let mtu = self.inner.stats().path.current_mtu;
+        self.reporter.report(rtt_ms, rate as f64, mtu);
         info!(
-            "packet_loss_rate:{:.2}%, rtt:{:?}, mtu:{}",
+            "packet_loss_rate:{:.2}%, rtt:{:.3}ms, mtu:{}",
             rate * 100.0,
-            self.rtt(),
-            self.stats().path.current_mtu,
+            rtt_ms,
+            mtu,
         );
 
         let id = send.id().index();
@@ -79,30 +146,30 @@ impl QuicConnection for Connection {
     }
 
     async fn open_uni(&self) -> Result<(Self::SendStream, u64), QuicErrorRepr> {
-        let send = self.open_uni().await?;
+        let send = self.inner.open_uni().await?;
         let id = send.id().index();
         Ok((send, id))
     }
 
     async fn accept_uni(&self) -> Result<(Self::RecvStream, u64), QuicErrorRepr> {
-        let recv = self.accept_uni().await?;
+        let recv = self.inner.accept_uni().await?;
         let id = recv.id().index();
         Ok((recv, id))
     }
 
     async fn read_datagram(&self) -> Result<Bytes, QuicErrorRepr> {
-        let bytes = self.read_datagram().await?;
+        let bytes = self.inner.read_datagram().await?;
         Ok(bytes)
     }
 
     async fn send_datagram(&self, bytes: Bytes) -> Result<(), QuicErrorRepr> {
         let len = bytes.len();
-        match self.send_datagram(bytes) {
+        match self.inner.send_datagram(bytes) {
             Ok(_) => (),
             Err(SendDatagramError::TooLarge) => warn!(
                 "datagram too large:{}>{}",
                 len,
-                self.max_datagram_size().unwrap()
+                self.inner.max_datagram_size().unwrap()
             ),
             e => e?,
         }
@@ -110,23 +177,24 @@ impl QuicConnection for Connection {
     }
 
     fn close_reason(&self) -> Option<QuicErrorRepr> {
-        self.close_reason().map(|x| x.into())
+        self.inner.close_reason().map(|x| x.into())
     }
     fn remote_address(&self) -> SocketAddr {
-        self.remote_address()
+        self.inner.remote_address()
     }
     fn peer_id(&self) -> u64 {
-        self.stable_id() as u64
+        self.inner.stable_id() as u64
     }
     fn close(&self, error_code: u64, reason: &[u8]) {
-        self.close(VarInt::from_u64(error_code).unwrap(), reason);
+        self.inner
+            .close(VarInt::from_u64(error_code).unwrap(), reason);
     }
     fn get_conn_stats(&self) -> Option<ConnStats> {
-        let stats = self.stats();
+        let stats = self.inner.stats();
         Some(ConnStats {
             lost_packets: stats.path.lost_packets,
             sent_packets: stats.path.sent_packets,
-            rtt: self.rtt().as_secs_f64() * 1000.0,
+            rtt: self.inner.rtt().as_secs_f64() * 1000.0,
             current_mtu: stats.path.current_mtu,
         })
     }
@@ -180,7 +248,13 @@ impl QuicClient for Endpoint {
             conn.close(0u8.into(), b"");
             return Err(QuicErrorRepr::JlsAuthFailed);
         }
-        Ok(conn)
+
+        let peer = conn.remote_address().to_string();
+        let reporter = StatsReporter::new(self.stats_config.as_ref(), peer);
+        Ok(Connection {
+            inner: conn,
+            reporter,
+        })
     }
 
     async fn new_with_socket_factory(
@@ -199,6 +273,7 @@ impl QuicClient for Endpoint {
         Ok(Endpoint {
             inner: end,
             zero_rtt: cfg.zero_rtt,
+            stats_config: Some(cfg.stats.clone()),
         })
     }
 
@@ -403,6 +478,7 @@ impl QuicServer for Endpoint {
         Ok(Endpoint {
             inner: endpoint,
             zero_rtt: cfg.zero_rtt,
+            stats_config: None,
         })
     }
     async fn accept(&self) -> Result<Self::C, QuicErrorRepr> {
@@ -432,7 +508,12 @@ impl QuicServer for Endpoint {
                     connection.close(0u8.into(), b"");
                     return Err(QuicErrorRepr::JlsAuthFailed);
                 }
-                Ok(connection)
+                let peer = connection.remote_address().to_string();
+                let reporter = StatsReporter::new(self.stats_config.as_ref(), peer);
+                Ok(Connection {
+                    inner: connection,
+                    reporter,
+                })
             }
             None => {
                 panic!("Quic endpoint closed");

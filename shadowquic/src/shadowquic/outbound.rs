@@ -14,6 +14,7 @@ use crate::{
     utils::socket_opt::{SocketFactory, UdpSocketFactory},
 };
 
+use crate::quic::QuicConnection;
 use crate::squic::{IDStore, SQConn, handle_udp_packet_recv};
 
 pub type ShadowQuicConn = SQConn<<EndClient as QuicClient>::C>;

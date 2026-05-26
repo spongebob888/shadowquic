@@ -132,6 +132,7 @@ impl Default for ShadowQuicClientCfg {
             cipher_suite_preference: None,
             socket_opt: Default::default(),
             protect_path: Default::default(),
+            stats: StatsConfig::default(),
         }
     }
 }
@@ -159,6 +160,13 @@ impl Default for BrutalParams {
             ack_compensate: default_brutal_ack_compensate(),
         }
     }
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct StatsConfig {
+    pub socket_path: Option<std::path::PathBuf>,
+    pub upstream_id: Option<String>,
 }
 
 /// Shadowquic outbound configuration
@@ -238,6 +246,10 @@ pub struct ShadowQuicClientCfg {
     /// Socket options like bind interface and fwmark
     #[serde(flatten)]
     pub socket_opt: SocketOpt,
+
+    /// Stats push to xtp-rs Unix DGRAM socket.
+    #[serde(default)]
+    pub stats: StatsConfig,
 }
 
 impl HasCipherSuitePreference for ShadowQuicClientCfg {
