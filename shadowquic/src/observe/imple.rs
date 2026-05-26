@@ -18,8 +18,8 @@ use tokio::{
 use tracing::info;
 
 use crate::{
-    AnyTcp, AnyUdpRecv, AnyUdpSend, ProxyRequest, TcpSession, TcpTrait, UdpRecv, UdpSend,
-    UdpSession, UserContext, UserName,
+    AnyTcp, AnyUdpRecv, AnyUdpSend, HttpForwardSession, ProxyRequest, TcpSession, TcpTrait,
+    UdpRecv, UdpSend, UdpSession, UserContext, UserName,
     error::SError,
     msgs::{socks5::SocksAddr, squic::UserStats},
 };
@@ -340,6 +340,21 @@ impl Observer {
                     }) as AnyUdpSend,
                     stream: udp.stream,
                     bind_addr: udp.bind_addr,
+                    user_context: Some(user_context),
+                })
+            }
+            ProxyRequest::Http(http) => {
+                let Some(user_context) = http.user_context else {
+                    return ProxyRequest::Http(http);
+                };
+                let stats = self.on_new_request(&user_context).await;
+                let (tcp_recv, tcp_sent, tcp_conns) = stats.tcp_counters();
+
+                ProxyRequest::Http(HttpForwardSession {
+                    stream: Box::new(TrackedTcp::new(http.stream, tcp_recv, tcp_sent, tcp_conns))
+                        as Box<dyn TcpTrait>,
+                    dst: http.dst,
+                    first_packet: http.first_packet,
                     user_context: Some(user_context),
                 })
             }

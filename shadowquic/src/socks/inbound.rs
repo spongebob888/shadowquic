@@ -1,6 +1,8 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::net::TcpStream;
 
+use crate::TcpTrait;
 use crate::config::{AuthUser, SocksServerCfg};
 use crate::error::{SError, SResult};
 use crate::msgs::socks5::{
@@ -13,7 +15,8 @@ use crate::utils::dual_socket::to_ipv4_mapped;
 use crate::{Inbound, ProxyRequest, TcpSession, UdpSession};
 use async_trait::async_trait;
 use socket2::{Domain, Protocol, Socket, Type};
-use tokio::net::{TcpListener, TcpStream, UdpSocket};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::{TcpListener, UdpSocket};
 
 use anyhow::Result;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
@@ -26,6 +29,7 @@ pub struct SocksServer {
     request_sender: Sender<ProxyRequest>,
     request_receiver: Receiver<ProxyRequest>,
 }
+
 impl SocksServer {
     pub async fn new(cfg: SocksServerCfg) -> Result<Self, SError> {
         let (s, r) = channel(20);
@@ -35,12 +39,43 @@ impl SocksServer {
             request_receiver: r,
         })
     }
+
+    pub async fn accept_stream_with_local_addr<S>(
+        stream: S,
+        local_addr: SocketAddr,
+        users: &[AuthUser],
+    ) -> Result<ProxyRequest, SError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static + TcpTrait,
+    {
+        let users_arc = Arc::new(users.to_vec());
+        let (s, req, socket) = handle_socks(users_arc, stream, local_addr).await?;
+        match req.cmd {
+            SOCKS5_CMD_TCP_CONNECT => Ok(ProxyRequest::Tcp(TcpSession {
+                stream: Box::new(s),
+                dst: req.dst,
+                user_context: None,
+            })),
+            SOCKS5_CMD_UDP_ASSOCIATE => {
+                let socket = Arc::new(socket.unwrap());
+                Ok(ProxyRequest::Udp(UdpSession {
+                    send: Arc::new(UdpSocksWrap(socket.clone(), Default::default())),
+                    recv: Box::new(UdpSocksWrap(socket, Default::default())),
+                    bind_addr: req.dst,
+                    stream: Some(Box::new(s)),
+                    user_context: None,
+                }))
+            }
+            _ => Err(SError::ProtocolViolation),
+        }
+    }
 }
 
-pub async fn authenticate(
-    users: Arc<Vec<AuthUser>>,
-    mut stream: TcpStream,
-) -> Result<TcpStream, SError> {
+// 公开的认证函数（独立）
+pub async fn authenticate<S>(users: Arc<Vec<AuthUser>>, mut stream: S) -> Result<S, SError>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
     let auth_req = AuthReq::decode(&mut stream).await?;
     if auth_req.version != SOCKS5_VERSION {
         return Err(SError::ProtocolViolation);
@@ -79,17 +114,21 @@ pub async fn authenticate(
         return Err(SError::SocksError("authentication failed".to_string()));
     }
     let reply = PasswordAuthReply {
-        version: 0x01, // authentication version not socks version
+        version: 0x01,
         status: SOCKS5_REPLY_SUCCEEDED,
     };
     reply.encode(&mut stream).await?;
     Ok(stream)
 }
-async fn handle_socks(
+
+async fn handle_socks<S>(
     users: Arc<Vec<AuthUser>>,
-    s: TcpStream,
+    s: S,
     local_addr: SocketAddr,
-) -> Result<(TcpStream, CmdReq, Option<UdpSocket>), SError> {
+) -> Result<(S, CmdReq, Option<UdpSocket>), SError>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
     let mut s = authenticate(users, s).await?;
     let req = socks5::CmdReq::decode(&mut s).await?;
 
@@ -108,7 +147,6 @@ async fn handle_socks(
         SOCKS5_CMD_TCP_CONNECT => (reply, None),
         SOCKS5_CMD_UDP_ASSOCIATE => {
             let mut local_addr = local_addr;
-
             local_addr.set_port(0);
             let socket = UdpSocket::bind(local_addr).await?;
             let local_addr = socket.local_addr()?;
@@ -127,72 +165,12 @@ async fn handle_socks(
     Ok((s, req, socket))
 }
 
-#[async_trait]
-impl Inbound for SocksServer {
-    async fn accept(&mut self) -> Result<ProxyRequest, SError> {
-        let recv = self
-            .request_receiver
-            .recv()
-            .await
-            .ok_or(SError::InboundUnavailable)?;
-        Ok(recv)
-    }
-    async fn init(&self) -> Result<(), SError> {
-        let dual_stack = self.cfg.bind_addr.is_ipv6();
-        let socket = Socket::new(
-            // Use socket2 for dualstack for windows compact
-            if dual_stack {
-                Domain::IPV6
-            } else {
-                Domain::IPV4
-            },
-            Type::STREAM,
-            Some(Protocol::TCP),
-        )?;
-        if dual_stack {
-            let _ = socket
-                .set_only_v6(false)
-                .map_err(|e| tracing::warn!("failed to set dual stack for socket: {}", e));
-        };
-        socket.set_reuse_address(true)?;
-        socket.set_nonblocking(true)?;
-        socket.bind(&self.cfg.bind_addr.into())?;
-        socket.listen(256)?;
-        let listener = TcpListener::from_std(socket.into())
-            .map_err(|e| SError::SocksError(format!("failed to create TcpListener: {e}")))?;
-
-        let req_send = self.request_sender.clone();
-        let users = Arc::new(self.cfg.users.clone());
-        let fut = async move {
-            loop {
-                let (stream, addr) = listener.accept().await?;
-                let _ = stream.set_nodelay(true);
-                let span = info_span!("socks", src = %addr);
-                let _enter = span.enter();
-                let users = users.clone();
-                let req_send = req_send.clone();
-                tokio::spawn(async move {
-                    handle_tcp(users, stream, req_send)
-                        .in_current_span()
-                        .await
-                        .map_err(|x| error!("failed to handle socks connection: {}", x))
-                });
-            }
-            #[allow(unreachable_code)]
-            SResult::<()>::Ok(())
-        };
-        tokio::spawn(fut);
-
-        Ok(())
-    }
-}
-
+// 处理单个 TCP 连接的任务（上游风格）
 async fn handle_tcp(
     users: Arc<Vec<AuthUser>>,
     stream: TcpStream,
     sender: Sender<ProxyRequest>,
 ) -> SResult<()> {
-    // ipv4 may be mapped for dual stack socket
     let local_addr = to_ipv4_mapped(stream.local_addr().unwrap());
 
     let (s, req, socket) = handle_socks(users, stream, local_addr)
@@ -227,4 +205,64 @@ async fn handle_tcp(
         .send(req)
         .await
         .map_err(|_| SError::ChannelError("socks request channel closed".into()))
+}
+
+#[async_trait]
+impl Inbound for SocksServer {
+    async fn accept(&mut self) -> Result<ProxyRequest, SError> {
+        let recv = self
+            .request_receiver
+            .recv()
+            .await
+            .ok_or(SError::InboundUnavailable)?;
+        Ok(recv)
+    }
+
+    async fn init(&self) -> Result<(), SError> {
+        let dual_stack = self.cfg.bind_addr.is_ipv6();
+        let socket = Socket::new(
+            if dual_stack {
+                Domain::IPV6
+            } else {
+                Domain::IPV4
+            },
+            Type::STREAM,
+            Some(Protocol::TCP),
+        )?;
+        if dual_stack {
+            let _ = socket
+                .set_only_v6(false)
+                .map_err(|e| tracing::warn!("failed to set dual stack for socket: {}", e));
+        };
+        socket.set_reuse_address(true)?;
+        socket.set_nonblocking(true)?;
+        socket.bind(&self.cfg.bind_addr.into())?;
+        socket.listen(256)?;
+        let listener = TcpListener::from_std(socket.into())
+            .map_err(|e| SError::SocksError(format!("failed to create TcpListener: {e}")))?;
+
+        let req_send = self.request_sender.clone();
+        let users = Arc::new(self.cfg.users.clone());
+
+        let fut = async move {
+            loop {
+                let (stream, addr) = listener.accept().await?;
+                let span = info_span!("socks", src = %addr);
+                let _enter = span.enter();
+                let users = users.clone();
+                let req_send = req_send.clone();
+                tokio::spawn(async move {
+                    handle_tcp(users, stream, req_send)
+                        .in_current_span()
+                        .await
+                        .map_err(|x| error!("failed to handle socks connection: {}", x))
+                });
+            }
+            #[allow(unreachable_code)]
+            SResult::<()>::Ok(())
+        };
+        tokio::spawn(fut);
+
+        Ok(())
+    }
 }

@@ -1,7 +1,7 @@
 use std::{net::ToSocketAddrs, sync::Arc};
 
 use crate::{
-    TcpSession, UdpRecv, UdpSend, UdpSession,
+    HttpForwardSession, TcpSession, UdpRecv, UdpSend, UdpSession,
     msgs::socks5::{
         CmdReply, PasswordAuthReply, PasswordAuthReq, SOCKS5_AUTH_METHOD_PASSWORD,
         SOCKS5_CMD_TCP_CONNECT, SOCKS5_CMD_UDP_ASSOCIATE, SOCKS5_REPLY_SUCCEEDED, SOCKS5_RESERVE,
@@ -11,7 +11,7 @@ use crate::{
     utils::socket_opt::{SocketFactory, TcpSocketFactory, UdpSocketFactory},
 };
 use tokio::{
-    io::{AsyncReadExt, copy_bidirectional_with_sizes},
+    io::{AsyncReadExt, AsyncWriteExt, copy_bidirectional_with_sizes},
     net::{TcpStream, UdpSocket},
     sync::OnceCell,
 };
@@ -50,6 +50,7 @@ impl Outbound for SocksClient {
             match req {
                 ProxyRequest::Tcp(tcp_session) => client.handle_tcp(tcp_session).await,
                 ProxyRequest::Udp(udp_session) => client.handle_udp(udp_session).await,
+                ProxyRequest::Http(http_session) => client.handle_http(http_session).await,
             }
         };
 
@@ -242,6 +243,34 @@ impl SocksClient {
         // We can use spawn, but it requirs communication to shutdown the other
         // Flatten spawn handle using try_join! doesn't work. Don't know why
         tokio::try_join!(fut1, fut2, fut3)?;
+
+        Ok(())
+    }
+
+    async fn handle_http(&self, mut http_session: HttpForwardSession) -> Result<(), SError> {
+        tracing::info!("connect to socks server: {}", self.cfg.addr);
+
+        let tcp = TcpStream::connect(self.cfg.addr.clone()).await?;
+        tcp.set_nodelay(true)?;
+
+        let mut tcp = self.authenticate(tcp).await?;
+
+        let socksreq = CmdReq {
+            version: SOCKS5_VERSION,
+            cmd: SOCKS5_CMD_TCP_CONNECT,
+            rsv: SOCKS5_RESERVE,
+            dst: http_session.dst,
+        };
+
+        socksreq.encode(&mut tcp).await?;
+        let _rep = CmdReply::decode(&mut tcp).await?;
+        tracing::trace!("socks http forward connection established");
+
+        tcp.write_all(&http_session.first_packet).await?;
+        tcp.flush().await?;
+
+        copy_bidirectional_with_sizes(&mut tcp, &mut http_session.stream, 16 * 1024, 16 * 1024)
+            .await?;
 
         Ok(())
     }

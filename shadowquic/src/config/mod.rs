@@ -8,6 +8,7 @@ use crate::{
     Inbound, Manager, Outbound,
     direct::outbound::DirectOut,
     error::SError,
+    mixed::inbound::MixedServer,
     shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
     socks::{inbound::SocksServer, outbound::SocksClient},
     sunnyquic::{inbound::SunnyQuicServer, outbound::SunnyQuicClient},
@@ -68,6 +69,7 @@ impl Config {
 #[serde(tag = "type")]
 pub enum InboundCfg {
     Socks(SocksServerCfg),
+    Mixed(MixedServerCfg),
     #[serde(rename = "shadowquic")]
     ShadowQuic(ShadowQuicServerCfg),
     #[serde(rename = "sunnyquic")]
@@ -80,6 +82,7 @@ impl InboundCfg {
     async fn build_inbound(self) -> Result<Box<dyn Inbound>, SError> {
         let r: Box<dyn Inbound> = match self {
             InboundCfg::Socks(cfg) => Box::new(SocksServer::new(cfg).await?),
+            InboundCfg::Mixed(cfg) => Box::new(MixedServer::new(cfg).await?),
             InboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicServer::new(cfg).await?),
             InboundCfg::SunnyQuic(cfg) => Box::new(SunnyQuicServer::new(cfg).await?),
             #[cfg(all(feature = "tproxy", target_os = "linux"))]
@@ -134,6 +137,26 @@ impl OutboundCfg {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SocksServerCfg {
     /// Server binding address. e.g. `0.0.0.0:1089`, `[::1]:1089`
+    pub bind_addr: SocketAddr,
+    /// Socks5 username, optional
+    /// Left empty to disable authentication
+    #[serde(default = "Vec::new")]
+    pub users: Vec<AuthUser>,
+}
+
+/// Mixed inbound configuration
+///
+/// Supports SOCKS5 and HTTP proxy (CONNECT + plain HTTP forwarding) on the same port.
+///
+/// Example:
+/// ```yaml
+/// type: mixed
+/// bind-addr: "0.0.0.0:1080"
+/// ```
+#[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct MixedServerCfg {
+    /// Server binding address. e.g. `0.0.0.0:1080`, `[::]:1080`
     pub bind_addr: SocketAddr,
     /// Socks5 username, optional
     /// Left empty to disable authentication
