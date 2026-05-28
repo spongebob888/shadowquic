@@ -138,25 +138,24 @@ async fn print_stats<C: QuicConnection>(sq_conn: &SQConn<C>) -> SResult<()> {
 
     let stats = sq_conn.get_conn_stats().ok_or(SError::ProtocolUnimpl)?;
     info!(
-        "[uplink] packet_loss_rate:{:.2}%, rtt:{:.0}ms, mtu:{}",
-        stats.lost_packets as f32 / (stats.sent_packets + 1) as f32 * 100.0,
-        stats.rtt,
-        stats.current_mtu,
+        packet_loss_rate=%format!("{:.2}%", stats.lost_packets as f32 / (stats.sent_packets + 1) as f32 * 100.0),
+        rtt = %format!("{:.0}ms", stats.rtt),
+        mtu = stats.current_mtu,
+        "uplink stats",
     );
-
     let stats = tokio::time::timeout(Duration::from_secs(10), get_peer_conn_stats(sq_conn)).await;
     let stats = match stats {
         Ok(Ok(Ok(s))) => s,
         _ => {
-            trace!("[downlink] failed to get peer conn stats. Api may not be implemented");
+            trace!("failed to get peer conn stats. Api may not be implemented");
             return Err(SError::ProtocolUnimpl);
         }
     };
     info!(
-        "[downlink] packet_loss_rate:{:.2}%, rtt:{:.0}ms, mtu:{}",
-        stats.lost_packets as f32 / (stats.sent_packets + 1) as f32 * 100.0,
-        stats.rtt,
-        stats.current_mtu,
+        packet_loss_rate=%format!("{:.2}%", stats.lost_packets as f32 / (stats.sent_packets + 1) as f32 * 100.0),
+        rtt = %format!("{:.0}ms", stats.rtt),
+        mtu = stats.current_mtu,
+        "downlink stats",
     );
     Ok(())
 }
