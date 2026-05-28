@@ -248,6 +248,7 @@ pub fn gen_client_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
         let mut mtudis = MtuDiscoveryConfig::default();
         mtudis.black_hole_cooldown(Duration::from_secs(120));
         mtudis.interval(Duration::from_secs(90));
+        mtudis.blackhole_reset_mtu(cfg.blackhole_detection);
         Some(mtudis)
     } else {
         None
@@ -346,6 +347,7 @@ impl QuicServer for Endpoint {
             let mut mtudis = MtuDiscoveryConfig::default();
             mtudis.black_hole_cooldown(Duration::from_secs(120));
             mtudis.interval(Duration::from_secs(90));
+            mtudis.blackhole_reset_mtu(cfg.blackhole_detection);
             Some(mtudis)
         } else {
             None

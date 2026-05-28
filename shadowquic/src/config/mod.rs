@@ -227,6 +227,10 @@ pub fn default_mtu_discovery() -> bool {
     true
 }
 
+pub fn default_blackhole_detection() -> bool {
+    false
+}
+
 pub fn default_brutal_bandwidth() -> u64 {
     10_000_000
 }
