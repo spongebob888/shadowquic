@@ -14,6 +14,8 @@ use tracing::error;
 pub mod config;
 pub mod direct;
 pub mod error;
+pub mod http;
+pub mod mixed;
 pub mod msgs;
 pub mod quic;
 pub mod shadowquic;
@@ -27,6 +29,7 @@ pub use msgs::SEncode;
 pub enum ProxyRequest<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend> {
     Tcp(TcpSession<T>),
     Udp(UdpSession<I, O>),
+    Http(HttpForwardSession),
 }
 /// Udp socket only use immutable reference to self
 /// So it can be safely wrapped by Arc and cloned to work in duplex way.
@@ -49,6 +52,12 @@ pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
     /// Control stream, should be kept alive during session.
     stream: Option<AnyTcp>,
     bind_addr: SocksAddr,
+}
+
+pub struct HttpForwardSession {
+    pub stream: Box<dyn TcpTrait>,
+    pub dst: SocksAddr,
+    pub first_packet: Vec<u8>,
 }
 
 pub type AnyTcp = Box<dyn TcpTrait>;
