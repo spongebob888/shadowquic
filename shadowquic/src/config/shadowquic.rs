@@ -5,11 +5,11 @@ use serde::{Deserialize, Serialize};
 use super::deserialize_bps;
 use crate::config::{
     AuthUser, CipherSuitePreference, CongestionControl, HasCipherSuitePreference, SocketOpt,
-    default_alpn, default_brutal_ack_compensate, default_brutal_bandwidth,
-    default_brutal_cwnd_gain, default_brutal_min_ack_rate, default_brutal_min_sample_count,
-    default_brutal_min_window, default_congestion_control, default_gso, default_initial_mtu,
-    default_keep_alive_interval, default_min_mtu, default_mtu_discovery, default_over_stream,
-    default_zero_rtt,
+    default_alpn, default_blackhole_detection, default_brutal_ack_compensate,
+    default_brutal_bandwidth, default_brutal_cwnd_gain, default_brutal_min_ack_rate,
+    default_brutal_min_sample_count, default_brutal_min_window, default_congestion_control,
+    default_gso, default_initial_mtu, default_keep_alive_interval, default_min_mtu,
+    default_mtu_discovery, default_over_stream, default_zero_rtt,
 };
 
 pub fn default_rate_limit() -> u64 {
@@ -74,6 +74,15 @@ pub struct ShadowQuicServerCfg {
     /// For stable udp network, it's better to disable it and set a proper initial mtu
     #[serde(default = "default_mtu_discovery")]
     pub mtu_discovery: bool,
+    /// Enable MTU black-hole detection. When enabled, the current MTU is reset to `min_mtu` once
+    /// a black hole is detected (standard PLPMTUD behavior). When disabled (default), the
+    /// previously discovered MTU is kept after a black hole is detected.
+    /// Controls quinn-jls `MtuDiscoveryConfig::blackhole_reset_mtu`.
+    /// Only takes effect when `mtu_discovery` is enabled.
+    ///
+    /// In high packet loss network, it's better to disable black hole detection to avoid unnecessary mtu reset.
+    #[serde(default = "default_blackhole_detection")]
+    pub blackhole_detection: bool,
 }
 
 /// Jls upstream configuration
@@ -109,6 +118,7 @@ impl Default for ShadowQuicServerCfg {
             server_name: None,
             gso: default_gso(),
             mtu_discovery: default_mtu_discovery(),
+            blackhole_detection: default_blackhole_detection(),
         }
     }
 }
@@ -129,6 +139,7 @@ impl Default for ShadowQuicClientCfg {
             keep_alive_interval: default_keep_alive_interval(),
             gso: default_gso(),
             mtu_discovery: default_mtu_discovery(),
+            blackhole_detection: default_blackhole_detection(),
             cipher_suite_preference: None,
             socket_opt: Default::default(),
             protect_path: Default::default(),
@@ -203,6 +214,14 @@ pub struct ShadowQuicClientCfg {
     /// Transfer udp over stream or over datagram.
     /// If true, use quic stream to send UDP, otherwise use quic datagram
     /// extension, similar to native UDP in TUIC
+    ///
+    /// ## Proxy HTTP3
+    /// To proxy HTTP3 traffic, recommend to disable over_stream and blackhole detection.
+    ///
+    /// Over stream will retransmit lost packets conflicting shadowquic's inner congestion controler. This is [*TCP in TCP*(TCP meltdown)
+    /// problem](https://web.archive.org/web/20230228035749/http://sites.inka.de/%7EW1011/devel/tcp-tcp.html).
+    ///
+    /// Over stream also breaks HTTP3's mtu discovery leading to probe wrong MTU.
     #[serde(default = "default_over_stream")]
     pub over_stream: bool,
     #[serde(default = "default_min_mtu")]
@@ -225,6 +244,15 @@ pub struct ShadowQuicClientCfg {
     /// For stable udp network, it's better to disable it and set a proper initial mtu
     #[serde(default = "default_mtu_discovery")]
     pub mtu_discovery: bool,
+    /// Enable MTU black-hole detection. When enabled, the current MTU is reset to `min_mtu` once
+    /// a black hole is detected (standard PLPMTUD behavior). When disabled (default), the
+    /// previously discovered MTU is kept after a black hole is detected.
+    /// Controls quinn-jls `MtuDiscoveryConfig::blackhole_reset_mtu`.
+    /// Only takes effect when `mtu_discovery` is enabled.
+    ///
+    /// In high packet loss network, it's better to disable black hole detection to avoid unnecessary mtu reset.
+    #[serde(default = "default_blackhole_detection")]
+    pub blackhole_detection: bool,
 
     /// Optional TLS 1.3 cipher suite preference.
     /// If unset, use rustls/ring default preference order.
