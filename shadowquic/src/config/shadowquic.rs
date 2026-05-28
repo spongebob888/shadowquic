@@ -215,13 +215,13 @@ pub struct ShadowQuicClientCfg {
     /// If true, use quic stream to send UDP, otherwise use quic datagram
     /// extension, similar to native UDP in TUIC
     ///
-    /// ## Proxy HTTP3
-    /// To proxy HTTP3 traffic, recommend to disable over_stream and blackhole detection.
+    /// ### Proxy HTTP3
+    /// To proxy HTTP3 traffic, recommend to disable over-stream and blackhole-detection.
     ///
-    /// Over stream will retransmit lost packets conflicting shadowquic's inner congestion controler. This is [*TCP in TCP*(TCP meltdown)
-    /// problem](https://web.archive.org/web/20230228035749/http://sites.inka.de/%7EW1011/devel/tcp-tcp.html).
+    /// Over-stream will retransmit lost packets conflicting shadowquic's inner congestion controller. This is famous [*TCP in TCP*(TCP meltdown)
+    /// ](https://web.archive.org/web/20230228035749/http://sites.inka.de/%7EW1011/devel/tcp-tcp.html) problem.
     ///
-    /// Over stream also breaks HTTP3's mtu discovery leading to probe wrong MTU.
+    /// Over-stream also breaks HTTP3's mtu discovery leading to probe wrong MTU.
     #[serde(default = "default_over_stream")]
     pub over_stream: bool,
     #[serde(default = "default_min_mtu")]
