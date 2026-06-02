@@ -60,14 +60,14 @@ yaml-rust2 = "0.11.0"
 serde = { version = "1.0.228", features = ["derive"]}
 clap = { version = "4", features = ["derive"] }
 educe = "0.6.0"
-socket2 = "0.6.2"
+socket2 = "0.6.4"
 
 gm-quic = { version = "0.4", default-features = false, optional = true}
 qevent = { version = "0.5", default-features = false, optional = true}
 qbase = { version = "0.5", default-features = false, optional = true}
 qunreliable = { version = "0.4", default-features = false, optional = true}
 rustls = { version = "0.23", default-features = false, features = ["std"], optional = true}
-rustls-native-certs = {version = "0.8.3", optional = true}
+rustls-native-certs = {version = "0.8.4", optional = true}
 
 # iroh-quinn = { git = "https://github.com/hrimfaxi/iroh_quinn", branch = "main", package = "noq", optional = true, default-features = false, features = ["rustls-ring", "runtime-tokio"] }
 # iroh-quinn-proto = { git = "https://github.com/hrimfaxi/iroh_quinn", branch = "main", package = "noq-proto", optional = true, default-features = false, features = ["rustls-ring"] }
@@ -80,7 +80,7 @@ notify = { version = "8.2.0", features = ["serde"], optional = true}
 arc-swap = { version = "1.9.1", optional = true }
 
 console-subscriber = { version = "0.5.0", optional = true }
-serde-saphyr = "0.0.26"
+serde-saphyr = "0.0.27"
 aws-lc-rs = { version = "1", optional = true, default-features = false }
 ring = { version = "0.17.14", optional = true }
 
@@ -88,7 +88,7 @@ ring = { version = "0.17.14", optional = true }
 sendfd = { version = "0.4.4", features = ["tokio"] }
 
 [target.'cfg(target_os="windows")'.dependencies]
-windows = { version = "0.56.0", features = [
+windows = { version = "0.62.2", features = [
     "Win32_Foundation",
     "Win32_Networking_WinSock",
     "Win32_NetworkManagement_IpHelper",
