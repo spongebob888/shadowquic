@@ -32,7 +32,7 @@ Authentication is provided by JLS protocol.
 Each proxy request is started with a command carried by a bistream. Only client can initiate a command.
 
 
-There are three types of command indicated by `CMD` field:
+There are several types of command indicated by `CMD` field:
 - `0x01` : TCP Connect
   #protocol-table(
     (1fr, 3fr),
