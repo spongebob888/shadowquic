@@ -110,7 +110,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                     tracing::info!("user authenticated:{}", name);
                     self.inner
                         .authed
-                        .set(true)
+                        .set(Ok(name.clone()))
                         .expect("repeated authentication!");
                 } else {
                     tracing::error!("authentication failed");

@@ -64,7 +64,7 @@ impl ShadowQuicClient {
 
         let conn = SQConn {
             conn,
-            authed: Arc::new(SetOnce::new_with(Some(true))),
+            authed: Arc::new(SetOnce::new_with(Some(Ok(self.config.username.clone())))),
             send_id_store: Default::default(),
             recv_id_store: IDStore {
                 id_counter: Default::default(),

@@ -8,8 +8,8 @@ use tokio::sync::{
 use tracing::{Instrument, error, trace_span};
 
 use crate::{
-    Inbound, ProxyRequest, config::ShadowQuicServerCfg, error::SError, quic::QuicConnection,
-    squic::inbound::SQServerConn,
+    Inbound, ProxyRequest, config::ShadowQuicServerCfg, error::SError, quic::AuthedConn,
+    quic::QuicConnection, squic::inbound::SQServerConn,
 };
 
 use crate::squic::{IDStore, SQConn};
@@ -33,14 +33,17 @@ impl ShadowQuicServer {
         })
     }
 
-    async fn handle_incoming<C: QuicConnection>(
+    async fn handle_incoming<C: QuicConnection + AuthedConn>(
         incom: C,
         req_sender: Sender<ProxyRequest>,
     ) -> Result<(), SError> {
+        let user = incom
+            .authed_user()
+            .ok_or(SError::SunnyAuthError("User not authenticated".into()))?;
         let sq_conn = SQServerConn {
             inner: SQConn {
                 conn: incom,
-                authed: Arc::new(SetOnce::new_with(Some(true))),
+                authed: Arc::new(SetOnce::new_with(Some(Ok(user.clone())))),
                 send_id_store: Default::default(),
                 recv_id_store: IDStore {
                     id_counter: Default::default(),
@@ -49,7 +52,7 @@ impl ShadowQuicServer {
             },
             users: Arc::new(Default::default()),
         };
-        let span = trace_span!("quic", id = sq_conn.inner.peer_id());
+        let span = trace_span!("quic", id = sq_conn.inner.peer_id(), user = %user);
         sq_conn
             .handle_connection(req_sender)
             .instrument(span)

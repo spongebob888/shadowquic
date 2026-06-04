@@ -30,8 +30,8 @@ use crate::{
     error::SResult,
     msgs::squic::ConnStats,
     quic::{
-        MAX_DATAGRAM_WINDOW, MAX_SEND_WINDOW, MAX_STREAM_WINDOW, QuicClient, QuicConnection,
-        QuicErrorRepr, QuicServer,
+        AuthedConn, MAX_DATAGRAM_WINDOW, MAX_SEND_WINDOW, MAX_STREAM_WINDOW, QuicClient,
+        QuicConnection, QuicErrorRepr, QuicServer,
     },
     utils::socket_opt::{SocketFactory, UdpSocketFactory},
 };
@@ -129,6 +129,12 @@ impl QuicConnection for Connection {
             rtt: self.rtt().as_secs_f64() * 1000.0,
             current_mtu: stats.path.current_mtu,
         })
+    }
+}
+
+impl AuthedConn for Connection {
+    fn authed_user(&self) -> Option<String> {
+        self.jls_chosen_user()
     }
 }
 

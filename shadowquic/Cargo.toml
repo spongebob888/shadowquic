@@ -42,10 +42,10 @@ tokio = {version = "1.52.3", features = ["io-util", "net","rt","macros","rt-mult
 tracing = "0.1.44"
 time = { version = "0.3.47", features = ["macros", "local-offset"] }
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt", "ansi", "time", "local-time"]}
-quinn = { package = "quinn-jls", version = "0.3.3", default-features = false, features = ["runtime-tokio"], optional = true}
-quinn_proto = { package = "quinn-proto-jls", version = "0.3.4", default-features = false, optional = true}
-#quinn = { package = "quinn", git = "https://github.com/spongebob888/quinn-jls", branch = "jls-main", default-features = false, features = ["runtime-tokio"], optional = true}
-#quinn_proto = { package = "quinn-proto", git = "https://github.com/spongebob888/quinn-jls", branch = "jls-main", default-features = false, optional = true}
+#quinn = { package = "quinn-jls", version = "0.3.3", default-features = false, features = ["runtime-tokio"], optional = true}
+#quinn_proto = { package = "quinn-proto-jls", version = "0.3.4", default-features = false, optional = true}
+quinn = { package = "quinn", git = "https://github.com/spongebob888/quinn-jls", branch = "jls-dev", default-features = false, features = ["runtime-tokio"], optional = true}
+quinn_proto = { package = "quinn-proto", git = "https://github.com/spongebob888/quinn-jls", branch = "jls-dev", default-features = false, optional = true}
 
 #brutal-core = { git = "https://github.com/hrimfaxi/brutal_quinn.git", branch = "master" }
 brutal-core = { version = "0.1.0" }

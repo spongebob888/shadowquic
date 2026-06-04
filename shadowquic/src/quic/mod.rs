@@ -62,6 +62,10 @@ pub trait QuicConnection: Send + Sync + Clone + 'static {
     }
 }
 
+pub trait AuthedConn {
+    fn authed_user(&self) -> Option<String>;
+}
+
 #[derive(Error, Debug)]
 #[error(transparent)]
 pub enum QuicErrorRepr {
