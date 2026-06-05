@@ -73,7 +73,7 @@ impl InboundCfg {
         let r: Box<dyn Inbound> = match self {
             InboundCfg::Socks(cfg) => Box::new(SocksServer::new(cfg).await?),
             InboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicServer::new(cfg).await?),
-            InboundCfg::SunnyQuic(cfg) => Box::new(SunnyQuicServer::new(cfg)?),
+            InboundCfg::SunnyQuic(cfg) => Box::new(SunnyQuicServer::new(cfg).await?),
         };
         Ok(r)
     }

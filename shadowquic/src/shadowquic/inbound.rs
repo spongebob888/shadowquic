@@ -26,9 +26,9 @@ impl ShadowQuicServer {
     pub async fn new(cfg: ShadowQuicServerCfg) -> Result<Self, SError> {
         let (send, recv) = channel::<ProxyRequest>(10);
 
-            let endpoint: EndServer = QuicServer::new(&cfg)
-                .await
-                .expect("Failed to listening on udp");
+        let endpoint: EndServer = QuicServer::new(&cfg)
+            .await
+            .expect("Failed to listening on udp");
 
         Ok(Self {
             endpoint,

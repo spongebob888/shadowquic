@@ -7,6 +7,7 @@ use std::{
 };
 
 use super::brutal::BrutalConfig;
+use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use bytes::Bytes;
 use iroh_quinn::{
@@ -43,20 +44,27 @@ use crate::{
 };
 
 pub type Connection = iroh_quinn::Connection;
-pub struct Endpoint<SC> {
+
+#[derive(Clone)]
+pub struct EndClient {
     inner: iroh_quinn::Endpoint,
-    cfg: Arc<SC>,
+    cfg: Arc<SunnyQuicClientCfg>,
 }
-impl<SC> Deref for Endpoint<SC> {
+
+#[derive(Clone)]
+pub struct EndServer {
+    inner: iroh_quinn::Endpoint,
+    cfg: Arc<ArcSwap<SunnyQuicServerCfg>>,
+    crypto: Arc<ArcSwap<RustlsServerConfig>>,
+}
+
+impl Deref for EndServer {
     type Target = iroh_quinn::Endpoint;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
-
-pub type EndClient = Endpoint<SunnyQuicClientCfg>;
-pub type EndServer = Endpoint<SunnyQuicServerCfg>;
 #[async_trait]
 impl QuicConnection for Connection {
     type RecvStream = iroh_quinn::RecvStream;
@@ -138,7 +146,7 @@ impl QuicConnection for Connection {
 }
 
 #[async_trait]
-impl QuicClient for Endpoint<SunnyQuicClientCfg> {
+impl QuicClient for EndClient {
     type SC = SunnyQuicClientCfg;
     async fn new(cfg: &Self::SC) -> SResult<Self> {
         Self::new_with_socket_factory(
@@ -202,7 +210,7 @@ impl QuicClient for Endpoint<SunnyQuicClientCfg> {
             runtime,
         )?;
         end.set_default_client_config(gen_client_cfg(cfg));
-        Ok(Endpoint {
+        Ok(EndClient {
             inner: end,
             cfg: Arc::new(cfg.to_owned()),
         })
@@ -367,99 +375,36 @@ pub fn gen_client_cfg(cfg: &SunnyQuicClientCfg) -> iroh_quinn::ClientConfig {
 }
 
 #[async_trait]
-impl QuicServer for Endpoint<SunnyQuicServerCfg> {
+impl QuicServer for EndServer {
     type C = Connection;
     type SC = SunnyQuicServerCfg;
     async fn new(cfg: &Self::SC) -> SResult<Self> {
-        let mut crypto: RustlsServerConfig;
-
-        let resolver = DynamicCertResolver::new(&cfg.key_path.clone(), &cfg.cert_path.clone())?;
-
-        tokio::spawn(
-            resolver
-                .clone()
-                .watch_cert_and_update(cfg.key_path.clone(), cfg.cert_path.clone()),
-        );
-        crypto = RustlsServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
-            .with_no_client_auth()
-            .with_cert_resolver(Arc::new(resolver.clone()));
-        crypto.alpn_protocols = cfg
-            .alpn
-            .iter()
-            .cloned()
-            .map(|alpn| alpn.into_bytes())
-            .collect();
-        crypto.max_early_data_size = if cfg.zero_rtt { u32::MAX } else { 0 };
-        crypto.send_half_rtt_data = cfg.zero_rtt;
-
-        for _user in &cfg.users {}
-
-        let mut tp_cfg = TransportConfig::default();
-
-        let mtudis = if cfg.mtu_discovery {
-            let mut mtudis = MtuDiscoveryConfig::default();
-            mtudis.black_hole_cooldown(Duration::from_secs(120));
-            mtudis.interval(Duration::from_secs(90));
-            Some(mtudis)
-        } else {
-            None
-        };
-
-        tp_cfg
-            .max_concurrent_bidi_streams(1000u32.into())
-            .max_concurrent_uni_streams(1000u32.into())
-            .mtu_discovery_config(mtudis)
-            .min_mtu(cfg.min_mtu)
-            .enable_segmentation_offload(cfg.gso)
-            .initial_mtu(cfg.initial_mtu);
-        match cfg.congestion_control {
-            CongestionControl::Brutal(ref brutal) => {
-                tracing::info!(?brutal, "using brutal congestion control");
-                let brutal_config = BrutalConfig::new(
-                    brutal.bandwidth,
-                    brutal.min_window,
-                    brutal.cwnd_gain,
-                    brutal.min_ack_rate,
-                    brutal.min_sample_count,
-                    brutal.ack_compensate,
-                );
-                tp_cfg.congestion_controller_factory(Arc::new(brutal_config))
-            }
-            CongestionControl::Bbr => {
-                let bbr_config = BbrConfig::default();
-                tp_cfg.congestion_controller_factory(Arc::new(bbr_config))
-            }
-            CongestionControl::Cubic => {
-                let cubic_config = CubicConfig::default();
-                tp_cfg.congestion_controller_factory(Arc::new(cubic_config))
-            }
-            CongestionControl::NewReno => {
-                let new_reno = NewRenoConfig::default();
-                tp_cfg.congestion_controller_factory(Arc::new(new_reno))
-            }
-        };
-        let mut config = iroh_quinn::ServerConfig::with_crypto(Arc::new(
-            QuicServerConfig::try_from(crypto).expect("rustls config can't created"),
-        ));
-        tp_cfg.send_window(MAX_SEND_WINDOW);
-        tp_cfg.stream_receive_window(MAX_STREAM_WINDOW.try_into().unwrap());
-        tp_cfg.datagram_send_buffer_size(MAX_DATAGRAM_WINDOW.try_into().unwrap());
-        tp_cfg.datagram_receive_buffer_size(Some(MAX_DATAGRAM_WINDOW as usize));
-        tp_cfg.max_concurrent_multipath_paths(cfg.max_path_num);
-
-        config.transport_config(Arc::new(tp_cfg));
+        let mut crypto = gen_server_crypto(cfg)?;
+        let config = gen_server_config(cfg, &mut crypto);
 
         let endpoint = iroh_quinn::Endpoint::server(config, cfg.bind_addr)?;
-        Ok(Endpoint {
+        Ok(EndServer {
             inner: endpoint,
-            cfg: Arc::new(cfg.to_owned()),
+            cfg: Arc::new(ArcSwap::new(Arc::new(cfg.to_owned()))),
+            crypto: Arc::new(ArcSwap::new(crypto.into())),
         })
     }
+
+    async fn update_config(&self, cfg: &Self::SC) -> SResult<()> {
+        let mut crypto: RustlsServerConfig = (**self.crypto.load()).clone();
+        let config = gen_server_config(cfg, &mut crypto);
+        self.inner.set_server_config(Some(config));
+        self.crypto.store(crypto.into());
+        self.cfg.store(Arc::new(cfg.to_owned()));
+        Ok(())
+    }
+
     async fn accept(&self) -> Result<Self::C, QuicErrorRepr> {
         match self.deref().accept().await {
             Some(conn) => {
                 let conn = conn.accept()?;
-                let connection = if self.cfg.zero_rtt {
+                let cfg = self.cfg.load_full();
+                let connection = if cfg.zero_rtt {
                     match conn.into_0rtt() {
                         Ok((conn, accepted)) => {
                             let _conn_clone = conn.clone();
@@ -480,6 +425,93 @@ impl QuicServer for Endpoint<SunnyQuicServerCfg> {
             }
         }
     }
+}
+
+fn gen_server_crypto(cfg: &SunnyQuicServerCfg) -> SResult<RustlsServerConfig> {
+    let resolver = DynamicCertResolver::new(&cfg.key_path.clone(), &cfg.cert_path.clone())?;
+
+    tokio::spawn(
+        resolver
+            .clone()
+            .watch_cert_and_update(cfg.key_path.clone(), cfg.cert_path.clone()),
+    );
+    Ok(
+        RustlsServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
+            .with_no_client_auth()
+            .with_cert_resolver(Arc::new(resolver.clone())),
+    )
+}
+
+fn gen_server_config(
+    cfg: &SunnyQuicServerCfg,
+    crypto: &mut RustlsServerConfig,
+) -> iroh_quinn::ServerConfig {
+    crypto.alpn_protocols = cfg
+        .alpn
+        .iter()
+        .cloned()
+        .map(|alpn| alpn.into_bytes())
+        .collect();
+    crypto.max_early_data_size = if cfg.zero_rtt { u32::MAX } else { 0 };
+    crypto.send_half_rtt_data = cfg.zero_rtt;
+
+    for _user in &cfg.users {}
+
+    let mut tp_cfg = TransportConfig::default();
+
+    let mtudis = if cfg.mtu_discovery {
+        let mut mtudis = MtuDiscoveryConfig::default();
+        mtudis.black_hole_cooldown(Duration::from_secs(120));
+        mtudis.interval(Duration::from_secs(90));
+        Some(mtudis)
+    } else {
+        None
+    };
+
+    tp_cfg
+        .max_concurrent_bidi_streams(1000u32.into())
+        .max_concurrent_uni_streams(1000u32.into())
+        .mtu_discovery_config(mtudis)
+        .min_mtu(cfg.min_mtu)
+        .enable_segmentation_offload(cfg.gso)
+        .initial_mtu(cfg.initial_mtu);
+    match cfg.congestion_control {
+        CongestionControl::Brutal(ref brutal) => {
+            tracing::info!(?brutal, "using brutal congestion control");
+            let brutal_config = BrutalConfig::new(
+                brutal.bandwidth,
+                brutal.min_window,
+                brutal.cwnd_gain,
+                brutal.min_ack_rate,
+                brutal.min_sample_count,
+                brutal.ack_compensate,
+            );
+            tp_cfg.congestion_controller_factory(Arc::new(brutal_config))
+        }
+        CongestionControl::Bbr => {
+            let bbr_config = BbrConfig::default();
+            tp_cfg.congestion_controller_factory(Arc::new(bbr_config))
+        }
+        CongestionControl::Cubic => {
+            let cubic_config = CubicConfig::default();
+            tp_cfg.congestion_controller_factory(Arc::new(cubic_config))
+        }
+        CongestionControl::NewReno => {
+            let new_reno = NewRenoConfig::default();
+            tp_cfg.congestion_controller_factory(Arc::new(new_reno))
+        }
+    };
+    let mut config = iroh_quinn::ServerConfig::with_crypto(Arc::new(
+        QuicServerConfig::try_from(crypto.clone()).expect("rustls config can't created"),
+    ));
+    tp_cfg.send_window(MAX_SEND_WINDOW);
+    tp_cfg.stream_receive_window(MAX_STREAM_WINDOW.try_into().unwrap());
+    tp_cfg.datagram_send_buffer_size(MAX_DATAGRAM_WINDOW.try_into().unwrap());
+    tp_cfg.datagram_receive_buffer_size(Some(MAX_DATAGRAM_WINDOW as usize));
+    tp_cfg.max_concurrent_multipath_paths(cfg.max_path_num);
+
+    config.transport_config(Arc::new(tp_cfg));
+    config
 }
 
 impl From<iroh_quinn::ConnectionError> for QuicErrorRepr {

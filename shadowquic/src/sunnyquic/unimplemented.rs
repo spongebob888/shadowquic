@@ -137,4 +137,8 @@ impl QuicServer for EndServer {
     async fn accept(&self) -> Result<Self::C, QuicErrorRepr> {
         unimplemented!()
     }
+
+    async fn update_config(&self, _cfg: &Self::SC) -> SResult<()> {
+        unimplemented!()
+    }
 }

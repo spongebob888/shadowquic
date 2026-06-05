@@ -230,6 +230,11 @@ impl QuicServer for EndServer {
             inner: conn.into(),
         })
     }
+
+    async fn update_config(&self, _cfg: &Self::SC) -> crate::error::SResult<()> {
+        tracing::warn!("sunnyquic gm-quic server does not support updating config");
+        Ok(())
+    }
 }
 
 impl From<std::io::Error> for QuicErrorRepr {
