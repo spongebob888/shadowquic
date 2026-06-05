@@ -131,6 +131,7 @@ async fn test_shadowquic() {
         key_path: "../assets/certs/localhost.key".into(),
         ..Default::default()
     })
+    .await
     .unwrap();
     let direct_client = DirectOut::default();
     let server = Manager {

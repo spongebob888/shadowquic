@@ -152,6 +152,7 @@ async fn test_shadowquic() {
         congestion_control: CongestionControl::Bbr,
         ..Default::default()
     })
+    .await
     .unwrap();
     let direct_client = DirectOut::default();
     let server = Manager {

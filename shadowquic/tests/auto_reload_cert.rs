@@ -123,6 +123,7 @@ async fn test_auto_reload_cert() {
         key_path: key_path.clone(),
         ..Default::default()
     })
+    .await
     .unwrap();
 
     let direct_client = DirectOut::default();

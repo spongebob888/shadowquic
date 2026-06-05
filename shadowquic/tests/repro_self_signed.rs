@@ -121,6 +121,7 @@ async fn test_self_signed_cert() {
         key_path: key_path.clone(),
         ..Default::default()
     })
+    .await
     .unwrap();
 
     let direct_client = DirectOut::default();
