@@ -183,9 +183,11 @@ impl<C: QuicConnection> SQServerConn<C> {
         };
         match user_opcode {
             ExtOpcodeUser::AddUser(user) => {
+                info!(username = %user.username, "adding user");
                 user_manager.add_user(user).await.encode(send).await?;
             }
             ExtOpcodeUser::RemoveUser(username) => {
+                info!(username = %username, "removing user");
                 user_manager
                     .remove_user(&username)
                     .await

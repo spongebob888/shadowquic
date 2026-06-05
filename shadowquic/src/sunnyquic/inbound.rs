@@ -3,17 +3,18 @@ use std::{collections::HashMap, sync::Arc};
 
 use arc_swap::ArcSwap;
 use tokio::sync::{
-    SetOnce,
+    RwLock, SetOnce,
     mpsc::{Receiver, Sender, channel},
 };
 use tracing::{Instrument, error, trace_span};
 
 use crate::{
     Inbound, ProxyRequest,
-    config::SunnyQuicServerCfg,
+    config::{AuthUser, SunnyQuicServerCfg},
     error::SError,
+    msgs::{squic::SQExtError, squic::SunnyCredential},
     quic::QuicConnection,
-    squic::inbound::{SQServerConn, SunnyQuicUsers},
+    squic::inbound::{SQServerConn, SunnyQuicUsers, UserManager},
     sunnyquic::EndServer,
 };
 
@@ -22,9 +23,68 @@ use crate::squic::{IDStore, SQConn};
 use crate::quic::QuicServer;
 pub struct SunnyQuicServer {
     pub endpoint: EndServer,
-    users: Arc<ArcSwap<HashMap<crate::msgs::squic::SunnyCredential, String>>>,
+    users: Arc<ArcSwap<HashMap<SunnyCredential, String>>>,
+    user_manager: Arc<SunnyQuicUserManager>,
     request_sender: Sender<ProxyRequest>,
     request: Receiver<ProxyRequest>,
+}
+
+struct SunnyQuicUserManager {
+    endpoint: EndServer,
+    users: Arc<ArcSwap<HashMap<SunnyCredential, String>>>,
+    config: RwLock<SunnyQuicServerCfg>,
+}
+
+#[async_trait]
+impl UserManager for SunnyQuicUserManager {
+    async fn add_user(&self, user: AuthUser) -> Result<(), SQExtError> {
+        let mut config = self.config.write().await;
+        let old_config = config.clone();
+        if let Some(existing_user) = config
+            .users
+            .iter_mut()
+            .find(|existing_user| existing_user.username == user.username)
+        {
+            existing_user.password = user.password;
+        } else {
+            config.users.push(user);
+        }
+
+        if let Err(error) = QuicServer::update_config(&self.endpoint, &config).await {
+            *config = old_config;
+            tracing::error!("failed to add sunnyquic user: {}", error);
+            return Err(SQExtError::NotAvailable);
+        }
+        self.users.store(SunnyQuicServer::gen_users_hash(&config));
+        Ok(())
+    }
+
+    async fn remove_user(&self, username: &str) -> Result<(), SQExtError> {
+        let mut config = self.config.write().await;
+        let old_config = config.clone();
+        let old_len = config.users.len();
+        config.users.retain(|user| user.username != username);
+        if config.users.len() == old_len {
+            return Err(SQExtError::NotFound);
+        }
+
+        if let Err(error) = QuicServer::update_config(&self.endpoint, &config).await {
+            *config = old_config;
+            tracing::error!("failed to remove sunnyquic user: {}", error);
+            return Err(SQExtError::NotAvailable);
+        }
+        self.users.store(SunnyQuicServer::gen_users_hash(&config));
+        Ok(())
+    }
+
+    async fn list_users(&self) -> Result<Vec<String>, SQExtError> {
+        let config = self.config.read().await;
+        Ok(config
+            .users
+            .iter()
+            .map(|user| user.username.clone())
+            .collect())
+    }
 }
 
 impl SunnyQuicServer {
@@ -33,10 +93,17 @@ impl SunnyQuicServer {
         let endpoint: EndServer = QuicServer::new(&cfg)
             .await
             .expect("Failed to listening on udp");
+        let users = Arc::new(ArcSwap::new(Self::gen_users_hash(&cfg)));
+        let user_manager = Arc::new(SunnyQuicUserManager {
+            endpoint: endpoint.clone(),
+            users: users.clone(),
+            config: RwLock::new(cfg),
+        });
 
         Ok(Self {
             endpoint,
-            users: Arc::new(ArcSwap::new(Self::gen_users_hash(&cfg))),
+            users,
+            user_manager,
             request_sender: send,
             request: recv,
         })
@@ -45,6 +112,7 @@ impl SunnyQuicServer {
     pub async fn update_config(&self, cfg: &SunnyQuicServerCfg) -> Result<(), SError> {
         QuicServer::update_config(&self.endpoint, cfg).await?;
         self.users.store(Self::gen_users_hash(cfg));
+        *self.user_manager.config.write().await = cfg.clone();
         Ok(())
     }
 
@@ -52,6 +120,7 @@ impl SunnyQuicServer {
         incom: C,
         req_sender: Sender<ProxyRequest>,
         user_hash: SunnyQuicUsers,
+        user_manager: Arc<dyn UserManager>,
     ) -> Result<(), SError> {
         let sq_conn = SQServerConn {
             inner: SQConn {
@@ -64,7 +133,7 @@ impl SunnyQuicServer {
                 },
             },
             users: user_hash,
-            user_manager: None,
+            user_manager: Some(user_manager),
         };
         let span = trace_span!("quic", id = sq_conn.inner.peer_id());
         sq_conn
@@ -98,14 +167,16 @@ impl Inbound for SunnyQuicServer {
         let request_sender = self.request_sender.clone();
         let endpoint = self.endpoint.clone();
         let users = self.users.clone();
+        let user_manager = self.user_manager.clone();
         let fut = async move {
             loop {
                 match QuicServer::accept(&endpoint).await {
                     Ok(conn) => {
                         let request_sender = request_sender.clone();
                         let user_hash = users.load_full();
+                        let user_manager = user_manager.clone();
                         tokio::spawn(async move {
-                            Self::handle_incoming(conn, request_sender, user_hash)
+                            Self::handle_incoming(conn, request_sender, user_hash, user_manager)
                                 .await
                                 .map_err(|x| error!("{}", x))
                         });

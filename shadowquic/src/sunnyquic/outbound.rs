@@ -9,8 +9,9 @@ use crate::{
     Outbound,
     config::SunnyQuicClientCfg,
     error::SError,
+    msgs::squic::SQExtError,
     quic::{QuicClient, QuicConnection},
-    squic::{auth_sunny, outbound::handle_request},
+    squic::{auth_sunny, outbound},
     sunnyquic::gen_sunny_user_hash,
     utils::socket_opt::{SocketFactory, UdpSocketFactory},
 };
@@ -103,6 +104,28 @@ impl SunnyQuicClient {
         }
         Ok(())
     }
+
+    pub async fn add_user(
+        &mut self,
+        username: &str,
+        password: &str,
+    ) -> Result<Result<(), SQExtError>, SError> {
+        self.prepare_conn().await?;
+        let conn = self.quic_conn.as_ref().unwrap();
+        outbound::add_user(conn, username, password).await
+    }
+
+    pub async fn remove_user(&mut self, username: &str) -> Result<Result<(), SQExtError>, SError> {
+        self.prepare_conn().await?;
+        let conn = self.quic_conn.as_ref().unwrap();
+        outbound::remove_user(conn, username).await
+    }
+
+    pub async fn list_users(&mut self) -> Result<Result<Vec<String>, SQExtError>, SError> {
+        self.prepare_conn().await?;
+        let conn = self.quic_conn.as_ref().unwrap();
+        outbound::list_users(conn).await
+    }
 }
 #[async_trait]
 impl Outbound for SunnyQuicClient {
@@ -112,7 +135,7 @@ impl Outbound for SunnyQuicClient {
         let conn = self.quic_conn.as_mut().unwrap().clone();
 
         let over_stream = self.config.over_stream;
-        handle_request(req, conn, over_stream).await?;
+        outbound::handle_request(req, conn, over_stream).await?;
         Ok(())
     }
 }
