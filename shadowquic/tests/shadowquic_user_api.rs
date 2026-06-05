@@ -53,10 +53,10 @@ async fn shadowquic_user_api_add_remove_and_permissions() {
     );
     assert_connects("alice", "alice-new-pass").await;
 
-    assert_eq!(admin.delete_user("alice").await.unwrap(), Ok(()));
+    assert_eq!(admin.remove_user("alice").await.unwrap(), Ok(()));
     assert_rejected_or_timeout("alice", "alice-new-pass").await;
     assert_eq!(
-        admin.delete_user("alice").await.unwrap(),
+        admin.remove_user("alice").await.unwrap(),
         Err(SQExtError::NotFound)
     );
 
@@ -66,7 +66,7 @@ async fn shadowquic_user_api_add_remove_and_permissions() {
         Err(SQExtError::PermissionDenied)
     );
     assert_eq!(
-        bob.delete_user("admin").await.unwrap(),
+        bob.remove_user("admin").await.unwrap(),
         Err(SQExtError::PermissionDenied)
     );
 }
