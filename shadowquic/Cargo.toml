@@ -32,8 +32,8 @@ aws-lc-rs = [
 ]
 tokio-console = ["dep:console-subscriber","tokio/tracing"]
 shadowquic-quinn = ["dep:quinn","dep:rustls_jls", "dep:quinn_proto"]
-sunnyquic-gm-quic = ["dep:gm-quic","dep:qevent","dep:qbase","dep:qunreliable", "dep:rustls","dep:rustls-native-certs","dep:arc-swap","dep:notify"]
-sunnyquic-iroh-quinn = ["dep:iroh-quinn", "dep:rustls", "dep:rustls-native-certs","dep:arc-swap","dep:notify", "dep:iroh-quinn-proto"]
+sunnyquic-gm-quic = ["dep:gm-quic","dep:qevent","dep:qbase","dep:qunreliable", "dep:rustls","dep:rustls-native-certs","dep:notify"]
+sunnyquic-iroh-quinn = ["dep:iroh-quinn", "dep:rustls", "dep:rustls-native-certs","dep:notify", "dep:iroh-quinn-proto"]
 
 [dependencies]
 anyhow = "1.0.100"
@@ -77,7 +77,7 @@ iroh-quinn-proto ={ version = "0.15.1",optional = true, default-features = false
 
 
 notify = { version = "8.2.0", features = ["serde"], optional = true}
-arc-swap = { version = "1.9.1", optional = true }
+arc-swap = { version = "1.9.1"}
 
 console-subscriber = { version = "0.5.0", optional = true }
 serde-saphyr = "0.0.26"

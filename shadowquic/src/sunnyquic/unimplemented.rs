@@ -13,6 +13,8 @@ use crate::{
 
 #[derive(Clone)]
 pub struct Connection;
+
+#[derive(Clone)]
 pub struct EndClient;
 #[async_trait]
 impl QuicClient for EndClient {
@@ -38,6 +40,7 @@ impl QuicClient for EndClient {
         unimplemented!()
     }
 }
+#[derive(Clone)]
 pub struct EndServer;
 pub struct SendStream;
 
