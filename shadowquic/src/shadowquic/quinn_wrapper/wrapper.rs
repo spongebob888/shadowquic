@@ -67,13 +67,13 @@ impl QuicConnection for Connection {
 
         let rate: f32 =
             (self.stats().path.lost_packets as f32) / ((self.stats().path.sent_packets + 1) as f32);
-        info!(
-            "packet_loss_rate:{:.2}%, rtt:{:?}, mtu:{}",
-            rate * 100.0,
-            self.rtt(),
-            self.stats().path.current_mtu,
-        );
 
+        info!(
+            packet_loss_rate=%format!("{:.2}%", rate*100.0),
+            rtt = %format!("{:.1}ms", self.rtt().as_secs_f32()*1000.0),
+            mtu = self.stats().path.current_mtu,
+            "uplink stats",
+        );
         let id = send.id().index();
         Ok((send, recv, id))
     }

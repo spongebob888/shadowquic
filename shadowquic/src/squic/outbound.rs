@@ -139,7 +139,7 @@ async fn print_stats<C: QuicConnection>(sq_conn: &SQConn<C>) -> SResult<()> {
     let stats = sq_conn.get_conn_stats().ok_or(SError::ProtocolUnimpl)?;
     info!(
         packet_loss_rate=%format!("{:.2}%", stats.lost_packets as f32 / (stats.sent_packets + 1) as f32 * 100.0),
-        rtt = %format!("{:.0}ms", stats.rtt),
+        rtt = %format!("{:.1}ms", stats.rtt),
         mtu = stats.current_mtu,
         "uplink stats",
     );
@@ -153,7 +153,7 @@ async fn print_stats<C: QuicConnection>(sq_conn: &SQConn<C>) -> SResult<()> {
     };
     info!(
         packet_loss_rate=%format!("{:.2}%", stats.lost_packets as f32 / (stats.sent_packets + 1) as f32 * 100.0),
-        rtt = %format!("{:.0}ms", stats.rtt),
+        rtt = %format!("{:.1}ms", stats.rtt),
         mtu = stats.current_mtu,
         "downlink stats",
     );
