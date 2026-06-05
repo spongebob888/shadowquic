@@ -7,8 +7,9 @@ use tokio::io::AsyncReadExt;
 use tracing::Instrument;
 use tracing::{Level, error, info, span, trace};
 
+use crate::config::AuthUser;
 use crate::error::SResult;
-use crate::msgs::squic::{ConnStats, ExtOpcodeConn, SQExtError, SQExtOpcode};
+use crate::msgs::squic::{ConnStats, ExtOpcodeConn, ExtOpcodeUser, SQExtError, SQExtOpcode};
 use crate::{
     ProxyRequest,
     error::SError,
@@ -122,6 +123,47 @@ pub async fn get_peer_conn_stats<C: QuicConnection>(
     let response = Result::<ConnStats, SQExtError>::decode(&mut recv).await?;
     Ok(response)
 }
+
+pub async fn add_user<C: QuicConnection>(
+    sq_conn: &SQConn<C>,
+    username: &str,
+    password: &str,
+) -> SResult<Result<(), SQExtError>> {
+    send_user_extension(
+        sq_conn,
+        ExtOpcodeUser::AddUser(AuthUser {
+            username: username.to_owned(),
+            password: password.to_owned(),
+        }),
+    )
+    .await
+}
+
+pub async fn delete_user<C: QuicConnection>(
+    sq_conn: &SQConn<C>,
+    username: &str,
+) -> SResult<Result<(), SQExtError>> {
+    send_user_extension(sq_conn, ExtOpcodeUser::RemoveUser(username.to_owned())).await
+}
+
+pub async fn remove_user<C: QuicConnection>(
+    sq_conn: &SQConn<C>,
+    username: &str,
+) -> SResult<Result<(), SQExtError>> {
+    delete_user(sq_conn, username).await
+}
+
+async fn send_user_extension<C: QuicConnection>(
+    sq_conn: &SQConn<C>,
+    opcode: ExtOpcodeUser,
+) -> SResult<Result<(), SQExtError>> {
+    let (mut send, mut recv, _id) = sq_conn.open_bi().await?;
+    let req = SQReq::SQExtension(SQExtOpcode::User(opcode));
+    req.encode(&mut send).await?;
+    let response = Result::<(), SQExtError>::decode(&mut recv).await?;
+    Ok(response)
+}
+
 async fn print_stats<C: QuicConnection>(sq_conn: &SQConn<C>) -> SResult<()> {
     static LAST_PRINT: std::sync::LazyLock<tokio::sync::Mutex<Option<std::time::Instant>>> =
         std::sync::LazyLock::new(|| tokio::sync::Mutex::new(None));

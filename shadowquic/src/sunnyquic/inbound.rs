@@ -64,6 +64,7 @@ impl SunnyQuicServer {
                 },
             },
             users: user_hash,
+            user_manager: None,
         };
         let span = trace_span!("quic", id = sq_conn.inner.peer_id());
         sq_conn

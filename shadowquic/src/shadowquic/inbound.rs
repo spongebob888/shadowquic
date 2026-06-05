@@ -2,14 +2,19 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use tokio::sync::{
-    SetOnce,
+    RwLock, SetOnce,
     mpsc::{Receiver, Sender, channel},
 };
 use tracing::{Instrument, error, trace_span};
 
 use crate::{
-    Inbound, ProxyRequest, config::ShadowQuicServerCfg, error::SError, quic::AuthedConn,
-    quic::QuicConnection, squic::inbound::SQServerConn,
+    Inbound, ProxyRequest,
+    config::{AuthUser, ShadowQuicServerCfg},
+    error::SError,
+    msgs::squic::SQExtError,
+    quic::AuthedConn,
+    quic::QuicConnection,
+    squic::inbound::{SQServerConn, UserManager},
 };
 
 use crate::squic::{IDStore, SQConn};
@@ -18,8 +23,55 @@ use super::quinn_wrapper::EndServer;
 use crate::quic::QuicServer;
 pub struct ShadowQuicServer {
     pub endpoint: EndServer,
+    user_manager: Arc<ShadowQuicUserManager>,
     request_sender: Sender<ProxyRequest>,
     request: Receiver<ProxyRequest>,
+}
+
+struct ShadowQuicUserManager {
+    endpoint: EndServer,
+    config: RwLock<ShadowQuicServerCfg>,
+}
+
+#[async_trait]
+impl UserManager for ShadowQuicUserManager {
+    async fn add_user(&self, user: AuthUser) -> Result<(), SQExtError> {
+        let mut config = self.config.write().await;
+        let old_config = config.clone();
+        if let Some(existing_user) = config
+            .users
+            .iter_mut()
+            .find(|existing_user| existing_user.username == user.username)
+        {
+            existing_user.password = user.password;
+        } else {
+            config.users.push(user);
+        }
+
+        if let Err(error) = QuicServer::update_config(&self.endpoint, &config).await {
+            *config = old_config;
+            tracing::error!("failed to add user: {}", error);
+            return Err(SQExtError::NotAvailable);
+        }
+        Ok(())
+    }
+
+    async fn remove_user(&self, username: &str) -> Result<(), SQExtError> {
+        let mut config = self.config.write().await;
+        let old_config = config.clone();
+        let old_len = config.users.len();
+        config.users.retain(|user| user.username != username);
+        if config.users.len() == old_len {
+            return Err(SQExtError::NotFound);
+        }
+
+        if let Err(error) = QuicServer::update_config(&self.endpoint, &config).await {
+            *config = old_config;
+            tracing::error!("failed to remove user: {}", error);
+            return Err(SQExtError::NotAvailable);
+        }
+        Ok(())
+    }
 }
 
 impl ShadowQuicServer {
@@ -29,9 +81,14 @@ impl ShadowQuicServer {
         let endpoint: EndServer = QuicServer::new(&cfg)
             .await
             .expect("Failed to listening on udp");
+        let user_manager = Arc::new(ShadowQuicUserManager {
+            endpoint: endpoint.clone(),
+            config: RwLock::new(cfg),
+        });
 
         Ok(Self {
             endpoint,
+            user_manager,
             request_sender: send,
             request: recv,
         })
@@ -40,6 +97,7 @@ impl ShadowQuicServer {
     async fn handle_incoming<C: QuicConnection + AuthedConn>(
         incom: C,
         req_sender: Sender<ProxyRequest>,
+        user_manager: Arc<dyn UserManager>,
     ) -> Result<(), SError> {
         let user = incom
             .authed_user()
@@ -55,6 +113,7 @@ impl ShadowQuicServer {
                 },
             },
             users: Arc::new(Default::default()),
+            user_manager: Some(user_manager),
         };
         let span = trace_span!("quic", id = sq_conn.inner.peer_id(), user = %user);
         sq_conn
@@ -80,13 +139,15 @@ impl Inbound for ShadowQuicServer {
     async fn init(&self) -> Result<(), SError> {
         let request_sender = self.request_sender.clone();
         let endpoint = self.endpoint.clone();
+        let user_manager = self.user_manager.clone();
         let fut = async move {
             loop {
                 match QuicServer::accept(&endpoint).await {
                     Ok(conn) => {
                         let request_sender = request_sender.clone();
+                        let user_manager = user_manager.clone();
                         tokio::spawn(async move {
-                            Self::handle_incoming(conn, request_sender)
+                            Self::handle_incoming(conn, request_sender, user_manager)
                                 .await
                                 .map_err(|x| error!("{}", x))
                         });

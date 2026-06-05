@@ -10,11 +10,12 @@ use tracing::{Instrument, info, trace, trace_span};
 
 use crate::{
     ProxyRequest, TcpSession, TcpTrait, UdpSession,
+    config::AuthUser,
     error::{SError, SResult},
     msgs::{
         SDecode, SEncode,
         socks5::SocksAddr,
-        squic::{ExtOpcodeConn, SQExtError, SQExtOpcode, SQReq, SunnyCredential},
+        squic::{ExtOpcodeConn, ExtOpcodeUser, SQExtError, SQExtOpcode, SQReq, SunnyCredential},
     },
     quic::QuicConnection,
     squic::wait_sunny_auth,
@@ -24,10 +25,17 @@ use super::{SQConn, handle_udp_packet_recv, handle_udp_recv_ctrl, handle_udp_sen
 
 pub type SunnyQuicUsers = Arc<HashMap<SunnyCredential, String>>;
 
+#[async_trait::async_trait]
+pub trait UserManager: Send + Sync {
+    async fn add_user(&self, user: AuthUser) -> Result<(), SQExtError>;
+    async fn remove_user(&self, username: &str) -> Result<(), SQExtError>;
+}
+
 #[derive(Clone)]
 pub struct SQServerConn<C: QuicConnection> {
     pub inner: SQConn<C>,
     pub users: SunnyQuicUsers,
+    pub user_manager: Option<Arc<dyn UserManager>>,
 }
 impl<C: QuicConnection> SQServerConn<C> {
     pub async fn handle_connection(self, req_send: Sender<ProxyRequest>) -> Result<(), SError> {
@@ -143,8 +151,27 @@ impl<C: QuicConnection> SQServerConn<C> {
                     stats.encode(&mut send).await?;
                 }
             },
+            SQExtOpcode::User(user_opcode) => {
+                let response = self.handle_user_extension(user_opcode).await;
+                response.encode(&mut send).await?;
+            }
         }
         Ok(())
+    }
+
+    async fn handle_user_extension(&self, user_opcode: ExtOpcodeUser) -> Result<(), SQExtError> {
+        let authed_user = wait_sunny_auth(&self.inner)
+            .await
+            .map_err(|_| SQExtError::PermissionDenied)?;
+        if authed_user != "admin" {
+            return Err(SQExtError::PermissionDenied);
+        }
+
+        let user_manager = self.user_manager.as_ref().ok_or(SQExtError::NotAvailable)?;
+        match user_opcode {
+            ExtOpcodeUser::AddUser(user) => user_manager.add_user(user).await,
+            ExtOpcodeUser::RemoveUser(username) => user_manager.remove_user(&username).await,
+        }
     }
 }
 

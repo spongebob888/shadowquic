@@ -9,8 +9,9 @@ use crate::{
     Outbound,
     config::ShadowQuicClientCfg,
     error::SError,
+    msgs::squic::SQExtError,
     quic::QuicClient,
-    squic::outbound::handle_request,
+    squic::outbound,
     utils::socket_opt::{SocketFactory, UdpSocketFactory},
 };
 
@@ -93,6 +94,26 @@ impl ShadowQuicClient {
         }
         Ok(())
     }
+
+    pub async fn add_user(
+        &mut self,
+        username: &str,
+        password: &str,
+    ) -> Result<Result<(), SQExtError>, SError> {
+        self.prepare_conn().await?;
+        let conn = self.quic_conn.as_ref().unwrap();
+        outbound::add_user(conn, username, password).await
+    }
+
+    pub async fn delete_user(&mut self, username: &str) -> Result<Result<(), SQExtError>, SError> {
+        self.prepare_conn().await?;
+        let conn = self.quic_conn.as_ref().unwrap();
+        outbound::delete_user(conn, username).await
+    }
+
+    pub async fn remove_user(&mut self, username: &str) -> Result<Result<(), SQExtError>, SError> {
+        self.delete_user(username).await
+    }
 }
 #[async_trait]
 impl Outbound for ShadowQuicClient {
@@ -102,7 +123,7 @@ impl Outbound for ShadowQuicClient {
         let conn = self.quic_conn.as_mut().unwrap().clone();
 
         let over_stream = self.config.over_stream;
-        handle_request(req, conn, over_stream).await?;
+        outbound::handle_request(req, conn, over_stream).await?;
         Ok(())
     }
 }
