@@ -1,4 +1,6 @@
+use crate::{SDecode, SEncode};
 use serde::{Deserialize, Serialize};
+use shadowquic_macros::{SDecode, SEncode};
 use std::net::{IpAddr, SocketAddr};
 use tracing::{Level, warn};
 
@@ -132,7 +134,7 @@ pub struct SocksServerCfg {
 }
 
 /// user authentication
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq, SEncode, SDecode)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AuthUser {
     pub username: String,
