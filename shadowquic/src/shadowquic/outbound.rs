@@ -7,11 +7,11 @@ use tracing::{error, info};
 
 use crate::{
     Outbound,
-    config::{AuthUser, ShadowQuicClientCfg},
+    config::ShadowQuicClientCfg,
     error::SError,
     msgs::squic::SQExtError,
     quic::QuicClient,
-    squic::{inbound::UserManager, outbound},
+    squic::outbound,
     utils::socket_opt::{SocketFactory, UdpSocketFactory},
 };
 
@@ -107,7 +107,13 @@ impl ShadowQuicClient {
     pub async fn remove_user(&mut self, username: &str) -> Result<Result<(), SQExtError>, SError> {
         self.prepare_conn().await?;
         let conn = self.quic_conn.as_ref().unwrap();
-        outbound::delete_user(conn, username).await
+        outbound::remove_user(conn, username).await
+    }
+
+    pub async fn list_users(&mut self) -> Result<Result<Vec<String>, SQExtError>, SError> {
+        self.prepare_conn().await?;
+        let conn = self.quic_conn.as_ref().unwrap();
+        outbound::list_users(conn).await
     }
 }
 #[async_trait]

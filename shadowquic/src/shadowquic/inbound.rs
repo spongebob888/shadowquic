@@ -72,6 +72,15 @@ impl UserManager for ShadowQuicUserManager {
         }
         Ok(())
     }
+
+    async fn list_users(&self) -> Result<Vec<String>, SQExtError> {
+        let config = self.config.read().await;
+        Ok(config
+            .users
+            .iter()
+            .map(|user| user.username.clone())
+            .collect())
+    }
 }
 
 impl ShadowQuicServer {

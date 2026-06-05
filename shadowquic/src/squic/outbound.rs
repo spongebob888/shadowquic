@@ -139,28 +139,27 @@ pub async fn add_user<C: QuicConnection>(
     .await
 }
 
-pub async fn delete_user<C: QuicConnection>(
+pub async fn remove_user<C: QuicConnection>(
     sq_conn: &SQConn<C>,
     username: &str,
 ) -> SResult<Result<(), SQExtError>> {
     send_user_extension(sq_conn, ExtOpcodeUser::RemoveUser(username.to_owned())).await
 }
 
-pub async fn remove_user<C: QuicConnection>(
+pub async fn list_users<C: QuicConnection>(
     sq_conn: &SQConn<C>,
-    username: &str,
-) -> SResult<Result<(), SQExtError>> {
-    delete_user(sq_conn, username).await
+) -> SResult<Result<Vec<String>, SQExtError>> {
+    send_user_extension(sq_conn, ExtOpcodeUser::ListUsers).await
 }
 
-async fn send_user_extension<C: QuicConnection>(
+async fn send_user_extension<C: QuicConnection, R: SDecode>(
     sq_conn: &SQConn<C>,
     opcode: ExtOpcodeUser,
-) -> SResult<Result<(), SQExtError>> {
+) -> SResult<Result<R, SQExtError>> {
     let (mut send, mut recv, _id) = sq_conn.open_bi().await?;
     let req = SQReq::SQExtension(SQExtOpcode::User(opcode));
     req.encode(&mut send).await?;
-    let response = Result::<(), SQExtError>::decode(&mut recv).await?;
+    let response = Result::<R, SQExtError>::decode(&mut recv).await?;
     Ok(response)
 }
 

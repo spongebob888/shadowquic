@@ -113,20 +113,24 @@ impl SDecode for () {
 }
 
 #[async_trait::async_trait]
-impl SEncode for Vec<u8> {
+impl<E: SEncode + Send + Sync> SEncode for Vec<E> {
     async fn encode<T: AsyncWrite + Unpin + Send>(&self, s: &mut T) -> Result<(), SError> {
         let len = self.len() as u32;
         len.encode(s).await?;
-        s.write_all(self).await?;
+        for item in self {
+            item.encode(s).await?;
+        }
         Ok(())
     }
 }
 #[async_trait::async_trait]
-impl SDecode for Vec<u8> {
+impl<E: SDecode + Send + Sync> SDecode for Vec<E> {
     async fn decode<T: AsyncRead + Unpin + Send>(s: &mut T) -> Result<Self, SError> {
         let len = u32::decode(s).await?;
-        let mut data = vec![0u8; len as usize];
-        s.read_exact(&mut data).await?;
+        let mut data = Vec::with_capacity(len as usize);
+        for _ in 0..len {
+            data.push(E::decode(s).await?);
+        }
         Ok(data)
     }
 }

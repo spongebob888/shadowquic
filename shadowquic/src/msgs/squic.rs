@@ -55,6 +55,7 @@ pub struct ConnStats {
 pub enum ExtOpcodeUser {
     AddUser(AuthUser) = 0x0,
     RemoveUser(String) = 0x1,
+    ListUsers = 0x2,
 }
 #[derive(PartialEq)]
 #[repr(u8)]

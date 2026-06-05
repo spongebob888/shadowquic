@@ -44,16 +44,21 @@ async fn shadowquic_user_api_add_remove_and_permissions() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut admin = client("admin", "admin-pass");
+    assert_users(&mut admin, &["admin", "bob"]).await;
+
     assert_eq!(admin.add_user("alice", "alice-pass").await.unwrap(), Ok(()));
+    assert_users(&mut admin, &["admin", "bob", "alice"]).await;
     assert_connects("alice", "alice-pass").await;
 
     assert_eq!(
         admin.add_user("alice", "alice-new-pass").await.unwrap(),
         Ok(())
     );
+    assert_users(&mut admin, &["admin", "bob", "alice"]).await;
     assert_connects("alice", "alice-new-pass").await;
 
     assert_eq!(admin.remove_user("alice").await.unwrap(), Ok(()));
+    assert_users(&mut admin, &["admin", "bob"]).await;
     assert_rejected_or_timeout("alice", "alice-new-pass").await;
     assert_eq!(
         admin.remove_user("alice").await.unwrap(),
@@ -67,6 +72,10 @@ async fn shadowquic_user_api_add_remove_and_permissions() {
     );
     assert_eq!(
         bob.remove_user("admin").await.unwrap(),
+        Err(SQExtError::PermissionDenied)
+    );
+    assert_eq!(
+        bob.list_users().await.unwrap(),
         Err(SQExtError::PermissionDenied)
     );
 }
@@ -93,6 +102,17 @@ async fn assert_connects(username: &str, password: &str) {
         .get_conn()
         .await
         .unwrap_or_else(|error| panic!("{username} should connect: {error}"));
+}
+
+async fn assert_users(client: &mut ShadowQuicClient, expected: &[&str]) {
+    let mut users = client.list_users().await.unwrap().unwrap();
+    users.sort();
+    let mut expected = expected
+        .iter()
+        .map(|username| username.to_string())
+        .collect::<Vec<_>>();
+    expected.sort();
+    assert_eq!(users, expected);
 }
 
 async fn assert_rejected_or_timeout(username: &str, password: &str) {

@@ -29,6 +29,7 @@ pub type SunnyQuicUsers = Arc<HashMap<SunnyCredential, String>>;
 pub trait UserManager: Send + Sync {
     async fn add_user(&self, user: AuthUser) -> Result<(), SQExtError>;
     async fn remove_user(&self, username: &str) -> Result<(), SQExtError>;
+    async fn list_users(&self) -> Result<Vec<String>, SQExtError>;
 }
 
 #[derive(Clone)]
@@ -152,26 +153,50 @@ impl<C: QuicConnection> SQServerConn<C> {
                 }
             },
             SQExtOpcode::User(user_opcode) => {
-                let response = self.handle_user_extension(user_opcode).await;
-                response.encode(&mut send).await?;
+                self.handle_user_extension(user_opcode, &mut send).await?;
             }
         }
         Ok(())
     }
 
-    async fn handle_user_extension(&self, user_opcode: ExtOpcodeUser) -> Result<(), SQExtError> {
-        let authed_user = wait_sunny_auth(&self.inner)
-            .await
-            .map_err(|_| SQExtError::PermissionDenied)?;
+    async fn handle_user_extension(
+        &self,
+        user_opcode: ExtOpcodeUser,
+        send: &mut C::SendStream,
+    ) -> SResult<()> {
+        let authed_user = wait_sunny_auth(&self.inner).await?;
         if authed_user != "admin" {
-            return Err(SQExtError::PermissionDenied);
+            (Err::<(), SQExtError>(SQExtError::PermissionDenied))
+                .encode(send)
+                .await?;
+            return Ok(());
         }
 
-        let user_manager = self.user_manager.as_ref().ok_or(SQExtError::NotAvailable)?;
+        let user_manager = match self.user_manager.as_ref() {
+            Some(user_manager) => user_manager,
+            None => {
+                (Err::<(), SQExtError>(SQExtError::NotAvailable))
+                    .encode(send)
+                    .await?;
+                return Ok(());
+            }
+        };
         match user_opcode {
-            ExtOpcodeUser::AddUser(user) => user_manager.add_user(user).await,
-            ExtOpcodeUser::RemoveUser(username) => user_manager.remove_user(&username).await,
+            ExtOpcodeUser::AddUser(user) => {
+                user_manager.add_user(user).await.encode(send).await?;
+            }
+            ExtOpcodeUser::RemoveUser(username) => {
+                user_manager
+                    .remove_user(&username)
+                    .await
+                    .encode(send)
+                    .await?;
+            }
+            ExtOpcodeUser::ListUsers => {
+                user_manager.list_users().await.encode(send).await?;
+            }
         }
+        Ok(())
     }
 }
 
