@@ -41,6 +41,7 @@ pub trait QuicServer: Send + Sync {
     where
         Self: Sized;
     async fn accept(&self) -> Result<Self::C, QuicErrorRepr>;
+    async fn update_config(&self, cfg: &Self::SC) -> SResult<()>;
 }
 
 #[async_trait]

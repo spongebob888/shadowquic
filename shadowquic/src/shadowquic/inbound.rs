@@ -17,17 +17,21 @@ use crate::squic::{IDStore, SQConn};
 use super::quinn_wrapper::EndServer;
 use crate::quic::QuicServer;
 pub struct ShadowQuicServer {
-    pub config: ShadowQuicServerCfg,
+    pub endpoint: EndServer,
     request_sender: Sender<ProxyRequest>,
     request: Receiver<ProxyRequest>,
 }
 
 impl ShadowQuicServer {
-    pub fn new(cfg: ShadowQuicServerCfg) -> Result<Self, SError> {
+    pub async fn new(cfg: ShadowQuicServerCfg) -> Result<Self, SError> {
         let (send, recv) = channel::<ProxyRequest>(10);
 
+            let endpoint: EndServer = QuicServer::new(&cfg)
+                .await
+                .expect("Failed to listening on udp");
+
         Ok(Self {
-            config: cfg,
+            endpoint,
             request_sender: send,
             request: recv,
         })
@@ -75,11 +79,8 @@ impl Inbound for ShadowQuicServer {
     /// Init background job for accepting connection
     async fn init(&self) -> Result<(), SError> {
         let request_sender = self.request_sender.clone();
-        let config = self.config.clone();
+        let endpoint = self.endpoint.clone();
         let fut = async move {
-            let endpoint: EndServer = QuicServer::new(&config)
-                .await
-                .expect("Failed to listening on udp");
             loop {
                 match QuicServer::accept(&endpoint).await {
                     Ok(conn) => {

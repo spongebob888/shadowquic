@@ -16,6 +16,7 @@ use tracing::{debug, error, info, trace, warn};
 use quinn::rustls::ServerConfig as RustlsServerConfig;
 
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
+use arc_swap::ArcSwap;
 
 #[cfg(feature = "aws-lc-rs")]
 use quinn::rustls::crypto::aws_lc_rs as crypto_provider;
@@ -37,11 +38,21 @@ use crate::{
 };
 
 pub type Connection = quinn::Connection;
-pub struct Endpoint {
+
+#[derive(Clone)]
+pub struct EndServer {
+    inner: quinn::Endpoint,
+    crypto: Arc<ArcSwap<RustlsServerConfig>>, // Include zero-rtt session ticket
+    zero_rtt: bool,
+}
+
+#[derive(Clone)]
+pub struct EndClient {
     inner: quinn::Endpoint,
     zero_rtt: bool,
 }
-impl Deref for Endpoint {
+
+impl Deref for EndServer {
     type Target = quinn::Endpoint;
 
     fn deref(&self) -> &Self::Target {
@@ -49,8 +60,6 @@ impl Deref for Endpoint {
     }
 }
 
-pub use Endpoint as EndClient;
-pub use Endpoint as EndServer;
 #[async_trait]
 impl QuicConnection for Connection {
     type RecvStream = quinn::RecvStream;
@@ -139,7 +148,7 @@ impl AuthedConn for Connection {
 }
 
 #[async_trait]
-impl QuicClient for Endpoint {
+impl QuicClient for EndClient {
     type SC = ShadowQuicClientCfg;
     async fn new(cfg: &Self::SC) -> SResult<Self> {
         Self::new_with_socket_factory(
@@ -202,7 +211,7 @@ impl QuicClient for Endpoint {
             runtime,
         )?;
         end.set_default_client_config(gen_client_cfg(cfg));
-        Ok(Endpoint {
+        Ok(EndClient {
             inner: end,
             zero_rtt: cfg.zero_rtt,
         })
@@ -313,7 +322,7 @@ pub fn gen_client_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
 }
 
 #[async_trait]
-impl QuicServer for Endpoint {
+impl QuicServer for EndServer {
     type C = Connection;
     type SC = ShadowQuicServerCfg;
     async fn new(cfg: &Self::SC) -> SResult<Self> {
@@ -324,7 +333,64 @@ impl QuicServer for Endpoint {
         crypto =
             RustlsServerConfig::builder_with_protocol_versions(&[&quinn::rustls::version::TLS13])
                 .with_no_client_auth()
-                .with_single_cert(vec![cert_der], PrivateKeyDer::Pkcs8(priv_key))?;
+                .with_single_cert(vec![cert_der], PrivateKeyDer::Pkcs8(priv_key))
+                .expect("invalid cert or key when create shadowquic server");
+
+
+        let config = gen_server_config(cfg, &mut crypto);
+
+        let endpoint = quinn::Endpoint::server(config.clone(), cfg.bind_addr)?;
+        Ok(EndServer {
+            crypto: Arc::new(ArcSwap::new(crypto.into())),
+            inner: endpoint,
+            zero_rtt: cfg.zero_rtt,
+        })
+    }
+    async fn update_config(&self, cfg: &Self::SC) -> SResult<()> {
+        let mut crypto: RustlsServerConfig = (**self.crypto.load()).clone();
+        let config = gen_server_config(cfg, &mut crypto);
+        self.inner.set_server_config(Some(config));
+        self.crypto.store(crypto.into());
+        Ok(())
+    }
+    async fn accept(&self) -> Result<Self::C, QuicErrorRepr> {
+        match self.deref().accept().await {
+            Some(conn) => {
+                let conn = conn.accept()?;
+                let connection = if self.zero_rtt {
+                    match conn.into_0rtt() {
+                        Ok((conn, accepted)) => {
+                            let conn_clone = conn.clone();
+                            tokio::spawn(async move {
+                                debug!("zero rtt accepted:{}", accepted.await);
+                                if conn_clone.is_jls() == Some(false) {
+                                    error!("JLS hijacked or wrong pwd/iv");
+                                    conn_clone.close(0u8.into(), b"");
+                                }
+                            });
+                            conn
+                        }
+                        Err(conn) => conn.await?,
+                    }
+                } else {
+                    conn.await?
+                };
+                if connection.is_jls() == Some(false) {
+                    error!("JLS hijacked or wrong pwd/iv");
+                    connection.close(0u8.into(), b"");
+                    return Err(QuicErrorRepr::JlsAuthFailed);
+                }
+                Ok(connection)
+            }
+            None => {
+                panic!("Quic endpoint closed");
+            }
+        }
+    }
+}
+
+fn gen_server_config(cfg: &ShadowQuicServerCfg, crypto: &mut RustlsServerConfig) -> quinn::ServerConfig {
+
         crypto.alpn_protocols = cfg
             .alpn
             .iter()
@@ -398,7 +464,7 @@ impl QuicServer for Endpoint {
             }
         };
         let mut config = quinn::ServerConfig::with_crypto(Arc::new(
-            QuicServerConfig::try_from(crypto).expect("rustls config can't created"),
+            QuicServerConfig::try_from(crypto.clone()).expect("rustls config can't created"),
         ));
         tp_cfg.send_window(MAX_SEND_WINDOW);
         tp_cfg.stream_receive_window(MAX_STREAM_WINDOW.try_into().unwrap());
@@ -406,47 +472,7 @@ impl QuicServer for Endpoint {
         tp_cfg.datagram_receive_buffer_size(Some(MAX_DATAGRAM_WINDOW as usize));
 
         config.transport_config(Arc::new(tp_cfg));
-
-        let endpoint = quinn::Endpoint::server(config, cfg.bind_addr)?;
-        Ok(Endpoint {
-            inner: endpoint,
-            zero_rtt: cfg.zero_rtt,
-        })
-    }
-    async fn accept(&self) -> Result<Self::C, QuicErrorRepr> {
-        match self.deref().accept().await {
-            Some(conn) => {
-                let conn = conn.accept()?;
-                let connection = if self.zero_rtt {
-                    match conn.into_0rtt() {
-                        Ok((conn, accepted)) => {
-                            let conn_clone = conn.clone();
-                            tokio::spawn(async move {
-                                debug!("zero rtt accepted:{}", accepted.await);
-                                if conn_clone.is_jls() == Some(false) {
-                                    error!("JLS hijacked or wrong pwd/iv");
-                                    conn_clone.close(0u8.into(), b"");
-                                }
-                            });
-                            conn
-                        }
-                        Err(conn) => conn.await?,
-                    }
-                } else {
-                    conn.await?
-                };
-                if connection.is_jls() == Some(false) {
-                    error!("JLS hijacked or wrong pwd/iv");
-                    connection.close(0u8.into(), b"");
-                    return Err(QuicErrorRepr::JlsAuthFailed);
-                }
-                Ok(connection)
-            }
-            None => {
-                panic!("Quic endpoint closed");
-            }
-        }
-    }
+        config
 }
 
 impl From<quinn::ConnectionError> for QuicErrorRepr {
