@@ -1,4 +1,13 @@
-use std::{io, net::SocketAddr, ops::Deref, sync::Arc, time::Duration};
+use std::{
+    io,
+    net::SocketAddr,
+    ops::Deref,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering::Relaxed},
+    },
+    time::Duration,
+};
 
 use super::brutal::BrutalConfig;
 use async_trait::async_trait;
@@ -43,7 +52,7 @@ pub type Connection = quinn::Connection;
 pub struct EndServer {
     inner: quinn::Endpoint,
     crypto: Arc<ArcSwap<RustlsServerConfig>>, // Include zero-rtt session ticket
-    zero_rtt: bool,
+    zero_rtt: Arc<AtomicBool>,
 }
 
 #[derive(Clone)]
@@ -342,13 +351,14 @@ impl QuicServer for EndServer {
         Ok(EndServer {
             crypto: Arc::new(ArcSwap::new(crypto.into())),
             inner: endpoint,
-            zero_rtt: cfg.zero_rtt,
+            zero_rtt: Arc::new(AtomicBool::new(cfg.zero_rtt)),
         })
     }
     async fn update_config(&self, cfg: &Self::SC) -> SResult<()> {
         let mut crypto: RustlsServerConfig = (**self.crypto.load()).clone();
         let config = gen_server_config(cfg, &mut crypto);
         self.inner.set_server_config(Some(config));
+        self.zero_rtt.store(cfg.zero_rtt, Relaxed);
         self.crypto.store(crypto.into());
         Ok(())
     }
@@ -356,7 +366,7 @@ impl QuicServer for EndServer {
         match self.deref().accept().await {
             Some(conn) => {
                 let conn = conn.accept()?;
-                let connection = if self.zero_rtt {
+                let connection = if self.zero_rtt.load(Relaxed) {
                     match conn.into_0rtt() {
                         Ok((conn, accepted)) => {
                             let conn_clone = conn.clone();
