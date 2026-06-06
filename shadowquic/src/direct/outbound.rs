@@ -9,7 +9,7 @@ use tokio::{
     net::{TcpStream, lookup_host},
     sync::Mutex,
 };
-use tracing::{Instrument, error, trace, trace_span};
+use tracing::{Instrument, error, info_span, trace};
 
 use crate::{
     Outbound, UdpSession,
@@ -56,7 +56,7 @@ impl Outbound for DirectOut {
             }
             Ok(()) as Result<(), SError>
         };
-        let span = trace_span!("direct");
+        let span = info_span!("direct");
         tokio::spawn(
             async {
                 let _ = fut.await.map_err(|x| error!("{}", x));

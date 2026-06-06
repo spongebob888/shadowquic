@@ -17,7 +17,7 @@ use tokio::{
 };
 
 use async_trait::async_trait;
-use tracing::{Instrument, error, trace_span};
+use tracing::{Instrument, error, info_span};
 
 use crate::{
     Outbound, ProxyRequest,
@@ -44,7 +44,7 @@ impl std::fmt::Debug for SocksClient {
 #[async_trait]
 impl Outbound for SocksClient {
     async fn handle(&mut self, req: ProxyRequest) -> Result<(), SError> {
-        let span = trace_span!("socks", server = self.cfg.addr);
+        let span = info_span!("socks", server = self.cfg.addr);
         let client = self.clone();
         let fut = async move {
             match req {

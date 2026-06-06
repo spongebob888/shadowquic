@@ -26,7 +26,7 @@ pub async fn handle_request<C: QuicConnection>(
     over_stream: bool,
 ) -> Result<(), SError> {
     let (mut send, recv, id) = QuicConnection::open_bi(&conn.conn).await?;
-    let _span = span!(Level::TRACE, "bistream", id = id);
+    let _span = span!(Level::INFO, "bistream", id = id);
     let conn_clone = conn.clone();
     tokio::spawn(
         async move {

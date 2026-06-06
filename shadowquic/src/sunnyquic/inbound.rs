@@ -6,7 +6,7 @@ use tokio::sync::{
     RwLock, SetOnce,
     mpsc::{Receiver, Sender, channel},
 };
-use tracing::{Instrument, error, trace_span};
+use tracing::{Instrument, error, info_span};
 
 use crate::{
     Inbound, ProxyRequest,
@@ -135,7 +135,7 @@ impl SunnyQuicServer {
             users: user_hash,
             user_manager: Some(user_manager),
         };
-        let span = trace_span!("quic", id = sq_conn.inner.peer_id());
+        let span = info_span!("quic", id = sq_conn.inner.peer_id());
         sq_conn
             .handle_connection(req_sender)
             .instrument(span)

@@ -6,7 +6,7 @@ use tokio::{
     select,
     sync::mpsc::{Sender, channel},
 };
-use tracing::{Instrument, info, trace, trace_span};
+use tracing::{Instrument, info, info_span, trace};
 
 use crate::{
     ProxyRequest, TcpSession, TcpTrait, UdpSession,
@@ -51,7 +51,7 @@ impl<C: QuicConnection> SQServerConn<C> {
             select! {
                 bi = conn.accept_bi() => {
                     let (send, recv, id) = bi?;
-                    let span = trace_span!("bistream", id = id);
+                    let span = info_span!("bistream", id = id);
                     trace!("bistream accepted");
                     tokio::spawn(self.clone().handle_bistream(send, recv, req_send.clone()).instrument(span).in_current_span());
                 },
