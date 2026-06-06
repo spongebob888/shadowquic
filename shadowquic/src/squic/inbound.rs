@@ -165,7 +165,7 @@ impl<C: QuicConnection> SQServerConn<C> {
         send: &mut C::SendStream,
     ) -> SResult<()> {
         let authed_user = wait_sunny_auth(&self.inner).await?;
-        if authed_user != "admin" {
+        if !authed_user.starts_with("admin") {
             (Err::<(), SQExtError>(SQExtError::PermissionDenied))
                 .encode(send)
                 .await?;
@@ -184,11 +184,7 @@ impl<C: QuicConnection> SQServerConn<C> {
         match user_opcode {
             ExtOpcodeUser::AddUser(user) => {
                 info!(username = %user.username, "adding user");
-                user_manager
-                    .add_user(user)
-                    .await
-                    .encode(send)
-                    .await?;
+                user_manager.add_user(user).await.encode(send).await?;
             }
             ExtOpcodeUser::RemoveUser(username) => {
                 info!(username = %username, "removing user");

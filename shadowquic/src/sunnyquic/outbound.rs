@@ -104,7 +104,6 @@ impl SunnyQuicClient {
         }
         Ok(())
     }
-
 }
 
 #[async_trait]

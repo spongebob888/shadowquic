@@ -26,6 +26,10 @@ async fn shadowquic_user_api_add_remove_and_permissions() {
                 username: "bob".into(),
                 password: "bob-pass".into(),
             },
+            AuthUser {
+                username: "admin_bob".into(),
+                password: "admin-bob-pass".into(),
+            },
         ],
         jls_upstream: JlsUpstream {
             addr: "localhost:443".into(),
@@ -45,23 +49,25 @@ async fn shadowquic_user_api_add_remove_and_permissions() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let admin = client("admin", "admin-pass");
-    assert_users(&admin, &["admin", "bob"]).await;
+    assert_users(&admin, &["admin", "bob", "admin_bob"]).await;
 
     assert_eq!(add_user(&admin, "alice", "alice-pass").await, Ok(()));
-    assert_users(&admin, &["admin", "bob", "alice"]).await;
+    assert_users(&admin, &["admin", "bob", "admin_bob", "alice"]).await;
     assert_connects("alice", "alice-pass").await;
 
     assert_eq!(add_user(&admin, "alice", "alice-new-pass").await, Ok(()));
-    assert_users(&admin, &["admin", "bob", "alice"]).await;
+    assert_users(&admin, &["admin", "bob", "admin_bob", "alice"]).await;
     assert_connects("alice", "alice-new-pass").await;
 
     assert_eq!(admin.remove_user("alice").await, Ok(()));
-    assert_users(&admin, &["admin", "bob"]).await;
+    assert_users(&admin, &["admin", "bob", "admin_bob"]).await;
     assert_rejected_or_timeout("alice", "alice-new-pass").await;
-    assert_eq!(
-        admin.remove_user("alice").await,
-        Err(SQExtError::NotFound),
-    );
+    assert_eq!(admin.remove_user("alice").await, Err(SQExtError::NotFound),);
+
+    let admin_bob = client("admin_bob", "admin-bob-pass");
+    assert_eq!(add_user(&admin_bob, "carol", "carol-pass").await, Ok(()));
+    assert_users(&admin, &["admin", "bob", "admin_bob", "carol"]).await;
+    assert_eq!(admin.remove_user("carol").await, Ok(()));
 
     let bob = client("bob", "bob-pass");
     assert_eq!(
@@ -72,10 +78,7 @@ async fn shadowquic_user_api_add_remove_and_permissions() {
         bob.remove_user("admin").await,
         Err(SQExtError::PermissionDenied),
     );
-    assert_eq!(
-        bob.list_users().await,
-        Err(SQExtError::PermissionDenied),
-    );
+    assert_eq!(bob.list_users().await, Err(SQExtError::PermissionDenied),);
 }
 
 fn client(username: &str, password: &str) -> ShadowQuicClient {
