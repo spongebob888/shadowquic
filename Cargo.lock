@@ -2505,11 +2505,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "quinn-jls"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb0c759ac6637df5a8132368f5ae254649e9bd0cac4b4f27f3174c00c4727c34"
+dependencies = [
+ "bytes",
+ "cfg_aliases",
+ "pin-project-lite",
+ "quinn-proto-jls",
+ "quinn-udp-jls",
+ "rustc-hash",
+ "rustls-jls",
+ "socket2 0.6.4",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "web-time",
+]
+
+[[package]]
 name = "quinn-proto"
 version = "0.11.13"
 source = "git+https://github.com/spongebob888/quinn-jls?branch=jls-dev#c7a6ed5d871e515e89b6a226f80583b9be3b122b"
 dependencies = [
- "aws-lc-rs",
  "bytes",
  "getrandom 0.3.4",
  "lru-slab",
@@ -2526,9 +2545,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "quinn-proto-jls"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b325366ffce23012d9d1e64ae298a0685c5b118c87ca7dd600e9fc45587678e"
+dependencies = [
+ "aws-lc-rs",
+ "bytes",
+ "getrandom 0.3.4",
+ "lru-slab",
+ "rand 0.9.4",
+ "ring",
+ "rustc-hash",
+ "rustls-jls",
+ "rustls-pki-types",
+ "slab",
+ "thiserror 2.0.18",
+ "tinyvec",
+ "tracing",
+ "web-time",
+]
+
+[[package]]
 name = "quinn-udp"
 version = "0.5.14"
 source = "git+https://github.com/spongebob888/quinn-jls?branch=jls-dev#c7a6ed5d871e515e89b6a226f80583b9be3b122b"
+dependencies = [
+ "cfg_aliases",
+ "libc",
+ "once_cell",
+ "socket2 0.6.4",
+ "tracing",
+ "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "quinn-udp-jls"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3823b6796bcb9b4224cb0efe7ebd97d4a7fc3c8a5d7e3662c3df8ebadb59a102"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -2731,7 +2786,6 @@ version = "0.23.36"
 source = "git+https://github.com/spongebob888/rustls-jls?tag=v%2F0.23.36-1.3.1#459f14c849f4fd5986aeeb80a7f52dca785bf80c"
 dependencies = [
  "aes-gcm",
- "aws-lc-rs",
  "once_cell",
  "ring",
  "rustls-pki-types",
@@ -3008,7 +3062,7 @@ dependencies = [
 
 [[package]]
 name = "shadowquic"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3027,8 +3081,8 @@ dependencies = [
  "notify",
  "qbase 0.5.0",
  "qevent 0.5.0",
- "quinn",
- "quinn-proto",
+ "quinn-jls",
+ "quinn-proto-jls",
  "qunreliable",
  "rand 0.10.1",
  "rcgen",
@@ -3053,7 +3107,7 @@ dependencies = [
 
 [[package]]
 name = "shadowquic-macros"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "proc-macro2",
  "quote",
