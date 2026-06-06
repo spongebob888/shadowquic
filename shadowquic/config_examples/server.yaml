@@ -6,6 +6,8 @@ inbound:
           password: "12345678"
         - username: "88888888"
           password: "99999999"
+        - username: "admin"
+          password: "hello"
     jls-upstream:
         addr: "cloudflare.com:443" # domain + port, domain must be the same as client
     alpn: ["h3"]

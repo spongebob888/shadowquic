@@ -37,6 +37,7 @@ async fn main() {
         congestion_control: CongestionControl::Bbr,
         ..Default::default()
     })
+    .await
     .unwrap();
 
     sq_server.init().await.expect("Failed to initialize server");

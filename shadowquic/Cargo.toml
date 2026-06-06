@@ -32,8 +32,8 @@ aws-lc-rs = [
 ]
 tokio-console = ["dep:console-subscriber","tokio/tracing"]
 shadowquic-quinn = ["dep:quinn","dep:rustls_jls", "dep:quinn_proto"]
-sunnyquic-gm-quic = ["dep:gm-quic","dep:qevent","dep:qbase","dep:qunreliable", "dep:rustls","dep:rustls-native-certs","dep:arc-swap","dep:notify"]
-sunnyquic-iroh-quinn = ["dep:iroh-quinn", "dep:rustls", "dep:rustls-native-certs","dep:arc-swap","dep:notify", "dep:iroh-quinn-proto"]
+sunnyquic-gm-quic = ["dep:gm-quic","dep:qevent","dep:qbase","dep:qunreliable", "dep:rustls","dep:rustls-native-certs","dep:notify"]
+sunnyquic-iroh-quinn = ["dep:iroh-quinn", "dep:rustls", "dep:rustls-native-certs","dep:notify", "dep:iroh-quinn-proto"]
 
 [dependencies]
 anyhow = "1.0.100"
@@ -42,10 +42,10 @@ tokio = {version = "1.52.3", features = ["io-util", "net","rt","macros","rt-mult
 tracing = "0.1.44"
 time = { version = "0.3.47", features = ["macros", "local-offset"] }
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt", "ansi", "time", "local-time"]}
-quinn = { package = "quinn-jls", version = "0.3.3", default-features = false, features = ["runtime-tokio"], optional = true}
-quinn_proto = { package = "quinn-proto-jls", version = "0.3.4", default-features = false, optional = true}
-#quinn = { package = "quinn", git = "https://github.com/spongebob888/quinn-jls", branch = "jls-main", default-features = false, features = ["runtime-tokio"], optional = true}
-#quinn_proto = { package = "quinn-proto", git = "https://github.com/spongebob888/quinn-jls", branch = "jls-main", default-features = false, optional = true}
+#quinn = { package = "quinn-jls", version = "0.3.3", default-features = false, features = ["runtime-tokio"], optional = true}
+#quinn_proto = { package = "quinn-proto-jls", version = "0.3.4", default-features = false, optional = true}
+quinn = { package = "quinn", git = "https://github.com/spongebob888/quinn-jls", branch = "jls-dev", default-features = false, features = ["runtime-tokio"], optional = true}
+quinn_proto = { package = "quinn-proto", git = "https://github.com/spongebob888/quinn-jls", branch = "jls-dev", default-features = false, optional = true}
 
 #brutal-core = { git = "https://github.com/hrimfaxi/brutal_quinn.git", branch = "master" }
 brutal-core = { version = "0.1.0" }
@@ -77,7 +77,7 @@ iroh-quinn-proto ={ version = "0.15.1",optional = true, default-features = false
 
 
 notify = { version = "8.2.0", features = ["serde"], optional = true}
-arc-swap = { version = "1.9.1", optional = true }
+arc-swap = { version = "1.9.1"}
 
 console-subscriber = { version = "0.5.0", optional = true }
 serde-saphyr = "0.0.26"

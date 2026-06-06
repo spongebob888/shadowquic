@@ -97,3 +97,53 @@ impl<T: SDecode, E: SDecode> SDecode for Result<T, E> {
         }
     }
 }
+
+#[async_trait::async_trait]
+impl SEncode for () {
+    async fn encode<T: AsyncWrite + Unpin + Send>(&self, _s: &mut T) -> Result<(), SError> {
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl SDecode for () {
+    async fn decode<T: AsyncRead + Unpin + Send>(_s: &mut T) -> Result<Self, SError> {
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl<E: SEncode + Send + Sync> SEncode for Vec<E> {
+    async fn encode<T: AsyncWrite + Unpin + Send>(&self, s: &mut T) -> Result<(), SError> {
+        let len = self.len() as u32;
+        len.encode(s).await?;
+        for item in self {
+            item.encode(s).await?;
+        }
+        Ok(())
+    }
+}
+#[async_trait::async_trait]
+impl<E: SDecode + Send + Sync> SDecode for Vec<E> {
+    async fn decode<T: AsyncRead + Unpin + Send>(s: &mut T) -> Result<Self, SError> {
+        let len = u32::decode(s).await?;
+        let mut data = Vec::with_capacity(len as usize);
+        for _ in 0..len {
+            data.push(E::decode(s).await?);
+        }
+        Ok(data)
+    }
+}
+#[async_trait::async_trait]
+impl SEncode for String {
+    async fn encode<T: AsyncWrite + Unpin + Send>(&self, s: &mut T) -> Result<(), SError> {
+        self.as_bytes().to_vec().encode(s).await
+    }
+}
+#[async_trait::async_trait]
+impl SDecode for String {
+    async fn decode<T: AsyncRead + Unpin + Send>(s: &mut T) -> Result<Self, SError> {
+        let data = Vec::<u8>::decode(s).await?;
+        Ok(String::from_utf8(data).map_err(|_| SError::ProtocolViolation)?)
+    }
+}

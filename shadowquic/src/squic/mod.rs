@@ -44,28 +44,34 @@ pub mod outbound;
 #[derive(Clone)]
 pub struct SQConn<T: QuicConnection> {
     pub(crate) conn: T,
-    pub(crate) authed: Arc<SetOnce<bool>>,
+    pub authed: Arc<SetOnce<SResult<String>>>,
     pub(crate) send_id_store: IDStore<()>,
     pub(crate) recv_id_store: IDStore<(AnyUdpSend, SocksAddr)>,
 }
 
-async fn wait_sunny_auth<T: QuicConnection>(conn: &SQConn<T>) -> SResult<()> {
+async fn wait_sunny_auth<T: QuicConnection>(conn: &SQConn<T>) -> SResult<String> {
     match tokio::time::timeout(Duration::from_millis(3200), conn.authed.wait()).await {
-        Ok(true) => Ok(()),
-        Ok(false) => Err(SError::SunnyAuthError("Wrong psassword/username".into())),
+        Ok(Ok(name)) => Ok(name.clone()),
+        Ok(Err(SError::SunnyAuthError(_))) => {
+            Err(SError::SunnyAuthError("Wrong password/username".into()))
+        }
         Err(_) => Err(SError::SunnyAuthError("timeout".into())),
+        _ => unreachable!(),
     }
 }
 
 pub(crate) async fn auth_sunny<T: QuicConnection>(
     conn: &SQConn<T>,
+    username: &str,
     user_hash: SunnyCredential,
 ) -> SResult<()> {
     if conn.authed.get().is_none() {
         let (mut send, _recv, _id) = conn.open_bi().await?;
         SQReq::SQAuthenticate(user_hash).encode(&mut send).await?;
         debug!("authentication request sent");
-        conn.authed.set(true).expect("repeated authentication");
+        conn.authed
+            .set(Ok(username.to_string()))
+            .expect("repeated authentication");
     }
     Ok(())
 }

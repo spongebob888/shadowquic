@@ -1,4 +1,13 @@
-use std::{io, net::SocketAddr, ops::Deref, sync::Arc, time::Duration};
+use std::{
+    io,
+    net::SocketAddr,
+    ops::Deref,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering::Relaxed},
+    },
+    time::Duration,
+};
 
 use super::brutal::BrutalConfig;
 use async_trait::async_trait;
@@ -15,6 +24,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use quinn::rustls::ServerConfig as RustlsServerConfig;
 
+use arc_swap::ArcSwap;
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 
 #[cfg(feature = "aws-lc-rs")]
@@ -30,18 +40,28 @@ use crate::{
     error::SResult,
     msgs::squic::ConnStats,
     quic::{
-        MAX_DATAGRAM_WINDOW, MAX_SEND_WINDOW, MAX_STREAM_WINDOW, QuicClient, QuicConnection,
-        QuicErrorRepr, QuicServer,
+        AuthedConn, MAX_DATAGRAM_WINDOW, MAX_SEND_WINDOW, MAX_STREAM_WINDOW, QuicClient,
+        QuicConnection, QuicErrorRepr, QuicServer,
     },
     utils::socket_opt::{SocketFactory, UdpSocketFactory},
 };
 
 pub type Connection = quinn::Connection;
-pub struct Endpoint {
+
+#[derive(Clone)]
+pub struct EndServer {
+    inner: quinn::Endpoint,
+    crypto: Arc<ArcSwap<RustlsServerConfig>>, // Include zero-rtt session ticket
+    zero_rtt: Arc<AtomicBool>,
+}
+
+#[derive(Clone)]
+pub struct EndClient {
     inner: quinn::Endpoint,
     zero_rtt: bool,
 }
-impl Deref for Endpoint {
+
+impl Deref for EndServer {
     type Target = quinn::Endpoint;
 
     fn deref(&self) -> &Self::Target {
@@ -49,8 +69,6 @@ impl Deref for Endpoint {
     }
 }
 
-pub use Endpoint as EndClient;
-pub use Endpoint as EndServer;
 #[async_trait]
 impl QuicConnection for Connection {
     type RecvStream = quinn::RecvStream;
@@ -67,13 +85,13 @@ impl QuicConnection for Connection {
 
         let rate: f32 =
             (self.stats().path.lost_packets as f32) / ((self.stats().path.sent_packets + 1) as f32);
-        info!(
-            "packet_loss_rate:{:.2}%, rtt:{:?}, mtu:{}",
-            rate * 100.0,
-            self.rtt(),
-            self.stats().path.current_mtu,
-        );
 
+        info!(
+            packet_loss_rate=%format!("{:.2}%", rate*100.0),
+            rtt = %format!("{:.1}ms", self.rtt().as_secs_f32()*1000.0),
+            mtu = self.stats().path.current_mtu,
+            "uplink stats",
+        );
         let id = send.id().index();
         Ok((send, recv, id))
     }
@@ -132,8 +150,14 @@ impl QuicConnection for Connection {
     }
 }
 
+impl AuthedConn for Connection {
+    fn authed_user(&self) -> Option<String> {
+        self.jls_chosen_user()
+    }
+}
+
 #[async_trait]
-impl QuicClient for Endpoint {
+impl QuicClient for EndClient {
     type SC = ShadowQuicClientCfg;
     async fn new(cfg: &Self::SC) -> SResult<Self> {
         Self::new_with_socket_factory(
@@ -196,7 +220,7 @@ impl QuicClient for Endpoint {
             runtime,
         )?;
         end.set_default_client_config(gen_client_cfg(cfg));
-        Ok(Endpoint {
+        Ok(EndClient {
             inner: end,
             zero_rtt: cfg.zero_rtt,
         })
@@ -307,7 +331,7 @@ pub fn gen_client_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
 }
 
 #[async_trait]
-impl QuicServer for Endpoint {
+impl QuicServer for EndServer {
     type C = Connection;
     type SC = ShadowQuicServerCfg;
     async fn new(cfg: &Self::SC) -> SResult<Self> {
@@ -318,100 +342,31 @@ impl QuicServer for Endpoint {
         crypto =
             RustlsServerConfig::builder_with_protocol_versions(&[&quinn::rustls::version::TLS13])
                 .with_no_client_auth()
-                .with_single_cert(vec![cert_der], PrivateKeyDer::Pkcs8(priv_key))?;
-        crypto.alpn_protocols = cfg
-            .alpn
-            .iter()
-            .cloned()
-            .map(|alpn| alpn.into_bytes())
-            .collect();
-        crypto.max_early_data_size = if cfg.zero_rtt { u32::MAX } else { 0 };
-        crypto.send_half_rtt_data = cfg.zero_rtt;
+                .with_single_cert(vec![cert_der], PrivateKeyDer::Pkcs8(priv_key))
+                .expect("invalid cert or key when create shadowquic server");
 
-        let mut jls_config = quinn::rustls::jls::JlsServerConfig::default();
-        for user in &cfg.users {
-            jls_config = jls_config.add_user(user.password.clone(), user.username.clone());
-        }
-        if let Some(sni) = &cfg.server_name {
-            jls_config = jls_config.with_server_name(sni.clone());
-        }
-        jls_config = jls_config
-            .with_rate_limit(cfg.jls_upstream.rate_limit)
-            .with_upstream_addr(cfg.jls_upstream.addr.clone())
-            .enable(true);
-        crypto.jls_config = jls_config.into();
+        let config = gen_server_config(cfg, &mut crypto);
 
-        let mut tp_cfg = TransportConfig::default();
-
-        let mtudis = if cfg.mtu_discovery {
-            let mut mtudis = MtuDiscoveryConfig::default();
-            mtudis.black_hole_cooldown(Duration::from_secs(120));
-            mtudis.interval(Duration::from_secs(90));
-            mtudis.blackhole_reset_mtu(cfg.blackhole_detection);
-            Some(mtudis)
-        } else {
-            None
-        };
-
-        tp_cfg
-            .max_concurrent_bidi_streams(1000u32.into())
-            .max_concurrent_uni_streams(1000u32.into())
-            .mtu_discovery_config(mtudis)
-            .min_mtu(cfg.min_mtu)
-            .initial_mtu(cfg.initial_mtu)
-            .enable_segmentation_offload(cfg.gso);
-
-        if !cfg.gso {
-            tracing::warn!("disabling QUIC segmentation offload (GSO)");
-        }
-
-        match cfg.congestion_control {
-            CongestionControl::Brutal(ref brutal) => {
-                tracing::info!(?brutal, "using brutal congestion control");
-                let brutal_config = BrutalConfig::new(
-                    brutal.bandwidth,
-                    brutal.min_window,
-                    brutal.cwnd_gain,
-                    brutal.min_ack_rate,
-                    brutal.min_sample_count,
-                    brutal.ack_compensate,
-                );
-                tp_cfg.congestion_controller_factory(Arc::new(brutal_config))
-            }
-            CongestionControl::Bbr => {
-                let bbr_config = BbrConfig::default();
-                tp_cfg.congestion_controller_factory(Arc::new(bbr_config))
-            }
-            CongestionControl::Cubic => {
-                let cubic_config = CubicConfig::default();
-                tp_cfg.congestion_controller_factory(Arc::new(cubic_config))
-            }
-            CongestionControl::NewReno => {
-                let new_reno = NewRenoConfig::default();
-                tp_cfg.congestion_controller_factory(Arc::new(new_reno))
-            }
-        };
-        let mut config = quinn::ServerConfig::with_crypto(Arc::new(
-            QuicServerConfig::try_from(crypto).expect("rustls config can't created"),
-        ));
-        tp_cfg.send_window(MAX_SEND_WINDOW);
-        tp_cfg.stream_receive_window(MAX_STREAM_WINDOW.try_into().unwrap());
-        tp_cfg.datagram_send_buffer_size(MAX_DATAGRAM_WINDOW.try_into().unwrap());
-        tp_cfg.datagram_receive_buffer_size(Some(MAX_DATAGRAM_WINDOW as usize));
-
-        config.transport_config(Arc::new(tp_cfg));
-
-        let endpoint = quinn::Endpoint::server(config, cfg.bind_addr)?;
-        Ok(Endpoint {
+        let endpoint = quinn::Endpoint::server(config.clone(), cfg.bind_addr)?;
+        Ok(EndServer {
+            crypto: Arc::new(ArcSwap::new(crypto.into())),
             inner: endpoint,
-            zero_rtt: cfg.zero_rtt,
+            zero_rtt: Arc::new(AtomicBool::new(cfg.zero_rtt)),
         })
+    }
+    async fn update_config(&self, cfg: &Self::SC) -> SResult<()> {
+        let mut crypto: RustlsServerConfig = (**self.crypto.load()).clone();
+        let config = gen_server_config(cfg, &mut crypto);
+        self.inner.set_server_config(Some(config));
+        self.zero_rtt.store(cfg.zero_rtt, Relaxed);
+        self.crypto.store(crypto.into());
+        Ok(())
     }
     async fn accept(&self) -> Result<Self::C, QuicErrorRepr> {
         match self.deref().accept().await {
             Some(conn) => {
                 let conn = conn.accept()?;
-                let connection = if self.zero_rtt {
+                let connection = if self.zero_rtt.load(Relaxed) {
                     match conn.into_0rtt() {
                         Ok((conn, accepted)) => {
                             let conn_clone = conn.clone();
@@ -441,6 +396,94 @@ impl QuicServer for Endpoint {
             }
         }
     }
+}
+
+fn gen_server_config(
+    cfg: &ShadowQuicServerCfg,
+    crypto: &mut RustlsServerConfig,
+) -> quinn::ServerConfig {
+    crypto.alpn_protocols = cfg
+        .alpn
+        .iter()
+        .cloned()
+        .map(|alpn| alpn.into_bytes())
+        .collect();
+    crypto.max_early_data_size = if cfg.zero_rtt { u32::MAX } else { 0 };
+    crypto.send_half_rtt_data = cfg.zero_rtt;
+
+    let mut jls_config = quinn::rustls::jls::JlsServerConfig::default();
+    for user in &cfg.users {
+        jls_config = jls_config.add_user(user.password.clone(), user.username.clone());
+    }
+    if let Some(sni) = &cfg.server_name {
+        jls_config = jls_config.with_server_name(sni.clone());
+    }
+    jls_config = jls_config
+        .with_rate_limit(cfg.jls_upstream.rate_limit)
+        .with_upstream_addr(cfg.jls_upstream.addr.clone())
+        .enable(true);
+    crypto.jls_config = jls_config.into();
+
+    let mut tp_cfg = TransportConfig::default();
+
+    let mtudis = if cfg.mtu_discovery {
+        let mut mtudis = MtuDiscoveryConfig::default();
+        mtudis.black_hole_cooldown(Duration::from_secs(120));
+        mtudis.interval(Duration::from_secs(90));
+        mtudis.blackhole_reset_mtu(cfg.blackhole_detection);
+        Some(mtudis)
+    } else {
+        None
+    };
+
+    tp_cfg
+        .max_concurrent_bidi_streams(1000u32.into())
+        .max_concurrent_uni_streams(1000u32.into())
+        .mtu_discovery_config(mtudis)
+        .min_mtu(cfg.min_mtu)
+        .initial_mtu(cfg.initial_mtu)
+        .enable_segmentation_offload(cfg.gso);
+
+    if !cfg.gso {
+        tracing::warn!("disabling QUIC segmentation offload (GSO)");
+    }
+
+    match cfg.congestion_control {
+        CongestionControl::Brutal(ref brutal) => {
+            tracing::info!(?brutal, "using brutal congestion control");
+            let brutal_config = BrutalConfig::new(
+                brutal.bandwidth,
+                brutal.min_window,
+                brutal.cwnd_gain,
+                brutal.min_ack_rate,
+                brutal.min_sample_count,
+                brutal.ack_compensate,
+            );
+            tp_cfg.congestion_controller_factory(Arc::new(brutal_config))
+        }
+        CongestionControl::Bbr => {
+            let bbr_config = BbrConfig::default();
+            tp_cfg.congestion_controller_factory(Arc::new(bbr_config))
+        }
+        CongestionControl::Cubic => {
+            let cubic_config = CubicConfig::default();
+            tp_cfg.congestion_controller_factory(Arc::new(cubic_config))
+        }
+        CongestionControl::NewReno => {
+            let new_reno = NewRenoConfig::default();
+            tp_cfg.congestion_controller_factory(Arc::new(new_reno))
+        }
+    };
+    let mut config = quinn::ServerConfig::with_crypto(Arc::new(
+        QuicServerConfig::try_from(crypto.clone()).expect("rustls config can't created"),
+    ));
+    tp_cfg.send_window(MAX_SEND_WINDOW);
+    tp_cfg.stream_receive_window(MAX_STREAM_WINDOW.try_into().unwrap());
+    tp_cfg.datagram_send_buffer_size(MAX_DATAGRAM_WINDOW.try_into().unwrap());
+    tp_cfg.datagram_receive_buffer_size(Some(MAX_DATAGRAM_WINDOW as usize));
+
+    config.transport_config(Arc::new(tp_cfg));
+    config
 }
 
 impl From<quinn::ConnectionError> for QuicErrorRepr {

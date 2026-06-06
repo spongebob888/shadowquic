@@ -1,4 +1,6 @@
+use crate::{SDecode, SEncode};
 use serde::{Deserialize, Serialize};
+use shadowquic_macros::{SDecode, SEncode};
 use std::net::{IpAddr, SocketAddr};
 use tracing::{Level, warn};
 
@@ -72,8 +74,8 @@ impl InboundCfg {
     async fn build_inbound(self) -> Result<Box<dyn Inbound>, SError> {
         let r: Box<dyn Inbound> = match self {
             InboundCfg::Socks(cfg) => Box::new(SocksServer::new(cfg).await?),
-            InboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicServer::new(cfg)?),
-            InboundCfg::SunnyQuic(cfg) => Box::new(SunnyQuicServer::new(cfg)?),
+            InboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicServer::new(cfg).await?),
+            InboundCfg::SunnyQuic(cfg) => Box::new(SunnyQuicServer::new(cfg).await?),
         };
         Ok(r)
     }
@@ -132,7 +134,7 @@ pub struct SocksServerCfg {
 }
 
 /// user authentication
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq, SEncode, SDecode)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AuthUser {
     pub username: String,

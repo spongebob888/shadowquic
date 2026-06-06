@@ -10,11 +10,12 @@ use tracing::{Instrument, info, trace, trace_span};
 
 use crate::{
     ProxyRequest, TcpSession, TcpTrait, UdpSession,
+    config::AuthUser,
     error::{SError, SResult},
     msgs::{
         SDecode, SEncode,
         socks5::SocksAddr,
-        squic::{ExtOpcodeConn, SQExtError, SQExtOpcode, SQReq, SunnyCredential},
+        squic::{ExtOpcodeConn, ExtOpcodeUser, SQExtError, SQExtOpcode, SQReq, SunnyCredential},
     },
     quic::QuicConnection,
     squic::wait_sunny_auth,
@@ -24,10 +25,18 @@ use super::{SQConn, handle_udp_packet_recv, handle_udp_recv_ctrl, handle_udp_sen
 
 pub type SunnyQuicUsers = Arc<HashMap<SunnyCredential, String>>;
 
+#[async_trait::async_trait]
+pub trait UserManager: Send + Sync {
+    async fn add_user(&self, user: AuthUser) -> Result<(), SQExtError>;
+    async fn remove_user(&self, username: &str) -> Result<(), SQExtError>;
+    async fn list_users(&self) -> Result<Vec<String>, SQExtError>;
+}
+
 #[derive(Clone)]
 pub struct SQServerConn<C: QuicConnection> {
     pub inner: SQConn<C>,
     pub users: SunnyQuicUsers,
+    pub user_manager: Option<Arc<dyn UserManager>>,
 }
 impl<C: QuicConnection> SQServerConn<C> {
     pub async fn handle_connection(self, req_send: Sender<ProxyRequest>) -> Result<(), SError> {
@@ -110,7 +119,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                     tracing::info!("user authenticated:{}", name);
                     self.inner
                         .authed
-                        .set(true)
+                        .set(Ok(name.clone()))
                         .expect("repeated authentication!");
                 } else {
                     tracing::error!("authentication failed");
@@ -143,6 +152,51 @@ impl<C: QuicConnection> SQServerConn<C> {
                     stats.encode(&mut send).await?;
                 }
             },
+            SQExtOpcode::User(user_opcode) => {
+                self.handle_user_extension(user_opcode, &mut send).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_user_extension(
+        &self,
+        user_opcode: ExtOpcodeUser,
+        send: &mut C::SendStream,
+    ) -> SResult<()> {
+        let authed_user = wait_sunny_auth(&self.inner).await?;
+        if !authed_user.starts_with("admin") {
+            (Err::<(), SQExtError>(SQExtError::PermissionDenied))
+                .encode(send)
+                .await?;
+            return Ok(());
+        }
+
+        let user_manager = match self.user_manager.as_ref() {
+            Some(user_manager) => user_manager,
+            None => {
+                (Err::<(), SQExtError>(SQExtError::NotAvailable))
+                    .encode(send)
+                    .await?;
+                return Ok(());
+            }
+        };
+        match user_opcode {
+            ExtOpcodeUser::AddUser(user) => {
+                info!(username = %user.username, "adding user");
+                user_manager.add_user(user).await.encode(send).await?;
+            }
+            ExtOpcodeUser::RemoveUser(username) => {
+                info!(username = %username, "removing user");
+                user_manager
+                    .remove_user(&username)
+                    .await
+                    .encode(send)
+                    .await?;
+            }
+            ExtOpcodeUser::ListUsers => {
+                user_manager.list_users().await.encode(send).await?;
+            }
         }
         Ok(())
     }

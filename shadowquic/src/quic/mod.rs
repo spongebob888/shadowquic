@@ -41,6 +41,7 @@ pub trait QuicServer: Send + Sync {
     where
         Self: Sized;
     async fn accept(&self) -> Result<Self::C, QuicErrorRepr>;
+    async fn update_config(&self, cfg: &Self::SC) -> SResult<()>;
 }
 
 #[async_trait]
@@ -60,6 +61,10 @@ pub trait QuicConnection: Send + Sync + Clone + 'static {
     fn get_conn_stats(&self) -> Option<ConnStats> {
         None
     }
+}
+
+pub trait AuthedConn {
+    fn authed_user(&self) -> Option<String>;
 }
 
 #[derive(Error, Debug)]

@@ -1,7 +1,12 @@
 use std::{io::IsTerminal, path::PathBuf};
 
-use clap::Parser;
-use shadowquic::config::{Config, LogLevel};
+use clap::{Parser, Subcommand};
+use shadowquic::{
+    config::{AuthUser, Config, LogLevel, OutboundCfg},
+    shadowquic::outbound::ShadowQuicClient,
+    squic::inbound::UserManager,
+    sunnyquic::outbound::SunnyQuicClient,
+};
 use tracing::{Level, info};
 use tracing_subscriber::{fmt::time::LocalTime, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -11,6 +16,7 @@ struct Cli {
     #[clap(
         short,
         long,
+        global = true,
         visible_short_aliases = ['c'],
         value_parser,
         value_name = "FILE",
@@ -18,6 +24,32 @@ struct Cli {
         help = "configuration file"
     )]
     config: PathBuf,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Run the proxy
+    Run,
+    /// Call SQuic control-plane APIs using the outbound config
+    /// The username must be admin or permission will get denied by server.
+    Api {
+        #[command(subcommand)]
+        command: ApiCommand,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(rename_all = "kebab-case")]
+enum ApiCommand {
+    /// List usernames
+    ListUsers,
+    /// Add or update a user
+    AddUser { username: String, password: String },
+    /// Remove a user
+    RemoveUser { username: String },
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 8)]
@@ -31,15 +63,79 @@ async fn main() {
             std::process::exit(1);
         }
     };
-    setup_log(cfg.log_level.clone());
-    let manager = cfg
-        .build_manager()
-        .await
-        .expect("creating inbound/outbound failed");
+    match cli.command.unwrap_or(Command::Run) {
+        Command::Run => {
+            setup_log(cfg.log_level.clone());
+            let manager = cfg
+                .build_manager()
+                .await
+                .expect("creating inbound/outbound failed");
 
-    info!("shadowquic {} running", env!("CARGO_PKG_VERSION"));
-    let _ = std::env::current_dir().inspect(|x| info!("current working directory: {:?}", x));
-    manager.run().await.expect("shadowquic stopped");
+            info!("shadowquic {} running", env!("CARGO_PKG_VERSION"));
+            let _ =
+                std::env::current_dir().inspect(|x| info!("current working directory: {:?}", x));
+            manager.run().await.expect("shadowquic stopped");
+        }
+        Command::Api { command } => {
+            if let Err(error) = call_api(cfg.outbound, command).await {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+async fn call_api(outbound: OutboundCfg, command: ApiCommand) -> Result<(), String> {
+    match outbound {
+        OutboundCfg::ShadowQuic(cfg) => {
+            let client = ShadowQuicClient::new(cfg);
+            call_user_manager_api(&client, command).await
+        }
+        OutboundCfg::SunnyQuic(cfg) => {
+            let client = SunnyQuicClient::new(cfg);
+            call_user_manager_api(&client, command).await
+        }
+        OutboundCfg::Socks(_) | OutboundCfg::Direct(_) => {
+            Err("api requires a shadowquic or sunnyquic outbound config".into())
+        }
+    }
+}
+
+async fn call_user_manager_api(
+    user_manager: &impl UserManager,
+    command: ApiCommand,
+) -> Result<(), String> {
+    match command {
+        ApiCommand::ListUsers => {
+            let users = user_manager
+                .list_users()
+                .await
+                .map_err(|error| format!("list-users failed: {error:?}"))?;
+            for user in users {
+                println!("{user}");
+            }
+            Ok(())
+        }
+        ApiCommand::AddUser { username, password } => {
+            user_manager
+                .add_user(AuthUser {
+                    username: username.clone(),
+                    password,
+                })
+                .await
+                .map_err(|error| format!("add-user failed: {error:?}"))?;
+            println!("user added: {username}");
+            Ok(())
+        }
+        ApiCommand::RemoveUser { username } => {
+            user_manager
+                .remove_user(&username)
+                .await
+                .map_err(|error| format!("remove-user failed: {error:?}"))?;
+            println!("user removed: {username}");
+            Ok(())
+        }
+    }
 }
 
 fn setup_log(level: LogLevel) {

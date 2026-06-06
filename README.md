@@ -5,6 +5,7 @@
  - UDP Friendly with minimum header
  - Full Cone
  - QUIC based 0-RTT
+ - [User Management](./document/api.md)
  - SNI camouflage with any domain (powered by [JLS](https://github.com/JimmyHuang454/JLS))
     - Anti-hijack
     - Resisting active detection

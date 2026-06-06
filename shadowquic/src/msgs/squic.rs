@@ -4,6 +4,7 @@ use crate::error::SError;
 
 use super::socks5::SocksAddr;
 use super::{SDecode, SEncode};
+use crate::config::AuthUser;
 use shadowquic_macros::{SDecode, SEncode};
 
 pub static SUNNY_QUIC_AUTH_LEN: usize = 64;
@@ -28,6 +29,8 @@ pub enum SQReq {
 pub enum SQExtOpcode {
     /// Connection related opcode
     Conn(ExtOpcodeConn) = 0x1,
+    /// User related opcode
+    User(ExtOpcodeUser) = 0x2,
 }
 #[derive(PartialEq)]
 #[repr(u8)]
@@ -45,11 +48,23 @@ pub struct ConnStats {
     pub rtt: f64,
     pub current_mtu: u16,
 }
+
+#[derive(PartialEq)]
+#[repr(u8)]
+#[derive(SEncode, SDecode)]
+pub enum ExtOpcodeUser {
+    AddUser(AuthUser) = 0x0,
+    RemoveUser(String) = 0x1,
+    ListUsers = 0x2,
+}
 #[derive(PartialEq)]
 #[repr(u8)]
 #[derive(SEncode, SDecode, Debug)]
 pub enum SQExtError {
     NotAvailable = 0x0,
+    PermissionDenied = 0x1,
+    NotFound = 0x2,
+    Other(String) = 0xFF,
 }
 
 #[derive(SEncode, SDecode)]
