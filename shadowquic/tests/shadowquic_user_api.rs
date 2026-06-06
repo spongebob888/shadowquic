@@ -8,6 +8,7 @@ use shadowquic::{
     },
     msgs::squic::SQExtError,
     shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
+    squic::inbound::UserManager,
 };
 
 const SERVER_ADDR: &str = "127.0.0.1:4458";
@@ -43,40 +44,37 @@ async fn shadowquic_user_api_add_remove_and_permissions() {
     server.init().await.expect("server init failed");
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let mut admin = client("admin", "admin-pass");
-    assert_users(&mut admin, &["admin", "bob"]).await;
+    let admin = client("admin", "admin-pass");
+    assert_users(&admin, &["admin", "bob"]).await;
 
-    assert_eq!(admin.add_user("alice", "alice-pass").await.unwrap(), Ok(()));
-    assert_users(&mut admin, &["admin", "bob", "alice"]).await;
+    assert_eq!(add_user(&admin, "alice", "alice-pass").await, Ok(()));
+    assert_users(&admin, &["admin", "bob", "alice"]).await;
     assert_connects("alice", "alice-pass").await;
 
-    assert_eq!(
-        admin.add_user("alice", "alice-new-pass").await.unwrap(),
-        Ok(())
-    );
-    assert_users(&mut admin, &["admin", "bob", "alice"]).await;
+    assert_eq!(add_user(&admin, "alice", "alice-new-pass").await, Ok(()));
+    assert_users(&admin, &["admin", "bob", "alice"]).await;
     assert_connects("alice", "alice-new-pass").await;
 
-    assert_eq!(admin.remove_user("alice").await.unwrap(), Ok(()));
-    assert_users(&mut admin, &["admin", "bob"]).await;
+    assert_eq!(admin.remove_user("alice").await, Ok(()));
+    assert_users(&admin, &["admin", "bob"]).await;
     assert_rejected_or_timeout("alice", "alice-new-pass").await;
     assert_eq!(
-        admin.remove_user("alice").await.unwrap(),
-        Err(SQExtError::NotFound)
+        admin.remove_user("alice").await,
+        Err(SQExtError::NotFound),
     );
 
-    let mut bob = client("bob", "bob-pass");
+    let bob = client("bob", "bob-pass");
     assert_eq!(
-        bob.add_user("mallory", "mallory-pass").await.unwrap(),
+        add_user(&bob, "mallory", "mallory-pass").await,
         Err(SQExtError::PermissionDenied)
     );
     assert_eq!(
-        bob.remove_user("admin").await.unwrap(),
-        Err(SQExtError::PermissionDenied)
+        bob.remove_user("admin").await,
+        Err(SQExtError::PermissionDenied),
     );
     assert_eq!(
-        bob.list_users().await.unwrap(),
-        Err(SQExtError::PermissionDenied)
+        bob.list_users().await,
+        Err(SQExtError::PermissionDenied),
     );
 }
 
@@ -104,8 +102,21 @@ async fn assert_connects(username: &str, password: &str) {
         .unwrap_or_else(|error| panic!("{username} should connect: {error}"));
 }
 
-async fn assert_users(client: &mut ShadowQuicClient, expected: &[&str]) {
-    let mut users = client.list_users().await.unwrap().unwrap();
+async fn add_user(
+    client: &ShadowQuicClient,
+    username: &str,
+    password: &str,
+) -> Result<(), SQExtError> {
+    client
+        .add_user(AuthUser {
+            username: username.to_owned(),
+            password: password.to_owned(),
+        })
+        .await
+}
+
+async fn assert_users(client: &ShadowQuicClient, expected: &[&str]) {
+    let mut users = client.list_users().await.unwrap();
     users.sort();
     let mut expected = expected
         .iter()

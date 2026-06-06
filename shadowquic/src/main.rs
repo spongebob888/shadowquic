@@ -2,8 +2,9 @@ use std::{io::IsTerminal, path::PathBuf};
 
 use clap::{Parser, Subcommand};
 use shadowquic::{
-    config::{Config, LogLevel, OutboundCfg},
+    config::{AuthUser, Config, LogLevel, OutboundCfg},
     shadowquic::outbound::ShadowQuicClient,
+    squic::inbound::UserManager,
     sunnyquic::outbound::SunnyQuicClient,
 };
 use tracing::{Level, info};
@@ -87,83 +88,52 @@ async fn main() {
 async fn call_api(outbound: OutboundCfg, command: ApiCommand) -> Result<(), String> {
     match outbound {
         OutboundCfg::ShadowQuic(cfg) => {
-            let mut client = ShadowQuicClient::new(cfg);
-            match command {
-                ApiCommand::ListUsers => {
-                    let users = client
-                        .list_users()
-                        .await
-                        .map_err(|error| error.to_string())?;
-                    match users {
-                        Ok(users) => {
-                            for user in users {
-                                println!("{user}");
-                            }
-                            Ok(())
-                        }
-                        Err(error) => Err(format!("list-users failed: {error:?}")),
-                    }
-                }
-                ApiCommand::AddUser { username, password } => {
-                    let result = client
-                        .add_user(&username, &password)
-                        .await
-                        .map_err(|error| error.to_string())?;
-                    result
-                        .map(|()| println!("user added: {username}"))
-                        .map_err(|error| format!("add-user failed: {error:?}"))
-                }
-                ApiCommand::RemoveUser { username } => {
-                    let result = client
-                        .remove_user(&username)
-                        .await
-                        .map_err(|error| error.to_string())?;
-                    result
-                        .map(|()| println!("user removed: {username}"))
-                        .map_err(|error| format!("remove-user failed: {error:?}"))
-                }
-            }
+            let client = ShadowQuicClient::new(cfg);
+            call_user_manager_api(&client, command).await
         }
         OutboundCfg::SunnyQuic(cfg) => {
-            let mut client = SunnyQuicClient::new(cfg);
-            match command {
-                ApiCommand::ListUsers => {
-                    let users = client
-                        .list_users()
-                        .await
-                        .map_err(|error| error.to_string())?;
-                    match users {
-                        Ok(users) => {
-                            for user in users {
-                                println!("{user}");
-                            }
-                            Ok(())
-                        }
-                        Err(error) => Err(format!("list-users failed: {error:?}")),
-                    }
-                }
-                ApiCommand::AddUser { username, password } => {
-                    let result = client
-                        .add_user(&username, &password)
-                        .await
-                        .map_err(|error| error.to_string())?;
-                    result
-                        .map(|()| println!("user added: {username}"))
-                        .map_err(|error| format!("add-user failed: {error:?}"))
-                }
-                ApiCommand::RemoveUser { username } => {
-                    let result = client
-                        .remove_user(&username)
-                        .await
-                        .map_err(|error| error.to_string())?;
-                    result
-                        .map(|()| println!("user removed: {username}"))
-                        .map_err(|error| format!("remove-user failed: {error:?}"))
-                }
-            }
+            let client = SunnyQuicClient::new(cfg);
+            call_user_manager_api(&client, command).await
         }
         OutboundCfg::Socks(_) | OutboundCfg::Direct(_) => {
             Err("api requires a shadowquic or sunnyquic outbound config".into())
+        }
+    }
+}
+
+async fn call_user_manager_api(
+    user_manager: &impl UserManager,
+    command: ApiCommand,
+) -> Result<(), String> {
+    match command {
+        ApiCommand::ListUsers => {
+            let users = user_manager
+                .list_users()
+                .await
+                .map_err(|error| format!("list-users failed: {error:?}"))?;
+            for user in users {
+                println!("{user}");
+            }
+            Ok(())
+        }
+        ApiCommand::AddUser { username, password } => {
+            user_manager
+                .add_user(AuthUser {
+                    username: username.clone(),
+                    password,
+                })
+                .await
+                .map_err(|error| format!("add-user failed: {error:?}"))?;
+            println!("user added: {username}");
+            Ok(())
+        }
+        ApiCommand::RemoveUser { username } => {
+            user_manager
+                .remove_user(&username)
+                .await
+                .map_err(|error| format!("remove-user failed: {error:?}"))?;
+            println!("user removed: {username}");
+            Ok(())
         }
     }
 }

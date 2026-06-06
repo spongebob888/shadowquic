@@ -64,6 +64,7 @@ pub enum SQExtError {
     NotAvailable = 0x0,
     PermissionDenied = 0x1,
     NotFound = 0x2,
+    Other(String) = 0xFF,
 }
 
 #[derive(SEncode, SDecode)]

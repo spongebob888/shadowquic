@@ -7,11 +7,11 @@ use tracing::{error, info};
 
 use crate::{
     Outbound,
-    config::SunnyQuicClientCfg,
+    config::{AuthUser, SunnyQuicClientCfg},
     error::SError,
     msgs::squic::SQExtError,
     quic::{QuicClient, QuicConnection},
-    squic::{auth_sunny, outbound},
+    squic::{auth_sunny, inbound::UserManager, outbound},
     sunnyquic::gen_sunny_user_hash,
     utils::socket_opt::{SocketFactory, UdpSocketFactory},
 };
@@ -105,28 +105,41 @@ impl SunnyQuicClient {
         Ok(())
     }
 
-    pub async fn add_user(
-        &mut self,
-        username: &str,
-        password: &str,
-    ) -> Result<Result<(), SQExtError>, SError> {
-        self.prepare_conn().await?;
-        let conn = self.quic_conn.as_ref().unwrap();
-        outbound::add_user(conn, username, password).await
+}
+
+#[async_trait]
+impl UserManager for SunnyQuicClient {
+    async fn add_user(&self, user: AuthUser) -> Result<(), SQExtError> {
+        let conn = self
+            .get_conn()
+            .await
+            .map_err(|error| SQExtError::Other(error.to_string()))?;
+        outbound::add_user(&conn, &user.username, &user.password)
+            .await
+            .map_err(|error| SQExtError::Other(error.to_string()))?
     }
 
-    pub async fn remove_user(&mut self, username: &str) -> Result<Result<(), SQExtError>, SError> {
-        self.prepare_conn().await?;
-        let conn = self.quic_conn.as_ref().unwrap();
-        outbound::remove_user(conn, username).await
+    async fn remove_user(&self, username: &str) -> Result<(), SQExtError> {
+        let conn = self
+            .get_conn()
+            .await
+            .map_err(|error| SQExtError::Other(error.to_string()))?;
+        outbound::remove_user(&conn, username)
+            .await
+            .map_err(|error| SQExtError::Other(error.to_string()))?
     }
 
-    pub async fn list_users(&mut self) -> Result<Result<Vec<String>, SQExtError>, SError> {
-        self.prepare_conn().await?;
-        let conn = self.quic_conn.as_ref().unwrap();
-        outbound::list_users(conn).await
+    async fn list_users(&self) -> Result<Vec<String>, SQExtError> {
+        let conn = self
+            .get_conn()
+            .await
+            .map_err(|error| SQExtError::Other(error.to_string()))?;
+        outbound::list_users(&conn)
+            .await
+            .map_err(|error| SQExtError::Other(error.to_string()))?
     }
 }
+
 #[async_trait]
 impl Outbound for SunnyQuicClient {
     async fn handle(&mut self, req: crate::ProxyRequest) -> Result<(), crate::error::SError> {

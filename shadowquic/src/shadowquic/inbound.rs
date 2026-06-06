@@ -51,7 +51,7 @@ impl UserManager for ShadowQuicUserManager {
         if let Err(error) = QuicServer::update_config(&self.endpoint, &config).await {
             *config = old_config;
             tracing::error!("failed to add user: {}", error);
-            return Err(SQExtError::NotAvailable);
+            return Err(SQExtError::Other(error.to_string()));
         }
         Ok(())
     }
@@ -68,7 +68,7 @@ impl UserManager for ShadowQuicUserManager {
         if let Err(error) = QuicServer::update_config(&self.endpoint, &config).await {
             *config = old_config;
             tracing::error!("failed to remove user: {}", error);
-            return Err(SQExtError::NotAvailable);
+            return Err(SQExtError::Other(error.to_string()));
         }
         Ok(())
     }

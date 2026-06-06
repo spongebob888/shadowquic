@@ -53,7 +53,7 @@ impl UserManager for SunnyQuicUserManager {
         if let Err(error) = QuicServer::update_config(&self.endpoint, &config).await {
             *config = old_config;
             tracing::error!("failed to add sunnyquic user: {}", error);
-            return Err(SQExtError::NotAvailable);
+            return Err(SQExtError::Other(error.to_string()));
         }
         self.users.store(SunnyQuicServer::gen_users_hash(&config));
         Ok(())
@@ -71,7 +71,7 @@ impl UserManager for SunnyQuicUserManager {
         if let Err(error) = QuicServer::update_config(&self.endpoint, &config).await {
             *config = old_config;
             tracing::error!("failed to remove sunnyquic user: {}", error);
-            return Err(SQExtError::NotAvailable);
+            return Err(SQExtError::Other(error.to_string()));
         }
         self.users.store(SunnyQuicServer::gen_users_hash(&config));
         Ok(())
