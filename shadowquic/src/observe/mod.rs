@@ -24,7 +24,7 @@ use crate::{
     msgs::{socks5::SocksAddr, squic::UserStats},
 };
 
-#[derive(Default,Clone)]
+#[derive(Default, Clone)]
 pub struct ProxyStatsAtm {
     tcp_sent: Arc<AtomicU64>,
     tcp_recv: Arc<AtomicU64>,
@@ -61,13 +61,19 @@ impl Observer {
     pub fn new() -> Self {
         Self::default()
     }
-    
-    pub async fn on_new_request(&self, user_context: &UserContext ) -> Option<ProxyStatsAtm> {
 
+    pub async fn on_new_request(&self, user_context: &UserContext) -> Option<ProxyStatsAtm> {
         let mut conns = self.conns.lock().await;
         conns.insert(user_context.conn_id, user_context.clone());
-        conns.retain(|x,v|v.conn_handle.upgrade().is_some());
-        Some(self.user_stats.lock().await.entry(user_context.username.clone()).or_default().clone())
+        conns.retain(|_, ctx| ctx.conn_handle.upgrade().is_some());
+        Some(
+            self.user_stats
+                .lock()
+                .await
+                .entry(user_context.username.clone())
+                .or_default()
+                .clone(),
+        )
     }
 
     pub async fn remove_user(&self, username: &str) {
@@ -259,7 +265,6 @@ impl Observer {
                 };
                 let stats = self.on_new_request(&user_context).await.unwrap();
                 let (tcp_recv, tcp_sent, tcp_conns) = stats.tcp_counters();
-        
 
                 ProxyRequest::Tcp(TcpSession {
                     stream: Box::new(TrackedTcp::new(tcp.stream, tcp_recv, tcp_sent, tcp_conns))
@@ -272,7 +277,7 @@ impl Observer {
                 let Some(user_context) = udp.user_context else {
                     return ProxyRequest::Udp(udp);
                 };
-  
+
                 let stats = self.on_new_request(&user_context).await.unwrap();
                 let (udp_recv, udp_sent, udp_conns) = stats.udp_counters();
                 udp_conns.fetch_add(1, Ordering::Relaxed);

@@ -5,12 +5,16 @@ use shadowquic::{
     config::{
         AuthUser, CongestionControl, SunnyQuicClientCfg, SunnyQuicServerCfg, default_initial_mtu,
     },
-    msgs::squic::SQExtError,
-    squic::{inbound::UserManager, outbound::get_peer_conn_stats},
+    msgs::{socks5::SocksAddr, squic::SQExtError},
+    squic::{
+        inbound::UserManager,
+        outbound::{connect_tcp, get_peer_conn_stats},
+    },
     sunnyquic::{inbound::SunnyQuicServer, outbound::SunnyQuicClient},
 };
 
 const SERVER_ADDR: &str = "127.0.0.1:4459";
+const STATS_SERVER_ADDR: &str = "127.0.0.1:4469";
 
 #[tokio::test]
 async fn sunnyquic_user_api_add_remove_list_and_permissions() {
@@ -80,11 +84,82 @@ async fn sunnyquic_user_api_add_remove_list_and_permissions() {
     assert_eq!(bob.list_users().await, Err(SQExtError::PermissionDenied),);
 }
 
+#[tokio::test]
+async fn sunnyquic_user_api_get_stats_and_kill_user_conns() {
+    let mut server = SunnyQuicServer::new(SunnyQuicServerCfg {
+        bind_addr: STATS_SERVER_ADDR.parse().unwrap(),
+        users: vec![
+            AuthUser {
+                username: "admin".into(),
+                password: "admin-pass".into(),
+            },
+            AuthUser {
+                username: "bob".into(),
+                password: "bob-pass".into(),
+            },
+        ],
+        alpn: vec!["h3".into()],
+        zero_rtt: false,
+        gso: false,
+        initial_mtu: default_initial_mtu(),
+        congestion_control: CongestionControl::Bbr,
+        server_name: "localhost".into(),
+        cert_path: "../assets/certs/localhost.crt".into(),
+        key_path: "../assets/certs/localhost.key".into(),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+
+    server.init().await.expect("server init failed");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let admin = client_at(STATS_SERVER_ADDR, "admin", "admin-pass");
+    let bob = client_at(STATS_SERVER_ADDR, "bob", "bob-pass");
+    let bob_conn = bob.get_conn().await.expect("bob should connect");
+    let _tcp_stream = connect_tcp(
+        &bob_conn,
+        SocksAddr::from_domain("example.com".to_owned(), 80),
+    )
+    .await
+    .expect("tcp request should open");
+    let _accepted_req = tokio::time::timeout(Duration::from_secs(2), server.accept())
+        .await
+        .expect("server should observe tcp request")
+        .expect("server accept should succeed");
+
+    let stats = admin
+        .get_user_stats("bob")
+        .await
+        .expect("admin should get bob stats");
+    assert_eq!(stats.conn_num, 1);
+    assert_eq!(stats.tcp_conns, 1);
+
+    assert!(matches!(
+        bob.get_user_stats("bob").await,
+        Err(SQExtError::PermissionDenied)
+    ));
+    assert_eq!(
+        bob.kill_user_conns("bob").await,
+        Err(SQExtError::PermissionDenied)
+    );
+
+    admin
+        .kill_user_conns("bob")
+        .await
+        .expect("admin should kill bob conns");
+    assert_connection_closed(&bob_conn).await;
+}
+
 fn client(username: &str, password: &str) -> SunnyQuicClient {
+    client_at(SERVER_ADDR, username, password)
+}
+
+fn client_at(addr: &str, username: &str, password: &str) -> SunnyQuicClient {
     SunnyQuicClient::new(SunnyQuicClientCfg {
         username: username.into(),
         password: password.into(),
-        addr: SERVER_ADDR.into(),
+        addr: addr.into(),
         server_name: "localhost".into(),
         alpn: vec!["h3".into()],
         cert_path: Some("../assets/certs/MyCA.pem".into()),
@@ -95,6 +170,16 @@ fn client(username: &str, password: &str) -> SunnyQuicClient {
         over_stream: true,
         ..Default::default()
     })
+}
+
+async fn assert_connection_closed(conn: &shadowquic::sunnyquic::outbound::SunnyQuicConn) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while conn.close_reason().is_none() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("connection should be closed");
 }
 
 async fn add_user(
