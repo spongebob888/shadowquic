@@ -10,7 +10,10 @@ use std::{
     io::Cursor,
     mem::replace,
     ops::Deref,
-    sync::{Arc, atomic::AtomicU16},
+    sync::{
+        Arc,
+        atomic::{AtomicU16, AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -47,6 +50,46 @@ pub struct SQConn<T: QuicConnection> {
     pub authed: Arc<SetOnce<SResult<String>>>,
     pub(crate) send_id_store: IDStore<()>,
     pub(crate) recv_id_store: IDStore<(AnyUdpSend, SocksAddr)>,
+    pub stats: Arc<SQStats>,
+}
+impl<T: QuicConnection> SQConn<T> {
+    pub fn new(conn: T, auth: SResult<String>) -> Self {
+        Self {
+            conn,
+            authed: Arc::new(SetOnce::new_with(Some(auth))),
+            send_id_store: IDStore {
+                id_counter: Default::default(),
+                inner: Default::default(),
+            },
+            recv_id_store: IDStore {
+                id_counter: Default::default(),
+                inner: Default::default(),
+            },
+            stats: Default::default(),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct SQStats {
+    pub tcp_received: Arc<AtomicU64>,
+    pub tcp_sent: Arc<AtomicU64>,
+    pub udp_received: Arc<AtomicU64>,
+    pub udp_sent: Arc<AtomicU64>,
+}
+impl SQStats {
+    pub fn on_tcp_received(&self, n: u64) {
+        self.tcp_received.fetch_add(n, Ordering::Relaxed);
+    }
+    pub fn on_tcp_sent(&self, n: u64) {
+        self.tcp_sent.fetch_add(n, Ordering::Relaxed);
+    }
+    pub fn on_udp_received(&self, n: u64) {
+        self.udp_received.fetch_add(n, Ordering::Relaxed);
+    }
+    pub fn on_udp_sent(&self, n: u64) {
+        self.udp_sent.fetch_add(n, Ordering::Relaxed);
+    }
 }
 
 async fn wait_sunny_auth<T: QuicConnection>(conn: &SQConn<T>) -> SResult<String> {
@@ -390,6 +433,7 @@ pub async fn handle_udp_send<C: QuicConnection>(
     let quic_conn = conn.conn.clone();
     loop {
         let (bytes, dst) = down_stream.recv_from().await?;
+        conn.stats.on_udp_sent(bytes.len() as u64);
         let (id, is_new) = session.get_id_or_insert(&dst).await;
         //let span = trace_span!("udp", id = id);
         let ctl_header = SQUdpControlHeader {
@@ -468,12 +512,14 @@ pub async fn handle_udp_recv_ctrl<C: QuicConnection>(
 /// This function is symetrical for both clients and servers.
 pub async fn handle_udp_packet_recv<C: QuicConnection>(conn: SQConn<C>) -> Result<(), SError> {
     let id_store = conn.recv_id_store.clone();
+    let stats = conn.stats.clone();
     wait_sunny_auth(&conn).await?;
     loop {
         tokio::select! {
             b = conn.read_datagram() => {
                 let b = b?;
                 let b = BytesMut::from(b);
+                stats.on_udp_received(b.len() as u64);
                 let mut cur = Cursor::new(b);
                 let SQPacketDatagramHeader{id} = SQPacketDatagramHeader::decode(&mut cur).await?;
                 let pos = cur.position() as usize;
@@ -502,16 +548,33 @@ pub async fn handle_udp_packet_recv<C: QuicConnection>(conn: SQConn<C>) -> Resul
                     }
                 };
 
+                let stats = stats.clone();
                 tokio::spawn(async move {
-                    loop {
-                        let l: usize = u16::decode(&mut uni_stream).await? as usize;
-                        let mut b = BytesMut::with_capacity(l);
-                        b.resize(l,0);
-                        uni_stream.read_exact(&mut b).await?;
-                        udp.send_to(b.freeze(), addr.clone()).await?;
+                    let mut recved: u64 = 0;
+                    let result: Result<(), SError> = loop {
+                        let r = async {
+                            let l: usize = u16::decode(&mut uni_stream).await? as usize;
+                            recved += l as u64;
+                            stats.on_udp_received(l as u64);
+                            let mut b = BytesMut::with_capacity(l);
+                            b.resize(l, 0);
+                            uni_stream.read_exact(&mut b).await?;
+                            udp.send_to(b.freeze(), addr.clone()).await?;
+                            Ok(()) as Result<(), SError>
+                        }
+                        .await;
+
+                        if let Err(e) = r {
+                            break Err(e);
+                        }
+                    };
+
+                    if let Err(e) = &result {
+                        trace!(dst = %addr, recved, "udp over stream receive loop stopped: {e}");
                     }
-                    #[allow(unreachable_code)]
-                    (Ok(()) as Result<(), SError>)
+
+                    info!(dst = %addr, recved, "udp over stream receive ended");
+                    result
                 }.in_current_span());
             }
         }

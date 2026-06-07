@@ -71,6 +71,7 @@ impl SunnyQuicClient {
                 id_counter: Default::default(),
                 inner: Default::default(),
             },
+            stats: Default::default(),
         };
 
         let username = self.config.username.clone();

@@ -19,6 +19,7 @@ use crate::{
     },
     quic::QuicConnection,
     squic::wait_sunny_auth,
+    utils::tracked_stream::{TrackedRead, TrackedWrite},
 };
 
 use super::{SQConn, handle_udp_packet_recv, handle_udp_recv_ctrl, handle_udp_send};
@@ -30,6 +31,12 @@ pub trait UserManager: Send + Sync {
     async fn add_user(&self, user: AuthUser) -> Result<(), SQExtError>;
     async fn remove_user(&self, username: &str) -> Result<(), SQExtError>;
     async fn list_users(&self) -> Result<Vec<String>, SQExtError>;
+}
+pub trait StatsManager: Send + Sync {
+    fn on_tcp_crated();
+    fn on_tcp_finished();
+    fn on_udp_created();
+    fn on_udp_finished();
 }
 
 #[derive(Clone)]
@@ -79,6 +86,8 @@ impl<C: QuicConnection> SQServerConn<C> {
             SQReq::SQConnect(dst) => {
                 wait_sunny_auth(&self.inner).await?;
                 info!(dst = %dst, "tcp connect request accepted");
+                let send = TrackedWrite::with_counter(send, self.inner.stats.tcp_sent.clone());
+                let recv = TrackedRead::with_counter(recv, self.inner.stats.tcp_received.clone());
                 let tcp: TcpSession = TcpSession {
                     stream: Box::new(Unsplit { s: send, r: recv }),
                     dst,

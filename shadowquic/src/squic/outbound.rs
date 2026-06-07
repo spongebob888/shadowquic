@@ -16,6 +16,7 @@ use crate::{
     msgs::{SDecode, SEncode, socks5::SocksAddr, squic::SQReq},
     quic::QuicConnection,
     squic::{handle_udp_recv_ctrl, handle_udp_send},
+    utils::tracked_stream::{TrackedRead, TrackedWrite},
 };
 
 use super::{SQConn, inbound::Unsplit};
@@ -43,11 +44,11 @@ pub async fn handle_request<C: QuicConnection>(
                 req.encode(&mut send).await?;
                 trace!(dst = %tcp_session.dst, "tcp connect req header sent");
 
-                let u = tokio::io::copy_bidirectional(
-                    &mut Unsplit { s: send, r: recv },
-                    &mut tcp_session.stream,
-                )
-                .await?;
+                let send = TrackedWrite::with_counter(send, conn.stats.tcp_sent.clone());
+                let recv = TrackedRead::with_counter(recv, conn.stats.tcp_received.clone());
+                let mut quic_stream = Unsplit { s: send, r: recv };
+                let u = tokio::io::copy_bidirectional(&mut quic_stream, &mut tcp_session.stream)
+                    .await?;
                 info!(
                     "request:{} finished, upload:{}bytes,download:{}bytes",
                     tcp_session.dst, u.1, u.0

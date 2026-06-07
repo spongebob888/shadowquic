@@ -63,15 +63,8 @@ impl ShadowQuicClient {
             .connect(addr, &self.config.server_name)
             .await?;
 
-        let conn = SQConn {
-            conn,
-            authed: Arc::new(SetOnce::new_with(Some(Ok(self.config.username.clone())))),
-            send_id_store: Default::default(),
-            recv_id_store: IDStore {
-                id_counter: Default::default(),
-                inner: Default::default(),
-            },
-        };
+        let conn = SQConn::new(conn, Ok(self.config.username.clone()));
+      
         let conn_clone = conn.clone();
         tokio::spawn(async move {
             let _ = handle_udp_packet_recv(conn_clone)
