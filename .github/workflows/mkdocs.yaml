@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - "shadowquic/src/config/**"
+      - "document/api.md"
       - "assets/sites/**"
       - ".github/workflows/mkdocs.yaml"
   workflow_dispatch:
