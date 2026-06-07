@@ -70,7 +70,7 @@ pub enum SQExtError {
     Other(String) = 0xFF,
 }
 
-#[derive(PartialEq, SEncode, SDecode)]
+#[derive(PartialEq, SEncode, SDecode, Default)]
 #[size_tag]
 pub struct UserStats {
     pub tcp_sent: u64,

@@ -86,10 +86,7 @@ impl UserManager for ShadowQuicUserManager {
     }
 
     async fn get_user_stats(&self, username: &str) -> Result<UserStats, SQExtError> {
-        self.observer
-            .get_user_stats(username)
-            .await
-            .ok_or(SQExtError::NotFound)
+        Ok(self.observer.get_user_stats(username).await)
     }
 
     async fn kill_user_conns(&self, username: &str) -> Result<(), SQExtError> {

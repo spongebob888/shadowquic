@@ -105,7 +105,7 @@ impl Observer {
             .filter(|(_, ctx)| ctx.username == username)
             .count()
     }
-    pub async fn get_user_stats(&self, username: &str) -> Option<UserStats> {
+    pub async fn get_user_stats(&self, username: &str) -> UserStats {
         let conn_num = self.get_conn_num(username).await;
         let user_stats = self.user_stats.lock().await;
         if let Some(stats) = user_stats.get(username) {
@@ -113,7 +113,7 @@ impl Observer {
             let tcp_sent = stats.tcp_sent.load(Ordering::Relaxed);
             let udp_recv = stats.udp_recv.load(Ordering::Relaxed);
             let udp_sent = stats.udp_sent.load(Ordering::Relaxed);
-            Some(UserStats {
+            UserStats {
                 tcp_sent,
                 tcp_recv,
                 udp_sent,
@@ -121,9 +121,9 @@ impl Observer {
                 tcp_conns: stats.tcp_conns.load(Ordering::Relaxed),
                 udp_conns: stats.udp_conns.load(Ordering::Relaxed),
                 conn_num: conn_num as u32,
-            })
+            }
         } else {
-            None
+            Default::default()
         }
     }
 }
