@@ -75,19 +75,23 @@ impl Observer {
     }
 
     pub async fn remove_user(&self, username: &str) {
-        let mut user_stats = self.user_stats.lock().await;
-        user_stats.remove(username);
+        {
+            let mut user_stats = self.user_stats.lock().await;
+            user_stats.remove(username);
+        }
         self.close_conn(username).await;
         let mut conns = self.conns.lock().await;
         conns.retain(|_, ctx| ctx.username != username);
     }
     pub async fn close_conn(&self, username: &str) {
-        let conns = self.conns.lock().await;
-        let to_close: Vec<_> = conns
-            .iter()
-            .filter(|(_, ctx)| ctx.username == username)
-            .map(|(id, ctx)| (*id, ctx.conn_handle.clone()))
-            .collect();
+        let to_close: Vec<_> = {
+            let conns = self.conns.lock().await;
+            conns
+                .iter()
+                .filter(|(_, ctx)| ctx.username == username)
+                .map(|(id, ctx)| (*id, ctx.conn_handle.clone()))
+                .collect()
+        };
         for (id, handle) in to_close {
             if let Some(handle) = handle.upgrade() {
                 handle.stop();
