@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use bytes::Bytes;
 use error::SError;
@@ -59,7 +59,8 @@ pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
 }
 pub struct UserContext {
     pub username: UserName,
-    pub conn_handle: Box<dyn Stoppable>,
+    pub conn_handle: Weak<dyn Stoppable>,
+    pub conn_id: u64,
 }
 
 pub type AnyTcp = Box<dyn TcpTrait>;

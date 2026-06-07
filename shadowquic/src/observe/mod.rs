@@ -15,14 +15,14 @@ use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     sync::Mutex,
 };
+use tracing::info;
 
 use crate::{
-    AnyTcp, AnyUdpRecv, AnyUdpSend, ProxyRequest, TcpSession, TcpTrait, UdpRecv, UdpSend,
-    UdpSession, UserName, error::SError, msgs::socks5::SocksAddr,
+    AnyTcp, AnyUdpRecv, AnyUdpSend, ProxyRequest, TcpSession, TcpTrait, UdpRecv, UdpSend, UdpSession, UserContext, UserName, error::SError, msgs::{socks5::SocksAddr, squic::UserStats}
 };
 
 #[derive(Default)]
-pub struct ProxyStats {
+pub struct ProxyStatsAtm {
     tcp_sent: Arc<AtomicU64>,
     tcp_recv: Arc<AtomicU64>,
     udp_sent: Arc<AtomicU64>,
@@ -31,7 +31,7 @@ pub struct ProxyStats {
     udp_conns: Arc<AtomicU64>,
 }
 
-impl ProxyStats {
+impl ProxyStatsAtm {
     fn tcp_counters(&self) -> (Arc<AtomicU64>, Arc<AtomicU64>, Arc<AtomicU64>) {
         (
             self.tcp_recv.clone(),
@@ -49,17 +49,61 @@ impl ProxyStats {
     }
 }
 
+#[derive(Clone,Default)]
 pub struct Observer {
-    pub user_stats: Arc<Mutex<HashMap<UserName, ProxyStats>>>,
+    pub user_stats: Arc<Mutex<HashMap<UserName, ProxyStatsAtm>>>,
+    pub conns: Arc<Mutex<HashMap<u64, UserContext>>>,
 }
-
-impl Default for Observer {
-    fn default() -> Self {
-        Self {
-            user_stats: Default::default(),
+impl Observer {
+    pub async fn remove_user(&self, username: &str) {
+        let mut user_stats = self.user_stats.lock().await;
+        user_stats.remove(username);
+        self.close_conn(username).await;
+        let mut conns = self.conns.lock().await;
+        conns.retain(|_, ctx| ctx.username != username);
+    }
+    pub async fn close_conn(&self, username: &str) {
+        let conns = self.conns.lock().await;
+        let to_close: Vec<_> = conns
+            .iter()
+            .filter(|(_, ctx)| ctx.username == username)
+            .map(|(id, ctx)| (*id, ctx.conn_handle.clone()))
+            .collect();
+        for (id, handle) in to_close {
+            if let Some(handle) = handle.upgrade() {
+                handle.stop();
+                info!(%id, "connection closed by observer");
+            }
+        }
+    }
+    pub async fn get_conn_num(&self, username: &str) -> usize {
+        let mut conns = self.conns.lock().await;
+        conns.retain(|_, ctx| ctx.conn_handle.upgrade().is_some());
+        conns.iter().filter(|(_, ctx)| ctx.username == username).count()
+    }
+    pub async fn get_user_stats(&self, username: &str) -> Option<UserStats> {
+        let conn_num = self.get_conn_num(username).await;
+        let user_stats = self.user_stats.lock().await;
+        if let Some(stats) = user_stats.get(username) {
+            let tcp_recv = stats.tcp_recv.load(Ordering::Relaxed);
+            let tcp_sent = stats.tcp_sent.load(Ordering::Relaxed);
+            let udp_recv = stats.udp_recv.load(Ordering::Relaxed);
+            let udp_sent = stats.udp_sent.load(Ordering::Relaxed);
+            Some(UserStats {
+                tcp_sent,
+                tcp_recv,
+                udp_sent,
+                udp_recv,
+                tcp_conns: stats.tcp_conns.load(Ordering::Relaxed),
+                udp_conns: stats.udp_conns.load(Ordering::Relaxed),
+                conn_num: conn_num as u32,
+            })
+        } else {
+            None
         }
     }
 }
+
 
 struct TrackedTcp {
     inner: AnyTcp,

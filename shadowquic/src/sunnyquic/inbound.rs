@@ -136,6 +136,7 @@ impl SunnyQuicServer {
             user_manager: Some(user_manager),
         };
         let span = info_span!("quic", id = sq_conn.inner.peer_id());
+        let sq_conn = Arc::new(sq_conn);
         sq_conn
             .handle_connection(req_sender)
             .instrument(span)

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::UserName;
 use crate::error::SError;
 
 use super::socks5::SocksAddr;
@@ -54,8 +55,10 @@ pub struct ConnStats {
 #[derive(SEncode, SDecode)]
 pub enum ExtOpcodeUser {
     AddUser(AuthUser) = 0x0,
-    RemoveUser(String) = 0x1,
+    RemoveUser(UserName) = 0x1,
     ListUsers = 0x2,
+    GetUserStats(UserName) = 0x3,
+    KillUserConn(UserName) = 0x4,
 }
 #[derive(PartialEq)]
 #[repr(u8)]
@@ -66,6 +69,20 @@ pub enum SQExtError {
     NotFound = 0x2,
     Other(String) = 0xFF,
 }
+
+#[derive(PartialEq, SEncode, SDecode)]
+#[size_tag]
+pub struct UserStats {
+    pub tcp_sent: u64,
+    pub tcp_recv: u64,
+    pub udp_sent: u64,
+    pub udp_recv: u64,
+    pub tcp_conns: u64,
+    pub udp_conns: u64,
+    /// Number of online connections, equal to devices connected.
+    pub conn_num: u32,
+}
+
 
 #[derive(SEncode, SDecode)]
 pub struct SQUdpControlHeader {

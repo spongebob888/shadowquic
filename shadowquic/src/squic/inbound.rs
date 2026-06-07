@@ -9,16 +9,11 @@ use tokio::{
 use tracing::{Instrument, info, info_span, trace};
 
 use crate::{
-    ProxyRequest, TcpSession, TcpTrait, UdpSession, UserContext,
-    config::AuthUser,
-    error::{SError, SResult},
-    msgs::{
+    ProxyRequest, Stoppable, TcpSession, TcpTrait, UdpSession, UserContext, config::AuthUser, error::{SError, SResult}, msgs::{
         SDecode, SEncode,
         socks5::SocksAddr,
-        squic::{ExtOpcodeConn, ExtOpcodeUser, SQExtError, SQExtOpcode, SQReq, SunnyCredential},
-    },
-    quic::QuicConnection,
-    squic::wait_sunny_auth,
+        squic::{ExtOpcodeConn, ExtOpcodeUser, SQExtError, SQExtOpcode, SQReq, SunnyCredential, UserStats},
+    }, quic::QuicConnection, squic::wait_sunny_auth
 };
 
 use super::{SQConn, handle_udp_packet_recv, handle_udp_recv_ctrl, handle_udp_send};
@@ -30,6 +25,8 @@ pub trait UserManager: Send + Sync {
     async fn add_user(&self, user: AuthUser) -> Result<(), SQExtError>;
     async fn remove_user(&self, username: &str) -> Result<(), SQExtError>;
     async fn list_users(&self) -> Result<Vec<String>, SQExtError>;
+    async fn get_user_stats(&self, username: &str) -> Result<UserStats, SQExtError>;
+    async fn kill_user_conns(&self, username: &str) -> Result<(), SQExtError>;
 }
 
 #[derive(Clone)]
@@ -39,7 +36,7 @@ pub struct SQServerConn<C: QuicConnection> {
     pub user_manager: Option<Arc<dyn UserManager>>,
 }
 impl<C: QuicConnection> SQServerConn<C> {
-    pub async fn handle_connection(self, req_send: Sender<ProxyRequest>) -> Result<(), SError> {
+    pub async fn handle_connection(self: Arc<Self>, req_send: Sender<ProxyRequest>) -> Result<(), SError> {
         let conn = &self.inner;
         info!(peer_address = %conn.remote_address(), "incoming connection accepted");
         let conn_clone = self.inner.clone();
@@ -60,7 +57,7 @@ impl<C: QuicConnection> SQServerConn<C> {
         Ok(())
     }
     async fn handle_bistream(
-        self,
+        self: Arc<Self>,
         send: C::SendStream,
         mut recv: C::RecvStream,
         req_send: Sender<ProxyRequest>,
@@ -84,7 +81,8 @@ impl<C: QuicConnection> SQServerConn<C> {
                     dst,
                     user_context: Some(UserContext {
                         username: user,
-                        conn_handle: Box::new(self.inner.conn.clone()),
+                        conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),
+                        conn_id: self.inner.conn.peer_id(),
                     }),
                 };
                 req_send
@@ -105,7 +103,8 @@ impl<C: QuicConnection> SQServerConn<C> {
                     bind_addr: dst.clone(),
                     user_context: Some(UserContext {
                         username: user,
-                        conn_handle: Box::new(self.inner.conn.clone()),
+                        conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),
+                        conn_id: self.inner.conn.peer_id(),
                     }),
                 };
                 let local_send = Arc::new(local_send);
@@ -119,7 +118,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                     self.inner.clone(),
                     req == &SQReq::SQAssociatOverStream(dst.clone()),
                 );
-                let fut2 = handle_udp_recv_ctrl(recv, local_send, self.inner);
+                let fut2 = handle_udp_recv_ctrl(recv, local_send, self.inner.clone());
                 tokio::try_join!(fut1, fut2)?;
             }
             SQReq::SQAuthenticate(passwd_hash) => {
@@ -210,6 +209,12 @@ impl<C: QuicConnection> SQServerConn<C> {
     }
 }
 
+
+impl<C: QuicConnection> Stoppable for SQServerConn<C> {
+    fn stop(&self) -> () {
+        self.inner.conn.close(0, &[]);
+    }
+}
 #[derive(Debug)]
 pub struct Unsplit<S, R> {
     pub s: S,
