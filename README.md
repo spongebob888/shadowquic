@@ -62,7 +62,7 @@ Configuration detail can be found in [Documentation](https://spongebob888.github
 - [QuicProxy](https://github.com/RealBikiniBottom/QuicProxy): GUI and core
 
 ## Other Servers
-- [docker](https://github.com/spongebob888/shadowquic/pkgs/container/shadowquic): example [coompose file](./shadowquic/config_examples/compose.yaml)
+- [docker](https://github.com/spongebob888/shadowquic/pkgs/container/shadowquic): example [compose file](./shadowquic/config_examples/compose.yaml)
 - [QuicProxy](https://github.com/RealBikiniBottom/QuicProxy): GUI and core
 ## Protocol
 [PROTOCOL](./PROTOCOL.pdf)
