@@ -237,7 +237,7 @@ impl<C: QuicConnection> SQServerConn<C> {
 }
 
 impl<C: QuicConnection> Stoppable for SQServerConn<C> {
-    fn stop(&self) -> () {
+    fn stop(&self) {
         self.inner.conn.close(0, &[]);
     }
 }
