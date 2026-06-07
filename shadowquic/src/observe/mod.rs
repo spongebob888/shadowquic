@@ -18,10 +18,13 @@ use tokio::{
 use tracing::info;
 
 use crate::{
-    AnyTcp, AnyUdpRecv, AnyUdpSend, ProxyRequest, TcpSession, TcpTrait, UdpRecv, UdpSend, UdpSession, UserContext, UserName, error::SError, msgs::{socks5::SocksAddr, squic::UserStats}
+    AnyTcp, AnyUdpRecv, AnyUdpSend, ProxyRequest, TcpSession, TcpTrait, UdpRecv, UdpSend,
+    UdpSession, UserContext, UserName,
+    error::SError,
+    msgs::{socks5::SocksAddr, squic::UserStats},
 };
 
-#[derive(Default)]
+#[derive(Default,Clone)]
 pub struct ProxyStatsAtm {
     tcp_sent: Arc<AtomicU64>,
     tcp_recv: Arc<AtomicU64>,
@@ -49,12 +52,24 @@ impl ProxyStatsAtm {
     }
 }
 
-#[derive(Clone,Default)]
+#[derive(Clone, Default)]
 pub struct Observer {
     pub user_stats: Arc<Mutex<HashMap<UserName, ProxyStatsAtm>>>,
     pub conns: Arc<Mutex<HashMap<u64, UserContext>>>,
 }
 impl Observer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    
+    pub async fn on_new_request(&self, user_context: &UserContext ) -> Option<ProxyStatsAtm> {
+
+        let mut conns = self.conns.lock().await;
+        conns.insert(user_context.conn_id, user_context.clone());
+        conns.retain(|x,v|v.conn_handle.upgrade().is_some());
+        Some(self.user_stats.lock().await.entry(user_context.username.clone()).or_default().clone())
+    }
+
     pub async fn remove_user(&self, username: &str) {
         let mut user_stats = self.user_stats.lock().await;
         user_stats.remove(username);
@@ -79,7 +94,10 @@ impl Observer {
     pub async fn get_conn_num(&self, username: &str) -> usize {
         let mut conns = self.conns.lock().await;
         conns.retain(|_, ctx| ctx.conn_handle.upgrade().is_some());
-        conns.iter().filter(|(_, ctx)| ctx.username == username).count()
+        conns
+            .iter()
+            .filter(|(_, ctx)| ctx.username == username)
+            .count()
     }
     pub async fn get_user_stats(&self, username: &str) -> Option<UserStats> {
         let conn_num = self.get_conn_num(username).await;
@@ -103,7 +121,6 @@ impl Observer {
         }
     }
 }
-
 
 struct TrackedTcp {
     inner: AnyTcp,
@@ -234,17 +251,15 @@ impl UdpSend for TrackedUdpSend {
 }
 
 impl Observer {
-    pub(crate) async fn wrap_request(&mut self, req: ProxyRequest) -> ProxyRequest {
+    pub(crate) async fn wrap_request(&self, req: ProxyRequest) -> ProxyRequest {
         match req {
             ProxyRequest::Tcp(tcp) => {
                 let Some(user_context) = tcp.user_context else {
                     return ProxyRequest::Tcp(tcp);
                 };
-                let username = user_context.username.clone();
-                let mut user_stats = self.user_stats.lock().await;
-                let stats = user_stats.entry(username).or_default();
+                let stats = self.on_new_request(&user_context).await.unwrap();
                 let (tcp_recv, tcp_sent, tcp_conns) = stats.tcp_counters();
-                drop(user_stats);
+        
 
                 ProxyRequest::Tcp(TcpSession {
                     stream: Box::new(TrackedTcp::new(tcp.stream, tcp_recv, tcp_sent, tcp_conns))
@@ -257,12 +272,10 @@ impl Observer {
                 let Some(user_context) = udp.user_context else {
                     return ProxyRequest::Udp(udp);
                 };
-                let username = user_context.username.clone();
-                let mut user_stats = self.user_stats.lock().await;
-                let stats = user_stats.entry(username).or_default();
+  
+                let stats = self.on_new_request(&user_context).await.unwrap();
                 let (udp_recv, udp_sent, udp_conns) = stats.udp_counters();
                 udp_conns.fetch_add(1, Ordering::Relaxed);
-                drop(user_stats);
 
                 ProxyRequest::Udp(UdpSession {
                     recv: Box::new(TrackedUdpRecv {

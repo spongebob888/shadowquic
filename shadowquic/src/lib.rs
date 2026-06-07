@@ -57,6 +57,7 @@ pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
     bind_addr: SocksAddr,
     user_context: Option<UserContext>,
 }
+#[derive(Clone)]
 pub struct UserContext {
     pub username: UserName,
     pub conn_handle: Weak<dyn Stoppable>,
@@ -109,10 +110,9 @@ impl Manager {
         self.inbound.init().await?;
         let mut inbound = self.inbound;
         let mut outbound = self.outbound;
-        let mut observer = observe::Observer::default();
         loop {
             match inbound.accept().await {
-                Ok(req) => match outbound.handle(observer.wrap_request(req).await).await {
+                Ok(req) => match outbound.handle(req).await {
                     Ok(_) => {}
                     Err(e) => {
                         error!("error during handling request: {}", e)

@@ -12,7 +12,8 @@ use crate::{
     Inbound, ProxyRequest,
     config::{AuthUser, SunnyQuicServerCfg},
     error::SError,
-    msgs::{squic::SQExtError, squic::SunnyCredential},
+    msgs::squic::{SQExtError, SunnyCredential, UserStats},
+    observe::Observer,
     quic::QuicConnection,
     squic::inbound::{SQServerConn, SunnyQuicUsers, UserManager},
     sunnyquic::EndServer,
@@ -27,12 +28,14 @@ pub struct SunnyQuicServer {
     user_manager: Arc<SunnyQuicUserManager>,
     request_sender: Sender<ProxyRequest>,
     request: Receiver<ProxyRequest>,
+    observer: Arc<Observer>,
 }
 
 struct SunnyQuicUserManager {
     endpoint: EndServer,
     users: Arc<ArcSwap<HashMap<SunnyCredential, String>>>,
     config: RwLock<SunnyQuicServerCfg>,
+    observer: Arc<Observer>,
 }
 
 #[async_trait]
@@ -74,6 +77,7 @@ impl UserManager for SunnyQuicUserManager {
             return Err(SQExtError::Other(error.to_string()));
         }
         self.users.store(SunnyQuicServer::gen_users_hash(&config));
+        self.observer.remove_user(username).await;
         Ok(())
     }
 
@@ -85,6 +89,18 @@ impl UserManager for SunnyQuicUserManager {
             .map(|user| user.username.clone())
             .collect())
     }
+
+    async fn get_user_stats(&self, username: &str) -> Result<UserStats, SQExtError> {
+        self.observer
+            .get_user_stats(username)
+            .await
+            .ok_or(SQExtError::NotFound)
+    }
+
+    async fn kill_user_conns(&self, username: &str) -> Result<(), SQExtError> {
+        self.observer.close_conn(username).await;
+        Ok(())
+    }
 }
 
 impl SunnyQuicServer {
@@ -94,10 +110,12 @@ impl SunnyQuicServer {
             .await
             .expect("Failed to listening on udp");
         let users = Arc::new(ArcSwap::new(Self::gen_users_hash(&cfg)));
+        let observer = Arc::new(Observer::new());
         let user_manager = Arc::new(SunnyQuicUserManager {
             endpoint: endpoint.clone(),
             users: users.clone(),
             config: RwLock::new(cfg),
+            observer: observer.clone(),
         });
 
         Ok(Self {
@@ -106,6 +124,7 @@ impl SunnyQuicServer {
             user_manager,
             request_sender: send,
             request: recv,
+            observer,
         })
     }
 
@@ -161,7 +180,7 @@ impl Inbound for SunnyQuicServer {
             .recv()
             .await
             .ok_or(SError::InboundUnavailable)?;
-        return Ok(req);
+        Ok(self.observer.wrap_request(req).await)
     }
     /// Init background job for accepting connection
     async fn init(&self) -> Result<(), SError> {

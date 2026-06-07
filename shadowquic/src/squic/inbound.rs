@@ -9,11 +9,19 @@ use tokio::{
 use tracing::{Instrument, info, info_span, trace};
 
 use crate::{
-    ProxyRequest, Stoppable, TcpSession, TcpTrait, UdpSession, UserContext, config::AuthUser, error::{SError, SResult}, msgs::{
+    ProxyRequest, Stoppable, TcpSession, TcpTrait, UdpSession, UserContext,
+    config::AuthUser,
+    error::{SError, SResult},
+    msgs::{
         SDecode, SEncode,
         socks5::SocksAddr,
-        squic::{ExtOpcodeConn, ExtOpcodeUser, SQExtError, SQExtOpcode, SQReq, SunnyCredential, UserStats},
-    }, quic::QuicConnection, squic::wait_sunny_auth
+        squic::{
+            ExtOpcodeConn, ExtOpcodeUser, SQExtError, SQExtOpcode, SQReq, SunnyCredential,
+            UserStats,
+        },
+    },
+    quic::QuicConnection,
+    squic::wait_sunny_auth,
 };
 
 use super::{SQConn, handle_udp_packet_recv, handle_udp_recv_ctrl, handle_udp_send};
@@ -36,7 +44,10 @@ pub struct SQServerConn<C: QuicConnection> {
     pub user_manager: Option<Arc<dyn UserManager>>,
 }
 impl<C: QuicConnection> SQServerConn<C> {
-    pub async fn handle_connection(self: Arc<Self>, req_send: Sender<ProxyRequest>) -> Result<(), SError> {
+    pub async fn handle_connection(
+        self: Arc<Self>,
+        req_send: Sender<ProxyRequest>,
+    ) -> Result<(), SError> {
         let conn = &self.inner;
         info!(peer_address = %conn.remote_address(), "incoming connection accepted");
         let conn_clone = self.inner.clone();
@@ -204,11 +215,26 @@ impl<C: QuicConnection> SQServerConn<C> {
             ExtOpcodeUser::ListUsers => {
                 user_manager.list_users().await.encode(send).await?;
             }
+            ExtOpcodeUser::GetUserStats(username) => {
+                info!(username = %username, "getting user stats");
+                user_manager
+                    .get_user_stats(&username)
+                    .await
+                    .encode(send)
+                    .await?;
+            }
+            ExtOpcodeUser::KillUserConn(username) => {
+                info!(username = %username, "killing user connections");
+                user_manager
+                    .kill_user_conns(&username)
+                    .await
+                    .encode(send)
+                    .await?;
+            }
         }
         Ok(())
     }
 }
-
 
 impl<C: QuicConnection> Stoppable for SQServerConn<C> {
     fn stop(&self) -> () {

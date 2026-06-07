@@ -83,7 +83,6 @@ pub struct UserStats {
     pub conn_num: u32,
 }
 
-
 #[derive(SEncode, SDecode)]
 pub struct SQUdpControlHeader {
     pub dst: SocksAddr,
