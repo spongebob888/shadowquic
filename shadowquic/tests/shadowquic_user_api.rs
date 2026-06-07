@@ -135,7 +135,7 @@ async fn shadowquic_user_api_get_stats_and_kill_user_conns() {
     )
     .await
     .expect("tcp request should open");
-    let _accepted_req = tokio::time::timeout(Duration::from_secs(2), server.accept())
+    let accepted_req = tokio::time::timeout(Duration::from_secs(2), server.accept())
         .await
         .expect("server should observe tcp request")
         .expect("server accept should succeed");
@@ -169,6 +169,13 @@ async fn shadowquic_user_api_get_stats_and_kill_user_conns() {
         .await
         .expect("admin should kill bob conns");
     assert_connection_closed(&bob_conn).await;
+    drop(accepted_req);
+    let stats = admin
+        .get_user_stats("bob")
+        .await
+        .expect("admin should get bob stats after killing conns");
+    assert_eq!(stats.tcp_conns, 0);
+    assert_eq!(stats.udp_conns, 0);
 }
 
 #[tokio::test]
