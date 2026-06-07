@@ -1,19 +1,31 @@
-use std::time::Duration;
+use std::{net::SocketAddr, time::Duration};
 
+use bytes::Bytes;
 use shadowquic::{
-    Inbound,
+    Inbound, Manager,
     config::{
         AuthUser, CongestionControl, JlsUpstream, ShadowQuicClientCfg, ShadowQuicServerCfg,
         default_initial_mtu,
     },
+    direct::outbound::DirectOut,
     msgs::socks5::SocksAddr,
     msgs::squic::SQExtError,
     shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
-    squic::{inbound::UserManager, outbound::connect_tcp},
+    squic::{
+        inbound::UserManager,
+        outbound::{associate_udp, connect_tcp},
+    },
+};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, UdpSocket},
 };
 
 const SERVER_ADDR: &str = "127.0.0.1:4458";
 const STATS_SERVER_ADDR: &str = "127.0.0.1:4468";
+const TRAFFIC_STATS_SERVER_ADDR: &str = "127.0.0.1:4478";
+const TCP_STATS_BYTES: usize = 4096;
+const UDP_STATS_BYTES: usize = 777;
 
 #[tokio::test]
 async fn shadowquic_user_api_add_remove_and_permissions() {
@@ -159,6 +171,106 @@ async fn shadowquic_user_api_get_stats_and_kill_user_conns() {
     assert_connection_closed(&bob_conn).await;
 }
 
+#[tokio::test]
+async fn shadowquic_user_api_get_stats_tracks_tcp_and_udp_bytes() {
+    let tcp_listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("tcp echo listener should bind");
+    let tcp_addr = tcp_listener.local_addr().unwrap();
+    let udp_socket = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("udp echo socket should bind");
+    let udp_addr = udp_socket.local_addr().unwrap();
+
+    tokio::spawn(tcp_echo_once(tcp_listener, TCP_STATS_BYTES));
+    tokio::spawn(udp_echo_once(udp_socket, UDP_STATS_BYTES));
+
+    let sq_server = ShadowQuicServer::new(ShadowQuicServerCfg {
+        bind_addr: TRAFFIC_STATS_SERVER_ADDR.parse().unwrap(),
+        users: vec![
+            AuthUser {
+                username: "admin".into(),
+                password: "admin-pass".into(),
+            },
+            AuthUser {
+                username: "bob".into(),
+                password: "bob-pass".into(),
+            },
+        ],
+        jls_upstream: JlsUpstream {
+            addr: "localhost:443".into(),
+            ..Default::default()
+        },
+        alpn: vec!["h3".into()],
+        zero_rtt: false,
+        gso: false,
+        initial_mtu: default_initial_mtu(),
+        congestion_control: CongestionControl::Bbr,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+
+    let server = Manager {
+        inbound: Box::new(sq_server),
+        outbound: Box::<DirectOut>::default(),
+    };
+    tokio::spawn(server.run());
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let admin = client_at(TRAFFIC_STATS_SERVER_ADDR, "admin", "admin-pass");
+    let bob = client_at(TRAFFIC_STATS_SERVER_ADDR, "bob", "bob-pass");
+    let bob_conn = bob.get_conn().await.expect("bob should connect");
+
+    let tcp_payload = vec![0x5a; TCP_STATS_BYTES];
+    let mut tcp_stream = connect_tcp(&bob_conn, SocksAddr::from(tcp_addr))
+        .await
+        .expect("tcp request should open");
+    tcp_stream.write_all(&tcp_payload).await.unwrap();
+    tcp_stream.flush().await.unwrap();
+    let mut tcp_echo = vec![0; TCP_STATS_BYTES];
+    tcp_stream.read_exact(&mut tcp_echo).await.unwrap();
+    assert_eq!(tcp_echo, tcp_payload);
+
+    let udp_payload = Bytes::from(vec![0xa5; UDP_STATS_BYTES]);
+    let udp_bind: SocketAddr = "0.0.0.0:0".parse().unwrap();
+    let (udp_send, mut udp_recv) = associate_udp(&bob_conn, SocksAddr::from(udp_bind), true)
+        .await
+        .expect("udp association should open");
+    udp_send
+        .send((udp_payload.clone(), SocksAddr::from(udp_addr)))
+        .await
+        .expect("udp payload should send");
+    let (udp_echo, udp_echo_addr) = tokio::time::timeout(Duration::from_secs(2), udp_recv.recv())
+        .await
+        .expect("udp echo should arrive before timeout")
+        .expect("udp echo channel should stay open");
+    assert_eq!(udp_echo, udp_payload);
+    assert_eq!(udp_echo_addr, SocksAddr::from(udp_addr));
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let stats = admin
+                .get_user_stats("bob")
+                .await
+                .expect("admin should get bob stats");
+            if stats.tcp_recv == TCP_STATS_BYTES as u64
+                && stats.tcp_sent == TCP_STATS_BYTES as u64
+                && stats.udp_recv == UDP_STATS_BYTES as u64
+                && stats.udp_sent == UDP_STATS_BYTES as u64
+            {
+                assert_eq!(stats.conn_num, 1);
+                assert_eq!(stats.tcp_conns, 1);
+                assert_eq!(stats.udp_conns, 1);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("traffic stats should be updated");
+}
+
 fn client(username: &str, password: &str) -> ShadowQuicClient {
     client_at(SERVER_ADDR, username, password)
 }
@@ -240,4 +352,18 @@ async fn assert_rejected_or_timeout(username: &str, password: &str) {
         rejected.is_ok(),
         "{username} should be rejected or closed after deletion"
     );
+}
+
+async fn tcp_echo_once(listener: TcpListener, len: usize) {
+    let (mut stream, _) = listener.accept().await.unwrap();
+    let mut buf = vec![0; len];
+    stream.read_exact(&mut buf).await.unwrap();
+    stream.write_all(&buf).await.unwrap();
+}
+
+async fn udp_echo_once(socket: UdpSocket, len: usize) {
+    let mut buf = vec![0; len];
+    let (read_len, addr) = socket.recv_from(&mut buf).await.unwrap();
+    assert_eq!(read_len, len);
+    socket.send_to(&buf, addr).await.unwrap();
 }
