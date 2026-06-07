@@ -9,7 +9,7 @@ use tokio::{
 use tracing::{Instrument, info, info_span, trace};
 
 use crate::{
-    ProxyRequest, TcpSession, TcpTrait, UdpSession,
+    ProxyRequest, TcpSession, TcpTrait, UdpSession, UserContext,
     config::AuthUser,
     error::{SError, SResult},
     msgs::{
@@ -77,11 +77,15 @@ impl<C: QuicConnection> SQServerConn<C> {
         // );
         match req {
             SQReq::SQConnect(dst) => {
-                wait_sunny_auth(&self.inner).await?;
+                let user = wait_sunny_auth(&self.inner).await?;
                 info!(dst = %dst, "tcp connect request accepted");
                 let tcp: TcpSession = TcpSession {
                     stream: Box::new(Unsplit { s: send, r: recv }),
                     dst,
+                    user_context: Some(UserContext {
+                        username: user,
+                        conn_handle: Box::new(self.inner.conn.clone()),
+                    }),
                 };
                 req_send
                     .send(ProxyRequest::Tcp(tcp))
@@ -90,7 +94,7 @@ impl<C: QuicConnection> SQServerConn<C> {
             }
             ref req @ (SQReq::SQAssociatOverDatagram(ref dst)
             | SQReq::SQAssociatOverStream(ref dst)) => {
-                wait_sunny_auth(&self.inner).await?;
+                let user = wait_sunny_auth(&self.inner).await?;
                 info!(bind_addr = %dst, "udp associate request accepted");
                 let (local_send, udp_recv) = channel::<(Bytes, SocksAddr)>(10);
                 let (udp_send, local_recv) = channel::<(Bytes, SocksAddr)>(10);
@@ -99,6 +103,10 @@ impl<C: QuicConnection> SQServerConn<C> {
                     recv: Box::new(udp_recv),
                     stream: None,
                     bind_addr: dst.clone(),
+                    user_context: Some(UserContext {
+                        username: user,
+                        conn_handle: Box::new(self.inner.conn.clone()),
+                    }),
                 };
                 let local_send = Arc::new(local_send);
                 req_send

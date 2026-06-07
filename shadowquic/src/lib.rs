@@ -15,6 +15,7 @@ pub mod config;
 pub mod direct;
 pub mod error;
 pub mod msgs;
+mod observe;
 pub mod quic;
 pub mod shadowquic;
 pub mod socks;
@@ -38,9 +39,14 @@ pub trait UdpSend: Send + Sync + Unpin {
 pub trait UdpRecv: Send + Sync + Unpin {
     async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr), SError>; // socksaddr is proxy addr
 }
+pub trait Stoppable: Send + Sync {
+    fn stop(&self);
+}
+pub type UserName = String;
 pub struct TcpSession<IO = AnyTcp> {
     stream: IO,
     dst: SocksAddr,
+    user_context: Option<UserContext>,
 }
 
 pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
@@ -49,6 +55,11 @@ pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
     /// Control stream, should be kept alive during session.
     stream: Option<AnyTcp>,
     bind_addr: SocksAddr,
+    user_context: Option<UserContext>,
+}
+pub struct UserContext {
+    pub username: UserName,
+    pub conn_handle: Box<dyn Stoppable>,
 }
 
 pub type AnyTcp = Box<dyn TcpTrait>;
@@ -97,9 +108,10 @@ impl Manager {
         self.inbound.init().await?;
         let mut inbound = self.inbound;
         let mut outbound = self.outbound;
+        let mut observer = observe::Observer::default();
         loop {
             match inbound.accept().await {
-                Ok(req) => match outbound.handle(req).await {
+                Ok(req) => match outbound.handle(observer.wrap_request(req).await).await {
                     Ok(_) => {}
                     Err(e) => {
                         error!("error during handling request: {}", e)

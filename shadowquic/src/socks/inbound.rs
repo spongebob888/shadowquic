@@ -203,6 +203,7 @@ async fn handle_tcp(
             ProxyRequest::Tcp(TcpSession {
                 stream: Box::new(s) as Box<dyn crate::TcpTrait>,
                 dst: req.dst,
+                user_context: None,
             })
         }
         SOCKS5_CMD_UDP_ASSOCIATE => {
@@ -214,6 +215,7 @@ async fn handle_tcp(
                 recv: Box::new(UdpSocksWrap(socket, Default::default())) as Box<dyn crate::UdpRecv>,
                 bind_addr: req.dst,
                 stream: Some(Box::new(s) as Box<dyn crate::TcpTrait>),
+                user_context: None,
             })
         }
         _ => {

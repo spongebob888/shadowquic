@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, sync::Arc};
 
-use crate::{error::SResult, msgs::squic::ConnStats, utils::socket_opt::SocketFactory};
+use crate::{Stoppable, error::SResult, msgs::squic::ConnStats, utils::socket_opt::SocketFactory};
 use async_trait::async_trait;
 use bytes::Bytes;
 use thiserror::Error;
@@ -60,6 +60,12 @@ pub trait QuicConnection: Send + Sync + Clone + 'static {
     fn peer_id(&self) -> u64;
     fn get_conn_stats(&self) -> Option<ConnStats> {
         None
+    }
+}
+
+impl<T: QuicConnection> Stoppable for T {
+    fn stop(&self) {
+        self.close(0, b"stopped by user");
     }
 }
 
