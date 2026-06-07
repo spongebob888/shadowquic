@@ -73,6 +73,9 @@ PROTOCOL_NAV_LABEL = "Protocol"
 PROTOCOL_REL_DIR = "protocol"  # docs/protocol/
 PROTOCOL_SOURCE_NAME = "PROTOCOL.typ"
 PROTOCOL_PDF_NAME = "PROTOCOL.pdf"
+API_NAV_LABEL = "API"
+API_SOURCE_NAME = "document/api.md"
+API_REL_PATH = "api.md"
 
 
 def build_protocol_pages(repo_root: Path) -> list[Path]:
@@ -122,6 +125,17 @@ def write_protocol_page(svg_pages: list[Path], pdf_link: str | None) -> Path:
         )
         body.append("")
     out_path.write_text("\n".join(body) + "\n")
+    return out_path
+
+
+def write_api_page(repo_root: Path) -> Path:
+    """Copy `document/api.md` into the generated site docs."""
+    src = repo_root / API_SOURCE_NAME
+    if not src.exists():
+        raise SystemExit(f"missing {src}")
+
+    out_path = DOCS_ROOT / API_REL_PATH
+    out_path.write_text(src.read_text())
     return out_path
 
 
@@ -1149,11 +1163,12 @@ def render_nav(pages: list[PageSpec], include_protocol: bool = False) -> str:
             lines.append(f'      {{ "{p.nav_label}" = "{p.rel_path}" }}{comma}')
         lines.append('    ] }')
 
+    lines.append('  ] },')
+    lines.append(f'  {{ "{API_NAV_LABEL}" = "{API_REL_PATH}" }},')
     if include_protocol:
-        lines.append('  ] },')
         lines.append(f'  {{ "{PROTOCOL_NAV_LABEL}" = "{PROTOCOL_REL_DIR}/index.md" }}')
     else:
-        lines.append('  ] }')
+        lines[-1] = lines[-1].rstrip(",")
     lines.append("]")
     return "\n".join(lines) + "\n"
 
@@ -1299,6 +1314,10 @@ def main(argv: list[str] | None = None) -> int:
 
         out_path.write_text(body)
         print(f"wrote {out_path.relative_to(REPO_ROOT)}", file=sys.stderr)
+
+    # User-management API reference
+    out_path = write_api_page(REPO_ROOT)
+    print(f"wrote {out_path.relative_to(REPO_ROOT)}", file=sys.stderr)
 
     # Protocol spec (PROTOCOL.typ -> SVG pages -> markdown)
     include_protocol = False

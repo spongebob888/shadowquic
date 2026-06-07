@@ -32,10 +32,9 @@ When running from source:
 cargo run -p shadowquic -- api list-users
 cargo run -p shadowquic -- api add-user alice alice-pass
 cargo run -p shadowquic -- api remove-user alice
-cargo run -p shadowquic -- api get-user-stats alice
-cargo run -p shadowquic -- api kill-user-conn alice
+cargo run -p shadowquic -- api get-stats alice
+cargo run -p shadowquic -- api kill-conn alice
 ```
 
 `add-user` updates the password if the username already exists.
-`get-user-stats` is also available as `getuserstats`.
-`kill-user-conn` is also available as `killuserconn`.
+

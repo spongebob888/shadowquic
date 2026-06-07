@@ -37,6 +37,7 @@ nav = [
       { "Interface" = "configuration/shared/interface.md" }
     ] }
   ] },
+  { "API" = "api.md" },
   { "Protocol" = "protocol/index.md" }
 ]
 # <<< generated nav
