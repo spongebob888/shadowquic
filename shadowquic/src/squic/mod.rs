@@ -50,7 +50,7 @@ pub struct SQConn<T: QuicConnection> {
     pub authed: Arc<SetOnce<SResult<String>>>,
     pub(crate) send_id_store: IDStore<()>,
     pub(crate) recv_id_store: IDStore<(AnyUdpSend, SocksAddr)>,
-    pub stats: Arc<SQStats>,
+    pub stats: Arc<SetOnce<Arc<SQTrafficStats>>>,
 }
 impl<T: QuicConnection> SQConn<T> {
     pub fn new(conn: T, auth: SResult<String>) -> Self {
@@ -65,19 +65,42 @@ impl<T: QuicConnection> SQConn<T> {
                 id_counter: Default::default(),
                 inner: Default::default(),
             },
-            stats: Default::default(),
+            stats: Arc::new(SetOnce::new_with(None) ),
         }
+    }
+    pub fn new_unauthenticated(conn: T) -> Self {
+        Self {
+            conn,
+            authed: Arc::new(SetOnce::new()),
+            send_id_store: IDStore {
+                id_counter: Default::default(),
+                inner: Default::default(),
+            },
+            recv_id_store: IDStore {
+                id_counter: Default::default(),
+                inner: Default::default(),
+            },
+            stats: Arc::new(SetOnce::new()),
+        }
+    }
+    pub async fn wait_authed_user(&self) -> Option<String> {
+        wait_sunny_auth(&self).await.ok()
+    }
+    pub fn get_authed_user(&self) -> Option<String> {
+        self.authed.get().and_then(|r| r.as_ref().ok()).cloned()
     }
 }
 
 #[derive(Debug, Default)]
-pub struct SQStats {
+pub struct SQTrafficStats {
     pub tcp_received: Arc<AtomicU64>,
     pub tcp_sent: Arc<AtomicU64>,
     pub udp_received: Arc<AtomicU64>,
     pub udp_sent: Arc<AtomicU64>,
+    pub tcp_sessions: Arc<AtomicU64>,
+    pub udp_sessions: Arc<AtomicU64>,
 }
-impl SQStats {
+impl SQTrafficStats {
     pub fn on_tcp_received(&self, n: u64) {
         self.tcp_received.fetch_add(n, Ordering::Relaxed);
     }
@@ -89,6 +112,18 @@ impl SQStats {
     }
     pub fn on_udp_sent(&self, n: u64) {
         self.udp_sent.fetch_add(n, Ordering::Relaxed);
+    }
+    pub fn on_tcp_created(&self) {
+        self.tcp_sessions.fetch_add(1, Ordering::Relaxed);
+    }
+    pub fn on_tcp_finished(&self) {
+        self.tcp_sessions.fetch_sub(1, Ordering::Relaxed);
+    }
+    pub fn on_udp_created(&self) {
+        self.udp_sessions.fetch_add(1, Ordering::Relaxed);
+    }
+    pub fn on_udp_finished(&self) {
+        self.udp_sessions.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -304,7 +339,7 @@ impl IDStore {
                             }
 
                             n.notify.send(()).unwrap_or_else(|_| {
-                                debug!("id:{} notifier without subscriber", id)
+                                debug!("idconn:{} notifier without subscriber", id)
                             });
                             event!(Level::TRACE, "notify socket id:{}", id);
                         }
@@ -431,9 +466,10 @@ pub async fn handle_udp_send<C: QuicConnection>(
         unistream_map: Default::default(),
     };
     let quic_conn = conn.conn.clone();
+    let stats = conn.stats.get().unwrap();
     loop {
         let (bytes, dst) = down_stream.recv_from().await?;
-        conn.stats.on_udp_sent(bytes.len() as u64);
+        stats.on_udp_sent(bytes.len() as u64);
         let (id, is_new) = session.get_id_or_insert(&dst).await;
         //let span = trace_span!("udp", id = id);
         let ctl_header = SQUdpControlHeader {
@@ -512,8 +548,8 @@ pub async fn handle_udp_recv_ctrl<C: QuicConnection>(
 /// This function is symetrical for both clients and servers.
 pub async fn handle_udp_packet_recv<C: QuicConnection>(conn: SQConn<C>) -> Result<(), SError> {
     let id_store = conn.recv_id_store.clone();
-    let stats = conn.stats.clone();
     wait_sunny_auth(&conn).await?;
+    let stats = conn.stats.get().unwrap().clone();
     loop {
         tokio::select! {
             b = conn.read_datagram() => {

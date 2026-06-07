@@ -1,10 +1,10 @@
 use bytes::Bytes;
-use std::{collections::HashMap, pin::Pin, sync::Arc};
+use std::{collections::HashMap, pin::Pin, sync::{Arc, Weak}};
 
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     select,
-    sync::mpsc::{Sender, channel},
+    sync::{Mutex, mpsc::{Sender, channel}},
 };
 use tracing::{Instrument, info, info_span, trace};
 
@@ -18,7 +18,7 @@ use crate::{
         squic::{ExtOpcodeConn, ExtOpcodeUser, SQExtError, SQExtOpcode, SQReq, SunnyCredential},
     },
     quic::QuicConnection,
-    squic::wait_sunny_auth,
+    squic::{SQTrafficStats, wait_sunny_auth},
     utils::tracked_stream::{TrackedRead, TrackedWrite},
 };
 
@@ -32,21 +32,49 @@ pub trait UserManager: Send + Sync {
     async fn remove_user(&self, username: &str) -> Result<(), SQExtError>;
     async fn list_users(&self) -> Result<Vec<String>, SQExtError>;
 }
-pub trait StatsManager: Send + Sync {
-    fn on_tcp_crated();
-    fn on_tcp_finished();
-    fn on_udp_created();
-    fn on_udp_finished();
-}
 
 #[derive(Clone)]
 pub struct SQServerConn<C: QuicConnection> {
     pub inner: SQConn<C>,
     pub users: SunnyQuicUsers,
     pub user_manager: Option<Arc<dyn UserManager>>,
+    pub conn_manager: Option<Arc<ServerConnManger<C>>>,
 }
+
+pub struct ServerConnManger<C: QuicConnection> {
+    // We don't own SQServerConn, so we use weak reference here to avoid circular reference.
+    conns: Arc<Mutex<Vec<Weak<SQServerConn<C>>>>>,
+    pub stats: Arc<Mutex<HashMap<String, Arc<SQTrafficStats>>>>,
+}
+impl<C: QuicConnection> ServerConnManger<C> {
+    pub fn new() -> Self {
+        Self {
+            conns: Arc::new(Mutex::new(Vec::new())),
+            stats: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+    pub async fn on_new_conn(&self, conn: Arc<SQServerConn<C>>) {
+        let mut conns = self.conns.lock().await;
+        // Delete dropped connections
+        if let Some(user) = conn.inner.get_authed_user() {
+            let mut stats = self.stats.lock().await;
+            stats.entry(user).or_insert_with(|| Arc::new(SQTrafficStats::default()));
+        }
+        conns.retain(|x|x.upgrade().is_some());
+        conns.push(Arc::downgrade(&conn));
+    }
+    pub async fn get_conn_num(&self) -> usize {
+        let mut conns = self.conns.lock().await;
+        conns.retain(|x|x.upgrade().is_some());
+        conns.iter().filter(|x|x.upgrade().is_some()).count()
+    }
+    pub async fn get_user_stats(&self, username: &str) -> Option<Arc<SQTrafficStats>> {
+        self.stats.lock().await.get(username).cloned()
+    }
+}
+
 impl<C: QuicConnection> SQServerConn<C> {
-    pub async fn handle_connection(self, req_send: Sender<ProxyRequest>) -> Result<(), SError> {
+    pub async fn handle_connection(self: Arc<Self>, req_send: Sender<ProxyRequest>) -> Result<(), SError> {
         let conn = &self.inner;
         info!(peer_address = %conn.remote_address(), "incoming connection accepted");
         let conn_clone = self.inner.clone();
@@ -67,7 +95,7 @@ impl<C: QuicConnection> SQServerConn<C> {
         Ok(())
     }
     async fn handle_bistream(
-        self,
+        self: Arc<Self>,
         send: C::SendStream,
         mut recv: C::RecvStream,
         req_send: Sender<ProxyRequest>,
@@ -80,14 +108,16 @@ impl<C: QuicConnection> SQServerConn<C> {
         //     "packet_loss_rate:{:.2}%, rtt:{:?}, mtu:{}",
         //     rate * 100.0,
         //     self.0.conn.rtt(),
-        //     self.0.conn.stats().path.current_mtu,
+        //     self.0.conn.stats().path.current_mtu,unwrap_or_default
         // );
         match req {
             SQReq::SQConnect(dst) => {
-                wait_sunny_auth(&self.inner).await?;
+                let _user = wait_sunny_auth(&self.inner).await?;
                 info!(dst = %dst, "tcp connect request accepted");
-                let send = TrackedWrite::with_counter(send, self.inner.stats.tcp_sent.clone());
-                let recv = TrackedRead::with_counter(recv, self.inner.stats.tcp_received.clone());
+                // If we pass sunnyauth. Then stats must be set
+                let stats = self.inner.stats.wait().await;
+                let send = TrackedWrite::with_counter(send, stats.tcp_sent.clone());
+                let recv = TrackedRead::with_counter(recv, stats.tcp_received.clone(),Some(stats.tcp_sessions.clone()));
                 let tcp: TcpSession = TcpSession {
                     stream: Box::new(Unsplit { s: send, r: recv }),
                     dst,
@@ -99,8 +129,10 @@ impl<C: QuicConnection> SQServerConn<C> {
             }
             ref req @ (SQReq::SQAssociatOverDatagram(ref dst)
             | SQReq::SQAssociatOverStream(ref dst)) => {
-                wait_sunny_auth(&self.inner).await?;
+                let _user = wait_sunny_auth(&self.inner).await?;
                 info!(bind_addr = %dst, "udp associate request accepted");
+                let stats = self.inner.stats.wait().await;
+                stats.on_udp_created();
                 let (local_send, udp_recv) = channel::<(Bytes, SocksAddr)>(10);
                 let (udp_send, local_recv) = channel::<(Bytes, SocksAddr)>(10);
                 let udp: UdpSession = UdpSession {
@@ -120,12 +152,23 @@ impl<C: QuicConnection> SQServerConn<C> {
                     self.inner.clone(),
                     req == &SQReq::SQAssociatOverStream(dst.clone()),
                 );
-                let fut2 = handle_udp_recv_ctrl(recv, local_send, self.inner);
+                let fut2 = handle_udp_recv_ctrl(recv, local_send, self.inner.clone());
                 tokio::try_join!(fut1, fut2)?;
             }
             SQReq::SQAuthenticate(passwd_hash) => {
                 if let Some(name) = self.users.get(passwd_hash.as_ref()) {
                     tracing::info!("user authenticated:{}", name);
+                    let stats = match &self.conn_manager {
+                        Some(conn_manager) => {
+                             conn_manager.get_user_stats(&name).await
+                        }
+                        None => {
+                            tracing::debug!("conn_manager not set, stats will not be collected for this connection");
+                            None
+                        }
+                    };
+                    let _ = self.inner.stats.set(stats.unwrap_or_default());
+
                     self.inner
                         .authed
                         .set(Ok(name.clone()))

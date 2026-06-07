@@ -15,7 +15,7 @@ use crate::{
     utils::socket_opt::{SocketFactory, UdpSocketFactory},
 };
 
-use crate::squic::{IDStore, SQConn, handle_udp_packet_recv};
+use crate::squic::{IDStore, SQConn, SQTrafficStats, handle_udp_packet_recv};
 
 pub type ShadowQuicConn = SQConn<<EndClient as QuicClient>::C>;
 
@@ -63,8 +63,8 @@ impl ShadowQuicClient {
             .connect(addr, &self.config.server_name)
             .await?;
 
-        let conn = SQConn::new(conn, Ok(self.config.username.clone()));
-      
+        let conn: SQConn<quinn::Connection> = SQConn::new(conn, Ok(self.config.username.clone()));
+        conn.stats.set(Arc::new(SQTrafficStats::default()));
         let conn_clone = conn.clone();
         tokio::spawn(async move {
             let _ = handle_udp_packet_recv(conn_clone)

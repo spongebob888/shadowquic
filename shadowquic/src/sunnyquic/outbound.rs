@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use std::{net::ToSocketAddrs, sync::Arc};
-use tokio::sync::{OnceCell, SetOnce};
+use tokio::sync::OnceCell;
 
 use super::EndClient;
 use tracing::{error, info};
@@ -11,12 +11,12 @@ use crate::{
     error::SError,
     msgs::squic::SQExtError,
     quic::{QuicClient, QuicConnection},
-    squic::{auth_sunny, inbound::UserManager, outbound},
+    squic::{SQTrafficStats, auth_sunny, inbound::UserManager, outbound},
     sunnyquic::gen_sunny_user_hash,
     utils::socket_opt::{SocketFactory, UdpSocketFactory},
 };
 
-use crate::squic::{IDStore, SQConn, handle_udp_packet_recv};
+use crate::squic::{SQConn, handle_udp_packet_recv};
 
 pub type SunnyQuicConn = SQConn<<EndClient as QuicClient>::C>;
 
@@ -63,17 +63,9 @@ impl SunnyQuicClient {
             .await;
         let conn = QuicClient::connect(end, addr, &self.config.server_name).await?;
 
-        let conn = SQConn {
-            conn,
-            authed: Arc::new(SetOnce::new()),
-            send_id_store: Default::default(),
-            recv_id_store: IDStore {
-                id_counter: Default::default(),
-                inner: Default::default(),
-            },
-            stats: Default::default(),
-        };
+        let conn = SQConn::new_unauthenticated(conn);
 
+        let _ = conn.stats.set(Arc::new(SQTrafficStats::default()));
         let username = self.config.username.clone();
         let password = self.config.password.clone();
         let conn_clone = conn.clone();

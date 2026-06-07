@@ -14,9 +14,9 @@ mod gm_quic_wrapper;
 pub use gm_quic_wrapper::{Connection, EndClient, EndServer};
 
 #[cfg(feature = "sunnyquic-noq")]
-mod noq_wrapper;
+mod iroh_wrapper;
 #[cfg(feature = "sunnyquic-noq")]
-pub use noq_wrapper::{Connection, EndClient, EndServer};
+pub use iroh_wrapper::{Connection, EndClient, EndServer};
 
 #[cfg(all(feature = "ring", not(feature = "aws-lc-rs")))]
 use ring::digest;

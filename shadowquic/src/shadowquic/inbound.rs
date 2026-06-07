@@ -12,9 +12,8 @@ use crate::{
     config::{AuthUser, ShadowQuicServerCfg},
     error::SError,
     msgs::squic::SQExtError,
-    quic::AuthedConn,
-    quic::QuicConnection,
-    squic::inbound::{SQServerConn, UserManager},
+    quic::{AuthedConn, QuicConnection},
+    squic::inbound::{SQServerConn, ServerConnManger, UserManager},
 };
 
 use crate::squic::{IDStore, SQConn};
@@ -31,6 +30,7 @@ pub struct ShadowQuicServer {
 struct ShadowQuicUserManager {
     endpoint: EndServer,
     config: RwLock<ShadowQuicServerCfg>,
+    conn_manager: Arc<ServerConnManger<<EndServer as QuicServer>::C>>,
 }
 
 #[async_trait]
@@ -93,6 +93,7 @@ impl ShadowQuicServer {
         let user_manager = Arc::new(ShadowQuicUserManager {
             endpoint: endpoint.clone(),
             config: RwLock::new(cfg),
+            conn_manager: Arc::new(ServerConnManger::new()),
         });
 
         Ok(Self {
@@ -107,16 +108,21 @@ impl ShadowQuicServer {
         incom: C,
         req_sender: Sender<ProxyRequest>,
         user_manager: Arc<dyn UserManager>,
+        conn_manager: Arc<ServerConnManger<C>>,
     ) -> Result<(), SError> {
         let user = incom
             .authed_user()
             .ok_or(SError::SunnyAuthError("User not authenticated".into()))?;
-        let sq_conn = SQServerConn {
+        let sq_conn = Arc::new(SQServerConn {
             inner: SQConn::new(incom, Ok(user.clone())),
             users: Arc::new(Default::default()),
             user_manager: Some(user_manager),
-        };
+            conn_manager: Some(conn_manager.clone()),
+        });
         let span = info_span!("quic", id = sq_conn.inner.peer_id(), user = %user);
+        conn_manager.on_new_conn(sq_conn.clone()).await;
+        let stats= conn_manager.get_user_stats(&user).await.unwrap();
+        let _ = sq_conn.inner.stats.set(stats);
         sq_conn
             .handle_connection(req_sender)
             .instrument(span)
@@ -141,14 +147,16 @@ impl Inbound for ShadowQuicServer {
         let request_sender = self.request_sender.clone();
         let endpoint = self.endpoint.clone();
         let user_manager = self.user_manager.clone();
+        let conn_manager = self.user_manager.conn_manager.clone();
         let fut = async move {
             loop {
                 match QuicServer::accept(&endpoint).await {
                     Ok(conn) => {
                         let request_sender = request_sender.clone();
                         let user_manager = user_manager.clone();
+                        let conn_manager = conn_manager.clone();
                         tokio::spawn(async move {
-                            Self::handle_incoming(conn, request_sender, user_manager)
+                            Self::handle_incoming(conn, request_sender, user_manager, conn_manager)
                                 .await
                                 .map_err(|x| error!("{}", x))
                         });

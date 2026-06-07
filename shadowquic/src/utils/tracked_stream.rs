@@ -14,15 +14,17 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 pub struct TrackedRead<T> {
     inner: T,
     bytes_read: Arc<AtomicU64>,
+    tracked_sessions: Option<Arc<AtomicU64>>,
 }
 
 impl<T> TrackedRead<T> {
     pub fn new(inner: T) -> Self {
-        Self::with_counter(inner, Arc::new(AtomicU64::new(0)))
+        Self::with_counter(inner, Arc::new(AtomicU64::new(0)), None)
     }
 
-    pub fn with_counter(inner: T, bytes_read: Arc<AtomicU64>) -> Self {
-        Self { inner, bytes_read }
+    pub fn with_counter(inner: T, bytes_read: Arc<AtomicU64>, tracked_sessions: Option<Arc<AtomicU64>>) -> Self {
+        tracked_sessions.as_ref().map(|counter| counter.fetch_add(1, Ordering::Relaxed));
+        Self { inner, bytes_read, tracked_sessions: (tracked_sessions) }
     }
 
     pub fn bytes_read(&self) -> u64 {
@@ -41,8 +43,13 @@ impl<T> TrackedRead<T> {
         &mut self.inner
     }
 
-    pub fn into_inner(self) -> T {
-        self.inner
+}
+
+impl<T> Drop for TrackedRead<T> {
+    fn drop(&mut self) {
+        if let Some(counter) = &self.tracked_sessions {
+            counter.fetch_sub(1, Ordering::Relaxed);
+        }
     }
 }
 

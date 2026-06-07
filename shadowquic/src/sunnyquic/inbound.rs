@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use arc_swap::ArcSwap;
 use tokio::sync::{
-    RwLock, SetOnce,
+    RwLock,
     mpsc::{Receiver, Sender, channel},
 };
 use tracing::{Instrument, error, info_span};
@@ -14,11 +14,11 @@ use crate::{
     error::SError,
     msgs::{squic::SQExtError, squic::SunnyCredential},
     quic::QuicConnection,
-    squic::inbound::{SQServerConn, SunnyQuicUsers, UserManager},
+    squic::inbound::{SQServerConn, ServerConnManger, SunnyQuicUsers, UserManager},
     sunnyquic::EndServer,
 };
 
-use crate::squic::{IDStore, SQConn};
+use crate::squic::SQConn;
 
 use crate::quic::QuicServer;
 pub struct SunnyQuicServer {
@@ -33,6 +33,7 @@ struct SunnyQuicUserManager {
     endpoint: EndServer,
     users: Arc<ArcSwap<HashMap<SunnyCredential, String>>>,
     config: RwLock<SunnyQuicServerCfg>,
+    conn_manager: Arc<ServerConnManger<<EndServer as QuicServer>::C>>,
 }
 
 #[async_trait]
@@ -98,6 +99,7 @@ impl SunnyQuicServer {
             endpoint: endpoint.clone(),
             users: users.clone(),
             config: RwLock::new(cfg),
+            conn_manager: Arc::new(ServerConnManger::new()),
         });
 
         Ok(Self {
@@ -121,22 +123,16 @@ impl SunnyQuicServer {
         req_sender: Sender<ProxyRequest>,
         user_hash: SunnyQuicUsers,
         user_manager: Arc<dyn UserManager>,
+        conn_manager: Arc<ServerConnManger<C>>,
     ) -> Result<(), SError> {
-        let sq_conn = SQServerConn {
-            inner: SQConn {
-                conn: incom,
-                authed: Arc::new(SetOnce::new()),
-                send_id_store: Default::default(),
-                recv_id_store: IDStore {
-                    id_counter: Default::default(),
-                    inner: Default::default(),
-                },
-                stats: Default::default(),
-            },
+        let sq_conn = Arc::new(SQServerConn {
+            inner: SQConn::new_unauthenticated(incom),
             users: user_hash,
             user_manager: Some(user_manager),
-        };
+            conn_manager: Some(conn_manager.clone()),
+        });
         let span = info_span!("quic", id = sq_conn.inner.peer_id());
+        conn_manager.on_new_conn(sq_conn.clone()).await;
         sq_conn
             .handle_connection(req_sender)
             .instrument(span)
@@ -169,6 +165,7 @@ impl Inbound for SunnyQuicServer {
         let endpoint = self.endpoint.clone();
         let users = self.users.clone();
         let user_manager = self.user_manager.clone();
+        let conn_manager = self.user_manager.conn_manager.clone();
         let fut = async move {
             loop {
                 match QuicServer::accept(&endpoint).await {
@@ -176,10 +173,17 @@ impl Inbound for SunnyQuicServer {
                         let request_sender = request_sender.clone();
                         let user_hash = users.load_full();
                         let user_manager = user_manager.clone();
+                        let conn_manager = conn_manager.clone();
                         tokio::spawn(async move {
-                            Self::handle_incoming(conn, request_sender, user_hash, user_manager)
-                                .await
-                                .map_err(|x| error!("{}", x))
+                            Self::handle_incoming(
+                                conn,
+                                request_sender,
+                                user_hash,
+                                user_manager,
+                                conn_manager,
+                            )
+                            .await
+                            .map_err(|x| error!("{}", x))
                         });
                     }
                     Err(e) => {
