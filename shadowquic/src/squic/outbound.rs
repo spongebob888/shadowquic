@@ -9,7 +9,9 @@ use tracing::{Level, error, info, span, trace};
 
 use crate::config::AuthUser;
 use crate::error::SResult;
-use crate::msgs::squic::{ConnStats, ExtOpcodeConn, ExtOpcodeUser, SQExtError, SQExtOpcode};
+use crate::msgs::squic::{
+    ConnStats, ExtOpcodeConn, ExtOpcodeUser, SQExtError, SQExtOpcode, UserStats,
+};
 use crate::{
     ProxyRequest,
     error::SError,
@@ -150,6 +152,20 @@ pub async fn list_users<C: QuicConnection>(
     sq_conn: &SQConn<C>,
 ) -> SResult<Result<Vec<String>, SQExtError>> {
     send_user_extension(sq_conn, ExtOpcodeUser::ListUsers).await
+}
+
+pub async fn get_user_stats<C: QuicConnection>(
+    sq_conn: &SQConn<C>,
+    username: &str,
+) -> SResult<Result<UserStats, SQExtError>> {
+    send_user_extension(sq_conn, ExtOpcodeUser::GetUserStats(username.to_owned())).await
+}
+
+pub async fn kill_user_conns<C: QuicConnection>(
+    sq_conn: &SQConn<C>,
+    username: &str,
+) -> SResult<Result<(), SQExtError>> {
+    send_user_extension(sq_conn, ExtOpcodeUser::KillUserConn(username.to_owned())).await
 }
 
 async fn send_user_extension<C: QuicConnection, R: SDecode>(

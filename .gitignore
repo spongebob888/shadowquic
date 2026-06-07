@@ -4,3 +4,4 @@
 .venv
 .python-version
 __pycache__
+/config.yaml

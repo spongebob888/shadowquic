@@ -9,14 +9,15 @@ description = { workspace = true }
 license = { workspace = true}
 readme = { workspace = true}
 [features]
-default = ["shadowquic-quinn", "sunnyquic-iroh-quinn", "ring"]
+default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics"]
+statistics = []
 ring = [
     "dep:ring",
     "quinn?/rustls-ring",
     "quinn_proto?/rustls-ring",
     "rustls_jls?/ring",
-    "iroh-quinn?/rustls-ring",
-    "iroh-quinn-proto?/rustls-ring",
+    "noq?/rustls-ring",
+    "noq-proto?/rustls-ring",
     "rustls?/ring",
     "rcgen/ring",
 ]
@@ -25,15 +26,15 @@ aws-lc-rs = [
     "quinn?/rustls-aws-lc-rs",
     "quinn_proto?/rustls-aws-lc-rs",
     "rustls_jls?/aws_lc_rs",
-    "iroh-quinn?/rustls-aws-lc-rs",
-    "iroh-quinn-proto?/rustls-aws-lc-rs",
+    "noq?/rustls-aws-lc-rs",
+    "noq-proto?/rustls-aws-lc-rs",
     "rustls?/aws-lc-rs",
     "rcgen/aws_lc_rs",
 ]
 tokio-console = ["dep:console-subscriber","tokio/tracing"]
 shadowquic-quinn = ["dep:quinn","dep:rustls_jls", "dep:quinn_proto"]
 sunnyquic-gm-quic = ["dep:gm-quic","dep:qevent","dep:qbase","dep:qunreliable", "dep:rustls","dep:rustls-native-certs","dep:notify"]
-sunnyquic-iroh-quinn = ["dep:iroh-quinn", "dep:rustls", "dep:rustls-native-certs","dep:notify", "dep:iroh-quinn-proto"]
+sunnyquic-noq = ["dep:noq", "dep:rustls", "dep:rustls-native-certs","dep:notify", "dep:noq-proto"]
 
 [dependencies]
 anyhow = "1.0.100"
@@ -69,11 +70,11 @@ qunreliable = { version = "0.4", default-features = false, optional = true}
 rustls = { version = "0.23", default-features = false, features = ["std"], optional = true}
 rustls-native-certs = {version = "0.8.3", optional = true}
 
-# iroh-quinn = { git = "https://github.com/hrimfaxi/iroh_quinn", branch = "main", package = "noq", optional = true, default-features = false, features = ["rustls-ring", "runtime-tokio"] }
-# iroh-quinn-proto = { git = "https://github.com/hrimfaxi/iroh_quinn", branch = "main", package = "noq-proto", optional = true, default-features = false, features = ["rustls-ring"] }
+# noq = { git = "https://github.com/hrimfaxi/iroh_quinn", branch = "main", package = "noq", optional = true, default-features = false, features = ["rustls-ring", "runtime-tokio"] }
+# noq-proto = { git = "https://github.com/hrimfaxi/iroh_quinn", branch = "main", package = "noq-proto", optional = true, default-features = false, features = ["rustls-ring"] }
 
-iroh-quinn ={ version = "0.16.1",optional = true, default-features = false, features = ["runtime-tokio"]}
-iroh-quinn-proto ={ version = "0.15.1",optional = true, default-features = false}
+noq ={ version = "1.0.0-rc.1",optional = true, default-features = false, features = ["runtime-tokio"]}
+noq-proto ={ version = "1.0.0-rc.1",optional = true, default-features = false}
 
 
 notify = { version = "8.2.0", features = ["serde"], optional = true}
@@ -100,5 +101,4 @@ libc = "0.2"
 [dev-dependencies]
 fast-socks5 = "1.0.0"
 rand = "0.10.1"
-
 

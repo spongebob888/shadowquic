@@ -279,6 +279,7 @@ pub enum CongestionControl {
     Cubic,
     NewReno,
     Brutal(BrutalParams),
+    Bbr3,
 }
 
 impl PartialEq for CongestionControl {

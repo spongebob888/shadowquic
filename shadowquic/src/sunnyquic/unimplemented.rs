@@ -1,6 +1,6 @@
 //! This module provides an empty implementation of the SunnyQuic QUIC client and server.
-//! It mainly serves as a placeholder when neither the `sunnyquic-iroh-quinn` nor the `sunnyquic-gm-quic` feature is enabled.
-//! And git rid of the dependences of `iroh-quinn` or `gm-quic` crates.
+//! It mainly serves as a placeholder when neither the `sunnyquic-noq` nor the `sunnyquic-gm-quic` feature is enabled.
+//! And git rid of the dependences of `noq` or `gm-quic` crates.
 
 use async_trait::async_trait;
 use tokio::io::{AsyncRead, AsyncWrite};

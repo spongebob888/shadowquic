@@ -11,9 +11,9 @@ use crate::{
     Inbound, ProxyRequest,
     config::{AuthUser, ShadowQuicServerCfg},
     error::SError,
-    msgs::squic::SQExtError,
-    quic::AuthedConn,
-    quic::QuicConnection,
+    msgs::squic::{SQExtError, UserStats},
+    observe::Observer,
+    quic::{AuthedConn, QuicConnection},
     squic::inbound::{SQServerConn, UserManager},
 };
 
@@ -26,11 +26,13 @@ pub struct ShadowQuicServer {
     user_manager: Arc<ShadowQuicUserManager>,
     request_sender: Sender<ProxyRequest>,
     request: Receiver<ProxyRequest>,
+    observer: Arc<Observer>,
 }
 
 struct ShadowQuicUserManager {
     endpoint: EndServer,
     config: RwLock<ShadowQuicServerCfg>,
+    observer: Arc<Observer>,
 }
 
 #[async_trait]
@@ -70,6 +72,7 @@ impl UserManager for ShadowQuicUserManager {
             tracing::error!("failed to remove user: {}", error);
             return Err(SQExtError::Other(error.to_string()));
         }
+        self.observer.remove_user(username).await;
         Ok(())
     }
 
@@ -81,6 +84,25 @@ impl UserManager for ShadowQuicUserManager {
             .map(|user| user.username.clone())
             .collect())
     }
+
+    async fn get_user_stats(&self, username: &str) -> Result<UserStats, SQExtError> {
+        let config = self.config.read().await;
+        if !config.users.iter().any(|user| user.username == username) {
+            return Err(SQExtError::NotFound);
+        }
+        drop(config);
+        Ok(self.observer.get_user_stats(username).await)
+    }
+
+    async fn kill_user_conns(&self, username: &str) -> Result<(), SQExtError> {
+        let config = self.config.read().await;
+        if !config.users.iter().any(|user| user.username == username) {
+            return Err(SQExtError::NotFound);
+        }
+        drop(config);
+        self.observer.close_conn(username).await;
+        Ok(())
+    }
 }
 
 impl ShadowQuicServer {
@@ -90,9 +112,11 @@ impl ShadowQuicServer {
         let endpoint: EndServer = QuicServer::new(&cfg)
             .await
             .expect("Failed to listening on udp");
+        let observer = Arc::new(Observer::new());
         let user_manager = Arc::new(ShadowQuicUserManager {
             endpoint: endpoint.clone(),
             config: RwLock::new(cfg),
+            observer: observer.clone(),
         });
 
         Ok(Self {
@@ -100,6 +124,7 @@ impl ShadowQuicServer {
             user_manager,
             request_sender: send,
             request: recv,
+            observer,
         })
     }
 
@@ -125,6 +150,7 @@ impl ShadowQuicServer {
             user_manager: Some(user_manager),
         };
         let span = info_span!("quic", id = sq_conn.inner.peer_id(), user = %user);
+        let sq_conn = Arc::new(sq_conn);
         sq_conn
             .handle_connection(req_sender)
             .instrument(span)
@@ -142,7 +168,7 @@ impl Inbound for ShadowQuicServer {
             .recv()
             .await
             .ok_or(SError::InboundUnavailable)?;
-        return Ok(req);
+        Ok(self.observer.wrap_request(req).await)
     }
     /// Init background job for accepting connection
     async fn init(&self) -> Result<(), SError> {

@@ -5,18 +5,18 @@ use crate::msgs::squic::{SUNNY_QUIC_AUTH_LEN, SunnyCredential};
 pub mod inbound;
 pub mod outbound;
 
-#[cfg(any(feature = "sunnyquic-gm-quic", feature = "sunnyquic-iroh-quinn"))]
+#[cfg(any(feature = "sunnyquic-gm-quic", feature = "sunnyquic-noq"))]
 pub(crate) mod dynamic_cert;
 
-#[cfg(all(feature = "sunnyquic-gm-quic", not(feature = "sunnyquic-iroh-quinn")))]
+#[cfg(all(feature = "sunnyquic-gm-quic", not(feature = "sunnyquic-noq")))]
 mod gm_quic_wrapper;
-#[cfg(all(feature = "sunnyquic-gm-quic", not(feature = "sunnyquic-iroh-quinn")))]
+#[cfg(all(feature = "sunnyquic-gm-quic", not(feature = "sunnyquic-noq")))]
 pub use gm_quic_wrapper::{Connection, EndClient, EndServer};
 
-#[cfg(feature = "sunnyquic-iroh-quinn")]
-mod iroh_wrapper;
-#[cfg(feature = "sunnyquic-iroh-quinn")]
-pub use iroh_wrapper::{Connection, EndClient, EndServer};
+#[cfg(feature = "sunnyquic-noq")]
+mod noq_wrapper;
+#[cfg(feature = "sunnyquic-noq")]
+pub use noq_wrapper::{Connection, EndClient, EndServer};
 
 #[cfg(all(feature = "ring", not(feature = "aws-lc-rs")))]
 use ring::digest;
@@ -24,15 +24,9 @@ use ring::digest;
 #[cfg(feature = "aws-lc-rs")]
 use aws_lc_rs::digest;
 
-#[cfg(all(
-    not(feature = "sunnyquic-iroh-quinn"),
-    not(feature = "sunnyquic-gm-quic")
-))]
+#[cfg(all(not(feature = "sunnyquic-noq"), not(feature = "sunnyquic-gm-quic")))]
 mod unimplemented;
-#[cfg(all(
-    not(feature = "sunnyquic-iroh-quinn"),
-    not(feature = "sunnyquic-gm-quic")
-))]
+#[cfg(all(not(feature = "sunnyquic-noq"), not(feature = "sunnyquic-gm-quic")))]
 pub use unimplemented::{Connection, EndClient, EndServer};
 
 /// Generate sunnyquic user hash from username and password

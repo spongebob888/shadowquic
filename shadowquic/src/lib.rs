@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use bytes::Bytes;
 use error::SError;
@@ -15,6 +15,7 @@ pub mod config;
 pub mod direct;
 pub mod error;
 pub mod msgs;
+mod observe;
 pub mod quic;
 pub mod shadowquic;
 pub mod socks;
@@ -38,9 +39,15 @@ pub trait UdpSend: Send + Sync + Unpin {
 pub trait UdpRecv: Send + Sync + Unpin {
     async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr), SError>; // socksaddr is proxy addr
 }
+pub trait Stoppable: Send + Sync {
+    fn stop(&self);
+}
+pub type UserName = String;
 pub struct TcpSession<IO = AnyTcp> {
     stream: IO,
     dst: SocksAddr,
+    #[allow(dead_code)]
+    user_context: Option<UserContext>,
 }
 
 pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
@@ -49,6 +56,14 @@ pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
     /// Control stream, should be kept alive during session.
     stream: Option<AnyTcp>,
     bind_addr: SocksAddr,
+    #[allow(dead_code)]
+    user_context: Option<UserContext>,
+}
+#[derive(Clone)]
+pub struct UserContext {
+    pub username: UserName,
+    pub conn_handle: Weak<dyn Stoppable>,
+    pub conn_id: u64,
 }
 
 pub type AnyTcp = Box<dyn TcpTrait>;

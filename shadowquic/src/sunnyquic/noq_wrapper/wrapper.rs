@@ -10,9 +10,9 @@ use super::brutal::BrutalConfig;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use bytes::Bytes;
-use iroh_quinn::{
+use noq::{
     ClientConfig, MtuDiscoveryConfig, SendDatagramError, TransportConfig, VarInt,
-    congestion::{BbrConfig, CubicConfig, NewRenoConfig},
+    congestion::{Bbr3Config, CubicConfig, NewRenoConfig},
 };
 #[cfg(feature = "aws-lc-rs")]
 use rustls::crypto::aws_lc_rs as crypto_provider;
@@ -27,7 +27,7 @@ use tracing::{debug, trace, warn};
 
 use rustls::ServerConfig as RustlsServerConfig;
 
-use iroh_quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
+use noq::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 
 use crate::{
     config::{
@@ -43,23 +43,23 @@ use crate::{
     utils::socket_opt::SocketFactory,
 };
 
-pub type Connection = iroh_quinn::Connection;
+pub type Connection = noq::Connection;
 
 #[derive(Clone)]
 pub struct EndClient {
-    inner: iroh_quinn::Endpoint,
+    inner: noq::Endpoint,
     cfg: Arc<SunnyQuicClientCfg>,
 }
 
 #[derive(Clone)]
 pub struct EndServer {
-    inner: iroh_quinn::Endpoint,
+    inner: noq::Endpoint,
     cfg: Arc<ArcSwap<SunnyQuicServerCfg>>,
     crypto: Arc<ArcSwap<RustlsServerConfig>>,
 }
 
 impl Deref for EndServer {
-    type Target = iroh_quinn::Endpoint;
+    type Target = noq::Endpoint;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
@@ -67,8 +67,8 @@ impl Deref for EndServer {
 }
 #[async_trait]
 impl QuicConnection for Connection {
-    type RecvStream = iroh_quinn::RecvStream;
-    type SendStream = iroh_quinn::SendStream;
+    type RecvStream = noq::RecvStream;
+    type SendStream = noq::SendStream;
     async fn open_bi(&self) -> Result<(Self::SendStream, Self::RecvStream, u64), QuicErrorRepr> {
         // let rate: f32 =
         //     (self.stats().path.lost_packets as f32) / ((self.stats().path.sent_packets + 1) as f32);
@@ -135,7 +135,11 @@ impl QuicConnection for Connection {
         self.close_reason().map(|x| x.into())
     }
     fn remote_address(&self) -> SocketAddr {
-        self.remote_address()
+        // It may fail here if this path closed
+        // TODO: fix me
+        self.path(noq::PathId::ZERO)
+            .and_then(|p| p.remote_address().ok())
+            .unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)))
     }
     fn peer_id(&self) -> u64 {
         self.stable_id() as u64
@@ -201,10 +205,10 @@ impl QuicClient for EndClient {
         socket_factory: Arc<dyn SocketFactory>,
     ) -> SResult<Self> {
         let socket = socket_factory.create_socket().await.map_err(SError::Io)?;
-        let runtime = iroh_quinn::default_runtime()
-            .ok_or_else(|| io::Error::other("no async runtime found"))?;
-        let end = iroh_quinn::Endpoint::new(
-            iroh_quinn::EndpointConfig::default(),
+        let runtime =
+            noq::default_runtime().ok_or_else(|| io::Error::other("no async runtime found"))?;
+        let end = noq::Endpoint::new(
+            noq::EndpointConfig::default(),
             None,
             UdpSocket::from(socket),
             runtime,
@@ -279,7 +283,7 @@ fn to_rustls_cipher_suite(suite: &CipherSuitePreference) -> rustls::SupportedCip
     }
 }
 
-pub fn gen_client_cfg(cfg: &SunnyQuicClientCfg) -> iroh_quinn::ClientConfig {
+pub fn gen_client_cfg(cfg: &SunnyQuicClientCfg) -> noq::ClientConfig {
     maybe_warn_cipher_suite_on_weak_arch(cfg);
 
     let mut root_store = RootCertStore::empty();
@@ -351,7 +355,11 @@ pub fn gen_client_cfg(cfg: &SunnyQuicClientCfg) -> iroh_quinn::ClientConfig {
             tp_cfg.congestion_controller_factory(Arc::new(NewRenoConfig::default()))
         }
         CongestionControl::Bbr => {
-            tp_cfg.congestion_controller_factory(Arc::new(BbrConfig::default()))
+            warn!("BBR is not implemented, fallback to BBR3");
+            tp_cfg.congestion_controller_factory(Arc::new(Bbr3Config::default()))
+        }
+        CongestionControl::Bbr3 => {
+            tp_cfg.congestion_controller_factory(Arc::new(Bbr3Config::default()))
         }
         CongestionControl::Brutal(ref brutal) => {
             tracing::info!(?brutal, "using brutal congestion control");
@@ -382,7 +390,7 @@ impl QuicServer for EndServer {
         let mut crypto = gen_server_crypto(cfg)?;
         let config = gen_server_config(cfg, &mut crypto);
 
-        let endpoint = iroh_quinn::Endpoint::server(config, cfg.bind_addr)?;
+        let endpoint = noq::Endpoint::server(config, cfg.bind_addr)?;
         Ok(EndServer {
             inner: endpoint,
             cfg: Arc::new(ArcSwap::new(Arc::new(cfg.to_owned()))),
@@ -445,7 +453,7 @@ fn gen_server_crypto(cfg: &SunnyQuicServerCfg) -> SResult<RustlsServerConfig> {
 fn gen_server_config(
     cfg: &SunnyQuicServerCfg,
     crypto: &mut RustlsServerConfig,
-) -> iroh_quinn::ServerConfig {
+) -> noq::ServerConfig {
     crypto.alpn_protocols = cfg
         .alpn
         .iter()
@@ -489,8 +497,11 @@ fn gen_server_config(
             tp_cfg.congestion_controller_factory(Arc::new(brutal_config))
         }
         CongestionControl::Bbr => {
-            let bbr_config = BbrConfig::default();
-            tp_cfg.congestion_controller_factory(Arc::new(bbr_config))
+            warn!("BBR is not implemented, fallback to BBR3");
+            tp_cfg.congestion_controller_factory(Arc::new(Bbr3Config::default()))
+        }
+        CongestionControl::Bbr3 => {
+            tp_cfg.congestion_controller_factory(Arc::new(Bbr3Config::default()))
         }
         CongestionControl::Cubic => {
             let cubic_config = CubicConfig::default();
@@ -501,7 +512,7 @@ fn gen_server_config(
             tp_cfg.congestion_controller_factory(Arc::new(new_reno))
         }
     };
-    let mut config = iroh_quinn::ServerConfig::with_crypto(Arc::new(
+    let mut config = noq::ServerConfig::with_crypto(Arc::new(
         QuicServerConfig::try_from(crypto.clone()).expect("rustls config can't created"),
     ));
     tp_cfg.send_window(MAX_SEND_WINDOW);
@@ -514,20 +525,20 @@ fn gen_server_config(
     config
 }
 
-impl From<iroh_quinn::ConnectionError> for QuicErrorRepr {
-    fn from(value: iroh_quinn::ConnectionError) -> Self {
+impl From<noq::ConnectionError> for QuicErrorRepr {
+    fn from(value: noq::ConnectionError) -> Self {
         QuicErrorRepr::QuicConnection(format!("{}", value))
     }
 }
 
-impl From<iroh_quinn::ConnectError> for QuicErrorRepr {
-    fn from(value: iroh_quinn::ConnectError) -> Self {
+impl From<noq::ConnectError> for QuicErrorRepr {
+    fn from(value: noq::ConnectError) -> Self {
         QuicErrorRepr::QuicConnect(format!("{}", value))
     }
 }
 
-impl From<iroh_quinn::SendDatagramError> for QuicErrorRepr {
-    fn from(value: iroh_quinn::SendDatagramError) -> Self {
+impl From<noq::SendDatagramError> for QuicErrorRepr {
+    fn from(value: noq::SendDatagramError) -> Self {
         QuicErrorRepr::QuicSendDatagramError(format!("{}", value))
     }
 }

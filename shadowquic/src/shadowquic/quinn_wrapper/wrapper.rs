@@ -309,6 +309,10 @@ pub fn gen_client_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
         CongestionControl::Bbr => {
             tp_cfg.congestion_controller_factory(Arc::new(BbrConfig::default()))
         }
+        CongestionControl::Bbr3 => {
+            warn!("BBR3 is not implemented yet in client, fallback to BBR");
+            tp_cfg.congestion_controller_factory(Arc::new(BbrConfig::default()))
+        }
         CongestionControl::Brutal(ref brutal) => {
             tracing::info!(?brutal, "using brutal congestion control");
             let brutal_config = BrutalConfig::new(
@@ -462,8 +466,11 @@ fn gen_server_config(
             tp_cfg.congestion_controller_factory(Arc::new(brutal_config))
         }
         CongestionControl::Bbr => {
-            let bbr_config = BbrConfig::default();
-            tp_cfg.congestion_controller_factory(Arc::new(bbr_config))
+            tp_cfg.congestion_controller_factory(Arc::new(BbrConfig::default()))
+        }
+        CongestionControl::Bbr3 => {
+            warn!("BBR3 is not implemented yet in client, fallback to BBR");
+            tp_cfg.congestion_controller_factory(Arc::new(BbrConfig::default()))
         }
         CongestionControl::Cubic => {
             let cubic_config = CubicConfig::default();

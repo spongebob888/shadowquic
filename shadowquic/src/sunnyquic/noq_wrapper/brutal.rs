@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use brutal_core::{BrutalConfigCore, BrutalCore};
-use iroh_quinn_proto::RttEstimator;
-use iroh_quinn_proto::congestion::{Controller, ControllerFactory};
+use noq_proto::RttEstimator;
+use noq_proto::congestion::{Controller, ControllerFactory};
 use tracing::trace;
 
 #[derive(Debug, Clone, Default)]
@@ -85,6 +85,7 @@ impl Controller for Brutal {
         _now: Instant,
         _sent: Instant,
         bytes: u64,
+        _largest_acked: u64,
         _app_limited: bool,
         rtt: &RttEstimator,
     ) {
@@ -108,6 +109,7 @@ impl Controller for Brutal {
         _is_persistent_congestion: bool,
         _is_ecn: bool,
         lost_bytes: u64,
+        _congestion_window: u64,
     ) {
         self.0.on_loss_bytes(lost_bytes);
     }
