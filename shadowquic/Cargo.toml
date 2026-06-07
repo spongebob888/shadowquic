@@ -9,7 +9,8 @@ description = { workspace = true }
 license = { workspace = true}
 readme = { workspace = true}
 [features]
-default = ["shadowquic-quinn", "sunnyquic-noq", "ring"]
+default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics"]
+statistics = []
 ring = [
     "dep:ring",
     "quinn?/rustls-ring",
@@ -100,5 +101,4 @@ libc = "0.2"
 [dev-dependencies]
 fast-socks5 = "1.0.0"
 rand = "0.10.1"
-
 

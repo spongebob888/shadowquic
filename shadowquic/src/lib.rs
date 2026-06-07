@@ -46,6 +46,7 @@ pub type UserName = String;
 pub struct TcpSession<IO = AnyTcp> {
     stream: IO,
     dst: SocksAddr,
+    #[allow(dead_code)]
     user_context: Option<UserContext>,
 }
 
@@ -55,6 +56,7 @@ pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
     /// Control stream, should be kept alive during session.
     stream: Option<AnyTcp>,
     bind_addr: SocksAddr,
+    #[allow(dead_code)]
     user_context: Option<UserContext>,
 }
 #[derive(Clone)]
