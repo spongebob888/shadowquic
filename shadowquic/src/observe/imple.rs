@@ -66,6 +66,7 @@ impl Observer {
         let mut conns = self.conns.lock().await;
         conns.insert(user_context.conn_id, user_context.clone());
         conns.retain(|_, ctx| ctx.conn_handle.upgrade().is_some());
+        drop(conns);
         self.user_stats
             .lock()
             .await
