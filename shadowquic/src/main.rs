@@ -50,6 +50,12 @@ enum ApiCommand {
     AddUser { username: String, password: String },
     /// Remove a user
     RemoveUser { username: String },
+    /// Get stats for a user
+    #[command(name = "get-stats")]
+    GetUserStats { username: String },
+    /// Kill all online connections for a user
+    #[command(name = "kill-conn")]
+    KillUserConn { username: String },
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 8)]
@@ -133,6 +139,29 @@ async fn call_user_manager_api(
                 .await
                 .map_err(|error| format!("remove-user failed: {error:?}"))?;
             println!("user removed: {username}");
+            Ok(())
+        }
+        ApiCommand::GetUserStats { username } => {
+            let stats = user_manager
+                .get_user_stats(&username)
+                .await
+                .map_err(|error| format!("get-user-stats failed: {error:?}"))?;
+            println!("username: {username}");
+            println!("conn_num: {}", stats.conn_num);
+            println!("tcp_conns: {}", stats.tcp_conns);
+            println!("tcp_sent: {}", stats.tcp_sent);
+            println!("tcp_recv: {}", stats.tcp_recv);
+            println!("udp_conns: {}", stats.udp_conns);
+            println!("udp_sent: {}", stats.udp_sent);
+            println!("udp_recv: {}", stats.udp_recv);
+            Ok(())
+        }
+        ApiCommand::KillUserConn { username } => {
+            user_manager
+                .kill_user_conns(&username)
+                .await
+                .map_err(|error| format!("kill-user-conn failed: {error:?}"))?;
+            println!("user connections killed: {username}");
             Ok(())
         }
     }
