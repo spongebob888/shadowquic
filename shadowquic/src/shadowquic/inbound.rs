@@ -86,10 +86,20 @@ impl UserManager for ShadowQuicUserManager {
     }
 
     async fn get_user_stats(&self, username: &str) -> Result<UserStats, SQExtError> {
+        let config = self.config.read().await;
+        if !config.users.iter().any(|user| user.username == username) {
+            return Err(SQExtError::NotFound);
+        }
+        drop(config);
         Ok(self.observer.get_user_stats(username).await)
     }
 
     async fn kill_user_conns(&self, username: &str) -> Result<(), SQExtError> {
+        let config = self.config.read().await;
+        if !config.users.iter().any(|user| user.username == username) {
+            return Err(SQExtError::NotFound);
+        }
+        drop(config);
         self.observer.close_conn(username).await;
         Ok(())
     }
