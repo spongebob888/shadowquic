@@ -46,6 +46,14 @@
 //! Based on these two macros,
 //! you can easily define your own protocol header and implement them fast and clean.
 //!
+//! Structs may use `#[size_tag]` with both derives to prefix the encoded struct
+//! payload with a `u32` byte length. During decode, the tagged payload is read
+//! before the fields are decoded. If the payload is longer than the current
+//! struct definition needs, trailing bytes are ignored. If the payload is
+//! shorter, missing trailing bytes are read as zeroes up to a bounded
+//! compatibility limit. This allows fields to be appended to size-tagged structs
+//! while still decoding older messages.
+//!
 //! Check [`shadowquic::msgs::socks5`] to see how socks5 protocol header is defined.
 //! A full protocol implementation can be seen in [`shadowquic::socks`] module
 //!
@@ -60,6 +68,7 @@ use quote::quote;
 /// and then encodes the content based on the value of disriminant.
 /// For enum variants, at most one field is supported. Named field/or tuple field is not supported for enum.
 ///  `#[repr(*)]` is required for enum to specify the type of discriminant.
+/// For structs, `#[size_tag]` prefixes the encoded field payload with a `u32` byte length.
 #[proc_macro_derive(SEncode, attributes(size_tag))]
 pub fn derive_encode(input: TokenStream) -> TokenStream {
     let ast = syn::parse_macro_input!(input as syn::DeriveInput);
@@ -393,6 +402,8 @@ fn generate_struct_encode_fields(fields: &StructFields) -> syn::Result<proc_macr
 /// For struct, it decodes each field in order. For enum, it first decodes a u8/u16... defined by `#[repr(*)]` as discriminant and then decodes the content based on the value of disriminant.
 /// For enum variants, at most one field is supported. Named field/or tuple field is not supported for enum.
 /// `#[repr(*)]` is required for enum to specify the type of discriminant.
+/// For structs, `#[size_tag]` reads a `u32` byte length before the field payload, ignores trailing payload bytes,
+/// and zero-pads missing trailing bytes up to a bounded compatibility limit.
 #[proc_macro_derive(SDecode, attributes(size_tag))]
 pub fn derive_decode(input: TokenStream) -> TokenStream {
     let ast = syn::parse_macro_input!(input as syn::DeriveInput);
@@ -424,7 +435,8 @@ fn impl_struct_decode(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenSt
             let len = u32::decode(s).await? as usize;
             let mut buf = vec![0u8; len];
             s.read_exact(&mut buf).await?;
-            let mut reader = &buf[..];
+            const COMPAT_PADDING_LIMIT: usize = 1024;
+            let mut reader = (&buf[..]).chain(tokio::io::repeat(0).take(COMPAT_PADDING_LIMIT as u64));
             let s = &mut reader;
             Ok(Self {
                 #builder_struct_fields_def
