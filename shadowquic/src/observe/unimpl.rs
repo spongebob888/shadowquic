@@ -29,6 +29,10 @@ impl Observer {
         UserStats::default()
     }
 
+    pub async fn get_all_stats(&self, _usernames: &[String]) -> Vec<UserStats> {
+        Vec::new()
+    }
+
     pub(crate) async fn wrap_request(&self, req: ProxyRequest) -> ProxyRequest {
         req
     }

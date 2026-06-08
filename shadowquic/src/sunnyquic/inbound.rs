@@ -99,6 +99,17 @@ impl UserManager for SunnyQuicUserManager {
         Ok(self.observer.get_user_stats(username).await)
     }
 
+    async fn get_all_stats(&self) -> Result<Vec<UserStats>, SQExtError> {
+        let config = self.config.read().await;
+        let usernames = config
+            .users
+            .iter()
+            .map(|user| user.username.clone())
+            .collect::<Vec<_>>();
+        drop(config);
+        Ok(self.observer.get_all_stats(&usernames).await)
+    }
+
     async fn kill_user_conns(&self, username: &str) -> Result<(), SQExtError> {
         let config = self.config.read().await;
         if !config.users.iter().any(|user| user.username == username) {

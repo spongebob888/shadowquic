@@ -135,3 +135,57 @@ async fn test_size_tagged_struct_encode_decode() {
 
     assert_eq!(original, decoded);
 }
+
+#[tokio::test]
+async fn test_size_tagged_struct_decode_short_payload_with_zero_padding() {
+    let mut buf = Vec::new();
+    4u32.encode(&mut buf).await.expect("encode tag failed");
+    0x12345678u32
+        .encode(&mut buf)
+        .await
+        .expect("encode value failed");
+
+    let mut reader = Cursor::new(&buf);
+    let decoded = <SizeTaggedStruct as super::SDecode>::decode(&mut reader)
+        .await
+        .expect("decode should zero-pad missing tail fields");
+
+    assert_eq!(
+        decoded,
+        SizeTaggedStruct {
+            value_u32: 0x12345678,
+            value_u8: 0,
+        }
+    );
+}
+
+#[tokio::test]
+async fn test_size_tagged_struct_decode_long_payload_ignores_trailing_bytes() {
+    let mut buf = Vec::new();
+    7u32.encode(&mut buf).await.expect("encode tag failed");
+    0x12345678u32
+        .encode(&mut buf)
+        .await
+        .expect("encode value_u32 failed");
+    0x9Au8
+        .encode(&mut buf)
+        .await
+        .expect("encode value_u8 failed");
+    0xBEEFu16
+        .encode(&mut buf)
+        .await
+        .expect("encode trailing bytes failed");
+
+    let mut reader = Cursor::new(&buf);
+    let decoded = <SizeTaggedStruct as super::SDecode>::decode(&mut reader)
+        .await
+        .expect("decode should ignore trailing tagged payload bytes");
+
+    assert_eq!(
+        decoded,
+        SizeTaggedStruct {
+            value_u32: 0x12345678,
+            value_u8: 0x9A,
+        }
+    );
+}

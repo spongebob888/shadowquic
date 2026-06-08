@@ -41,7 +41,7 @@ pub enum ExtOpcodeConn {
     GetConnStats = 0x0,
 }
 #[derive(PartialEq, SEncode, SDecode)]
-#[size_tag]
+#[size_tag] // size tag allow future compatibility by prefixing a size field before the content, so that decoder can skip unknown opcode content based on the size field.
 pub struct ConnStats {
     pub lost_packets: u64,
     pub sent_packets: u64,
@@ -59,6 +59,7 @@ pub enum ExtOpcodeUser {
     ListUsers = 0x2,
     GetUserStats(UserName) = 0x3,
     KillUserConn(UserName) = 0x4,
+    GetAllStats = 0x5,
 }
 #[derive(PartialEq)]
 #[repr(u8)]
@@ -81,6 +82,8 @@ pub struct UserStats {
     pub udp_conns: u64,
     /// Number of online connections, equal to devices connected.
     pub conn_num: u32,
+    /// User these stats belong to. Added in v0.3.11
+    pub username: UserName,
 }
 
 #[derive(SEncode, SDecode)]

@@ -161,6 +161,12 @@ pub async fn get_user_stats<C: QuicConnection>(
     send_user_extension(sq_conn, ExtOpcodeUser::GetUserStats(username.to_owned())).await
 }
 
+pub async fn get_all_stats<C: QuicConnection>(
+    sq_conn: &SQConn<C>,
+) -> SResult<Result<Vec<UserStats>, SQExtError>> {
+    send_user_extension(sq_conn, ExtOpcodeUser::GetAllStats).await
+}
+
 pub async fn kill_user_conns<C: QuicConnection>(
     sq_conn: &SQConn<C>,
     username: &str,
