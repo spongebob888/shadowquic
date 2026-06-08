@@ -59,6 +59,7 @@ pub enum ExtOpcodeUser {
     ListUsers = 0x2,
     GetUserStats(UserName) = 0x3,
     KillUserConn(UserName) = 0x4,
+    GetAllStats = 0x5,
 }
 #[derive(PartialEq)]
 #[repr(u8)]
@@ -81,6 +82,13 @@ pub struct UserStats {
     pub udp_conns: u64,
     /// Number of online connections, equal to devices connected.
     pub conn_num: u32,
+}
+
+#[derive(PartialEq, SEncode, SDecode, Default)]
+#[size_tag]
+pub struct UserNamedStats {
+    pub username: UserName,
+    pub stats: UserStats,
 }
 
 #[derive(SEncode, SDecode)]

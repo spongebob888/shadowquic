@@ -9,7 +9,7 @@ use crate::{
     Outbound,
     config::{AuthUser, SunnyQuicClientCfg},
     error::SError,
-    msgs::squic::{SQExtError, UserStats},
+    msgs::squic::{SQExtError, UserNamedStats, UserStats},
     quic::{QuicClient, QuicConnection},
     squic::{auth_sunny, inbound::UserManager, outbound},
     sunnyquic::gen_sunny_user_hash,
@@ -144,6 +144,16 @@ impl UserManager for SunnyQuicClient {
             .await
             .map_err(|error| SQExtError::Other(error.to_string()))?;
         outbound::get_user_stats(&conn, username)
+            .await
+            .map_err(|error| SQExtError::Other(error.to_string()))?
+    }
+
+    async fn get_all_stats(&self) -> Result<Vec<UserNamedStats>, SQExtError> {
+        let conn = self
+            .get_conn()
+            .await
+            .map_err(|error| SQExtError::Other(error.to_string()))?;
+        outbound::get_all_stats(&conn)
             .await
             .map_err(|error| SQExtError::Other(error.to_string()))?
     }

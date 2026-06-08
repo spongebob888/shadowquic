@@ -146,6 +146,21 @@ async fn shadowquic_user_api_get_stats_and_kill_user_conns() {
         .expect("admin should get bob stats");
     assert_eq!(stats.conn_num, 1);
     assert_eq!(stats.tcp_conns, 1);
+    let all_stats = admin
+        .get_all_stats()
+        .await
+        .expect("admin should get all stats");
+    let bob_stats = all_stats
+        .iter()
+        .find(|user_stats| user_stats.username == "bob")
+        .expect("all stats should include bob");
+    assert_eq!(bob_stats.stats.conn_num, 1);
+    assert_eq!(bob_stats.stats.tcp_conns, 1);
+    assert!(
+        all_stats
+            .iter()
+            .any(|user_stats| user_stats.username == "admin")
+    );
     assert!(matches!(
         admin.get_user_stats("missing").await,
         Err(SQExtError::NotFound)
@@ -157,6 +172,10 @@ async fn shadowquic_user_api_get_stats_and_kill_user_conns() {
 
     assert!(matches!(
         bob.get_user_stats("bob").await,
+        Err(SQExtError::PermissionDenied)
+    ));
+    assert!(matches!(
+        bob.get_all_stats().await,
         Err(SQExtError::PermissionDenied)
     ));
     assert_eq!(

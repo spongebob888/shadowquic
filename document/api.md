@@ -74,9 +74,10 @@ user removed: alice
 
 If the user does not exist, the command fails with `NotFound`.
 
-### `get-stats <username>`
+### `get-stats [username]`
 
-Fetch traffic and connection statistics for a user.
+Fetch traffic and connection statistics for one user, or every configured user
+when `username` is omitted.
 
 ```sh
 shadowquic api get-stats alice
@@ -103,6 +104,35 @@ udp_recv: 777
 Traffic statistics require the `statistics` feature, which is enabled by
 default on targets with 64-bit atomics. On targets without 64-bit atomics, such
 as 32-bit MIPS, statistics are disabled and this command returns zero counters.
+
+To fetch stats for every configured user, omit the username:
+
+```sh
+shadowquic api get-stats
+```
+
+The command prints one `get-stats`-style block per user, separated by a blank
+line:
+
+```text
+username: admin
+conn_num: 1
+tcp_conns: 0
+tcp_sent: 0
+tcp_recv: 0
+udp_conns: 0
+udp_sent: 0
+udp_recv: 0
+
+username: alice
+conn_num: 1
+tcp_conns: 1
+tcp_sent: 4096
+tcp_recv: 4096
+udp_conns: 1
+udp_sent: 777
+udp_recv: 777
+```
 
 ### `kill-conn <username>`
 

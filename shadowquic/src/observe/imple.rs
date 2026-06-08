@@ -21,7 +21,10 @@ use crate::{
     AnyTcp, AnyUdpRecv, AnyUdpSend, ProxyRequest, TcpSession, TcpTrait, UdpRecv, UdpSend,
     UdpSession, UserContext, UserName,
     error::SError,
-    msgs::{socks5::SocksAddr, squic::UserStats},
+    msgs::{
+        socks5::SocksAddr,
+        squic::{UserNamedStats, UserStats},
+    },
 };
 
 #[derive(Default, Clone)]
@@ -128,6 +131,45 @@ impl Observer {
         } else {
             Default::default()
         }
+    }
+
+    pub async fn get_all_stats(&self, usernames: &[String]) -> Vec<UserNamedStats> {
+        let mut conns = self.conns.lock().await;
+        conns.retain(|_, ctx| ctx.conn_handle.upgrade().is_some());
+        let conn_nums = usernames
+            .iter()
+            .map(|username| {
+                let conn_num = conns
+                    .iter()
+                    .filter(|(_, ctx)| ctx.username == *username)
+                    .count() as u32;
+                (username.clone(), conn_num)
+            })
+            .collect::<HashMap<_, _>>();
+        drop(conns);
+
+        let user_stats = self.user_stats.lock().await;
+        usernames
+            .iter()
+            .map(|username| {
+                let stats = user_stats
+                    .get(username)
+                    .map(|stats| UserStats {
+                        tcp_sent: stats.tcp_sent.load(Ordering::Relaxed),
+                        tcp_recv: stats.tcp_recv.load(Ordering::Relaxed),
+                        udp_sent: stats.udp_sent.load(Ordering::Relaxed),
+                        udp_recv: stats.udp_recv.load(Ordering::Relaxed),
+                        tcp_conns: stats.tcp_conns.load(Ordering::Relaxed),
+                        udp_conns: stats.udp_conns.load(Ordering::Relaxed),
+                        conn_num: *conn_nums.get(username).unwrap_or(&0),
+                    })
+                    .unwrap_or_default();
+                UserNamedStats {
+                    username: username.clone(),
+                    stats,
+                }
+            })
+            .collect()
     }
 }
 

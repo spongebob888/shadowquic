@@ -50,9 +50,9 @@ enum ApiCommand {
     AddUser { username: String, password: String },
     /// Remove a user
     RemoveUser { username: String },
-    /// Get stats for a user
+    /// Get stats for a user, or all users when username is omitted
     #[command(name = "get-stats")]
-    GetUserStats { username: String },
+    GetUserStats { username: Option<String> },
     /// Kill all online connections for a user
     #[command(name = "kill-conn")]
     KillUserConn { username: String },
@@ -141,19 +141,27 @@ async fn call_user_manager_api(
             println!("user removed: {username}");
             Ok(())
         }
-        ApiCommand::GetUserStats { username } => {
+        ApiCommand::GetUserStats {
+            username: Some(username),
+        } => {
             let stats = user_manager
                 .get_user_stats(&username)
                 .await
                 .map_err(|error| format!("get-user-stats failed: {error:?}"))?;
-            println!("username: {username}");
-            println!("conn_num: {}", stats.conn_num);
-            println!("tcp_conns: {}", stats.tcp_conns);
-            println!("tcp_sent: {}", stats.tcp_sent);
-            println!("tcp_recv: {}", stats.tcp_recv);
-            println!("udp_conns: {}", stats.udp_conns);
-            println!("udp_sent: {}", stats.udp_sent);
-            println!("udp_recv: {}", stats.udp_recv);
+            print_user_stats(&username, &stats);
+            Ok(())
+        }
+        ApiCommand::GetUserStats { username: None } => {
+            let stats = user_manager
+                .get_all_stats()
+                .await
+                .map_err(|error| format!("get-user-stats failed: {error:?}"))?;
+            for (index, user_stats) in stats.iter().enumerate() {
+                if index > 0 {
+                    println!();
+                }
+                print_user_stats(&user_stats.username, &user_stats.stats);
+            }
             Ok(())
         }
         ApiCommand::KillUserConn { username } => {
@@ -165,6 +173,17 @@ async fn call_user_manager_api(
             Ok(())
         }
     }
+}
+
+fn print_user_stats(username: &str, stats: &shadowquic::msgs::squic::UserStats) {
+    println!("username: {username}");
+    println!("conn_num: {}", stats.conn_num);
+    println!("tcp_conns: {}", stats.tcp_conns);
+    println!("tcp_sent: {}", stats.tcp_sent);
+    println!("tcp_recv: {}", stats.tcp_recv);
+    println!("udp_conns: {}", stats.udp_conns);
+    println!("udp_sent: {}", stats.udp_sent);
+    println!("udp_recv: {}", stats.udp_recv);
 }
 
 fn setup_log(level: LogLevel) {

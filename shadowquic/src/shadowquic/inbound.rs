@@ -11,7 +11,7 @@ use crate::{
     Inbound, ProxyRequest,
     config::{AuthUser, ShadowQuicServerCfg},
     error::SError,
-    msgs::squic::{SQExtError, UserStats},
+    msgs::squic::{SQExtError, UserNamedStats, UserStats},
     observe::Observer,
     quic::{AuthedConn, QuicConnection},
     squic::inbound::{SQServerConn, UserManager},
@@ -92,6 +92,17 @@ impl UserManager for ShadowQuicUserManager {
         }
         drop(config);
         Ok(self.observer.get_user_stats(username).await)
+    }
+
+    async fn get_all_stats(&self) -> Result<Vec<UserNamedStats>, SQExtError> {
+        let config = self.config.read().await;
+        let usernames = config
+            .users
+            .iter()
+            .map(|user| user.username.clone())
+            .collect::<Vec<_>>();
+        drop(config);
+        Ok(self.observer.get_all_stats(&usernames).await)
     }
 
     async fn kill_user_conns(&self, username: &str) -> Result<(), SQExtError> {
