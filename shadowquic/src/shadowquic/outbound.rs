@@ -9,7 +9,7 @@ use crate::{
     Outbound,
     config::{AuthUser, ShadowQuicClientCfg},
     error::SError,
-    msgs::squic::{SQExtError, UserNamedStats, UserStats},
+    msgs::squic::{SQExtError, UserStats},
     quic::QuicClient,
     squic::{inbound::UserManager, outbound},
     utils::socket_opt::{SocketFactory, UdpSocketFactory},
@@ -138,7 +138,7 @@ impl UserManager for ShadowQuicClient {
             .map_err(|error| SQExtError::Other(error.to_string()))?
     }
 
-    async fn get_all_stats(&self) -> Result<Vec<UserNamedStats>, SQExtError> {
+    async fn get_all_stats(&self) -> Result<Vec<UserStats>, SQExtError> {
         let conn = self
             .get_conn()
             .await

@@ -21,10 +21,7 @@ use crate::{
     AnyTcp, AnyUdpRecv, AnyUdpSend, ProxyRequest, TcpSession, TcpTrait, UdpRecv, UdpSend,
     UdpSession, UserContext, UserName,
     error::SError,
-    msgs::{
-        socks5::SocksAddr,
-        squic::{UserNamedStats, UserStats},
-    },
+    msgs::{socks5::SocksAddr, squic::UserStats},
 };
 
 #[derive(Default, Clone)]
@@ -127,13 +124,17 @@ impl Observer {
                 tcp_conns: stats.tcp_conns.load(Ordering::Relaxed),
                 udp_conns: stats.udp_conns.load(Ordering::Relaxed),
                 conn_num: conn_num as u32,
+                username: username.to_owned(),
             }
         } else {
-            Default::default()
+            UserStats {
+                username: username.to_owned(),
+                ..Default::default()
+            }
         }
     }
 
-    pub async fn get_all_stats(&self, usernames: &[String]) -> Vec<UserNamedStats> {
+    pub async fn get_all_stats(&self, usernames: &[String]) -> Vec<UserStats> {
         let mut conns = self.conns.lock().await;
         conns.retain(|_, ctx| ctx.conn_handle.upgrade().is_some());
         let conn_nums = usernames
@@ -152,7 +153,7 @@ impl Observer {
         usernames
             .iter()
             .map(|username| {
-                let stats = user_stats
+                user_stats
                     .get(username)
                     .map(|stats| UserStats {
                         tcp_sent: stats.tcp_sent.load(Ordering::Relaxed),
@@ -162,12 +163,12 @@ impl Observer {
                         tcp_conns: stats.tcp_conns.load(Ordering::Relaxed),
                         udp_conns: stats.udp_conns.load(Ordering::Relaxed),
                         conn_num: *conn_nums.get(username).unwrap_or(&0),
+                        username: username.clone(),
                     })
-                    .unwrap_or_default();
-                UserNamedStats {
-                    username: username.clone(),
-                    stats,
-                }
+                    .unwrap_or_else(|| UserStats {
+                        username: username.clone(),
+                        ..Default::default()
+                    })
             })
             .collect()
     }

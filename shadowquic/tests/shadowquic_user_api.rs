@@ -152,15 +152,11 @@ async fn shadowquic_user_api_get_stats_and_kill_user_conns() {
         .expect("admin should get all stats");
     let bob_stats = all_stats
         .iter()
-        .find(|user_stats| user_stats.username == "bob")
+        .find(|stats| stats.username == "bob")
         .expect("all stats should include bob");
-    assert_eq!(bob_stats.stats.conn_num, 1);
-    assert_eq!(bob_stats.stats.tcp_conns, 1);
-    assert!(
-        all_stats
-            .iter()
-            .any(|user_stats| user_stats.username == "admin")
-    );
+    assert_eq!(bob_stats.conn_num, 1);
+    assert_eq!(bob_stats.tcp_conns, 1);
+    assert!(all_stats.iter().any(|stats| stats.username == "admin"));
     assert!(matches!(
         admin.get_user_stats("missing").await,
         Err(SQExtError::NotFound)

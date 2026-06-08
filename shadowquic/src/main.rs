@@ -147,7 +147,7 @@ async fn call_user_manager_api(
             let stats = user_manager
                 .get_user_stats(&username)
                 .await
-                .map_err(|error| format!("get-user-stats failed: {error:?}"))?;
+                .map_err(|error| format!("get-stats of user {username} failed: {error:?}"))?;
             print_user_stats(&username, &stats);
             Ok(())
         }
@@ -155,12 +155,12 @@ async fn call_user_manager_api(
             let stats = user_manager
                 .get_all_stats()
                 .await
-                .map_err(|error| format!("get-user-stats failed: {error:?}"))?;
+                .map_err(|error| format!("get-stats of all users failed: {error:?}"))?;
             for (index, user_stats) in stats.iter().enumerate() {
                 if index > 0 {
                     println!();
                 }
-                print_user_stats(&user_stats.username, &user_stats.stats);
+                print_user_stats(&user_stats.username, user_stats);
             }
             Ok(())
         }
@@ -168,7 +168,7 @@ async fn call_user_manager_api(
             user_manager
                 .kill_user_conns(&username)
                 .await
-                .map_err(|error| format!("kill-user-conn failed: {error:?}"))?;
+                .map_err(|error| format!("kill-conn of user {username} failed: {error:?}"))?;
             println!("user connections killed: {username}");
             Ok(())
         }

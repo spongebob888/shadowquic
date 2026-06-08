@@ -1,9 +1,6 @@
 #![allow(dead_code)]
 
-use crate::{
-    ProxyRequest, UserContext,
-    msgs::squic::{UserNamedStats, UserStats},
-};
+use crate::{ProxyRequest, UserContext, msgs::squic::UserStats};
 
 #[derive(Default, Clone)]
 pub struct ProxyStatsAtm;
@@ -32,7 +29,7 @@ impl Observer {
         UserStats::default()
     }
 
-    pub async fn get_all_stats(&self, _usernames: &[String]) -> Vec<UserNamedStats> {
+    pub async fn get_all_stats(&self, _usernames: &[String]) -> Vec<UserStats> {
         Vec::new()
     }
 

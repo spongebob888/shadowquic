@@ -10,7 +10,7 @@ use tracing::{Level, error, info, span, trace};
 use crate::config::AuthUser;
 use crate::error::SResult;
 use crate::msgs::squic::{
-    ConnStats, ExtOpcodeConn, ExtOpcodeUser, SQExtError, SQExtOpcode, UserNamedStats, UserStats,
+    ConnStats, ExtOpcodeConn, ExtOpcodeUser, SQExtError, SQExtOpcode, UserStats,
 };
 use crate::{
     ProxyRequest,
@@ -163,7 +163,7 @@ pub async fn get_user_stats<C: QuicConnection>(
 
 pub async fn get_all_stats<C: QuicConnection>(
     sq_conn: &SQConn<C>,
-) -> SResult<Result<Vec<UserNamedStats>, SQExtError>> {
+) -> SResult<Result<Vec<UserStats>, SQExtError>> {
     send_user_extension(sq_conn, ExtOpcodeUser::GetAllStats).await
 }
 

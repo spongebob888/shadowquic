@@ -17,7 +17,7 @@ use crate::{
         socks5::SocksAddr,
         squic::{
             ExtOpcodeConn, ExtOpcodeUser, SQExtError, SQExtOpcode, SQReq, SunnyCredential,
-            UserNamedStats, UserStats,
+            UserStats,
         },
     },
     quic::QuicConnection,
@@ -34,7 +34,7 @@ pub trait UserManager: Send + Sync {
     async fn remove_user(&self, username: &str) -> Result<(), SQExtError>;
     async fn list_users(&self) -> Result<Vec<String>, SQExtError>;
     async fn get_user_stats(&self, username: &str) -> Result<UserStats, SQExtError>;
-    async fn get_all_stats(&self) -> Result<Vec<UserNamedStats>, SQExtError>;
+    async fn get_all_stats(&self) -> Result<Vec<UserStats>, SQExtError>;
     async fn kill_user_conns(&self, username: &str) -> Result<(), SQExtError>;
 }
 

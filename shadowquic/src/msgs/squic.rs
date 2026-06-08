@@ -82,13 +82,8 @@ pub struct UserStats {
     pub udp_conns: u64,
     /// Number of online connections, equal to devices connected.
     pub conn_num: u32,
-}
-
-#[derive(PartialEq, SEncode, SDecode, Default)]
-#[size_tag]
-pub struct UserNamedStats {
+    /// User these stats belong to. Added in v0.3.11
     pub username: UserName,
-    pub stats: UserStats,
 }
 
 #[derive(SEncode, SDecode)]

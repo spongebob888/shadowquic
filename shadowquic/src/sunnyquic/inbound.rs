@@ -12,7 +12,7 @@ use crate::{
     Inbound, ProxyRequest,
     config::{AuthUser, SunnyQuicServerCfg},
     error::SError,
-    msgs::squic::{SQExtError, SunnyCredential, UserNamedStats, UserStats},
+    msgs::squic::{SQExtError, SunnyCredential, UserStats},
     observe::Observer,
     quic::QuicConnection,
     squic::inbound::{SQServerConn, SunnyQuicUsers, UserManager},
@@ -99,7 +99,7 @@ impl UserManager for SunnyQuicUserManager {
         Ok(self.observer.get_user_stats(username).await)
     }
 
-    async fn get_all_stats(&self) -> Result<Vec<UserNamedStats>, SQExtError> {
+    async fn get_all_stats(&self) -> Result<Vec<UserStats>, SQExtError> {
         let config = self.config.read().await;
         let usernames = config
             .users
