@@ -20,7 +20,7 @@ use tokio::sync::mpsc::{Receiver, channel};
 use socket2::{Domain, Protocol, Socket, Type};
 
 pub struct TproxyServer {
-    bind_addr: SocketAddr,
+    _bind_addr: SocketAddr,
     tcp_listener: TcpListener,
     #[cfg(target_os = "linux")]
     udp_req_rx: Receiver<ProxyRequest>,
@@ -44,7 +44,7 @@ impl TproxyServer {
         }
 
         Ok(Self {
-            bind_addr: cfg.bind_addr,
+            _bind_addr: cfg.bind_addr,
             tcp_listener,
             #[cfg(target_os = "linux")]
             udp_req_rx,
@@ -168,18 +168,17 @@ impl UdpSend for TproxyUdpSend {
         };
 
         let mut packet = Vec::new();
-        let builder;
-        match (src_addr, self.client_addr) {
+        let builder = match (src_addr, self.client_addr) {
             (SocketAddr::V4(src), SocketAddr::V4(dst)) => {
-                builder = PacketBuilder::ipv4(src.ip().octets(), dst.ip().octets(), 64)
-                    .udp(src.port(), dst.port());
+                PacketBuilder::ipv4(src.ip().octets(), dst.ip().octets(), 64)
+                    .udp(src.port(), dst.port())
             }
             (SocketAddr::V6(src), SocketAddr::V6(dst)) => {
-                builder = PacketBuilder::ipv6(src.ip().octets(), dst.ip().octets(), 64)
-                    .udp(src.port(), dst.port());
+                PacketBuilder::ipv6(src.ip().octets(), dst.ip().octets(), 64)
+                    .udp(src.port(), dst.port())
             }
             _ => return Err(SError::SocksError("Address family mismatch".into())),
-        }
+        };
 
         let packet_size = builder.size(buf.len());
         packet.reserve(packet_size);
