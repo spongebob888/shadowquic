@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ShadowQUIC TPROXY — Change Summary</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 900px; margin: 0 auto; padding: 2rem; background: #0d1117; color: #c9d1d9; }
+  h1 { color: #58a6ff; border-bottom: 1px solid #30363d; padding-bottom: 0.5rem; }
+  h2 { color: #f0883e; margin-top: 2rem; }
+  h3 { color: #7ee787; }
+  .file { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 0.75rem 1rem; margin: 0.5rem 0; font-family: monospace; font-size: 0.9rem; }
+  .file.added { border-left: 3px solid #3fb950; }
+  .file.removed { border-left: 3px solid #f85149; }
+  .file.modified { border-left: 3px solid #d2991d; }
+  .tag { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; margin-right: 0.5rem; }
+  .tag.add { background: #1b3a1b; color: #3fb950; }
+  .tag.rem { background: #3a1b1b; color: #f85149; }
+  .tag.fix { background: #3a341b; color: #d2991d; }
+  .tag.ref { background: #1b2a3a; color: #58a6ff; }
+  code { background: #1c2128; padding: 0.15em 0.4em; border-radius: 3px; font-size: 0.9em; }
+  pre { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 1rem; overflow-x: auto; }
+  .flow { background: #1c2128; border-radius: 8px; padding: 1.25rem; margin: 1rem 0; }
+  .flow span { color: #58a6ff; font-weight: bold; }
+  ul { padding-left: 1.5rem; }
+  li { margin: 0.4rem 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #30363d; }
+  th { color: #8b949e; font-weight: 600; }
+  .pass { color: #3fb950; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<h1>&#x1f4cb; ShadowQUIC TPROXY Branch — Change Summary</h1>
+<p>Branch: <code>tproxy</code> &nbsp;|&nbsp; Repo: <code>spongebob888/shadowquic</code> &nbsp;|&nbsp; Date: 2026-06-09</p>
+
+<h2>&#x1f6e0; Bug Fixes</h2>
+
+<div class="file modified">
+  <span class="tag ref">FIX</span> <code>shadowquic/src/config/mod.rs</code>
+  <p>Line 83: Fixed Unicode typo <code>。</code> (U+3002 Ideographic Full Stop) → <code>.</code> (Period) in method chain <code>ShadowQuicServer::new(cfg).await?</code>. This was a pre-existing bug on the tproxy branch.</p>
+</div>
+
+<div class="file modified">
+  <span class="tag ref">FIX</span> <code>shadowquic/src/tproxy/inbound.rs</code>
+  <p><strong>3 fixes applied:</strong></p>
+  <ul>
+    <li>Added missing <code>user_context: None</code> field to <code>TcpSession</code> initializer (line ~109)</li>
+    <li>Added missing <code>user_context: None</code> field to <code>UdpSession</code> initializer (line ~315)</li>
+    <li>Removed 4 unused imports: <code>TcpStream</code>, <code>Instrument</code>, <code>trace</code>, <code>trace_span</code>, <code>warn</code></li>
+  </ul>
+  <p>These were compile errors preventing the tproxy feature from building.</p>
+</div>
+
+<h2>&#x1f5d1; Removed Files</h2>
+
+<div class="file removed">
+  <span class="tag rem">REMOVED</span> <code>scripts/test_tproxy.sh</code>
+  <p>Old shell-based TPROXY test script (built inside Docker, limited logging).</p>
+</div>
+
+<div class="file removed">
+  <span class="tag rem">REMOVED</span> <code>shadowquic/tests/run_tproxy_test.sh</code>
+  <p>Old Docker-based TPROXY echo test shell script (built inside Docker).</p>
+</div>
+
+<h2>&#x2795; New Files</h2>
+
+<div class="file added">
+  <span class="tag add">NEW</span> <code>scripts/test_tproxy.py</code>
+  <p>Python-based TPROXY integration test (~240 lines). <strong>Runs in Docker without building inside Docker</strong> — uses pre-built binary mounted from the host.</p>
+
+  <h3>Test Architecture</h3>
+  <table>
+    <tr><th>Component</th><th>Detail</th></tr>
+    <tr><td>Test IP</td><td><code>10.255.255.1:8080</code></td></tr>
+    <tr><td>TPROXY port</td><td><code>1089</code></td></tr>
+    <tr><td>TCP server</td><td><code>socat</code> TCP echo on 127.0.0.1:8080</td></tr>
+    <tr><td>UDP server</td><td><code>socat</code> UDP echo on 127.0.0.1:8080</td></tr>
+    <tr><td>TCP test tool</td><td><code>socat</code> (echo payload)</td></tr>
+    <tr><td>UDP test tool</td><td><code>socat</code> (echo payload)</td></tr>
+  </table>
+
+  <h3>Traffic Flow</h3>
+  <div class="flow">
+    <span>socat</span> → 10.255.255.1:8080<br>
+    &nbsp;&nbsp;→ <span>OUTPUT mangle</span>: MARK fwmark 1<br>
+    &nbsp;&nbsp;→ <span>Routing table 100</span>: route to loopback<br>
+    &nbsp;&nbsp;→ <span>PREROUTING mangle</span>: TPROXY → shadowquic:1089<br>
+    &nbsp;&nbsp;→ <span>shadowquic</span>: reads original dst from socket<br>
+    &nbsp;&nbsp;→ <span>OUTPUT nat</span> (gid shadowquic): DNAT → 127.0.0.1:8080<br>
+    &nbsp;&nbsp;→ <span>Local servers</span> respond → shadowquic proxies back to client
+  </div>
+
+  <h3>3 Tests</h3>
+  <table>
+    <tr><th>Test</th><th>Method</th><th>Assertion</th></tr>
+    <tr><td>TCP connectivity</td><td><code>echo PAYLOAD | socat - TCP:10.255.255.1:8080</code></td><td>Echo matches sent payload</td></tr>
+    <tr><td>UDP connectivity</td><td><code>echo PAYLOAD | socat - UDP:10.255.255.1:8080</code></td><td>Echo matches sent payload</td></tr>
+    <tr><td>Log verification</td><td>Read shadowquic log file</td><td>Contains <code>"accepted tcp connection"</code> and <code>"accepted udp connection"</code></td></tr>
+  </table>
+
+  <p>Final output: prints summary table then exits 0 on all-pass or 1 on any failure.</p>
+</div>
+
+<div class="file added">
+  <span class="tag add">NEW</span> <code>scripts/test_suite/test_tproxy.py</code>
+  <p>Module-level test following the existing test_suite pattern. Builds locally with <code>--features tproxy</code>, then runs the Docker test, asserts <code>"All tests PASSED!"</code>.</p>
+</div>
+
+<h2>&#x270f; Modified Files</h2>
+
+<div class="file modified">
+  <span class="tag fix">EDIT</span> <code>scripts/main_test.py</code>
+  <p>Added <code>import test_tproxy</code> so the TPROXY test runs alongside <code>basic_test</code> and <code>test_detection</code>.</p>
+</div>
+
+<h2>&#x2705; Test Results</h2>
+<table>
+  <tr><th>Test</th><th>Result</th><th>Details</th></tr>
+  <tr><td>TCP</td><td class="pass">PASS</td><td>socat echo matched payload <code>HELLO_TPROXY_TCP_12345</code></td></tr>
+  <tr><td>UDP</td><td class="pass">PASS</td><td>socat echo matched payload <code>HELLO_TPROXY_UDP_67890</code></td></tr>
+  <tr><td>Logs</td><td class="pass">PASS</td><td>Log confirmed <code>accepted tcp connection</code> and <code>accepted udp connection</code></td></tr>
+</table>
+
+<h2>&#x1f4e6; How To Run</h2>
+<pre># Run all tests (including TPROXY)
+cd shadowquic/scripts
+python3 main_test.py
+
+# Run only TPROXY test standalone
+python3 scripts/test_tproxy.py
+
+# Manual Docker invocation
+docker run --rm --cap-add=NET_ADMIN \
+    -v $(pwd):/app ubuntu:22.04 \
+    bash -c "apt-get update -qq && apt-get install -y -qq python3 socat curl iproute2 iptables && python3 /app/scripts/test_tproxy.py"</pre>
+
+</body>
+</html>

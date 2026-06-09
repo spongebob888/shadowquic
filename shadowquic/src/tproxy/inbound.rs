@@ -12,11 +12,10 @@ use crate::{
 use async_trait::async_trait;
 #[cfg(target_os = "linux")]
 use bytes::Bytes;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 #[cfg(target_os = "linux")]
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::{Receiver, channel};
-use tracing::{Instrument, trace, trace_span, warn};
 
 use socket2::{Domain, Protocol, Socket, Type};
 
@@ -109,6 +108,7 @@ impl Inbound for TproxyServer {
                     Ok(ProxyRequest::Tcp(TcpSession {
                         stream: Box::new(stream),
                         dst,
+                        user_context: None,
                     }))
                 }
                 Some(req) = self.udp_req_rx.recv() => {
@@ -323,6 +323,7 @@ async fn handle_udp_tproxy(
                                 },
                                 port: 0,
                             },
+                            user_context: None,
                         });
 
                     if req_tx.send(req).await.is_err() {
