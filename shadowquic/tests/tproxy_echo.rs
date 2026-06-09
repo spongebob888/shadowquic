@@ -27,13 +27,8 @@ impl Outbound for EchoOutbound {
             }
             ProxyRequest::Udp(mut session) => {
                 tokio::spawn(async move {
-                    loop {
-                        match session.recv.recv_from().await {
-                            Ok((buf, addr)) => {
-                                let _ = session.send.send_to(buf, addr).await;
-                            }
-                            Err(_) => break,
-                        }
+                    while let Ok((buf, addr)) = session.recv.recv_from().await {
+                        let _ = session.send.send_to(buf, addr).await;
                     }
                 });
             }
@@ -63,7 +58,7 @@ async fn test_tproxy_echo() {
     .await
     .unwrap();
 
-    let echo_outbound = EchoOutbound::default();
+    let echo_outbound = EchoOutbound;
 
     let manager = Manager {
         inbound: Box::new(tproxy_server),
