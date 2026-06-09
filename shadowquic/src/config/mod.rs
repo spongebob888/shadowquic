@@ -14,7 +14,7 @@ use crate::{
 };
 
 mod serde_utils;
-#[cfg(feature = "tproxy")]
+#[cfg(all(feature = "tproxy", target_os = "linux"))]
 use crate::tproxy::inbound::TproxyServer;
 
 mod shadowquic;
@@ -72,7 +72,7 @@ pub enum InboundCfg {
     ShadowQuic(ShadowQuicServerCfg),
     #[serde(rename = "sunnyquic")]
     SunnyQuic(SunnyQuicServerCfg),
-    #[cfg(feature = "tproxy")]
+    #[cfg(all(feature = "tproxy", target_os = "linux"))]
     #[serde(rename = "tproxy")]
     Tproxy(TproxyServerCfg),
 }
@@ -82,7 +82,7 @@ impl InboundCfg {
             InboundCfg::Socks(cfg) => Box::new(SocksServer::new(cfg).await?),
             InboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicServer::new(cfg).await?),
             InboundCfg::SunnyQuic(cfg) => Box::new(SunnyQuicServer::new(cfg).await?),
-            #[cfg(feature = "tproxy")]
+            #[cfg(all(feature = "tproxy", target_os = "linux"))]
             InboundCfg::Tproxy(cfg) => Box::new(TproxyServer::new(cfg).await?),
         };
         Ok(r)
@@ -147,7 +147,7 @@ pub struct SocksServerCfg {
 /// ```yaml
 /// bind-addr: "0.0.0.0:1089" # or "[::]:1089" for dualstack
 /// ```
-#[cfg(feature = "tproxy")]
+#[cfg(all(feature = "tproxy", target_os = "linux"))]
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct TproxyServerCfg {

@@ -10,10 +10,8 @@ use crate::{
 };
 
 use async_trait::async_trait;
-#[cfg(target_os = "linux")]
 use bytes::Bytes;
 use tokio::net::TcpListener;
-#[cfg(target_os = "linux")]
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::{Receiver, channel};
 
@@ -22,7 +20,6 @@ use socket2::{Domain, Protocol, Socket, Type};
 pub struct TproxyServer {
     _bind_addr: SocketAddr,
     tcp_listener: TcpListener,
-    #[cfg(target_os = "linux")]
     udp_req_rx: Receiver<ProxyRequest>,
 }
 
@@ -30,10 +27,8 @@ impl TproxyServer {
     pub async fn new(cfg: TproxyServerCfg) -> Result<Self, SError> {
         let tcp_listener = Self::create_tcp_listener(cfg.bind_addr)?;
 
-        #[cfg(target_os = "linux")]
         let (udp_req_tx, udp_req_rx) = channel(1024);
 
-        #[cfg(target_os = "linux")]
         {
             let bind_addr = cfg.bind_addr;
             tokio::spawn(async move {
@@ -46,7 +41,6 @@ impl TproxyServer {
         Ok(Self {
             _bind_addr: cfg.bind_addr,
             tcp_listener,
-            #[cfg(target_os = "linux")]
             udp_req_rx,
         })
     }
@@ -69,7 +63,6 @@ impl TproxyServer {
         };
         socket.set_reuse_address(true)?;
 
-        #[cfg(target_os = "linux")]
         {
             if addr.is_ipv4() || dual_stack {
                 let _ = socket.set_ip_transparent_v4(true);
@@ -91,60 +84,37 @@ impl TproxyServer {
 #[async_trait]
 impl Inbound for TproxyServer {
     async fn accept(&mut self) -> Result<ProxyRequest, SError> {
-        #[cfg(target_os = "linux")]
-        {
-            tokio::select! {
-                res = self.tcp_listener.accept() => {
-                    let (stream, _) = res?;
-                    tracing::info!("accepted tcp connection from {}", stream.peer_addr().unwrap());
-                    let orig_dst = stream.local_addr().map_err(|e| SError::SocksError(e.to_string()))?;
-                    let dst = SocksAddr {
-                        addr: match orig_dst.ip() {
-                            std::net::IpAddr::V4(v4) => AddrOrDomain::V4(v4.octets()),
-                            std::net::IpAddr::V6(v6) => AddrOrDomain::V6(v6.octets()),
-                        },
-                        port: orig_dst.port(),
-                    };
-                    Ok(ProxyRequest::Tcp(TcpSession {
-                        stream: Box::new(stream),
-                        dst,
-                        user_context: None,
-                    }))
-                }
-                Some(req) = self.udp_req_rx.recv() => {
-                    Ok(req)
-                }
+        tokio::select! {
+            res = self.tcp_listener.accept() => {
+                let (stream, _) = res?;
+                tracing::info!("accepted tcp connection from {}", stream.peer_addr().unwrap());
+                let orig_dst = stream.local_addr().map_err(|e| SError::SocksError(e.to_string()))?;
+                let dst = SocksAddr {
+                    addr: match orig_dst.ip() {
+                        std::net::IpAddr::V4(v4) => AddrOrDomain::V4(v4.octets()),
+                        std::net::IpAddr::V6(v6) => AddrOrDomain::V6(v6.octets()),
+                    },
+                    port: orig_dst.port(),
+                };
+                Ok(ProxyRequest::Tcp(TcpSession {
+                    stream: Box::new(stream),
+                    dst,
+                    user_context: None,
+                }))
             }
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            let (stream, _) = self.tcp_listener.accept().await?;
-            let orig_dst = stream
-                .local_addr()
-                .map_err(|e| SError::SocksError(e.to_string()))?;
-            let dst = SocksAddr {
-                addr: match orig_dst.ip() {
-                    std::net::IpAddr::V4(v4) => AddrOrDomain::V4(v4.octets()),
-                    std::net::IpAddr::V6(v6) => AddrOrDomain::V6(v6.octets()),
-                },
-                port: orig_dst.port(),
-            };
-            Ok(ProxyRequest::Tcp(TcpSession {
-                stream: Box::new(stream),
-                dst,
-            }))
+            Some(req) = self.udp_req_rx.recv() => {
+                Ok(req)
+            }
         }
     }
 }
 
-#[cfg(target_os = "linux")]
 pub struct TproxyUdpSend {
     client_addr: SocketAddr,
     v4_socket: Arc<tokio::io::unix::AsyncFd<std::os::fd::OwnedFd>>,
     v6_socket: Arc<tokio::io::unix::AsyncFd<std::os::fd::OwnedFd>>,
 }
 
-#[cfg(target_os = "linux")]
 #[async_trait]
 impl UdpSend for TproxyUdpSend {
     async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
@@ -228,7 +198,6 @@ impl UdpSend for TproxyUdpSend {
     }
 }
 
-#[cfg(target_os = "linux")]
 async fn handle_udp_tproxy(
     bind_addr: SocketAddr,
     req_tx: Sender<ProxyRequest>,
@@ -350,7 +319,6 @@ async fn handle_udp_tproxy(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 fn new_unbound_socket(family_hint: SocketAddr) -> Result<socket2::Socket, SError> {
     let socket = if family_hint.is_ipv4() {
         socket2::Socket::new(
@@ -372,7 +340,6 @@ fn new_unbound_socket(family_hint: SocketAddr) -> Result<socket2::Socket, SError
     Ok(socket)
 }
 
-#[cfg(target_os = "linux")]
 fn set_ip_transparent_v6(socket: &Socket) -> io::Result<()> {
     use std::os::unix::io::AsRawFd;
     let fd = socket.as_raw_fd();
@@ -396,7 +363,6 @@ fn set_ip_transparent_v6(socket: &Socket) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 fn set_socket_option(socket: &Socket, level: i32, opt: i32, val: i32) -> io::Result<()> {
     use std::os::unix::io::AsRawFd;
     let fd = socket.as_raw_fd();

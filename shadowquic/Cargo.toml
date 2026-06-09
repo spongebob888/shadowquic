@@ -91,6 +91,7 @@ etherparse = { version = "0.14.3", optional = true }
 [target.'cfg(target_os="linux")'.dependencies]
 unix-udp-sock = { git = "https://github.com/Watfaq/unix-udp-sock.git", rev = "847c80b519f0fd8cff5c887ae708429897d08671", optional = true }
 libc = { version = "0.2", optional = true }
+etherparse = { version = "0.14.3", optional = true }
 [target.'cfg(target_os="android")'.dependencies]
 sendfd = { version = "0.4.4", features = ["tokio"] }
 

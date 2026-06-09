@@ -21,7 +21,7 @@ pub mod shadowquic;
 pub mod socks;
 pub mod squic;
 pub mod sunnyquic;
-#[cfg(feature = "tproxy")]
+#[cfg(all(feature = "tproxy", target_os = "linux"))]
 pub mod tproxy;
 pub mod utils;
 
