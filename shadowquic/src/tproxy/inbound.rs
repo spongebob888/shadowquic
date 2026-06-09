@@ -1,5 +1,6 @@
 use std::io;
-use std::net::SocketAddr;
+use std::mem::MaybeUninit;
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 
 use crate::config::TproxyServerCfg;
@@ -15,7 +16,9 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::{Receiver, channel};
 
-use socket2::{Domain, Protocol, Socket, Type};
+use socket2::{
+    Domain, MaybeUninitSlice, MsgHdrMut, Protocol, SockAddr, SockAddrStorage, Socket, Type,
+};
 
 pub struct TproxyServer {
     _bind_addr: SocketAddr,
@@ -203,7 +206,6 @@ async fn handle_udp_tproxy(
     req_tx: Sender<ProxyRequest>,
 ) -> Result<(), SError> {
     use std::collections::HashMap;
-    use unix_udp_sock::UdpSocket as UnixUdpSocket;
 
     let dual_stack = bind_addr.is_ipv6();
     let socket = Socket::new(
@@ -231,6 +233,7 @@ async fn handle_udp_tproxy(
     socket.set_broadcast(true)?;
 
     let _ = set_socket_option(&socket, libc::IPPROTO_IP, libc::IP_RECVORIGDSTADDR, 1);
+    let _ = set_socket_option(&socket, libc::SOL_UDP, libc::UDP_GRO, 1);
     if dual_stack {
         let _ = set_socket_option(&socket, libc::IPPROTO_IPV6, libc::IPV6_RECVORIGDSTADDR, 1);
     }
@@ -238,7 +241,7 @@ async fn handle_udp_tproxy(
     socket.bind(&bind_addr.into())?;
 
     let listener = Arc::new(
-        UnixUdpSocket::from_std(socket.into()).map_err(|e| SError::SocksError(e.to_string()))?,
+        tokio::io::unix::AsyncFd::new(socket).map_err(|e| SError::SocksError(e.to_string()))?,
     );
 
     let v4_raw = new_unbound_socket(SocketAddr::from(([0, 0, 0, 0], 0)))?;
@@ -258,13 +261,13 @@ async fn handle_udp_tproxy(
     const MAX_UDP_PAYLOAD_SIZE: usize = 65536;
     const UDP_GRO_MAX_SEGMENTS: usize = 64;
 
-    let mut buf = vec![0u8; MAX_UDP_PAYLOAD_SIZE * UDP_GRO_MAX_SEGMENTS];
+    let mut buf = vec![MaybeUninit::uninit(); MAX_UDP_PAYLOAD_SIZE * UDP_GRO_MAX_SEGMENTS];
     let idle_timeout = std::time::Duration::from_secs(300);
     let mut cleanup_interval = tokio::time::interval(std::time::Duration::from_secs(60));
 
     loop {
         tokio::select! {
-            recv_result = listener.recv_msg(&mut buf) => {
+            recv_result = recv_tproxy_udp_msg(&listener, &mut buf) => {
                 match recv_result {
                     Ok(meta) => {
                         let orig_dst = match meta.orig_dst {
@@ -319,7 +322,10 @@ async fn handle_udp_tproxy(
                             port: orig_dst.port(),
                         };
 
-                        for packet in udp_gro_packets(&buf[..meta.len], meta.stride) {
+                        let data = unsafe {
+                            std::slice::from_raw_parts(buf.as_ptr() as *const u8, meta.len)
+                        };
+                        for packet in udp_gro_packets(data, meta.stride) {
                             let data = Bytes::copy_from_slice(packet);
                             if tx.send((data, dst_socks.clone())).await.is_err() {
                                 break;
@@ -342,6 +348,142 @@ async fn handle_udp_tproxy(
         }
     }
     Ok(())
+}
+
+struct TproxyUdpRecvMeta {
+    addr: SocketAddr,
+    orig_dst: Option<SocketAddr>,
+    len: usize,
+    stride: usize,
+}
+
+#[repr(align(8))]
+struct Aligned<T>(T);
+
+async fn recv_tproxy_udp_msg(
+    socket: &tokio::io::unix::AsyncFd<Socket>,
+    buf: &mut [MaybeUninit<u8>],
+) -> io::Result<TproxyUdpRecvMeta> {
+    loop {
+        let mut guard = socket.readable().await?;
+        match guard.try_io(|inner| recv_tproxy_udp_msg_once(inner.get_ref(), buf)) {
+            Ok(res) => return res,
+            Err(_would_block) => continue,
+        }
+    }
+}
+
+fn recv_tproxy_udp_msg_once(
+    socket: &Socket,
+    buf: &mut [MaybeUninit<u8>],
+) -> io::Result<TproxyUdpRecvMeta> {
+    const CMSG_LEN: usize = 512;
+
+    loop {
+        let mut addr = unsafe {
+            SockAddr::new(
+                SockAddrStorage::zeroed(),
+                std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t,
+            )
+        };
+        let mut iov = [MaybeUninitSlice::new(buf)];
+        let mut control = Aligned([MaybeUninit::<u8>::uninit(); CMSG_LEN]);
+        let mut msg = MsgHdrMut::new()
+            .with_addr(&mut addr)
+            .with_buffers(&mut iov)
+            .with_control(&mut control.0);
+
+        let len = match socket.recvmsg(&mut msg, 0) {
+            Ok(_) if msg.flags().is_truncated() => continue,
+            Ok(len) => len,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+
+        let control_len = msg.control_len().min(control.0.len());
+        let addr = addr.as_socket().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "unsupported peer address")
+        })?;
+
+        let data =
+            unsafe { std::slice::from_raw_parts(control.0.as_ptr() as *const u8, control_len) };
+        let cmsgs = decode_tproxy_udp_cmsgs(data, len);
+
+        return Ok(TproxyUdpRecvMeta {
+            addr,
+            orig_dst: cmsgs.orig_dst,
+            len,
+            stride: cmsgs.stride,
+        });
+    }
+}
+
+struct TproxyUdpCmsgs {
+    orig_dst: Option<SocketAddr>,
+    stride: usize,
+}
+
+fn decode_tproxy_udp_cmsgs(control: &[u8], len: usize) -> TproxyUdpCmsgs {
+    let mut orig_dst = None;
+    let mut stride = len;
+    let mut offset = 0usize;
+
+    while offset + std::mem::size_of::<libc::cmsghdr>() <= control.len() {
+        let hdr = unsafe {
+            std::ptr::read_unaligned(control.as_ptr().add(offset) as *const libc::cmsghdr)
+        };
+        let cmsg_len = hdr.cmsg_len as usize;
+        let data_offset = unsafe { libc::CMSG_LEN(0) as usize };
+
+        if cmsg_len < data_offset || offset + cmsg_len > control.len() {
+            break;
+        }
+
+        let data = &control[offset + data_offset..offset + cmsg_len];
+        match (hdr.cmsg_level, hdr.cmsg_type) {
+            (libc::SOL_UDP, libc::UDP_GRO) if data.len() >= std::mem::size_of::<libc::c_int>() => {
+                let gro_stride = unsafe { read_cmsg_data::<libc::c_int>(data) }.max(0) as usize;
+                if gro_stride != 0 {
+                    stride = gro_stride;
+                }
+            }
+            (libc::SOL_IP, libc::IP_ORIGDSTADDR)
+                if data.len() >= std::mem::size_of::<libc::sockaddr_in>() =>
+            {
+                let addr_in = unsafe { read_cmsg_data::<libc::sockaddr_in>(data) };
+                let addr = Ipv4Addr::from(addr_in.sin_addr.s_addr.to_ne_bytes());
+                let port = u16::from_be(addr_in.sin_port);
+                orig_dst = Some(SocketAddr::from((addr, port)));
+            }
+            (libc::SOL_IPV6, libc::IPV6_ORIGDSTADDR)
+                if data.len() >= std::mem::size_of::<libc::sockaddr_in6>() =>
+            {
+                let addr_in = unsafe { read_cmsg_data::<libc::sockaddr_in6>(data) };
+                let addr = Ipv6Addr::from(addr_in.sin6_addr.s6_addr);
+                let port = u16::from_be(addr_in.sin6_port);
+                orig_dst = Some(SocketAddr::V6(std::net::SocketAddrV6::new(
+                    addr,
+                    port,
+                    addr_in.sin6_flowinfo,
+                    addr_in.sin6_scope_id,
+                )));
+            }
+            _ => {}
+        }
+
+        let data_len = cmsg_len - data_offset;
+        let next = offset + unsafe { libc::CMSG_SPACE(data_len as libc::c_uint) as usize };
+        if next <= offset {
+            break;
+        }
+        offset = next;
+    }
+
+    TproxyUdpCmsgs { orig_dst, stride }
+}
+
+unsafe fn read_cmsg_data<T: Copy>(data: &[u8]) -> T {
+    unsafe { std::ptr::read_unaligned(data.as_ptr() as *const T) }
 }
 
 fn udp_gro_packets(buf: &[u8], stride: usize) -> UdpGroPackets<'_> {

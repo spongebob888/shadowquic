@@ -3130,7 +3130,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "unix-udp-sock",
  "webpki-roots",
  "windows",
  "yaml-rust2",
@@ -3177,16 +3176,6 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
-
-[[package]]
-name = "socket2"
-version = "0.4.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f7916fc008ca5542385b89a3d3ce689953c143e9304a9bf8beec1de48994c0d"
-dependencies = [
- "libc",
- "winapi",
-]
 
 [[package]]
 name = "socket2"
@@ -3602,22 +3591,6 @@ checksum = "fc1de2c688dc15305988b563c3854064043356019f97a4b46276fe734c4f07ea"
 dependencies = [
  "crypto-common",
  "subtle",
-]
-
-[[package]]
-name = "unix-udp-sock"
-version = "0.7.0"
-source = "git+https://github.com/Watfaq/unix-udp-sock.git?rev=847c80b519f0fd8cff5c887ae708429897d08671#847c80b519f0fd8cff5c887ae708429897d08671"
-dependencies = [
- "bytes",
- "futures-core",
- "futures-sink",
- "libc",
- "pin-project-lite",
- "socket2 0.4.10",
- "tokio",
- "tokio-util",
- "tracing",
 ]
 
 [[package]]
