@@ -958,6 +958,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "etherparse"
+version = "0.20.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ac016aaf11dfe643edcd088a166234bfcb72e7f06691abfcf21e9af524037f4"
+dependencies = [
+ "arrayvec",
+]
+
+[[package]]
 name = "fast-socks5"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1203,9 +1212,9 @@ dependencies = [
 
 [[package]]
 name = "granit-parser"
-version = "0.0.2"
+version = "0.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7e736dfe3881c53a7dce0685eb18202d0d9fe6911782f9870946eb9ee89d778"
+checksum = "f50ba32164f9e098d5da618776a32afbb32270adcbe3d3d006107dae11e37c91"
 dependencies = [
  "arraydeque",
  "smallvec",
@@ -1822,7 +1831,7 @@ dependencies = [
  "jni",
  "ndk-context",
  "nix 0.29.0",
- "windows",
+ "windows 0.56.0",
 ]
 
 [[package]]
@@ -3007,9 +3016,9 @@ dependencies = [
 
 [[package]]
 name = "serde-saphyr"
-version = "0.0.26"
+version = "0.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcc7fe48e34d02a97bc8e6253b8b91e5a47fe2c47eaacb5149cefbb69922eaf0"
+checksum = "5897b4c3faadadd35fdb6689f015641f3bc481d5adaaac56231ea15aeb243db3"
 dependencies = [
  "ahash",
  "annotate-snippets",
@@ -3102,7 +3111,8 @@ dependencies = [
  "clap",
  "console-subscriber",
  "educe",
- "etherparse",
+ "etherparse 0.14.3",
+ "etherparse 0.20.1",
  "fast-socks5",
  "gm-quic",
  "libc",
@@ -3131,7 +3141,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "webpki-roots",
- "windows",
+ "windows 0.62.2",
  "yaml-rust2",
 ]
 
@@ -3806,6 +3816,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "windows"
+version = "0.62.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "527fadee13e0c05939a6a05d5bd6eec6cd2e3dbd648b9f8e447c6518133d8580"
+dependencies = [
+ "windows-collections",
+ "windows-core 0.62.2",
+ "windows-future",
+ "windows-numerics",
+]
+
+[[package]]
+name = "windows-collections"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23b2d95af1a8a14a3c7367e1ed4fc9c20e0a26e79551b1454d72583c97cc6610"
+dependencies = [
+ "windows-core 0.62.2",
+]
+
+[[package]]
 name = "windows-core"
 version = "0.56.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3828,6 +3859,17 @@ dependencies = [
  "windows-link",
  "windows-result 0.4.1",
  "windows-strings",
+]
+
+[[package]]
+name = "windows-future"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1d6f90251fe18a279739e78025bd6ddc52a7e22f921070ccdc67dde84c605cb"
+dependencies = [
+ "windows-core 0.62.2",
+ "windows-link",
+ "windows-threading",
 ]
 
 [[package]]
@@ -3879,6 +3921,16 @@ name = "windows-link"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
+
+[[package]]
+name = "windows-numerics"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e2e40844ac143cdb44aead537bbf727de9b044e107a0f1220392177d15b0f26"
+dependencies = [
+ "windows-core 0.62.2",
+ "windows-link",
+]
 
 [[package]]
 name = "windows-result"
@@ -3998,6 +4050,15 @@ dependencies = [
  "windows_x86_64_gnu 0.53.1",
  "windows_x86_64_gnullvm 0.53.1",
  "windows_x86_64_msvc 0.53.1",
+]
+
+[[package]]
+name = "windows-threading"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3949bd5b99cafdf1c7ca86b43ca564028dfe27d66958f2470940f73d86d75b37"
+dependencies = [
+ "windows-link",
 ]
 
 [[package]]
