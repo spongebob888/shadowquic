@@ -253,66 +253,83 @@ async fn handle_udp_tproxy(
             .map_err(|e| SError::SocksError(e.to_string()))?,
     );
 
-    let mut sessions: HashMap<SocketAddr, Sender<(Bytes, SocksAddr)>> = HashMap::new();
+    let mut sessions: HashMap<SocketAddr, (Sender<(Bytes, SocksAddr)>, std::time::Instant)> =
+        HashMap::new();
     let mut buf = vec![0u8; 65536];
+    let idle_timeout = std::time::Duration::from_secs(300);
+    let mut cleanup_interval = tokio::time::interval(std::time::Duration::from_secs(60));
 
     loop {
-        match listener.recv_msg(&mut buf).await {
-            Ok(meta) => {
-                let orig_dst = match meta.orig_dst {
-                    Some(d) => d.to_canonical(),
-                    None => continue,
-                };
+        tokio::select! {
+            recv_result = listener.recv_msg(&mut buf) => {
+                match recv_result {
+                    Ok(meta) => {
+                        let orig_dst = match meta.orig_dst {
+                            Some(d) => d.to_canonical(),
+                            None => continue,
+                        };
 
-                let client_addr = meta.addr.to_canonical();
+                        let client_addr = meta.addr.to_canonical();
+                        let now = std::time::Instant::now();
 
-                sessions.retain(|_, tx| !tx.is_closed());
+                        sessions.retain(|_, (tx, _)| !tx.is_closed());
 
-                let tx = if let Some(tx) = sessions.get(&client_addr) {
-                    tx.clone()
-                } else {
-                    tracing::info!("accepted udp connection from {}", client_addr);
-                    let (tx, rx) = channel(1024);
-                    let send = Arc::new(TproxyUdpSend {
-                        client_addr,
-                        v4_socket: v4_socket.clone(),
-                        v6_socket: v6_socket.clone(),
-                    });
+                        let tx = if let Some((tx, last_active)) = sessions.get_mut(&client_addr) {
+                            *last_active = now;
+                            tx.clone()
+                        } else {
+                            tracing::info!("accepted udp connection from {}", client_addr);
+                            let (tx, rx) = channel(1024);
+                            let send = Arc::new(TproxyUdpSend {
+                                client_addr,
+                                v4_socket: v4_socket.clone(),
+                                v6_socket: v6_socket.clone(),
+                            });
 
-                    let req: ProxyRequest<AnyTcp, AnyUdpRecv, AnyUdpSend> =
-                        ProxyRequest::Udp(UdpSession {
-                            send: send as Arc<dyn UdpSend>,
-                            recv: Box::new(rx) as Box<dyn UdpRecv>,
-                            stream: None,
-                            bind_addr: SocksAddr {
-                                addr: match orig_dst.ip() {
-                                    std::net::IpAddr::V4(_) => AddrOrDomain::V4([0, 0, 0, 0]),
-                                    std::net::IpAddr::V6(_) => AddrOrDomain::V6([0u8; 16]),
-                                },
-                                port: 0,
+                            let req: ProxyRequest<AnyTcp, AnyUdpRecv, AnyUdpSend> =
+                                ProxyRequest::Udp(UdpSession {
+                                    send: send as Arc<dyn UdpSend>,
+                                    recv: Box::new(rx) as Box<dyn UdpRecv>,
+                                    stream: None,
+                                    bind_addr: SocksAddr {
+                                        addr: match orig_dst.ip() {
+                                            std::net::IpAddr::V4(_) => AddrOrDomain::V4([0, 0, 0, 0]),
+                                            std::net::IpAddr::V6(_) => AddrOrDomain::V6([0u8; 16]),
+                                        },
+                                        port: 0,
+                                    },
+                                    user_context: None,
+                                });
+
+                            if req_tx.send(req).await.is_err() {
+                                break;
+                            }
+                            sessions.insert(client_addr, (tx.clone(), now));
+                            tx
+                        };
+
+                        let data = Bytes::copy_from_slice(&buf[0..meta.len]);
+                        let dst_socks = SocksAddr {
+                            addr: match orig_dst.ip() {
+                                std::net::IpAddr::V4(v4) => AddrOrDomain::V4(v4.octets()),
+                                std::net::IpAddr::V6(v6) => AddrOrDomain::V6(v6.octets()),
                             },
-                            user_context: None,
-                        });
-
-                    if req_tx.send(req).await.is_err() {
-                        break;
+                            port: orig_dst.port(),
+                        };
+                        let _ = tx.send((data, dst_socks)).await;
                     }
-                    sessions.insert(client_addr, tx.clone());
-                    tx
-                };
-
-                let data = Bytes::copy_from_slice(&buf[0..meta.len]);
-                let dst_socks = SocksAddr {
-                    addr: match orig_dst.ip() {
-                        std::net::IpAddr::V4(v4) => AddrOrDomain::V4(v4.octets()),
-                        std::net::IpAddr::V6(v6) => AddrOrDomain::V6(v6.octets()),
-                    },
-                    port: orig_dst.port(),
-                };
-                let _ = tx.send((data, dst_socks)).await;
+                    Err(_) => continue,
+                }
             }
-            Err(_) => {
-                continue;
+            _ = cleanup_interval.tick() => {
+                let now = std::time::Instant::now();
+                sessions.retain(|addr, (tx, last_active)| {
+                    let keep = !tx.is_closed() && now.duration_since(*last_active) < idle_timeout;
+                    if !keep {
+                        tracing::info!("cleaning up idle udp session for {}", addr);
+                    }
+                    keep
+                });
             }
         }
     }
