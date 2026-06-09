@@ -46,15 +46,15 @@ pub trait Stoppable: Send + Sync {
 }
 pub type UserName = String;
 pub struct TcpSession<IO = AnyTcp> {
-    stream: IO,
-    dst: SocksAddr,
+    pub stream: IO,
+    pub dst: SocksAddr,
     #[allow(dead_code)]
     user_context: Option<UserContext>,
 }
 
 pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
-    recv: I,
-    send: O,
+    pub recv: I,
+    pub send: O,
     /// Control stream, should be kept alive during session.
     stream: Option<AnyTcp>,
     bind_addr: SocksAddr,

@@ -46,6 +46,7 @@ const CHUNK_LEN: usize = 1024;
 const ROUND: usize = 10;
 
 #[tokio::test]
+#[ignore = "requires Docker with NET_ADMIN + iptables TPROXY setup (run scripts/test_tproxy.py instead)"]
 async fn test_tproxy_echo() {
     let filter = tracing_subscriber::filter::Targets::new()
         .with_target("tproxy_echo", Level::TRACE)

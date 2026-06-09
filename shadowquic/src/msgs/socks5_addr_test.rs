@@ -2,7 +2,6 @@ use crate::msgs::socks5::SOCKS5_ADDR_TYPE_DOMAIN_NAME;
 
 use super::socks5::{AddrOrDomain, SOCKS5_ADDR_TYPE_IPV4, SOCKS5_ADDR_TYPE_IPV6, SocksAddr};
 use std::io::Cursor;
-use tokio::io::{AsyncRead, AsyncWrite};
 
 #[tokio::test]
 async fn test_socksaddr_ipv4_encode_decode() {

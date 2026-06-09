@@ -32,7 +32,7 @@ async fn shadowquic_client_sqconn_records_authenticated_username() {
         congestion_control: CongestionControl::Bbr,
         ..Default::default()
     })
-    .unwrap();
+    .await.unwrap();
     server.init().await.unwrap();
 
     let client = ShadowQuicClient::new(ShadowQuicClientCfg {
@@ -73,7 +73,7 @@ async fn sunnyquic_client_sqconn_records_authenticated_username() {
         key_path: "../assets/certs/localhost.key".into(),
         ..Default::default()
     })
-    .unwrap();
+    .await.unwrap();
     server.init().await.unwrap();
 
     let client = SunnyQuicClient::new(SunnyQuicClientCfg {
