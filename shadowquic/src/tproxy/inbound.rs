@@ -255,7 +255,10 @@ async fn handle_udp_tproxy(
 
     let mut sessions: HashMap<SocketAddr, (Sender<(Bytes, SocksAddr)>, std::time::Instant)> =
         HashMap::new();
-    let mut buf = vec![0u8; 65536];
+    const MAX_UDP_PAYLOAD_SIZE: usize = 65536;
+    const UDP_GRO_MAX_SEGMENTS: usize = 64;
+
+    let mut buf = vec![0u8; MAX_UDP_PAYLOAD_SIZE * UDP_GRO_MAX_SEGMENTS];
     let idle_timeout = std::time::Duration::from_secs(300);
     let mut cleanup_interval = tokio::time::interval(std::time::Duration::from_secs(60));
 
@@ -308,7 +311,6 @@ async fn handle_udp_tproxy(
                             tx
                         };
 
-                        let data = Bytes::copy_from_slice(&buf[0..meta.len]);
                         let dst_socks = SocksAddr {
                             addr: match orig_dst.ip() {
                                 std::net::IpAddr::V4(v4) => AddrOrDomain::V4(v4.octets()),
@@ -316,7 +318,13 @@ async fn handle_udp_tproxy(
                             },
                             port: orig_dst.port(),
                         };
-                        let _ = tx.send((data, dst_socks)).await;
+
+                        for packet in udp_gro_packets(&buf[..meta.len], meta.stride) {
+                            let data = Bytes::copy_from_slice(packet);
+                            if tx.send((data, dst_socks.clone())).await.is_err() {
+                                break;
+                            }
+                        }
                     }
                     Err(_) => continue,
                 }
@@ -326,7 +334,7 @@ async fn handle_udp_tproxy(
                 sessions.retain(|addr, (tx, last_active)| {
                     let keep = !tx.is_closed() && now.duration_since(*last_active) < idle_timeout;
                     if !keep {
-                        tracing::info!("cleaning up idle udp session for {}", addr);
+                        tracing::debug!("cleaning up idle udp session for {}", addr);
                     }
                     keep
                 });
@@ -334,6 +342,49 @@ async fn handle_udp_tproxy(
         }
     }
     Ok(())
+}
+
+fn udp_gro_packets(buf: &[u8], stride: usize) -> UdpGroPackets<'_> {
+    UdpGroPackets {
+        buf,
+        stride: if stride == 0 {
+            buf.len().max(1)
+        } else {
+            stride
+        },
+        offset: 0,
+        emitted_empty: false,
+    }
+}
+
+struct UdpGroPackets<'a> {
+    buf: &'a [u8],
+    stride: usize,
+    offset: usize,
+    emitted_empty: bool,
+}
+
+impl<'a> Iterator for UdpGroPackets<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.buf.is_empty() {
+            if self.emitted_empty {
+                return None;
+            }
+            self.emitted_empty = true;
+            return Some(self.buf);
+        }
+
+        if self.offset >= self.buf.len() {
+            return None;
+        }
+
+        let start = self.offset;
+        let end = (self.offset + self.stride).min(self.buf.len());
+        self.offset = end;
+        Some(&self.buf[start..end])
+    }
 }
 
 fn new_unbound_socket(family_hint: SocketAddr) -> Result<socket2::Socket, SError> {
@@ -417,5 +468,30 @@ impl ToCanonical for SocketAddr {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::udp_gro_packets;
+
+    #[test]
+    fn splits_udp_gro_payload_by_stride() {
+        let buf = b"aaabbbccd";
+        let packets = udp_gro_packets(buf, 3).collect::<Vec<_>>();
+
+        assert_eq!(packets, vec![&b"aaa"[..], &b"bbb"[..], &b"ccd"[..]]);
+    }
+
+    #[test]
+    fn preserves_non_gro_and_empty_udp_payloads() {
+        let buf = b"packet";
+
+        assert_eq!(udp_gro_packets(buf, 0).collect::<Vec<_>>(), vec![&buf[..]]);
+        assert_eq!(
+            udp_gro_packets(buf, buf.len()).collect::<Vec<_>>(),
+            vec![&buf[..]]
+        );
+        assert_eq!(udp_gro_packets(&[], 0).collect::<Vec<_>>(), vec![&[][..]]);
     }
 }
