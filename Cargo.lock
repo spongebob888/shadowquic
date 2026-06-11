@@ -2526,9 +2526,9 @@ dependencies = [
 
 [[package]]
 name = "quinn-jls"
-version = "0.3.4"
+version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb0c759ac6637df5a8132368f5ae254649e9bd0cac4b4f27f3174c00c4727c34"
+checksum = "55706c432564de8b518055947eca4aa0f6c9dfb3b8fbfaf77ea37864ae5dc3e0"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2566,9 +2566,9 @@ dependencies = [
 
 [[package]]
 name = "quinn-proto-jls"
-version = "0.3.5"
+version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b325366ffce23012d9d1e64ae298a0685c5b118c87ca7dd600e9fc45587678e"
+checksum = "1d5e4adccc6ebfc7bcb5eabf9ba807d658da125b753477fed32b31fbcf08fddf"
 dependencies = [
  "aws-lc-rs",
  "bytes",
@@ -2601,16 +2601,15 @@ dependencies = [
 
 [[package]]
 name = "quinn-udp-jls"
-version = "0.3.3"
+version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3823b6796bcb9b4224cb0efe7ebd97d4a7fc3c8a5d7e3662c3df8ebadb59a102"
+checksum = "138b3d30aff9d2a670e3465313d547bb4c55de132fa30dea9b7acc5e69587130"
 dependencies = [
  "cfg_aliases",
  "libc",
- "once_cell",
  "socket2 0.6.4",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

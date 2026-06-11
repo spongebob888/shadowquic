@@ -213,7 +213,7 @@ impl QuicClient for EndClient {
     ) -> SResult<Self> {
         let runtime =
             quinn::default_runtime().ok_or_else(|| io::Error::other("no async runtime found"))?;
-        let mut end = quinn::Endpoint::new(
+        let end = quinn::Endpoint::new(
             quinn::EndpointConfig::default(),
             None,
             std::net::UdpSocket::from(socket_factory.create_socket().await?),
