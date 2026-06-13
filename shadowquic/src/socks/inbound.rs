@@ -166,6 +166,7 @@ impl Inbound for SocksServer {
         let fut = async move {
             loop {
                 let (stream, addr) = listener.accept().await?;
+                let _ = stream.set_nodelay(true);
                 let span = info_span!("socks", src = %addr);
                 let _enter = span.enter();
                 let users = users.clone();
