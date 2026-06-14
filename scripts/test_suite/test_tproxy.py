@@ -32,12 +32,15 @@ print("[*] Running TPROXY test in Docker ...")
 result = sp.run(
     [
         "docker", "run", "--rm", "--cap-add=NET_ADMIN",
+        "--sysctl", "net.ipv6.conf.all.disable_ipv6=0",
+        "--sysctl", "net.ipv6.conf.all.forwarding=1",
         "-v", f"{WORKSPACE}:/app",
         "ubuntu:22.04",
         "bash", "-c",
+        "echo Acquire::ForceIPv4 true > /etc/apt/apt.conf.d/99force-ipv4 && "
         "apt-get update -qq && "
         "apt-get install -y -qq python3 socat iproute2 iptables 2>&1 | tail -1 && "
-        "python3 /app/scripts/test_tproxy.py",
+        "SHADOWQUIC_BIN=/app/target/release/shadowquic python3 /app/scripts/test_tproxy.py",
     ],
     capture_output=True,
     text=True,
