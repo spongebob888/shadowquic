@@ -225,11 +225,7 @@ def check_logs():
 
 
 def has_ipv6():
-    """Check if IPv6 TPROXY is available.
-    Docker runtimes often can't manipulate IPv6 routes/addresses on lo,
-    so we skip IPv6 tests inside containers."""
-    if os.path.exists("/.dockerenv"):
-        return False
+    """Check if IPv6 TPROXY is available."""
     try:
         r = subprocess.run("ip -6 addr show lo", shell=True, capture_output=True, text=True, timeout=3)
         if "::1" not in r.stdout:
