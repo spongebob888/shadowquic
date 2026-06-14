@@ -118,7 +118,7 @@ async fn test_shadowquic() {
     };
 
     let sq_server = ShadowQuicServer::new(ShadowQuicServerCfg {
-        bind_addr: "127.0.0.1:4445".parse().unwrap(),
+        bind_addr: "[::]:4445".parse().unwrap(),
         users: vec![AuthUser {
             username: "123".into(),
             password: "123".into(),

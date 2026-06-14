@@ -1,6 +1,6 @@
 use std::{
     io,
-    net::SocketAddr,
+    net::{SocketAddr, UdpSocket},
     ops::Deref,
     sync::{
         Arc,
@@ -20,6 +20,7 @@ use quinn::{
     ClientConfig, MtuDiscoveryConfig, SendDatagramError, TransportConfig, VarInt,
     congestion::{BbrConfig, CubicConfig, NewRenoConfig},
 };
+use socket2::{Domain, Protocol, Socket, Type};
 use tracing::{debug, error, info, trace, warn};
 
 use quinn::rustls::ServerConfig as RustlsServerConfig;
@@ -334,6 +335,19 @@ pub fn gen_client_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
     config
 }
 
+fn bind_server_udp_socket(bind_addr: SocketAddr) -> io::Result<UdpSocket> {
+    if bind_addr.is_ipv6() && bind_addr.ip().is_unspecified() {
+        let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
+        let _ = socket
+            .set_only_v6(false)
+            .map_err(|e| warn!("failed to enable dual-stack UDP socket: {}", e));
+        socket.bind(&bind_addr.into())?;
+        Ok(socket.into())
+    } else {
+        UdpSocket::bind(bind_addr)
+    }
+}
+
 #[async_trait]
 impl QuicServer for EndServer {
     type C = Connection;
@@ -350,8 +364,14 @@ impl QuicServer for EndServer {
                 .expect("invalid cert or key when create shadowquic server");
 
         let config = gen_server_config(cfg, &mut crypto);
-
-        let endpoint = quinn::Endpoint::server(config.clone(), cfg.bind_addr)?;
+        let socket = bind_server_udp_socket(cfg.bind_addr)?;
+        socket.set_nonblocking(true)?;
+        let endpoint = quinn::Endpoint::new(
+            quinn::EndpointConfig::default(),
+            Some(config.clone()),
+            socket,
+            quinn::default_runtime().expect("no runtime found for quinn"),
+        )?;
         Ok(EndServer {
             crypto: Arc::new(ArcSwap::new(crypto.into())),
             inner: endpoint,
