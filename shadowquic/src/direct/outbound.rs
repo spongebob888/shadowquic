@@ -133,7 +133,7 @@ impl DirectOut {
     }
 
     async fn handle_udp(&self, udp_session: UdpSession) -> Result<(), SError> {
-        trace!("associating udp to {}", udp_session.bind_addr);
+        trace!(bind_addr = %udp_session.bind_addr,"associating udp");
         let dst =
             udp_session
                 .bind_addr
@@ -142,11 +142,22 @@ impl DirectOut {
                 .ok_or(SError::DomainResolveFailed(
                     udp_session.bind_addr.to_string(),
                 ))?;
-        trace!("resolved to {}", dst);
-        let ipv4_only = dst.is_ipv4();
-
-        let socket = DualSocket::new_bind(dst, !ipv4_only)?;
-
+        let ipv4 = dst.is_ipv4();
+        // For unspecified address, we try to bind a dual stack socket first.
+        // If it fails, we fallback to single stack socket
+        // https://github.com/spongebob888/shadowquic/issues/172
+        let socket = if dst.ip().is_unspecified() {
+            let socket = DualSocket::new_bind("[::]:0".parse().unwrap(), true)?;
+            if socket.dual_stack || !ipv4 {
+                trace!("bound to dual stack socket");
+                socket
+            } else {
+                trace!("fallback to single stack socket");
+                DualSocket::new_bind(dst, false)?
+            }
+        } else {
+            DualSocket::new_bind(dst, false)?
+        };
         let upstream = Arc::new(socket);
         let upstream_clone = upstream.clone();
         let mut downstream = udp_session.recv;

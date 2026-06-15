@@ -12,14 +12,14 @@ use tokio::net::UdpSocket;
 /// In windows, Ipv4 mapping must be done manually.
 pub struct DualSocket {
     inner: UdpSocket,
-    dual_stack: bool,
+    pub dual_stack: bool,
 }
 impl DualSocket {
-    pub fn new_bind(addr: SocketAddr, dual_stack: bool) -> io::Result<Self> {
+    pub fn new_bind(addr: SocketAddr, mut dual_stack: bool) -> io::Result<Self> {
         //let upstream = UdpSocket::bind(dst).await?;
         let socket = Socket::new(
             // Use socket2 for dualstack for windows compact
-            if dual_stack {
+            if dual_stack || addr.ip().is_ipv6() {
                 Domain::IPV6
             } else {
                 Domain::IPV4
@@ -28,9 +28,10 @@ impl DualSocket {
             Some(Protocol::UDP),
         )?;
         if dual_stack {
-            let _ = socket
-                .set_only_v6(false)
-                .map_err(|x| tracing::warn!("set dual stack for failed: {}", x));
+            let _ = socket.set_only_v6(false).map_err(|x| {
+                dual_stack = false;
+                tracing::warn!("set dual stack for failed: {}", x);
+            });
         };
         socket.set_nonblocking(true)?;
         socket.bind(&addr.into())?;
