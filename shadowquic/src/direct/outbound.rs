@@ -143,9 +143,19 @@ impl DirectOut {
                     udp_session.bind_addr.to_string(),
                 ))?;
         trace!("resolved to {}", dst);
-        let ipv4_only = dst.is_ipv4();
 
-        let socket = DualSocket::new_bind(dst, !ipv4_only)?;
+        // When the client sends an unspecified address (0.0.0.0:0 or [::]:0) it means
+        // "any address" per RFC 1928.  The server cannot predict whether it will later
+        // resolve a domain to IPv4 or IPv6, so always create a dual-stack socket in
+        // that case so that send_to() works for both address families.
+        let socket = if dst.ip().is_unspecified() {
+            DualSocket::new_bind(
+                SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
+                true,
+            )?
+        } else {
+            DualSocket::new_bind(dst, dst.is_ipv6())?
+        };
 
         let upstream = Arc::new(socket);
         let upstream_clone = upstream.clone();
@@ -269,5 +279,54 @@ mod test {
         let addrs: Vec<SocketAddr> = vec![];
         let result = apply_dns_strategy(addrs.into_iter(), &DnsStrategy::PreferIpv4);
         assert_eq!(result, None);
+    }
+
+    /// Verify that when the SOCKS5 client sends 0.0.0.0:0 (unspecified IPv4) as
+    /// bind_addr, the server creates a dual-stack socket so that send_to() works
+    /// for both IPv4 and IPv6 destinations (RFC 1928, §7).
+    #[tokio::test]
+    async fn test_unspecified_ipv4_bind_addr_creates_dual_stack_socket() {
+        let dst = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
+        assert!(dst.ip().is_unspecified());
+        // Dual-stack socket bound to [::]:0 must be created successfully.
+        let socket = DualSocket::new_bind(
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
+            true,
+        );
+        assert!(
+            socket.is_ok(),
+            "dual-stack socket creation failed: {:?}",
+            socket.err()
+        );
+    }
+
+    /// Verify that when the SOCKS5 client sends [::]:0 (unspecified IPv6) as
+    /// bind_addr, the server also creates a dual-stack socket.
+    #[tokio::test]
+    async fn test_unspecified_ipv6_bind_addr_creates_dual_stack_socket() {
+        let dst = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0);
+        assert!(dst.ip().is_unspecified());
+        let socket = DualSocket::new_bind(
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
+            true,
+        );
+        assert!(
+            socket.is_ok(),
+            "dual-stack socket creation failed: {:?}",
+            socket.err()
+        );
+    }
+
+    /// Verify that a specific IPv4 bind address creates an IPv4-only socket.
+    #[tokio::test]
+    async fn test_specific_ipv4_bind_addr_creates_ipv4_socket() {
+        let dst = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
+        assert!(!dst.ip().is_unspecified());
+        let socket = DualSocket::new_bind(dst, false);
+        assert!(
+            socket.is_ok(),
+            "IPv4 socket creation failed: {:?}",
+            socket.err()
+        );
     }
 }
