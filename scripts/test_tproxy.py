@@ -13,8 +13,8 @@ Flow:
   5. HTTP/UDP servers respond → shadowquic proxies back to client
 
 Tests:
-  - TCP connectivity via socat (echo)
-  - UDP connectivity via socat (echo)
+  - IPv4 and IPv6 TCP connectivity via socat (echo)
+  - IPv4 and IPv6 UDP connectivity via socat (echo)
   - Log verification: "accepted tcp connection" and "accepted udp connection"
 """
 
@@ -24,11 +24,12 @@ import time
 import os
 import grp
 
-BINARY = "/app/target/release/shadowquic"
+BINARY = os.environ.get("SHADOWQUIC_BINARY", "/app/target/release/shadowquic")
 CONFIG_PATH = "/tmp/tproxy_config.yaml"
 LOG_PATH = "/tmp/shadowquic.log"
-BIND_ADDR = "0.0.0.0:1089"
-TEST_IP = "10.255.255.1"
+BIND_ADDR = "[::]:1089"
+TEST_IP_V4 = "10.255.255.1"
+TEST_IP_V6 = "fd00::1"
 TEST_PORT = 8080
 SQ_GROUP = "shadowquic"
 
@@ -45,41 +46,59 @@ def run(cmd, check=True, capture=False, timeout=15):
 
 
 def setup_iptables():
-    """Configure iptables for TPROXY."""
-    print("[*] Setting up iptables rules...")
+    """Configure iptables/ip6tables for TPROXY."""
+    print("[*] Setting up iptables/ip6tables rules...")
 
     # Policy routing: traffic marked with 1 goes through table 100
     run("ip rule add fwmark 1 table 100", check=False)
     run("ip route add local 0.0.0.0/0 dev lo table 100", check=False)
+    # IPv6 needs an initial route before mangle OUTPUT can mark locally generated traffic.
+    run(f"ip -6 route add {TEST_IP_V6}/128 dev lo", check=False)
+    run("ip -6 rule add fwmark 1 table 100", check=False)
+    run("ip -6 route add local ::/0 dev lo table 100", check=False)
 
     # DIVERT chain for already-established sockets
     run("iptables -t mangle -N DIVERT 2>/dev/null || true", check=False)
     run("iptables -t mangle -F DIVERT", check=False)
     run("iptables -t mangle -A DIVERT -j MARK --set-mark 1", check=False)
     run("iptables -t mangle -A DIVERT -j ACCEPT", check=False)
+    run("ip6tables -t mangle -N DIVERT 2>/dev/null || true", check=False)
+    run("ip6tables -t mangle -F DIVERT", check=False)
+    run("ip6tables -t mangle -A DIVERT -j MARK --set-mark 1", check=False)
+    run("ip6tables -t mangle -A DIVERT -j ACCEPT", check=False)
 
     # Existing socket connections go to DIVERT
     run("iptables -t mangle -A PREROUTING -p tcp -m socket -j DIVERT", check=False)
     run("iptables -t mangle -A PREROUTING -p udp -m socket -j DIVERT", check=False)
+    run("ip6tables -t mangle -A PREROUTING -p tcp -m socket -j DIVERT", check=False)
+    run("ip6tables -t mangle -A PREROUTING -p udp -m socket -j DIVERT", check=False)
 
-    # TPROXY: ONLY redirect traffic destined to TEST_IP:TEST_PORT to shadowquic
-    run(f"iptables -t mangle -A PREROUTING -p tcp -d {TEST_IP} --dport {TEST_PORT} -j TPROXY --tproxy-mark 0x1/0x1 --on-port 1089", check=False)
-    run(f"iptables -t mangle -A PREROUTING -p udp -d {TEST_IP} --dport {TEST_PORT} -j TPROXY --tproxy-mark 0x1/0x1 --on-port 1089", check=False)
+    # TPROXY: ONLY redirect traffic destined to test addresses to shadowquic
+    run(f"iptables -t mangle -A PREROUTING -p tcp -d {TEST_IP_V4} --dport {TEST_PORT} -j TPROXY --tproxy-mark 0x1/0x1 --on-port 1089", check=False)
+    run(f"iptables -t mangle -A PREROUTING -p udp -d {TEST_IP_V4} --dport {TEST_PORT} -j TPROXY --tproxy-mark 0x1/0x1 --on-port 1089", check=False)
+    run(f"ip6tables -t mangle -A PREROUTING -p tcp -d {TEST_IP_V6} --dport {TEST_PORT} -j TPROXY --tproxy-mark 0x1/0x1 --on-port 1089", check=False)
+    run(f"ip6tables -t mangle -A PREROUTING -p udp -d {TEST_IP_V6} --dport {TEST_PORT} -j TPROXY --tproxy-mark 0x1/0x1 --on-port 1089", check=False)
 
     # OUTPUT: skip marking for shadowquic's own traffic (avoid loop)
     run(f"iptables -t mangle -A OUTPUT -m owner --gid-owner {SQ_GROUP} -j RETURN", check=False)
+    run(f"ip6tables -t mangle -A OUTPUT -m owner --gid-owner {SQ_GROUP} -j RETURN", check=False)
 
-    # OUTPUT: mark test traffic to TEST_IP → routing table 100 → loopback → PREROUTING → TPROXY
-    run(f"iptables -t mangle -A OUTPUT -p tcp -d {TEST_IP} --dport {TEST_PORT} -j MARK --set-mark 1", check=False)
-    run(f"iptables -t mangle -A OUTPUT -p udp -d {TEST_IP} --dport {TEST_PORT} -j MARK --set-mark 1", check=False)
+    # OUTPUT: mark test traffic to test addresses -> routing table 100 -> loopback -> PREROUTING -> TPROXY
+    run(f"iptables -t mangle -A OUTPUT -p tcp -d {TEST_IP_V4} --dport {TEST_PORT} -j MARK --set-mark 1", check=False)
+    run(f"iptables -t mangle -A OUTPUT -p udp -d {TEST_IP_V4} --dport {TEST_PORT} -j MARK --set-mark 1", check=False)
+    run(f"ip6tables -t mangle -A OUTPUT -p tcp -d {TEST_IP_V6} --dport {TEST_PORT} -j MARK --set-mark 1", check=False)
+    run(f"ip6tables -t mangle -A OUTPUT -p udp -d {TEST_IP_V6} --dport {TEST_PORT} -j MARK --set-mark 1", check=False)
 
     # OUTPUT nat: DNAT shadowquic's outbound to local servers (TCP works; UDP via raw socket needs PREROUTING DNAT)
-    run(f"iptables -t nat -A OUTPUT -m owner --gid-owner {SQ_GROUP} -d {TEST_IP} -p tcp --dport {TEST_PORT} -j DNAT --to-destination 127.0.0.1:{TEST_PORT}", check=False)
-    run(f"iptables -t nat -A OUTPUT -m owner --gid-owner {SQ_GROUP} -d {TEST_IP} -p udp --dport {TEST_PORT} -j DNAT --to-destination 127.0.0.1:{TEST_PORT}", check=False)
+    run(f"iptables -t nat -A OUTPUT -m owner --gid-owner {SQ_GROUP} -d {TEST_IP_V4} -p tcp --dport {TEST_PORT} -j DNAT --to-destination 127.0.0.1:{TEST_PORT}", check=False)
+    run(f"iptables -t nat -A OUTPUT -m owner --gid-owner {SQ_GROUP} -d {TEST_IP_V4} -p udp --dport {TEST_PORT} -j DNAT --to-destination 127.0.0.1:{TEST_PORT}", check=False)
+    run(f"ip6tables -t nat -A OUTPUT -m owner --gid-owner {SQ_GROUP} -d {TEST_IP_V6} -p tcp --dport {TEST_PORT} -j DNAT --to-destination [::1]:{TEST_PORT}", check=False)
+    run(f"ip6tables -t nat -A OUTPUT -m owner --gid-owner {SQ_GROUP} -d {TEST_IP_V6} -p udp --dport {TEST_PORT} -j DNAT --to-destination [::1]:{TEST_PORT}", check=False)
     # Raw socket UDP might bypass OUTPUT nat, also add PREROUTING DNAT for the raw-sent packets
-    run(f"iptables -t nat -A PREROUTING -d {TEST_IP} -p udp --dport {TEST_PORT} -j DNAT --to-destination 127.0.0.1:{TEST_PORT}", check=False)
+    run(f"iptables -t nat -A PREROUTING -d {TEST_IP_V4} -p udp --dport {TEST_PORT} -j DNAT --to-destination 127.0.0.1:{TEST_PORT}", check=False)
+    run(f"ip6tables -t nat -A PREROUTING -d {TEST_IP_V6} -p udp --dport {TEST_PORT} -j DNAT --to-destination [::1]:{TEST_PORT}", check=False)
 
-    print("[+] iptables rules set up.")
+    print("[+] iptables/ip6tables rules set up.")
 
 
 def write_config():
@@ -99,8 +118,8 @@ log-level: trace
 
 
 def start_servers():
-    """Start TCP and UDP echo servers on 127.0.0.1:8080."""
-    # TCP echo server
+    """Start IPv4 and IPv6 TCP/UDP echo servers."""
+    # IPv4 echo servers
     subprocess.Popen(
         ["socat", f"TCP-LISTEN:{TEST_PORT},fork,bind=127.0.0.1", "EXEC:cat"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -110,8 +129,17 @@ def start_servers():
         ["socat", f"UDP-LISTEN:{TEST_PORT},fork,bind=127.0.0.1", "EXEC:cat"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
+    # IPv6 echo servers
+    subprocess.Popen(
+        ["socat", f"TCP6-LISTEN:{TEST_PORT},fork,bind=[::1],ipv6only=1", "EXEC:cat"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    subprocess.Popen(
+        ["socat", f"UDP6-LISTEN:{TEST_PORT},fork,bind=[::1],ipv6only=1", "EXEC:cat"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
     time.sleep(0.5)
-    print(f"[+] TCP and UDP echo servers started on 127.0.0.1:{TEST_PORT}")
+    print(f"[+] TCP and UDP echo servers started on 127.0.0.1:{TEST_PORT} and [::1]:{TEST_PORT}")
 
 
 def start_shadowquic():
@@ -131,51 +159,51 @@ def start_shadowquic():
     return proc
 
 
-def test_tcp():
+def test_tcp(name, test_ip, socat_target):
     """Test TCP connectivity through TPROXY using socat echo."""
-    print(f"\n[*] Testing TCP to {TEST_IP}:{TEST_PORT} ...")
-    payload = "HELLO_TPROXY_TCP_12345"
+    print(f"\n[*] Testing {name} TCP to {test_ip}:{TEST_PORT} ...")
+    payload = f"HELLO_TPROXY_{name.upper()}_TCP_12345"
     try:
         result = subprocess.run(
-            ["bash", "-c", f"echo '{payload}' | socat -t 3 - TCP:{TEST_IP}:{TEST_PORT}"],
+            ["bash", "-c", f"echo '{payload}' | socat -t 3 - {socat_target}"],
             capture_output=True, text=True, timeout=10,
         )
         stdout = result.stdout.strip()
         if payload == stdout:
-            print(f"  [PASS] TCP: echo matched ({stdout})")
+            print(f"  [PASS] {name} TCP: echo matched ({stdout})")
             return True
         else:
-            print(f"  [FAIL] TCP: expected '{payload}', got '{stdout[:200]}'")
+            print(f"  [FAIL] {name} TCP: expected '{payload}', got '{stdout[:200]}'")
             return False
     except subprocess.TimeoutExpired:
-        print("  [FAIL] TCP: connection timed out")
+        print(f"  [FAIL] {name} TCP: connection timed out")
         return False
     except Exception as e:
-        print(f"  [FAIL] TCP: {e}")
+        print(f"  [FAIL] {name} TCP: {e}")
         return False
 
 
-def test_udp():
+def test_udp(name, test_ip, socat_target):
     """Test UDP connectivity through TPROXY using socat."""
-    print(f"\n[*] Testing UDP to {TEST_IP}:{TEST_PORT} ...")
-    payload = "HELLO_TPROXY_UDP_67890"
+    print(f"\n[*] Testing {name} UDP to {test_ip}:{TEST_PORT} ...")
+    payload = f"HELLO_TPROXY_{name.upper()}_UDP_67890"
     try:
         result = subprocess.run(
-            ["bash", "-c", f"echo '{payload}' | socat -t 3 - UDP:{TEST_IP}:{TEST_PORT}"],
+            ["bash", "-c", f"echo '{payload}' | socat -t 3 - {socat_target}"],
             capture_output=True, text=True, timeout=10,
         )
         stdout = result.stdout.strip()
         if payload in stdout:
-            print(f"  [PASS] UDP: echo matched ({stdout})")
+            print(f"  [PASS] {name} UDP: echo matched ({stdout})")
             return True
         else:
-            print(f"  [FAIL] UDP: unexpected response: {stdout[:200]}")
+            print(f"  [FAIL] {name} UDP: unexpected response: {stdout[:200]}")
             return False
     except subprocess.TimeoutExpired:
-        print("  [FAIL] UDP: connection timed out")
+        print(f"  [FAIL] {name} UDP: connection timed out")
         return False
     except Exception as e:
-        print(f"  [FAIL] UDP: {e}")
+        print(f"  [FAIL] {name} UDP: {e}")
         return False
 
 
@@ -237,8 +265,10 @@ def main():
     proc = start_shadowquic()
 
     try:
-        results["tcp"] = test_tcp()
-        results["udp"] = test_udp()
+        results["tcp_ipv4"] = test_tcp("ipv4", TEST_IP_V4, f"TCP:{TEST_IP_V4}:{TEST_PORT}")
+        results["udp_ipv4"] = test_udp("ipv4", TEST_IP_V4, f"UDP:{TEST_IP_V4}:{TEST_PORT}")
+        results["tcp_ipv6"] = test_tcp("ipv6", f"[{TEST_IP_V6}]", f"TCP6:[{TEST_IP_V6}]:{TEST_PORT}")
+        results["udp_ipv6"] = test_udp("ipv6", f"[{TEST_IP_V6}]", f"UDP6:[{TEST_IP_V6}]:{TEST_PORT}")
         results["logs"] = check_logs()
     finally:
         print("\n[*] Cleaning up...")

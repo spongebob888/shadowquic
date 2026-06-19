@@ -10,11 +10,13 @@ import sys
 import os
 
 WORKSPACE = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+MUSL_TARGET = "x86_64-unknown-linux-musl"
+MUSL_BINARY = f"/app/target/{MUSL_TARGET}/release/shadowquic"
 
 # 1. Build locally (not in Docker) with tproxy feature
-print("[*] Building shadowquic with --features tproxy ...")
+print(f"[*] Building shadowquic with --features tproxy for {MUSL_TARGET} ...")
 result = sp.run(
-    ["cargo", "build", "--release", "--features", "tproxy"],
+    ["cargo", "build", "--release", "--features", "tproxy", "--target", MUSL_TARGET],
     cwd=WORKSPACE,
     capture_output=True,
     text=True,
@@ -29,16 +31,21 @@ print("[+] Build succeeded")
 
 # 2. Run Docker test
 print("[*] Running TPROXY test in Docker ...")
+docker_args = [
+    "docker", "run", "--rm", "--cap-add=NET_ADMIN",
+    "--sysctl", "net.ipv6.conf.all.disable_ipv6=0",
+    "--sysctl", "net.ipv6.conf.default.disable_ipv6=0",
+]
+docker_args.extend([
+    "-v", f"{WORKSPACE}:/app",
+    "ubuntu:22.04",
+    "bash", "-c",
+    "apt-get update -qq && "
+    "apt-get install -y -qq python3 socat iproute2 iptables 2>&1 | tail -1 && "
+    f"SHADOWQUIC_BINARY={MUSL_BINARY} python3 /app/scripts/test_tproxy.py",
+])
 result = sp.run(
-    [
-        "docker", "run", "--rm", "--cap-add=NET_ADMIN",
-        "-v", f"{WORKSPACE}:/app",
-        "ubuntu:22.04",
-        "bash", "-c",
-        "apt-get update -qq && "
-        "apt-get install -y -qq python3 socat iproute2 iptables 2>&1 | tail -1 && "
-        "python3 /app/scripts/test_tproxy.py",
-    ],
+    docker_args,
     capture_output=True,
     text=True,
     timeout=120,
