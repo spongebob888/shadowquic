@@ -28,6 +28,9 @@ jobs:
             rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
       - run: |
           nix develop --command \
+            rustup update ${{ matrix.toolchain }} && rustup target add x86_64-unknown-linux-musl
+      - run: |
+          nix develop --command \
             rustup component add rustfmt
           nix develop --command \
             cargo fmt --check --verbose
