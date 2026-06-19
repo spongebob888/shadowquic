@@ -1,13 +1,13 @@
 #set par(justify: true)
 
-#let protocol-table(columns, ..cells) = {
+#let protocol-table(columns, header-rows: (0,), ..cells) = {
   let cell-list = cells.pos()
   let cols-count = if type(columns) == array { columns.len() } else { columns }
   let styled-cells = cell-list
     .enumerate()
     .map(((i, cell)) => {
       let row = calc.floor(i / cols-count)
-      if row == 0 {
+      if row in header-rows {
         cell
       } else {
         text(size: 0.85em, cell)
@@ -16,7 +16,7 @@
   table(
     columns: columns,
     align: center + horizon,
-    fill: (col, row) => if row == 0 { rgb("#f0f4f8") } else { none },
+    fill: (col, row) => if row in header-rows { rgb("#f0f4f8") } else { none },
     stroke: 0.5pt + rgb("#d0d7de"),
     ..styled-cells
   )
@@ -303,10 +303,39 @@ Namely for each unistream, CONTEXT ID is sent only once right after this stream 
 If datagrams are carried by QUIC datagram extension, the payload is sent directly without length field (only with `Context ID`).
 
 
-== Custom commands
+= SunnyQUIC
+*SunnyQUIC* is the twin protocol of *ShadowQUIC*. It is nearly the same as *ShadowQUIC*. The only
+difference is that *SunnyQUIC* gives up JLS layer and provide a QUIC layer authentication.
+The underlying connection is native QUIC connection.
+
+== Authentication
+SunnyQUIC adds a new _authentication_ command. The command is carried by the bistream.
+
+#protocol-table(
+  (1fr, 3fr),
+  [*`CMD`*],
+  [*`AUTH_HASH`*],
+  [1],
+  [64],
+)
+The `CMD` field is `0x5` for authentication command, The `AUTH_HASH` field is truncated 64byte hash:
+`SHA256(username:password)[0..64]`
+
+For client, the authentication command can be issued in parallel with other proxy commands.
+
+For server, it should block any commands until authentication is finished. If authentication fails, server should terminate the connection.
+
+
+= Custom commands
 In order to provide flexiblity, we define `0xFF` to be _customized extensions_. Users can define their own subcommand to extend protocol usage.
 
-Here is an example of subcommand `Conn`. `Conn` subcommand can accept one byte parameter, Here 0x0 means GetConnStats. The stream will return QUIC connection stats in this bistream.
+== Subcommand `OPCODE`
+Here is the list of supported subcommands
+- `Conn(0x1)`: connection subcommand, used to deal with per connection operation.
+- `User(0x2)`: user managerment subcommand, used to deal with per user operation.
+
+=== `Conn` Subcommand
+`Conn` subcommand can accept one byte parameter, Here 0x0 means GetConnStats. The stream will return QUIC connection stats in this bistream.
 
 #protocol-table(
   (1fr, 1fr, 1fr),
@@ -362,37 +391,178 @@ Here is the serialized bytes stream of response ```rust Ok(ConnStats)```
   [8],
   [2],
 )
+=== `User` Subcommand
+`User` subcommand is used for runtime user management and per-user
+statistics. The subcommand is only available to authenticated users whose
+username starts with `admin`.
 
+All `User` requests use the following prefix:
 
+#protocol-table(
+  (1fr, 1fr, 1fr, 3fr),
+  [*`CMD(0xff)`*],
+  [*`OPCODE(0x2)`*],
+  [*`USER OPCODE`*],
+  [*`PAYLOAD`*],
+  [1],
+  [8],
+  [1],
+  [Variable],
+)
 
-=== Subcommand `OPCODE`
-Here is the list of supported subcommands
-- `Conn(0x1)`: connection subcommand, used to deal with per connection operation.
+The supported `USER OPCODE` values are:
 
+#protocol-table(
+  (1fr, 2fr, 3fr, 3fr),
+  [*Opcode*],
+  [*Name*],
+  [*Payload*],
+  [*Response*],
+  [`0x0`],
+  [`AddUser`],
+  [`AuthUser`],
+  [`Result<(), SQExtError>`],
+  [`0x1`],
+  [`RemoveUser`],
+  [`UserName`],
+  [`Result<(), SQExtError>`],
+  [`0x2`],
+  [`ListUsers`],
+  [Empty],
+  [`Result<Vec<UserName>, SQExtError>`],
+  [`0x3`],
+  [`GetUserStats`],
+  [`UserName`],
+  [`Result<UserStats, SQExtError>`],
+  [`0x4`],
+  [`KillUserConn`],
+  [`UserName`],
+  [`Result<(), SQExtError>`],
+  [`0x5`],
+  [`GetAllStats`],
+  [Empty],
+  [`Result<Vec<UserStats>, SQExtError>`],
+)
 
+`AuthUser` contains two strings:
 
+#protocol-table(
+  (2fr, 3fr, 2fr, 3fr),
+  [*`USERNAME_LEN`*],
+  [*`USERNAME`*],
+  [*`PASSWORD_LEN`*],
+  [*`PASSWORD`*],
+  [4],
+  [Variable],
+  [4],
+  [Variable],
+)
 
-
-
-
-= SunnyQUIC
-*SunnyQUIC* is the twin protocol of *ShadowQUIC*. It is nearly the same as *ShadowQUIC*. The only
-difference is that *SunnyQUIC* gives up JLS layer and provide a QUIC layer authentication.
-The underlying connection is native QUIC connection.
-
-== Authentication
-SunnyQUIC adds a new _authentication_ command. The command is carried by the bistream.
+`UserName` is encoded as a string:
 
 #protocol-table(
   (1fr, 3fr),
-  [*`CMD`*],
-  [*`AUTH_HASH`*],
-  [1],
-  [64],
+  [*`LEN`*],
+  [*`UTF-8 BYTES`*],
+  [4],
+  [Variable],
 )
-The `CMD` field is `0x5` for authentication command, The `AUTH_HASH` field is truncated 64byte hash:
-`SHA256(username:password)[0..64]`
 
-For client, the authentication command can be issued in parallel with other proxy commands.
+`Vec<T>` is encoded as a 4 byte item count followed by each encoded item:
 
-For server, it should block any commands until authentication is finished. If authentication fails, server should terminate the connection.
+#protocol-table(
+  (1fr, 2fr, 2fr, 1fr),
+  [*`COUNT`*],
+  [*`ITEM 0`*],
+  [*`ITEM 1`*],
+  [*`...`*],
+  [4],
+  [Variable],
+  [Variable],
+  [...],
+)
+
+The response uses the same one byte `Result` tag as `Conn` subcommand:
+`Ok` is `0x0` and `Err` is `0x1`. `Result<(), SQExtError>` successful
+response therefore contains only one byte `0x0`.
+
+`SQExtError` is encoded as:
+
+#protocol-table(
+  (1fr, 2fr, 3fr),
+  [*Tag*],
+  [*Name*],
+  [*Payload*],
+  [`0x0`],
+  [`NotAvailable`],
+  [Empty],
+  [`0x1`],
+  [`PermissionDenied`],
+  [Empty],
+  [`0x2`],
+  [`NotFound`],
+  [Empty],
+  [`0xff`],
+  [`Other`],
+  [`String`],
+)
+
+When the caller is not an admin user, the server returns
+`Err(PermissionDenied)`. When the server has no user manager implementation,
+the server returns `Err(NotAvailable)`. Removing, querying stats for, or
+killing connections of a missing user returns `Err(NotFound)`.
+
+`UserStats` is a size-tagged struct. A 4 byte payload length is prepended for
+future compatibility. The current payload length is `56 + username byte length`.
+
+#protocol-table(
+  (1fr, 1fr, 1fr, 1fr, 1fr, 1fr, 1fr, 1fr,1fr),
+  [*`LEN`*],
+  [*`tcp_sent`*],
+  [*`tcp_recv`*],
+  [*`udp_sent`*],
+  [*`udp_recv`*],
+  [*`tcp_conns`*],
+  [*`udp_conns`*],
+  [*`conn_num`*],
+  [*`username`*],
+  [4],
+  [8],
+  [8],
+  [8],
+  [8],
+  [8],
+  [8],
+  [4],
+  [String MSG LEN],
+)
+
+Here is the serialized bytes stream of response
+```rust Ok(UserStats)```:
+
+#protocol-table(
+  (1fr, 1fr, 1fr, 1fr, 1fr),
+  header-rows: (0, 2),
+  [*`Ok(0x0)`*],
+  [*`LEN`*],
+  [*`tcp_sent`*],
+  [*`tcp_recv`*],
+  [*`udp_sent`*],
+  [1],
+  [4],
+  [8],
+  [8],
+  [8],
+  [*`udp_recv`*],
+  [*`tcp_conns`*],
+  [*`udp_conns`*],
+  [*`conn_num`*],
+  [*`username`*],
+  [8],
+  [8],
+  [8],
+  [4],
+  [String MSG LEN],
+)
+
+All integers and `f64` values are encoded in network byte order.
