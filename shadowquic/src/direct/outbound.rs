@@ -6,7 +6,6 @@ use std::{
 
 use bytes::BytesMut;
 use tokio::{
-    io::AsyncWriteExt,
     net::{TcpStream, lookup_host},
     sync::Mutex,
 };
@@ -48,26 +47,6 @@ impl Outbound for DirectOut {
                     let _ = upstream.set_nodelay(true);
                     let (_, _) = tokio::io::copy_bidirectional_with_sizes(
                         &mut tcp_session.stream,
-                        &mut upstream,
-                        1024 * 16,
-                        1024 * 16,
-                    )
-                    .await?;
-                }
-
-                crate::ProxyRequest::Http(mut http_session) => {
-                    trace!("direct http forward to {}", http_session.dst);
-                    let dst = http_session.dst.to_socket_addrs()?;
-                    let dst = apply_dns_strategy(dst, &dns_strategy)
-                        .ok_or(SError::DomainResolveFailed(http_session.dst.to_string()))?;
-                    trace!("resolved to {}", dst);
-
-                    let mut upstream = TcpStream::connect(dst).await?;
-                    upstream.write_all(&http_session.first_packet).await?;
-                    upstream.flush().await?;
-
-                    let (_, _) = tokio::io::copy_bidirectional_with_sizes(
-                        &mut http_session.stream,
                         &mut upstream,
                         1024 * 16,
                         1024 * 16,

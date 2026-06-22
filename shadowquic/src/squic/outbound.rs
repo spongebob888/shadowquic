@@ -3,9 +3,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncReadExt;
 use tracing::Instrument;
-use tracing::{Level, debug, error, info, span, trace};
+use tracing::{Level, error, info, span, trace};
 
 use crate::config::AuthUser;
 use crate::error::SResult;
@@ -54,48 +54,6 @@ pub async fn handle_request<C: QuicConnection>(
                 info!(
                     "request:{} finished, upload:{}bytes,download:{}bytes",
                     tcp_session.dst, u.1, u.0
-                );
-            }
-
-            crate::ProxyRequest::Http(mut http_session) => {
-                match &http_session.dst.addr {
-                    crate::msgs::socks5::AddrOrDomain::V4(ip) => {
-                        trace!(
-                            "http dst is ipv4: {}:{}",
-                            std::net::Ipv4Addr::from(*ip),
-                            http_session.dst.port
-                        );
-                    }
-                    crate::msgs::socks5::AddrOrDomain::V6(ip) => {
-                        trace!(
-                            "http dst is ipv6: [{}]:{}",
-                            std::net::Ipv6Addr::from(*ip),
-                            http_session.dst.port
-                        );
-                    }
-                    crate::msgs::socks5::AddrOrDomain::Domain(host) => {
-                        let host =
-                            std::str::from_utf8(&host.contents).unwrap_or("<invalid-utf8-domain>");
-                        trace!("http dst is domain: {}:{}", host, http_session.dst.port);
-                    }
-                }
-
-                debug!("bistream opened for http dst:{}", http_session.dst.clone());
-
-                let req = SQReq::SQConnect(http_session.dst.clone());
-                req.encode(&mut send).await?;
-                send.write_all(&http_session.first_packet).await?;
-                send.flush().await?;
-
-                let u = tokio::io::copy_bidirectional(
-                    &mut Unsplit { s: send, r: recv },
-                    &mut http_session.stream,
-                )
-                .await?;
-
-                info!(
-                    "http request:{} finished, upload:{}bytes,download:{}bytes",
-                    http_session.dst, u.1, u.0
                 );
             }
 

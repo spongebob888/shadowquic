@@ -34,7 +34,6 @@ pub use msgs::SEncode;
 pub enum ProxyRequest<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend> {
     Tcp(TcpSession<T>),
     Udp(UdpSession<I, O>),
-    Http(HttpForwardSession),
 }
 /// Udp socket only use immutable reference to self
 /// So it can be safely wrapped by Arc and cloned to work in duplex way.
@@ -71,14 +70,6 @@ pub struct UserContext {
     pub username: UserName,
     pub conn_handle: Weak<dyn Stoppable>,
     pub conn_id: u64,
-}
-
-pub struct HttpForwardSession {
-    pub stream: Box<dyn TcpTrait>,
-    pub dst: SocksAddr,
-    pub first_packet: Vec<u8>,
-    #[allow(dead_code)]
-    user_context: Option<UserContext>,
 }
 
 pub type AnyTcp = Box<dyn TcpTrait>;

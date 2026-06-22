@@ -5,7 +5,7 @@ use base64::engine::general_purpose::STANDARD;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{
-    HttpForwardSession, ProxyRequest, TcpSession, TcpTrait,
+    ProxyRequest, TcpSession, TcpTrait,
     error::SError,
     msgs::socks5::{AddrOrDomain, SocksAddr},
     utils::replay_stream::ReplayStream,
@@ -17,7 +17,7 @@ pub struct ProxyBasicAuth {
     pub password: String,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct HttpProxyServer {
     users: Vec<ProxyBasicAuth>,
 }
@@ -84,10 +84,11 @@ impl HttpProxyServer {
         let mut first_packet = rewritten_header;
         first_packet.extend_from_slice(&remain);
 
-        Ok(ProxyRequest::Http(HttpForwardSession {
+        let stream = ReplayStream::new(first_packet, stream);
+
+        Ok(ProxyRequest::Tcp(TcpSession {
             stream: Box::new(stream),
             dst,
-            first_packet,
             user_context: None,
         }))
     }
