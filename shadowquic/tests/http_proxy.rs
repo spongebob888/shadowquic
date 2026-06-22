@@ -1,5 +1,7 @@
 use std::net::SocketAddr;
+use std::sync::Arc;
 
+use base64::Engine;
 use shadowquic::Manager;
 use shadowquic::config::{AuthUser, MixedServerCfg, SocketOpt, SocksClientCfg, SocksServerCfg};
 use shadowquic::direct::outbound::DirectOut;
@@ -9,6 +11,7 @@ use shadowquic::socks::outbound::SocksClient;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Barrier;
 use tokio::time::Duration;
 
 use tracing::{debug, info, trace};
@@ -327,4 +330,211 @@ async fn read_to_end(stream: &mut TcpStream) -> Vec<u8> {
     }
 
     out
+}
+
+#[tokio::test]
+async fn test_http_auth_required() {
+    init_tracing();
+
+    let target_addr = spawn_http_target().await;
+    let entry_port = 11083;
+    let upstream_port = 11097;
+
+    let mixed_server = MixedServer::new(MixedServerCfg {
+        bind_addr: format!("127.0.0.1:{}", entry_port).parse().unwrap(),
+        users: vec![AuthUser {
+            username: "myuser".into(),
+            password: "mypass".into(),
+        }],
+    })
+    .await
+    .unwrap();
+
+    let direct = DirectOut::default();
+
+    let manager = Manager {
+        inbound: Box::new(mixed_server),
+        outbound: Box::new(direct),
+    };
+
+    tokio::spawn(manager.run());
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Without auth -> 407
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", entry_port))
+        .await
+        .unwrap();
+    let req = format!(
+        "GET http://{}/hello HTTP/1.1\r\nHost: {}\r\n\r\n",
+        target_addr, target_addr
+    );
+    stream.write_all(req.as_bytes()).await.unwrap();
+    stream.flush().await.unwrap();
+    let resp = read_to_end(&mut stream).await;
+    let text = String::from_utf8_lossy(&resp);
+    assert!(
+        text.starts_with("HTTP/1.1 407"),
+        "expected 407 without auth, got: {}",
+        text
+    );
+
+    // With correct auth -> 200
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", entry_port))
+        .await
+        .unwrap();
+    let creds = base64::engine::general_purpose::STANDARD.encode(b"myuser:mypass");
+    let req = format!(
+        "GET http://{}/hello HTTP/1.1\r\n\
+         Host: {}\r\n\
+         Proxy-Authorization: Basic {}\r\n\
+         \r\n",
+        target_addr, target_addr, creds
+    );
+    stream.write_all(req.as_bytes()).await.unwrap();
+    stream.flush().await.unwrap();
+    let resp = read_to_end(&mut stream).await;
+    let text = String::from_utf8_lossy(&resp);
+    assert!(
+        text.starts_with("HTTP/1.1 200 OK"),
+        "expected 200 with auth, got: {}",
+        text
+    );
+
+    // With wrong auth -> 407
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", entry_port))
+        .await
+        .unwrap();
+    let bad_creds = base64::engine::general_purpose::STANDARD.encode(b"myuser:wrong");
+    let req = format!(
+        "GET http://{}/hello HTTP/1.1\r\n\
+         Host: {}\r\n\
+         Proxy-Authorization: Basic {}\r\n\
+         \r\n",
+        target_addr, target_addr, bad_creds
+    );
+    stream.write_all(req.as_bytes()).await.unwrap();
+    stream.flush().await.unwrap();
+    let resp = read_to_end(&mut stream).await;
+    let text = String::from_utf8_lossy(&resp);
+    assert!(
+        text.starts_with("HTTP/1.1 407"),
+        "expected 407 with wrong auth, got: {}",
+        text
+    );
+}
+
+#[tokio::test]
+async fn test_mixed_concurrent_connections() {
+    init_tracing();
+
+    let target_addr = spawn_http_target().await;
+    let entry_port = 11084;
+    let upstream_port = 11098;
+
+    spawn_mixed_proxy_chain(entry_port, upstream_port).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let barrier = Arc::new(Barrier::new(5));
+    let mut handles = Vec::new();
+
+    for i in 0..5 {
+        let barrier = barrier.clone();
+        let target = target_addr;
+        handles.push(tokio::spawn(async move {
+            let mut stream = TcpStream::connect(format!("127.0.0.1:{}", entry_port))
+                .await
+                .unwrap();
+
+            barrier.wait().await;
+
+            let req = format!(
+                "GET http://{}/concurrent?i={} HTTP/1.1\r\n\
+                 Host: {}\r\n\
+                 \r\n",
+                target, i, target
+            );
+            stream.write_all(req.as_bytes()).await.unwrap();
+            stream.flush().await.unwrap();
+
+            let resp = read_to_end(&mut stream).await;
+            let text = String::from_utf8_lossy(&resp);
+            assert!(
+                text.starts_with("HTTP/1.1 200 OK"),
+                "concurrent request {} failed: {}",
+                i,
+                text
+            );
+            assert!(
+                text.contains(&format!("X-Path: /concurrent?i={}", i)),
+                "response {} should contain path, got: {}",
+                i,
+                text
+            );
+        }));
+    }
+
+    for h in handles {
+        h.await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn test_mixed_socks5_and_http_interleaved() {
+    init_tracing();
+
+    let echo_addr = spawn_echo_target().await;
+    let http_target = spawn_http_target().await;
+    let entry_port = 11085;
+    let upstream_port = 11099;
+
+    spawn_mixed_proxy_chain(entry_port, upstream_port).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // HTTP request
+    let mut http_stream = TcpStream::connect(format!("127.0.0.1:{}", entry_port))
+        .await
+        .unwrap();
+    let req = format!(
+        "GET http://{}/mixed HTTP/1.1\r\nHost: {}\r\n\r\n",
+        http_target, http_target
+    );
+    http_stream.write_all(req.as_bytes()).await.unwrap();
+    http_stream.flush().await.unwrap();
+
+    // CONNECT tunnel
+    let mut conn_stream = TcpStream::connect(format!("127.0.0.1:{}", entry_port))
+        .await
+        .unwrap();
+    let req = format!(
+        "CONNECT {} HTTP/1.1\r\nHost: {}\r\n\r\n",
+        echo_addr, echo_addr
+    );
+    conn_stream.write_all(req.as_bytes()).await.unwrap();
+    conn_stream.flush().await.unwrap();
+
+    let mut head = vec![0u8; 1024];
+    let n = conn_stream.read(&mut head).await.unwrap();
+    let text = String::from_utf8_lossy(&head[..n]);
+    assert!(text.starts_with("HTTP/1.1 200 Connection Established"));
+
+    let payload = b"interleaved test data";
+    conn_stream.write_all(payload).await.unwrap();
+    conn_stream.flush().await.unwrap();
+    let mut recv = vec![0u8; payload.len()];
+    conn_stream.read_exact(&mut recv).await.unwrap();
+    assert_eq!(&recv, payload);
+
+    // Read HTTP response
+    let resp = read_to_end(&mut http_stream).await;
+    let text = String::from_utf8_lossy(&resp);
+    assert!(
+        text.starts_with("HTTP/1.1 200 OK"),
+        "HTTP request failed: {}",
+        text
+    );
+    assert!(
+        text.contains("X-Path: /mixed"),
+        "response should contain path, got: {}",
+        text
+    );
 }
