@@ -4,11 +4,12 @@ use shadowquic_macros::{SDecode, SEncode};
 use std::net::{IpAddr, SocketAddr};
 use tracing::{Level, warn};
 
+#[cfg(feature = "mixed")]
+use crate::mixed::inbound::MixedServer;
 use crate::{
     Inbound, Manager, Outbound,
     direct::outbound::DirectOut,
     error::SError,
-    mixed::inbound::MixedServer,
     shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
     socks::{inbound::SocksServer, outbound::SocksClient},
     sunnyquic::{inbound::SunnyQuicServer, outbound::SunnyQuicClient},
@@ -69,6 +70,7 @@ impl Config {
 #[serde(tag = "type")]
 pub enum InboundCfg {
     Socks(SocksServerCfg),
+    #[cfg(feature = "mixed")]
     Mixed(MixedServerCfg),
     #[serde(rename = "shadowquic")]
     ShadowQuic(ShadowQuicServerCfg),
@@ -82,6 +84,7 @@ impl InboundCfg {
     async fn build_inbound(self) -> Result<Box<dyn Inbound>, SError> {
         let r: Box<dyn Inbound> = match self {
             InboundCfg::Socks(cfg) => Box::new(SocksServer::new(cfg).await?),
+            #[cfg(feature = "mixed")]
             InboundCfg::Mixed(cfg) => Box::new(MixedServer::new(cfg).await?),
             InboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicServer::new(cfg).await?),
             InboundCfg::SunnyQuic(cfg) => Box::new(SunnyQuicServer::new(cfg).await?),
@@ -153,6 +156,7 @@ pub struct SocksServerCfg {
 /// type: mixed
 /// bind-addr: "0.0.0.0:1080"
 /// ```
+#[cfg(feature = "mixed")]
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct MixedServerCfg {

@@ -9,8 +9,9 @@ description = { workspace = true }
 license = { workspace = true}
 readme = { workspace = true}
 [features]
-default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy"]
+default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", "mixed"]
 statistics = []
+mixed = []
 ring = [
     "dep:ring",
     "quinn?/rustls-ring",

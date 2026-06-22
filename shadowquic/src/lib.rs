@@ -14,7 +14,9 @@ use tracing::error;
 pub mod config;
 pub mod direct;
 pub mod error;
+#[cfg(feature = "mixed")]
 pub mod http;
+#[cfg(feature = "mixed")]
 pub mod mixed;
 pub mod msgs;
 mod observe;
