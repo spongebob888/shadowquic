@@ -243,10 +243,15 @@ fn rewrite_forward_request(header: &[u8]) -> Result<(SocksAddr, Vec<u8>), SError
     let mut out = Vec::with_capacity(header.len() + 64);
     out.extend_from_slice(format!("{method} {} {version}\r\n", parsed.path_and_query).as_bytes());
 
-    let host_header = if parsed.port == 80 {
+    let is_ipv6 = parsed.host.parse::<std::net::Ipv6Addr>().is_ok();
+    let host_header = if is_ipv6 {
+        if parsed.port == 80 {
+            format!("[{}]", parsed.host)
+        } else {
+            format!("[{}]:{}", parsed.host, parsed.port)
+        }
+    } else if parsed.port == 80 {
         parsed.host.clone()
-    } else if parsed.host.contains(':') {
-        format!("[{}]:{}", parsed.host, parsed.port)
     } else {
         format!("{}:{}", parsed.host, parsed.port)
     };
