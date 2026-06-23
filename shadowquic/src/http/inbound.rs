@@ -135,7 +135,8 @@ fn check_proxy_basic_auth(text: &str, users: &[ProxyBasicAuth]) -> bool {
         return false;
     };
 
-    let Some(encoded) = value.strip_prefix("Basic ") else {
+    let value_lower = value.to_ascii_lowercase();
+    let Some(encoded) = value_lower.strip_prefix("basic ").map(|_| &value[6..]) else {
         return false;
     };
 
@@ -351,6 +352,76 @@ fn parse_absolute_http_uri(target: &str) -> Result<ParsedHttpUri, SError> {
         port,
         path_and_query: path_and_query.to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_users() -> Vec<ProxyBasicAuth> {
+        vec![ProxyBasicAuth {
+            username: "myuser".into(),
+            password: "mypass".into(),
+        }]
+    }
+
+    fn make_request(auth_header: &str) -> String {
+        format!(
+            "GET http://example.com/ HTTP/1.1\r\n\
+             Host: example.com\r\n\
+             {}\r\n\
+             \r\n",
+            auth_header
+        )
+    }
+
+    #[test]
+    fn basic_auth_standard_case() {
+        let creds = STANDARD.encode(b"myuser:mypass");
+        let req = make_request(&format!("Proxy-Authorization: Basic {}", creds));
+        assert!(check_proxy_basic_auth(&req, &make_users()));
+    }
+
+    #[test]
+    fn basic_auth_lowercase() {
+        let creds = STANDARD.encode(b"myuser:mypass");
+        let req = make_request(&format!("Proxy-Authorization: basic {}", creds));
+        assert!(check_proxy_basic_auth(&req, &make_users()));
+    }
+
+    #[test]
+    fn basic_auth_uppercase() {
+        let creds = STANDARD.encode(b"myuser:mypass");
+        let req = make_request(&format!("Proxy-Authorization: BASIC {}", creds));
+        assert!(check_proxy_basic_auth(&req, &make_users()));
+    }
+
+    #[test]
+    fn basic_auth_mixed_case() {
+        let creds = STANDARD.encode(b"myuser:mypass");
+        let req = make_request(&format!("Proxy-Authorization: bAsIc {}", creds));
+        assert!(check_proxy_basic_auth(&req, &make_users()));
+    }
+
+    #[test]
+    fn basic_auth_wrong_credentials() {
+        let creds = STANDARD.encode(b"myuser:wrong");
+        let req = make_request(&format!("Proxy-Authorization: Basic {}", creds));
+        assert!(!check_proxy_basic_auth(&req, &make_users()));
+    }
+
+    #[test]
+    fn basic_auth_no_header() {
+        let req = make_request("X-Other: value");
+        assert!(!check_proxy_basic_auth(&req, &make_users()));
+    }
+
+    #[test]
+    fn basic_auth_unsupported_scheme() {
+        let creds = STANDARD.encode(b"myuser:mypass");
+        let req = make_request(&format!("Proxy-Authorization: Bearer {}", creds));
+        assert!(!check_proxy_basic_auth(&req, &make_users()));
+    }
 }
 
 fn make_socks_addr(host: &str, port: u16) -> Result<SocksAddr, SError> {
