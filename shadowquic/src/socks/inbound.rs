@@ -71,7 +71,7 @@ impl SocksServer {
     }
 }
 
-// 公开的认证函数（独立）
+// Public authentication helper (standalone)
 pub async fn authenticate<S>(users: Arc<Vec<AuthUser>>, mut stream: S) -> Result<S, SError>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
@@ -165,7 +165,7 @@ where
     Ok((s, req, socket))
 }
 
-// 处理单个 TCP 连接的任务（上游风格）
+// Handle a single TCP connection task (upstream style)
 async fn handle_tcp(
     users: Arc<Vec<AuthUser>>,
     stream: TcpStream,
