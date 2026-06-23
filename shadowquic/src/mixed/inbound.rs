@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use socket2::{Domain, Protocol, Socket, Type};
@@ -35,8 +37,8 @@ impl MixedServer {
 
 async fn handle_connection(
     mut stream: TcpStream,
-    http: HttpProxyServer,
-    users: Vec<AuthUser>,
+    http: Arc<HttpProxyServer>,
+    users: Arc<Vec<AuthUser>>,
     sender: Sender<ProxyRequest>,
 ) -> SResult<()> {
     use tokio::io::AsyncReadExt;
@@ -110,8 +112,8 @@ impl Inbound for MixedServer {
             })
             .collect();
 
-        let http = HttpProxyServer::with_users(http_users);
-        let users = self.cfg.users.clone();
+        let http = Arc::new(HttpProxyServer::with_users(http_users));
+        let users = Arc::new(self.cfg.users.clone());
         let req_send = self.request_sender.clone();
 
         let fut = async move {
