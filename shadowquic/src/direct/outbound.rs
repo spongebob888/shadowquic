@@ -33,6 +33,7 @@ impl Outbound for DirectOut {
     ) -> anyhow::Result<(), crate::error::SError> {
         let dns_strategy = self.cfg.dns_strategy.clone();
         let self_clone = self.clone();
+
         let fut = async move {
             match req {
                 crate::ProxyRequest::Tcp(mut tcp_session) => {
@@ -41,6 +42,7 @@ impl Outbound for DirectOut {
                     let dst = apply_dns_strategy(dst, &dns_strategy)
                         .ok_or(SError::DomainResolveFailed(tcp_session.dst.to_string()))?;
                     trace!("resolved to {}", dst);
+
                     let mut upstream = TcpStream::connect(dst).await?;
                     let _ = upstream.set_nodelay(true);
                     let (_, _) = tokio::io::copy_bidirectional_with_sizes(
@@ -51,10 +53,12 @@ impl Outbound for DirectOut {
                     )
                     .await?;
                 }
+
                 crate::ProxyRequest::Udp(udp_session) => {
                     self_clone.handle_udp(udp_session).await?;
                 }
             }
+
             Ok(()) as Result<(), SError>
         };
         let span = info_span!("direct");

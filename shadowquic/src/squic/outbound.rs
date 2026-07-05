@@ -21,6 +21,7 @@ use crate::{
 };
 
 use super::{SQConn, inbound::Unsplit};
+
 /// Handling a proxy request and starting proxy task with given squic connection
 pub async fn handle_request<C: QuicConnection>(
     req: ProxyRequest,
@@ -40,7 +41,6 @@ pub async fn handle_request<C: QuicConnection>(
         match req {
             crate::ProxyRequest::Tcp(mut tcp_session) => {
                 info!(dst = %tcp_session.dst, "bistream opened for tcp");
-                //let _enter = _span.enter();
                 let req = SQReq::SQConnect(tcp_session.dst.clone());
                 req.encode(&mut send).await?;
                 trace!(dst = %tcp_session.dst, "tcp connect req header sent");
@@ -50,11 +50,13 @@ pub async fn handle_request<C: QuicConnection>(
                     &mut tcp_session.stream,
                 )
                 .await?;
+
                 info!(
                     "request:{} finished, upload:{}bytes,download:{}bytes",
                     tcp_session.dst, u.1, u.0
                 );
             }
+
             crate::ProxyRequest::Udp(udp_session) => {
                 info!(bind_addr = %udp_session.bind_addr, "bistream opened for udp association");
                 let req = if over_stream {
@@ -62,12 +64,13 @@ pub async fn handle_request<C: QuicConnection>(
                 } else {
                     SQReq::SQAssociatOverDatagram(udp_session.bind_addr.clone())
                 };
+
                 req.encode(&mut send).await?;
                 trace!("udp associate req header sent");
+
                 let fut2 = handle_udp_recv_ctrl(recv, udp_session.send.clone(), conn.clone());
                 let fut1 = handle_udp_send(send, udp_session.recv, conn, over_stream);
-                // control stream, in socks5 inbound, end of control stream
-                // means end of udp association.
+
                 let fut3 = async {
                     if udp_session.stream.is_none() {
                         return Ok(());
@@ -108,7 +111,6 @@ pub async fn connect_tcp<C: QuicConnection>(
     let (mut send, recv, _id) = conn.open_bi().await?;
 
     info!(dst = %dst, "bistream opened for tcp");
-    //let _enter = _span.enter();
     let req = SQReq::SQConnect(dst.clone());
     req.encode(&mut send).await?;
     trace!("tcp connect req header sent");
