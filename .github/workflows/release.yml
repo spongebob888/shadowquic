@@ -231,7 +231,7 @@ jobs:
             rustup target add ${TARGET}
           fi
           rm -f ~/.cargo/bin/cross*
-          cargo install cross --git https://github.com/cross-rs/cross
+          cargo +stable install cross --locked --version 0.2.5
         env:
           TARGET: ${{ matrix.target }}
 
