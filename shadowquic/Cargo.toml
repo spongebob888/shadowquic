@@ -52,7 +52,7 @@ quinn_proto = { package = "quinn-proto-jls", version = "0.3.6", default-features
 
 #brutal-core = { git = "https://github.com/hrimfaxi/brutal_quinn.git", branch = "master" }
 brutal-core = { version = "0.1.0" }
-rustls_jls = { package = "rustls-jls", version = "1.3.1", default-features = false, features = ["std"], optional = true}
+rustls_jls = { package = "rustls-jls", version = "1.3.3", default-features = false, features = ["std"], optional = true}
 
 rcgen = { version = "0.14", default-features = false, features = ["crypto"] }
 bytes = "1.11.0"
