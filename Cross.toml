@@ -9,3 +9,20 @@ image = "ghcr.io/cross-rs/mips64-unknown-linux-muslabi64:edge"
 
 [target.mips64el-unknown-linux-muslabi64]
 image = "ghcr.io/cross-rs/mips64el-unknown-linux-muslabi64:edge"
+
+# cross 0.2.5 has no built-in image for loongarch64; specify edge image explicitly
+[target.loongarch64-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/loongarch64-unknown-linux-gnu:edge"
+
+# Android edge images ship a newer NDK that includes libunwind, fixing -lunwind linker errors
+[target.aarch64-linux-android]
+image = "ghcr.io/cross-rs/aarch64-linux-android:edge"
+
+[target.armv7-linux-androideabi]
+image = "ghcr.io/cross-rs/armv7-linux-androideabi:edge"
+
+[target.i686-linux-android]
+image = "ghcr.io/cross-rs/i686-linux-android:edge"
+
+[target.x86_64-linux-android]
+image = "ghcr.io/cross-rs/x86_64-linux-android:edge"
