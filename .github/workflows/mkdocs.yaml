@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Rust (nightly for rustdoc JSON)
         uses: dtolnay/rust-toolchain@nightly
@@ -42,7 +42,7 @@ jobs:
           cache-dependency-glob: assets/sites/uv.lock
 
       - name: Install typst
-        uses: typst-community/setup-typst@v4
+        uses: typst-community/setup-typst@v5
 
       - name: Setup pages
         uses: actions/configure-pages@v6
