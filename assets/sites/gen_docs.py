@@ -31,8 +31,248 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SITE_ROOT = Path(__file__).resolve().parent
-DOCS_ROOT = SITE_ROOT / "docs"
 CONFIG_SRC_PREFIX = "shadowquic/src/config/"
+
+# ----------------------------------------------------------------------------
+# i18n: two complete sites, one per language
+# ----------------------------------------------------------------------------
+#
+# Zensical builds a single-language site per config file. For bilingual
+# support we generate two full doc trees (docs/en + docs/zh) and render each
+# into its own site via zensical.toml / zensical.zh.toml. Both configs carry
+# `extra.alternate` so the header shows a language switcher.
+#
+# The Chinese tree is produced by translating the English rustdoc doc
+# comments plus a set of UI labels (headings, "required"/"default" markers,
+# nav section names). Doc comments are keyed by exact string so untranslated
+# entries fall back to English rather than breaking the build.
+
+LANG_EN = "en"
+LANG_ZH = "zh"
+
+#: Which language this invocation renders. Set by `--lang` in main().
+LANG = LANG_EN
+
+
+def docs_root() -> Path:
+    """Per-language docs directory (docs/en or docs/zh)."""
+    return SITE_ROOT / "docs" / LANG
+
+
+def config_file() -> Path:
+    """Per-language Zensical config whose nav block we patch."""
+    return SITE_ROOT / "zensical.toml" if LANG == LANG_EN else SITE_ROOT / "zensical.zh.toml"
+
+
+# English rustdoc doc comment -> Chinese translation. Exact-match only.
+# Anything not listed here stays in English.
+ZH_DOCS: dict[str, str] = {
+    "0-RTT handshake.\nSet to true to enable zero rtt.\nEnabled by default":
+        "0-RTT 握手。\n设为 true 开启零往返（0-RTT）。\n默认开启",
+    "Alpn of tls, default is \\[\"h3\"\\], must have common element with server":
+        "TLS 的 ALPN，默认是 [\"h3\"]，必须与服务器有公共元素",
+    "Alpn of tls. Default is `[\"h3\"]`, must have common element with client":
+        "TLS 的 ALPN，默认是 [\"h3\"]，必须与客户端有公共元素",
+    "Android Only. the unix socket path for protecting android socket":
+        "仅 Android。用于保护 Android socket 的 Unix socket 路径",
+    "Binding address. e.g. `0.0.0.0:443`, `[::1]:443`":
+        "绑定地址。例如 `0.0.0.0:443`、`[::1]:443`",
+    "Brutal server configuration":
+        "Brutal 服务器配置",
+    "Certificate path for tls":
+        "TLS 证书路径",
+    "Congestion control, default to \"bbr\", supported: \"bbr\", \"new-reno\", \"cubic\"":
+        "拥塞控制算法，默认是 \"bbr\"，支持：\"bbr\"、\"new-reno\"、\"cubic\"",
+    "Enable MTU black-hole detection. When enabled, the current MTU is reset to `min_mtu` once\na black hole is detected (standard PLPMTUD behavior). When disabled (default), the\npreviously discovered MTU is kept after a black hole is detected.\nControls quinn-jls `MtuDiscoveryConfig::blackhole_reset_mtu`.\nOnly takes effect when `mtu_discovery` is enabled.\n\nIn high packet loss network, it's better to disable black hole detection to avoid unnecessary mtu reset.":
+        "启用 MTU 黑洞检测。启用时，一旦检测到黑洞，当前 MTU 会重置为 `min_mtu`（标准 PLPMTUD 行为）。停用时（默认），检测到黑洞后仍保留先前发现的 MTU。\n控制 quinn-jls 的 `MtuDiscoveryConfig::blackhole_reset_mtu`。\n仅在 `mtu_discovery` 启用时生效。\n\n在高丢包网络中，建议关闭黑洞检测以避免不必要的 MTU 重置。",
+    "Enable QUIC Generic Segmentation Offload (GSO).\nControls [`quinn::TransportConfig::enable_segmentation_offload`]. When supported, GSO reduces\nCPU usage for bulk sends; unsupported environments may see transient startup packet loss.\nEnabled by default":
+        "启用 QUIC 通用分段卸载（GSO）。\n控制 [`quinn::TransportConfig::enable_segmentation_offload`]。在支持时，GSO 能降低批量发送的 CPU 占用；不支持的環境可能出现启动阶段的瞬时丢包。\n默认开启",
+    "Enable auto MTU discovery, default to true\nFor stable udp network, it's better to disable it and set a proper initial mtu":
+        "启用自动 MTU 探测，默认开启。\n对于稳定的 UDP 网络，建议关闭它并设置合适的 initial-mtu",
+    "Initial mtu, must be larger than min mtu, at least to be 1200.\n1400 is recommended for high packet loss network. default to be 1300":
+        "初始 MTU，必须大于 min-mtu，至少为 1200。\n高丢包网络推荐 1400，默认 1300",
+    "Jls upstream address, e.g. `codepn.io:443`, `google.com:443`, `127.0.0.1:443`":
+        "JLS 上游地址，例如 `codepn.io:443`、`google.com:443`、`127.0.0.1:443`",
+    "Jls upstream configuration":
+        "JLS 上游配置",
+    "Jls upstream, camouflage server, must be address with port. e.g.: `codepn.io:443`,`google.com:443`,`127.0.0.1:443`":
+        "JLS 上游（伪装服务器），必须是带端口的地址。例如：`codepn.io:443`、`google.com:443`、`127.0.0.1:443`",
+    "Keep alive interval in milliseconds\n0 means disable keep alive, should be smaller than 30_000(idle time).\nDisabled by default.":
+        "保活间隔（毫秒）。\n0 表示关闭保活，应小于 30_000（空闲超时）。\n默认关闭。",
+    "Log level of shadowquic\nDefault level is info.":
+        "shadowquic 的日志级别。\n默认是 info。",
+    "Maximum number of paths for multipath quic, 0 for disabling multipath":
+        "多路径 QUIC 的最大路径数，0 表示关闭多路径",
+    "Maximum rate for JLS forwarding in unit of bps, default is disabled.":
+        "JLS 转发速率上限（单位 bps），默认不限制。",
+    "Minimum mtu, must be smaller than initial mtu, at least to be 1200.\n1400 is recommended for high packet loss network. default to be 1290":
+        "最小 MTU，必须小于 initial-mtu，至少为 1200。\n高丢包网络推荐 1400，默认 1290",
+    "Optional TLS 1.3 cipher suite preference.\nIf unset, use rustls/ring default preference order.":
+        "可选的 TLS 1.3 密码套件偏好。\n不设置时使用 rustls/ring 的默认优先级顺序。",
+    "Private key path for tls":
+        "TLS 私钥路径",
+    "SOCKS5 password, optional":
+        "SOCKS5 密码，可选",
+    "SOCKS5 username, optional":
+        "SOCKS5 用户名，可选",
+    "Server binding address. e.g. `0.0.0.0:1080`, `[::]:1080`":
+        "服务器绑定地址。例如 `0.0.0.0:1080`、`[::]:1080`",
+    "Server binding address. e.g. `0.0.0.0:1089`, `[::1]:1089`":
+        "服务器绑定地址。例如 `0.0.0.0:1089`、`[::1]:1089`",
+    "Server name of the certificates":
+        "证书的服务器名",
+    "Server name used to check client. Must be the same as client\nIf empty, server name will be parsed from jls_upstream\nIf not available, server name check will be skipped":
+        "用于校验客户端的服务器名，必须与客户端一致。\n为空时从 jls_upstream 解析服务器名。\n无法获得时跳过服务器名校验。",
+    "Server name, must be the same as the server jls_upstream\ndomain name":
+        "服务器名，必须与服务端 jls_upstream 的域名一致",
+    "Set to true to enable zero rtt, default to true":
+        "设为 true 开启零往返（0-RTT），默认 true",
+    "Socket options":
+        "Socket 选项",
+    "Socket options like bind interface and fwmark":
+        "Socket 选项，例如绑定接口和 fwmark",
+    "Socks5 username, optional\nLeft empty to disable authentication":
+        "SOCKS5 用户名，可选。留空表示关闭认证",
+    "Transfer udp over stream or over datagram.\nIf true, use quic stream to send UDP, otherwise use quic datagram\nextension, similar to native UDP in TUIC":
+        "UDP 走 QUIC 流（stream）还是数据报（datagram）。\n为 true 时用 QUIC 流发送 UDP，否则用 QUIC 数据报扩展，类似 TUIC 的原生 UDP",
+    "Transfer udp over stream or over datagram.\nIf true, use quic stream to send UDP, otherwise use quic datagram\nextension, similar to native UDP in TUIC\n\n### Proxy HTTP3\nTo proxy HTTP3 traffic, recommend to disable over-stream and blackhole-detection.\n\nOver-stream will retransmit lost packets conflicting shadowquic's inner congestion controller. This is famous [*TCP in TCP*(TCP meltdown)\n](https://web.archive.org/web/20230228035749/http://sites.inka.de/%7EW1011/devel/tcp-tcp.html) problem.\n\nOver-stream also breaks HTTP3's mtu discovery leading to probe wrong MTU.":
+        "UDP 走 QUIC 流（stream）还是数据报（datagram）。\n为 true 时用 QUIC 流发送 UDP，否则用 QUIC 数据报扩展，类似 TUIC 的原生 UDP\n\n### 代理 HTTP3\n代理 HTTP3 流量时，建议关闭 over-stream 和 blackhole-detection。\n\nOver-stream 会重传丢失的数据包，这与 shadowquic 内部的拥塞控制冲突，是著名的 [*TCP in TCP*（TCP 崩溃）](https://web.archive.org/web/20230228035749/http://sites.inka.de/%7EW1011/devel/tcp-tcp.html) 问题。\n\nOver-stream 还会破坏 HTTP3 的 MTU 探测，导致探测到错误的 MTU。",
+    "Users for client authentication":
+        "用于客户端认证的用户",
+    "binding interface of this outgoing packet.\n\nIf `bind_interface` is set, the outgoing packet will be sent from the\nspecified interface. Recommend to use to cooporate with other tun based proxy like sing-box/mihomo\n\nExample:\n```yaml\n# by ip address\nbind-interface: \"127.0.0.1\"\n# by interface name\nbind-interface: \"eth0\"\n```":
+        "此出站数据包的绑定接口。\n\n设置了 `bind_interface` 后，出站数据包将从指定接口发出。建议配合 sing-box/mihomo 等基于 TUN 的代理一起使用。\n\n示例：\n```yaml\n# 按 IP 地址\nbind-interface: \"127.0.0.1\"\n# 按接口名\nbind-interface: \"eth0\"\n```",
+    "fw_mark on linux":
+        "Linux 上的 fw_mark",
+    "only use ipv4 address":
+        "只使用 IPv4 地址",
+    "only use ipv6 address":
+        "只使用 IPv6 地址",
+    "password, must be the same as the server":
+        "密码，必须与服务器一致",
+    "Shadowquic server address. example: `127.0.0.0.1:443`, `www.server.com:443`, `[ff::f1]:4443`":
+        "Shadowquic 服务器地址。例如：`127.0.0.0.1:443`、`www.server.com:443`、`[ff::f1]:4443`",
+    "Additional paths for multipath quic\nIPV4 or IPv6 path are all fine.\nRight now only one path is used to sending data, the rest paths are backup paths.\nSee https://github.com/n0-computer/quinn/issues/389 for more details.\n\nIt's recommended to use IPV4 and IPV6 path together for dual stack network.\n```yaml\nextra-paths:\n  - \"[12:ff::ff]:1089\"\n```":
+        "多路径 QUIC 的附加路径。\nIPv4 或 IPv6 路径都可以。\n目前只有一条路径用于发送数据，其余路径是备用路径。\n详见 https://github.com/n0-computer/quinn/issues/389。\n\n建议同时使用 IPv4 和 IPv6 路径以支持双栈网络。\n```yaml\nextra-paths:\n  - \"[12:ff::ff]:1089\"\n```",
+    "Path of a YAML file persisting users and their traffic statistics.\nLoaded and merged with `users` at startup; written on every user\nchange via API, periodically and on graceful shutdown.\nOptional, persistence is disabled when omitted.\n```yaml\nuser-store: \"users.yaml\"\n```":
+        "用于持久化用户及其流量统计的 YAML 文件路径。\n启动时与 `users` 合并加载；在通过 API 修改用户、周期性刷新以及优雅关闭时写入。\n可选，省略时关闭持久化。\n```yaml\nuser-store: \"users.yaml\"\n```",
+    "Interval in seconds for periodically flushing users and traffic\nstatistics to the `user-store` file. Default is 60, set to 0 to\ndisable periodic flushing (only API changes and shutdown persist).\nOnly takes effect when `user-store` is set.":
+        "把用户和流量统计周期性刷入 `user-store` 文件的间隔（秒）。\n默认 60，设为 0 关闭周期性刷新（仅 API 变更和关闭时持久化）。\n仅在设置了 `user-store` 时生效。",
+    "Jls upstream configuration":
+        "JLS 上游配置",
+    "try to use ipv4 first, if no ipv4 address, use ipv6":
+        "优先使用 IPv4，若无 IPv4 地址则使用 IPv6",
+    "try to use ipv6 first, if no ipv6 address, use ipv4":
+        "优先使用 IPv6，若无 IPv6 地址则使用 IPv4",
+    "user authentication":
+        "用户认证",
+    "username, must be the same as the server":
+        "用户名，必须与服务器一致",
+}
+
+# Longer top-level container docs (struct/enum pages). Kept separately so the
+# per-field table above stays readable.
+ZH_CONTAINER_DOCS: dict[str, str] = {
+    "Config": "shadowquic 的整体配置。\n\n示例：\n```yaml\ninbound:\n  type: xxx\n  xxx: xxx\noutbound:\n  type: xxx\n  xxx: xxx\nlog-level: trace # 或 debug、info、warn、error\n```\n支持的入站类型见 [`InboundCfg`]\n\n支持的出站类型见 [`OutboundCfg`]",
+    "InboundCfg": "入站配置\n示例：\n```yaml\ntype: socks # 或 shadowquic\nbind-addr: \"0.0.0.0:443\" # \"[::]:443\"\nxxx: xxx # 其他字段取决于类型\n```\n各类型对应的配置字段见 [`SocksServerCfg`] 和 [`ShadowQuicServerCfg`]",
+    "OutboundCfg": "出站配置\n示例：\n```yaml\ntype: socks # 或 shadowquic、direct\naddr: \"127.0.0.1:443\" # \"[::1]:443\"\nxxx: xxx # 其他字段取决于类型\n```\n各类型对应的配置字段见 [`SocksClientCfg`] 和 [`ShadowQuicClientCfg`]",
+    "ShadowQuicServerCfg": "shadowquic 入站配置\n\n示例：\n```yaml\nbind-addr: \"0.0.0.0:1443\"\nusers:\n  - username: \"zhangsan\"\n    password: \"12345678\"\njls-upstream:\n  addr: \"echo.free.beeceptor.com:443\" # 域名/IP + 端口，域名必须与客户端一致\n  rate-limit: 1000000 # 可选：限制转发速率（bps），默认不限制\nserver-name: \"echo.free.beeceptor.com\" # 必须与客户端一致\nalpn: [\"h3\"]\ncongestion-control: bbr\nzero-rtt: true\n```",
+    "SunnyQuicServerCfg": "sunnyquic 入站配置\n\n示例：\n```yaml\nbind-addr: \"0.0.0.0:1443\"\nusers:\n  - username: \"zhangsan\"\n    password: \"12345678\"\nserver-name: \"echo.free.beeceptor.com\" # 必须与客户端一致\nalpn: [\"h3\"]\ncongestion-control: bbr\nzero-rtt: true\n```",
+    "ShadowQuicClientCfg": "shadowquic 出站配置\n\n示例：\n```yaml\naddr: \"12.34.56.7:1089\" # 或 \"[12:ff::ff]:1089\"（双栈）\npassword: \"12345678\"\nusername: \"87654321\"\nserver-name: \"echo.free.beeceptor.com\" # 必须与服务端 jls_upstream 一致\nalpn: [\"h3\"]\ninitial-mtu: 1400\ncongestion-control: bbr\nzero-rtt: true\nover-stream: false  # true 表示 UDP 走流，false 表示 UDP 走数据报\n```",
+    "SunnyQuicClientCfg": "sunnyquic 出站配置\n\n示例：\n```yaml\naddr: \"12.34.56.7:1089\" # 或 \"[12:ff::ff]:1089\"（双栈）\npassword: \"12345678\"\nusername: \"87654321\"\nserver-name: \"echo.free.beeceptor.com\"\nalpn: [\"h3\"]\ninitial-mtu: 1400\ncongestion-control: bbr\nzero-rtt: true\nover-stream: false  # true 表示 UDP 走流，false 表示 UDP 走数据报\n```",
+    "SocksServerCfg": "socks 入站配置\n\n示例：\n```yaml\nbind-addr: \"0.0.0.0:1089\" # 或 \"[::]:1089\"（双栈）\nusers:\n - username: \"username\"\n   password: \"password\"\n```",
+    "SocksClientCfg": "socks 出站配置\n示例：\n```yaml\naddr: \"12.34.56.7:1089\" # 或 \"[12:ff::ff]:1089\"（双栈）\n```",
+    "MixedServerCfg": "mixed 入站配置\n\n同一端口同时支持 SOCKS5 和 HTTP 代理（CONNECT + 普通 HTTP 转发）。\n\n示例：\n```yaml\ntype: mixed\nbind-addr: \"0.0.0.0:1080\"\n```",
+    "TproxyServerCfg": "tproxy 入站配置\n\n示例：\n```yaml\nbind-addr: \"0.0.0.0:1089\" # 或 \"[::]:1089\"（双栈）\n```",
+    "DirectOutCfg": "直连出站配置\n示例：\n```yaml\ndns-strategy: prefer-ipv4 # 或 prefer-ipv6、ipv4-only、ipv6-only\n```",
+    "CongestionControl": "拥塞控制算法\n示例：\n```yaml\ncongestion-control: bbr # 或 cubic、new-reno、brutal\n```\n使用 `brutal` 时，配置形如：\n```yaml\ncongestion-control:\n  brutal:\n    bandwidth: 10000000 # 默认 10000000 bps\n```\nBrutal 的 bandwidth 指上行带宽。若要设置下行带宽，请设置对端（例如客户端对应服务器端）的 bandwidth。",
+    "DnsStrategy": "DNS 解析策略\n默认是 `prefer-ipv4`\n\n- `prefer-ipv4`：优先 IPv4，无 IPv4 地址时用 IPv6\n- `prefer-ipv6`：优先 IPv6，无 IPv6 地址时用 IPv4\n- `ipv4-only`：只用 IPv4 地址\n- `ipv6-only`：只用 IPv6 地址",
+    "LogLevel": "shadowquic 的日志级别\n默认是 info。",
+    "AuthUser": "用户认证",
+    "SocketOpt": "Socket 选项",
+    "BrutalParams": "Brutal 参数",
+    "CipherSuitePreference": "TLS 1.3 密码套件偏好",
+    "Interface": "出站数据包的绑定接口",
+}
+
+# Chinese labels for shared config types (friendly page titles).
+ZH_SHARED_LABELS = {
+    "LogLevel": "日志级别",
+    "AuthUser": "认证用户",
+    "JlsUpstream": "JLS 上游",
+    "CongestionControl": "拥塞控制",
+    "BrutalParams": "Brutal 参数",
+    "SocketOpt": "Socket 选项",
+    "CipherSuitePreference": "密码套件偏好",
+    "DnsStrategy": "DNS 策略",
+    "Interface": "接口",
+}
+# UI labels used by the emitters, per language.
+ZH_UI = {
+    "title_fields": "字段",
+    "title_variants": "变体",
+    "meta_type": "类型",
+    "meta_required": "必填",
+    "meta_default": "默认值",
+    "meta_required_yes": "是",
+    "meta_required_no": "否",
+    "meta_optional": "可选",
+    "meta_type_default": "（类型默认值）",
+    "meta_list_of": "列表",
+    "meta_serialized_tag": "此枚举通过 YAML 键 `{tag}` 选择变体。",
+    "nav_home": "首页",
+    "nav_guide": "入门指南",
+    "nav_guide_label": "入门指南",
+    "nav_config": "配置",
+    "nav_config_overview": "概览",
+    "nav_inbound": "入站",
+    "nav_outbound": "出站",
+    "nav_shared": "共享类型",
+    "nav_api": "API",
+    "nav_protocol": "协议",
+    "variant_carries": "携带",
+    "variant_desc": "说明",
+}
+
+# English equivalents, used when rendering the English tree.
+EN_UI = {
+    "title_fields": "Fields",
+    "title_variants": "Variants",
+    "meta_type": "Type",
+    "meta_required": "Required",
+    "meta_default": "Default",
+    "meta_required_yes": "yes",
+    "meta_required_no": "no",
+    "meta_optional": "optional",
+    "meta_type_default": "type default",
+    "meta_list_of": "list of",
+    "meta_serialized_tag": "This enum is serialized with the YAML key **`{tag}`** selecting the variant.",
+    "nav_home": "Home",
+    "nav_guide": "Guide",
+    "nav_guide_label": "Guide",
+    "nav_config": "Configuration",
+    "nav_config_overview": "Overview",
+    "nav_inbound": "Inbound",
+    "nav_outbound": "Outbound",
+    "nav_shared": "Shared types",
+    "nav_api": "API",
+    "nav_protocol": "Protocol",
+    "variant_carries": "Carries",
+    "variant_desc": "Description",
+}
+
+
+def _(text: str) -> str:
+    """Translate a doc comment for the active language (zh only)."""
+    if LANG != LANG_ZH:
+        return text
+    return ZH_DOCS.get(text, text)
+
+
+def ui(key: str, **fmt: object) -> str:
+    """Return a UI label for the active language."""
+    table = ZH_UI if LANG == LANG_ZH else EN_UI
+    label = table.get(key, key)
+    return label.format(**fmt) if fmt else label
 
 # ----------------------------------------------------------------------------
 # rustdoc invocation
@@ -90,7 +330,7 @@ def build_protocol_pages(repo_root: Path) -> list[Path]:
     if not src.exists():
         raise SystemExit(f"missing {src}")
 
-    out_dir = DOCS_ROOT / PROTOCOL_REL_DIR
+    out_dir = docs_root() / PROTOCOL_REL_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
     # Wipe any prior pages so deletions in PROTOCOL.typ don't leave stragglers.
     for stale in out_dir.glob("page-*.svg"):
@@ -109,7 +349,7 @@ def build_protocol_pages(repo_root: Path) -> list[Path]:
 
 def write_protocol_page(svg_pages: list[Path], pdf_link: str | None) -> Path:
     """Write `docs/protocol/index.md` embedding each SVG page in order."""
-    out_path = DOCS_ROOT / PROTOCOL_REL_DIR / "index.md"
+    out_path = docs_root() / PROTOCOL_REL_DIR / "index.md"
     body: list[str] = ["# shadowquic protocol\n"]
     body.append(
         "Specification of the wire protocol between shadowquic clients and servers. "
@@ -129,14 +369,37 @@ def write_protocol_page(svg_pages: list[Path], pdf_link: str | None) -> Path:
 
 
 def write_api_page(repo_root: Path) -> Path:
-    """Copy `document/api.md` into the generated site docs."""
-    src = repo_root / API_SOURCE_NAME
+    """Copy the user-management API reference into the site docs.
+
+    English comes from `document/api.md`; the Chinese tree uses
+    `document/api.zh.md` (hand-translated copy kept in the repo).
+    """
+    src = repo_root / (API_SOURCE_NAME if LANG == LANG_EN else "document/api.zh.md")
     if not src.exists():
         raise SystemExit(f"missing {src}")
 
-    out_path = DOCS_ROOT / API_REL_PATH
+    out_path = docs_root() / API_REL_PATH
     out_path.write_text(src.read_text())
     return out_path
+
+
+def write_guide_pages(repo_root: Path) -> Path:
+    """Copy the static beginner's guide (`guide/<lang>/**`) into docs/<lang>/.
+
+    The guide is hand-written markdown, distinct from the auto-generated
+    configuration reference. Each language has its own complete guide tree
+    under `guide/{en,zh}/`, kept in the repo (outside the gitignored `docs/`)
+    so edits are committed; this function stages the active language's guide
+    into the site on every build.
+    """
+    src_dir = SITE_ROOT / "guide" / LANG
+    if not src_dir.exists():
+        raise SystemExit(f"missing {src_dir}")
+    out_dir = docs_root() / "guide"
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    shutil.copytree(src_dir, out_dir)
+    return out_dir
 
 
 # ----------------------------------------------------------------------------
@@ -547,9 +810,9 @@ def render_type(ty: dict, ctx: RenderContext, from_page: Path) -> str:
                     inner_args.append(a["type"])
 
         if short == "Option" and len(inner_args) == 1:
-            return f"{render_type(inner_args[0], ctx, from_page)} *(optional)*"
+            return f"{render_type(inner_args[0], ctx, from_page)} *({ui('meta_optional')})*"
         if short == "Vec" and len(inner_args) == 1:
-            return f"list of {render_type(inner_args[0], ctx, from_page)}"
+            return f"{ui('meta_list_of')} {render_type(inner_args[0], ctx, from_page)}"
 
         # Display label (std types get friendlier names).
         label = STD_TYPE_LABELS.get(path, short)
@@ -694,13 +957,16 @@ def emit_struct_page(
     body: list[str] = []
     body.append(f"# {title}\n")
     if extra_intro:
-        body.append(extra_intro.rstrip() + "\n")
+        body.append(ui(extra_intro).rstrip() + "\n")
 
-    docs_md = rewrite_doc_links(item.docs, item.links, ctx, page_path)
+    docs = item.docs
+    if LANG == LANG_ZH:
+        docs = ZH_CONTAINER_DOCS.get(item.name) or _(item.docs)
+    docs_md = rewrite_doc_links(docs, item.links, ctx, page_path)
     if docs_md:
         body.append(docs_md.rstrip() + "\n")
 
-    body.append("## Fields\n")
+    body.append(f"## {ui('title_fields')}\n")
     _emit_struct_fields(item, serde, ctx, body, page_path, depth=0)
     return "\n".join(body) + "\n"
 
@@ -780,14 +1046,18 @@ def _emit_struct_fields(
             )
 
         required = not (fserde.has_default or is_option_type)
-        required_md = "no" if not required else "**yes**"
+        required_md = ui("meta_required_yes") if required else ui("meta_required_no")
+        required_md = f"**{required_md}**" if required else required_md
 
         body.append(f"### `{yaml_name}`\n")
-        meta: list[str] = [f"- **Type:** {type_md}", f"- **Required:** {required_md}"]
+        meta: list[str] = [
+            f"- **{ui('meta_type')}:** {type_md}",
+            f"- **{ui('meta_required')}:** {required_md}",
+        ]
         if fserde.default_fn:
             val = ctx.default_values.get(fserde.default_fn)
             display = render_default_value(val, ctx) if val else f"{fserde.default_fn}()"
-            meta.append(f"- **Default:** `{display}`")
+            meta.append(f"- **{ui('meta_default')}:** `{display}`")
         elif fserde.has_default and not is_option_type:
             enum_default = None
             if isinstance(ty, dict) and "resolved_path" in ty:
@@ -795,12 +1065,12 @@ def _emit_struct_fields(
                 if tid is not None:
                     enum_default = ctx.enum_defaults_by_id.get(int(tid))
             if enum_default is not None:
-                meta.append(f"- **Default:** `{enum_default}`")
+                meta.append(f"- **{ui('meta_default')}:** `{enum_default}`")
             else:
-                meta.append("- **Default:** *(type default)*")
+                meta.append(f"- **{ui('meta_default')}:** *{ui('meta_type_default')}*")
         body.append("\n".join(meta) + "\n")
 
-        desc_md = rewrite_doc_links(f.docs or "", f.links, ctx, page_path).rstrip()
+        desc_md = rewrite_doc_links(_(f.docs or ""), f.links, ctx, page_path).rstrip()
         if desc_md:
             body.append(desc_md + "\n")
 
@@ -816,19 +1086,19 @@ def emit_enum_page(
     body: list[str] = []
     body.append(f"# {title}\n")
     if extra_intro:
-        body.append(extra_intro.rstrip() + "\n")
+        body.append(ui(extra_intro).rstrip() + "\n")
 
-    docs_md = rewrite_doc_links(item.docs, item.links, ctx, page_path)
+    docs = item.docs
+    if LANG == LANG_ZH:
+        docs = ZH_CONTAINER_DOCS.get(item.name) or _(item.docs)
+    docs_md = rewrite_doc_links(docs, item.links, ctx, page_path)
     if docs_md:
         body.append(docs_md.rstrip() + "\n")
 
-    body.append("## Variants\n")
+    body.append(f"## {ui('title_variants')}\n")
     if serde.tag:
-        body.append(
-            f"This enum is serialized with the YAML key **`{serde.tag}`** "
-            f"selecting the variant.\n"
-        )
-    body.append("| Tag value | Carries | Description |")
+        body.append(ui("meta_serialized_tag", tag=serde.tag) + "\n")
+    body.append(f"| Tag value | {ui('variant_carries')} | {ui('variant_desc')} |")
     body.append("|-----------|---------|-------------|")
 
     for vid in item.inner["enum"]["variants"]:
@@ -850,7 +1120,7 @@ def emit_enum_page(
                     if isinstance(ty, dict):
                         carries_md = render_type(ty, ctx, page_path)
 
-        desc_md = (v.docs or "").strip().replace("|", "\\|").replace("\n", "<br>")
+        desc_md = _(v.docs or "").strip().replace("|", "\\|").replace("\n", "<br>")
         body.append(
             f"| `{tag_name}` | {carries_md} | {desc_md or '—'} |"
         )
@@ -1048,12 +1318,18 @@ def plan_pages(
     pages: list[PageSpec] = []
     placed: set[str] = set()
 
+    def page_title(english: str, zh: str | None = None) -> str:
+        return zh if LANG == LANG_ZH and zh else english
+
     pages.append(PageSpec(
         title="Config",
         nav_label="Overview",
         rel_path="configuration/index.md",
         item_id=int(config.id),
-        intro="Top-level configuration object. Every shadowquic config file deserializes into this struct.",
+        intro=page_title(
+            "Top-level configuration object. Every shadowquic config file deserializes into this struct.",
+            "顶层配置对象。每个 shadowquic 配置文件都会反序列化成这个结构体。",
+        ),
     ))
     placed.add("Config")
 
@@ -1062,7 +1338,10 @@ def plan_pages(
         nav_label="Overview",
         rel_path="configuration/inbound/index.md",
         item_id=int(inbound.id),
-        intro="Selects an inbound listener. Pick a variant via the `type` key.",
+        intro=page_title(
+            "Selects an inbound listener. Pick a variant via the `type` key.",
+            "选择入站监听器。通过 `type` 键选择变体。",
+        ),
     ))
     placed.add("InboundCfg")
 
@@ -1071,8 +1350,8 @@ def plan_pages(
         if it.name in inbound_targets and it.name not in placed:
             tag, label = inbound_targets[it.name]
             pages.append(PageSpec(
-                title=f"{label} server",
-                nav_label=f"{label} server",
+                title=page_title(f"{label} server", f"{label} 服务端"),
+                nav_label=page_title(f"{label} server", f"{label} 服务端"),
                 rel_path=f"configuration/inbound/{tag}.md",
                 item_id=int(it.id),
             ))
@@ -1083,7 +1362,10 @@ def plan_pages(
         nav_label="Overview",
         rel_path="configuration/outbound/index.md",
         item_id=int(outbound.id),
-        intro="Selects the upstream the inbound forwards to. Pick a variant via the `type` key.",
+        intro=page_title(
+            "Selects the upstream the inbound forwards to. Pick a variant via the `type` key.",
+            "选择入站转发到的上游。通过 `type` 键选择变体。",
+        ),
     ))
     placed.add("OutboundCfg")
 
@@ -1091,8 +1373,8 @@ def plan_pages(
         if it.name in outbound_targets and it.name not in placed:
             tag, label = outbound_targets[it.name]
             pages.append(PageSpec(
-                title=f"{label} outbound",
-                nav_label=f"{label} outbound",
+                title=page_title(f"{label} outbound", f"{label} 出站"),
+                nav_label=page_title(f"{label} outbound", f"{label} 出站"),
                 rel_path=f"configuration/outbound/{tag}.md",
                 item_id=int(it.id),
             ))
@@ -1103,9 +1385,10 @@ def plan_pages(
         if it.name in placed or not it.name:
             continue
         label = _friendly_label(it.name)
+        zh_label = ZH_SHARED_LABELS.get(it.name, label)
         pages.append(PageSpec(
-            title=label,
-            nav_label=label,
+            title=page_title(label, zh_label),
+            nav_label=page_title(label, zh_label),
             rel_path=f"configuration/shared/{it.name.lower()}.md",
             item_id=int(it.id),
         ))
@@ -1122,6 +1405,28 @@ def plan_pages(
 NAV_BEGIN = "# >>> generated nav"
 NAV_END = "# <<< generated nav"
 
+# Static beginner's guide pages (docs/<lang>/guide/**). The generator owns the
+# nav block, so guide entries are defined here instead of hand-editing the
+# zensical config. In the bilingual layout each language has its own guide
+# tree (guide/what-is.md, guide/quickstart.md, ...), so the nav differs per
+# language.
+def guide_nav_block() -> str:
+    if LANG == LANG_ZH:
+        return """  { "入门指南" = [
+    { "入门指南" = "guide/index.md" },
+    { "什么是 ShadowQUIC？" = "guide/what-is.md" },
+    { "快速上手" = "guide/quickstart.md" },
+    { "配置大白话" = "guide/configuration.md" },
+    { "常见问题" = "guide/faq.md" }
+  ] },"""
+    return """  { "Guide" = [
+    { "Guide" = "guide/index.md" },
+    { "What is ShadowQUIC?" = "guide/what-is.md" },
+    { "Quick Start" = "guide/quickstart.md" },
+    { "Configuration explained" = "guide/configuration.md" },
+    { "FAQ" = "guide/faq.md" }
+  ] },"""
+
 
 def render_nav(pages: list[PageSpec], include_protocol: bool = False) -> str:
     """Render a `nav = [...]` TOML block matching the page layout."""
@@ -1136,37 +1441,38 @@ def render_nav(pages: list[PageSpec], include_protocol: bool = False) -> str:
     shared_pages = [p for p in cfg_pages if p.rel_path.startswith("configuration/shared/")]
 
     lines = ["nav = ["]
-    lines.append('  { "Home" = "index.md" },')
-    lines.append('  { "Configuration" = [')
-    lines.append(f'    {{ "Overview" = "{overview.rel_path}" }},')
+    lines.append(f'  {{ "{ui("nav_home")}" = "index.md" }},')
+    lines.append(guide_nav_block())
+    lines.append(f'  {{ "{ui("nav_config")}" = [')
+    lines.append(f'    {{ "{ui("nav_config_overview")}" = "{overview.rel_path}" }},')
 
     if inbound_pages:
-        lines.append('    { "Inbound" = [')
+        lines.append(f'    {{ "{ui("nav_inbound")}" = [')
         for i, p in enumerate(inbound_pages):
-            label = "Overview" if p.rel_path.endswith("/index.md") else p.nav_label
+            label = ui("nav_config_overview") if p.rel_path.endswith("/index.md") else p.nav_label
             comma = "," if i < len(inbound_pages) - 1 else ""
             lines.append(f'      {{ "{label}" = "{p.rel_path}" }}{comma}')
         lines.append('    ] },')
 
     if outbound_pages:
-        lines.append('    { "Outbound" = [')
+        lines.append(f'    {{ "{ui("nav_outbound")}" = [')
         for i, p in enumerate(outbound_pages):
-            label = "Overview" if p.rel_path.endswith("/index.md") else p.nav_label
+            label = ui("nav_config_overview") if p.rel_path.endswith("/index.md") else p.nav_label
             comma = "," if i < len(outbound_pages) - 1 else ""
             lines.append(f'      {{ "{label}" = "{p.rel_path}" }}{comma}')
         lines.append('    ] },')
 
     if shared_pages:
-        lines.append('    { "Shared types" = [')
+        lines.append(f'    {{ "{ui("nav_shared")}" = [')
         for i, p in enumerate(shared_pages):
             comma = "," if i < len(shared_pages) - 1 else ""
             lines.append(f'      {{ "{p.nav_label}" = "{p.rel_path}" }}{comma}')
         lines.append('    ] }')
 
     lines.append('  ] },')
-    lines.append(f'  {{ "{API_NAV_LABEL}" = "{API_REL_PATH}" }},')
+    lines.append(f'  {{ "{ui("nav_api")}" = "{API_REL_PATH}" }},')
     if include_protocol:
-        lines.append(f'  {{ "{PROTOCOL_NAV_LABEL}" = "{PROTOCOL_REL_DIR}/index.md" }}')
+        lines.append(f'  {{ "{ui("nav_protocol")}" = "{PROTOCOL_REL_DIR}/index.md" }}')
     else:
         lines[-1] = lines[-1].rstrip(",")
     lines.append("]")
@@ -1194,6 +1500,13 @@ LANDING_PAGE = """# shadowquic
 
 A 0-RTT QUIC proxy with SNI camouflage.
 
+## Getting started
+
+New here? Read the [Beginner's Guide](guide/index.md) and follow the
+[Quick Start](guide/quickstart.md).
+
+## Configuration reference
+
 This site documents the **YAML configuration schema**. The pages under
 [Configuration](configuration/index.md) are generated from the doc comments on
 the Rust structs in [`shadowquic/src/config/`](
@@ -1202,6 +1515,7 @@ so they stay in sync with the actual deserializer.
 
 ## Quick links
 
+- [Beginner's Guide](guide/index.md)
 - [Top-level `Config`](configuration/index.md)
 - [Inbound types](configuration/inbound/index.md)
 - [Outbound types](configuration/outbound/index.md)
@@ -1228,6 +1542,49 @@ shadowquic -c config.yaml
 ```
 """
 
+LANDING_PAGE_ZH = """# shadowquic
+
+一个带 SNI 伪装的 0-RTT QUIC 代理。
+
+## 开始使用
+
+初次接触？先读[零基础入门](guide/index.md)，然后跟着[快速上手](guide/quickstart.md)动手跑起来。
+
+## 配置参考
+
+本站整理了 **YAML 配置结构**。[配置](configuration/index.md) 下的页面由
+[`shadowquic/src/config/`](https://github.com/spongebob888/shadowquic/tree/main/shadowquic/src/config)
+中 Rust 结构体的文档注释自动生成，与实际反序列化器保持同步。
+
+## 快速链接
+
+- [零基础入门](guide/index.md)
+- [顶层 `Config`](configuration/index.md)
+- [入站类型](configuration/inbound/index.md)
+- [出站类型](configuration/outbound/index.md)
+
+## 示例
+
+```yaml
+inbound:
+  type: socks
+  bind-addr: "127.0.0.1:1089"
+outbound:
+  type: shadowquic
+  addr: "your.server.example:443"
+  username: "alice"
+  password: "secret"
+  server-name: "your.server.example"
+log-level: info
+```
+
+保存为 `config.yaml` 并运行：
+
+```sh
+shadowquic -c config.yaml
+```
+"""
+
 
 # ----------------------------------------------------------------------------
 # main
@@ -1236,6 +1593,12 @@ shadowquic -c config.yaml
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--lang",
+        choices=[LANG_EN, LANG_ZH],
+        default=LANG_EN,
+        help="which language tree to generate (docs/<lang>); nav goes to the matching zensical config",
+    )
     parser.add_argument(
         "--no-build",
         action="store_true",
@@ -1250,7 +1613,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--clean",
         action="store_true",
-        help="wipe docs/configuration before regenerating",
+        help="wipe docs/<lang>/configuration before regenerating",
     )
     parser.add_argument(
         "--skip-protocol",
@@ -1258,6 +1621,9 @@ def main(argv: list[str] | None = None) -> int:
         help="don't render PROTOCOL.typ; useful when typst isn't installed",
     )
     args = parser.parse_args(argv)
+
+    global LANG
+    LANG = args.lang
 
     if args.json:
         json_path = args.json
@@ -1281,27 +1647,28 @@ def main(argv: list[str] | None = None) -> int:
         index=index,
         page_for_type=page_for_type,
         default_values=defaults,
-        pages_dir_for={p.item_id: (DOCS_ROOT / p.rel_path).parent for p in pages},
+        pages_dir_for={p.item_id: (docs_root() / p.rel_path).parent for p in pages},
         src_attrs=src_attrs,
         enum_variant_tags=variant_tags,
         enum_defaults_by_id=enum_defaults_by_id,
     )
 
     # Wipe & recreate
-    cfg_dir = DOCS_ROOT / "configuration"
+    root = docs_root()
+    cfg_dir = root / "configuration"
     if args.clean and cfg_dir.exists():
         shutil.rmtree(cfg_dir)
-    DOCS_ROOT.mkdir(parents=True, exist_ok=True)
+    root.mkdir(parents=True, exist_ok=True)
 
     # Landing page (only written if missing — user may want to customize).
-    landing = DOCS_ROOT / "index.md"
+    landing = root / "index.md"
     if not landing.exists():
-        landing.write_text(LANDING_PAGE)
+        landing.write_text(LANDING_PAGE if LANG == LANG_EN else LANDING_PAGE_ZH)
 
     # Per-type pages
     for p in pages:
         item = Item(index[str(p.item_id)].raw)
-        out_path = DOCS_ROOT / p.rel_path
+        out_path = root / p.rel_path
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
         if "struct" in item.inner:
@@ -1318,6 +1685,10 @@ def main(argv: list[str] | None = None) -> int:
     # User-management API reference
     out_path = write_api_page(REPO_ROOT)
     print(f"wrote {out_path.relative_to(REPO_ROOT)}", file=sys.stderr)
+
+    # Beginner's guide (static markdown for the active language)
+    guide_dir = write_guide_pages(REPO_ROOT)
+    print(f"copied {guide_dir.relative_to(REPO_ROOT)}", file=sys.stderr)
 
     # Protocol spec (PROTOCOL.typ -> SVG pages -> markdown)
     include_protocol = False
@@ -1339,15 +1710,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"wrote {out_path.relative_to(REPO_ROOT)}", file=sys.stderr)
             include_protocol = True
 
-    # Update nav
-    patch_zensical_nav(
-        SITE_ROOT / "zensical.toml",
-        render_nav(pages, include_protocol=include_protocol),
-    )
-    print(
-        f"updated nav in {(SITE_ROOT / 'zensical.toml').relative_to(REPO_ROOT)}",
-        file=sys.stderr,
-    )
+    # Update nav in the active language's config.
+    cfg = config_file()
+    patch_zensical_nav(cfg, render_nav(pages, include_protocol=include_protocol))
+    print(f"updated nav in {cfg.relative_to(REPO_ROOT)}", file=sys.stderr)
 
     return 0
 

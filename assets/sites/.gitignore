@@ -1,4 +1,6 @@
 .venv/
 site/
+site-en/
+site-zh/
 __pycache__/
 docs
