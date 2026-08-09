@@ -165,11 +165,13 @@ jobs:
             skip-test: true
 
           # Linux mips
+          # Pinned because newer nightlies fail while linking build-std's proc_macro
+          # for MIPS64 with LLVM's "out of range PC16 fixup" error.
           - os: ubuntu-latest
             target: mips-unknown-linux-musl
             release-name: mips-linux-musl
             tool: cross
-            toolchain: nightly
+            toolchain: nightly-2026-05-15
             install-target: false
             components: rust-src, rustfmt, clippy
             extra-args: "-Z build-std=std,panic_abort"
@@ -178,7 +180,7 @@ jobs:
             target: mipsel-unknown-linux-musl
             release-name: mipsel-linux-musl
             tool: cross
-            toolchain: nightly
+            toolchain: nightly-2026-05-15
             install-target: false
             components: rust-src, rustfmt, clippy
             extra-args: "-Z build-std=std,panic_abort"
@@ -187,7 +189,7 @@ jobs:
             target: mips64-unknown-linux-muslabi64
             release-name: mips64-linux-musl
             tool: cross
-            toolchain: nightly
+            toolchain: nightly-2026-05-15
             install-target: false
             components: rust-src, rustfmt, clippy
             extra-args: "-Z build-std=std,panic_abort"
@@ -196,7 +198,7 @@ jobs:
             target: mips64el-unknown-linux-muslabi64
             release-name: mips64el-linux-musl
             tool: cross
-            toolchain: nightly
+            toolchain: nightly-2026-05-15
             install-target: false
             components: rust-src, rustfmt, clippy
             extra-args: "-Z build-std=std,panic_abort"
