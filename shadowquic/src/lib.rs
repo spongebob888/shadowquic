@@ -9,7 +9,7 @@ use tokio::net::TcpStream;
 use anyhow::Result;
 use async_trait::async_trait;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tracing::error;
+use tracing::{error, info};
 
 pub mod config;
 pub mod direct;
@@ -84,6 +84,10 @@ pub trait Inbound<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend>: Send + Sync + Unp
     async fn init(&self) -> Result<(), SError> {
         Ok(())
     }
+    /// Called once on graceful shutdown, flush persistent state here.
+    async fn shutdown(&self) -> Result<(), SError> {
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -113,25 +117,50 @@ pub struct Manager {
     pub outbound: Box<dyn Outbound>,
 }
 
+/// Resolves when a shutdown signal is received (Ctrl-C, plus SIGTERM on unix).
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut sigterm =
+            signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = sigterm.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
 impl Manager {
     pub async fn run(self) -> Result<(), SError> {
         self.inbound.init().await?;
         let mut inbound = self.inbound;
         let mut outbound = self.outbound;
+        let shutdown = shutdown_signal();
+        tokio::pin!(shutdown);
         loop {
-            match inbound.accept().await {
-                Ok(req) => match outbound.handle(req).await {
-                    Ok(_) => {}
+            tokio::select! {
+                _ = &mut shutdown => {
+                    info!("shutdown signal received, persisting users and stats");
+                    inbound.shutdown().await?;
+                    return Ok(());
+                }
+                req = inbound.accept() => match req {
+                    Ok(req) => match outbound.handle(req).await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            error!("error during handling request: {}", e)
+                        }
+                    },
                     Err(e) => {
-                        error!("error during handling request: {}", e)
+                        error!("error during accepting request: {}", e)
                     }
-                },
-                Err(e) => {
-                    error!("error during accepting request: {}", e)
                 }
             }
         }
-        #[allow(unreachable_code)]
-        Ok(())
     }
 }

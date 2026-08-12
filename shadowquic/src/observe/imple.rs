@@ -158,6 +158,19 @@ impl Observer {
         }
     }
 
+    /// Restore persisted traffic counters (used at startup).
+    /// Connection counters are runtime-only and start from zero.
+    pub async fn restore_stats(&self, stats: &[UserStats]) {
+        let mut user_stats = self.user_stats.lock().await;
+        for s in stats {
+            let entry = user_stats.entry(s.username.clone()).or_default();
+            entry.tcp_sent.store(s.tcp_sent, Ordering::Relaxed);
+            entry.tcp_recv.store(s.tcp_recv, Ordering::Relaxed);
+            entry.udp_sent.store(s.udp_sent, Ordering::Relaxed);
+            entry.udp_recv.store(s.udp_recv, Ordering::Relaxed);
+        }
+    }
+
     pub async fn get_all_stats(&self, usernames: &[String]) -> Vec<UserStats> {
         let mut conns = self.conns.lock().await;
         conns.retain(|_, ctx| ctx.conn_handle.upgrade().is_some());

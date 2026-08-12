@@ -15,6 +15,7 @@ use crate::{
     observe::Observer,
     quic::{AuthedConn, QuicConnection},
     squic::inbound::{SQServerConn, UserManager},
+    utils::user_store,
 };
 
 use crate::squic::{IDStore, SQConn};
@@ -33,6 +34,22 @@ struct ShadowQuicUserManager {
     endpoint: EndServer,
     config: RwLock<ShadowQuicServerCfg>,
     observer: Arc<Observer>,
+}
+
+impl ShadowQuicUserManager {
+    /// Persist current users and traffic stats to the configured store file.
+    async fn persist(&self) {
+        let config = self.config.read().await;
+        let Some(path) = config.user_store.clone() else {
+            return;
+        };
+        let users = config.users.clone();
+        drop(config);
+        let store = user_store::build_store(&users, &self.observer).await;
+        if let Err(error) = user_store::save_store(&path, &store) {
+            error!("failed to persist user store: {}", error);
+        }
+    }
 }
 
 #[async_trait]
@@ -55,6 +72,8 @@ impl UserManager for ShadowQuicUserManager {
             tracing::error!("failed to add user: {}", error);
             return Err(SQExtError::Other(error.to_string()));
         }
+        drop(config);
+        self.persist().await;
         Ok(())
     }
 
@@ -72,7 +91,9 @@ impl UserManager for ShadowQuicUserManager {
             tracing::error!("failed to remove user: {}", error);
             return Err(SQExtError::Other(error.to_string()));
         }
+        drop(config);
         self.observer.remove_user(username).await;
+        self.persist().await;
         Ok(())
     }
 
@@ -122,6 +143,7 @@ impl UserManager for ShadowQuicUserManager {
         }
         drop(config);
         self.observer.clear_user_stats(username).await;
+        self.persist().await;
         Ok(())
     }
 
@@ -134,18 +156,32 @@ impl UserManager for ShadowQuicUserManager {
             .collect::<Vec<_>>();
         drop(config);
         self.observer.clear_all_stats(&usernames).await;
+        self.persist().await;
         Ok(())
     }
 }
 
 impl ShadowQuicServer {
-    pub async fn new(cfg: ShadowQuicServerCfg) -> Result<Self, SError> {
+    pub async fn new(mut cfg: ShadowQuicServerCfg) -> Result<Self, SError> {
         let (send, recv) = channel::<ProxyRequest>(10);
+
+        let store = match &cfg.user_store {
+            Some(path) => user_store::load_store(path)?,
+            None => None,
+        };
+        if let Some(store) = &store {
+            user_store::merge_users(&mut cfg.users, store);
+        }
 
         let endpoint: EndServer = QuicServer::new(&cfg)
             .await
             .expect("Failed to listening on udp");
         let observer = Arc::new(Observer::new());
+        if let Some(store) = &store {
+            observer
+                .restore_stats(&user_store::stored_stats(store))
+                .await;
+        }
         let user_manager = Arc::new(ShadowQuicUserManager {
             endpoint: endpoint.clone(),
             config: RwLock::new(cfg),
@@ -159,6 +195,26 @@ impl ShadowQuicServer {
             request: recv,
             observer,
         })
+    }
+
+    /// Periodically flush users and traffic stats to the user store,
+    /// so stats survive unexpected crashes.
+    async fn spawn_store_flush(&self) {
+        let config = self.user_manager.config.read().await;
+        let interval_secs = config.store_flush_interval;
+        let store_enabled = config.user_store.is_some();
+        drop(config);
+        if !store_enabled || interval_secs == 0 {
+            return;
+        }
+        let user_manager = self.user_manager.clone();
+        tokio::spawn(async move {
+            let interval = std::time::Duration::from_secs(interval_secs);
+            loop {
+                tokio::time::sleep(interval).await;
+                user_manager.persist().await;
+            }
+        });
     }
 
     async fn handle_incoming<C: QuicConnection + AuthedConn>(
@@ -227,6 +283,12 @@ impl Inbound for ShadowQuicServer {
             }
         };
         tokio::spawn(fut);
+        self.spawn_store_flush().await;
+        Ok(())
+    }
+
+    async fn shutdown(&self) -> Result<(), SError> {
+        self.user_manager.persist().await;
         Ok(())
     }
 }

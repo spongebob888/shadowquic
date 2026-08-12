@@ -6,7 +6,7 @@ use crate::config::{
     AuthUser, BrutalParams, CipherSuitePreference, CongestionControl, HasCipherSuitePreference,
     SocketOpt, default_alpn, default_congestion_control, default_gso, default_initial_mtu,
     default_keep_alive_interval, default_min_mtu, default_mtu_discovery, default_over_stream,
-    default_zero_rtt,
+    default_store_flush_interval, default_zero_rtt,
 };
 
 pub(crate) fn default_multipath_num() -> u32 {
@@ -75,6 +75,21 @@ pub struct SunnyQuicServerCfg {
     /// Brutal server configuration
     #[serde(default)]
     pub brutal: Option<BrutalParams>,
+    /// Path of a YAML file persisting users and their traffic statistics.
+    /// Loaded and merged with `users` at startup; written on every user
+    /// change via API, periodically and on graceful shutdown.
+    /// Optional, persistence is disabled when omitted.
+    /// ```yaml
+    /// user-store: "users.yaml"
+    /// ```
+    #[serde(default)]
+    pub user_store: Option<PathBuf>,
+    /// Interval in seconds for periodically flushing users and traffic
+    /// statistics to the `user-store` file. Default is 60, set to 0 to
+    /// disable periodic flushing (only API changes and shutdown persist).
+    /// Only takes effect when `user-store` is set.
+    #[serde(default = "default_store_flush_interval")]
+    pub store_flush_interval: u64,
 }
 
 impl Default for SunnyQuicServerCfg {
@@ -94,6 +109,8 @@ impl Default for SunnyQuicServerCfg {
             mtu_discovery: default_mtu_discovery(),
             gso: default_gso(),
             brutal: None,
+            user_store: None,
+            store_flush_interval: default_store_flush_interval(),
         }
     }
 }

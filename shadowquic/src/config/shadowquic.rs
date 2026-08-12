@@ -9,7 +9,7 @@ use crate::config::{
     default_brutal_bandwidth, default_brutal_cwnd_gain, default_brutal_min_ack_rate,
     default_brutal_min_sample_count, default_brutal_min_window, default_congestion_control,
     default_gso, default_initial_mtu, default_keep_alive_interval, default_min_mtu,
-    default_mtu_discovery, default_over_stream, default_zero_rtt,
+    default_mtu_discovery, default_over_stream, default_store_flush_interval, default_zero_rtt,
 };
 
 pub fn default_rate_limit() -> u64 {
@@ -83,6 +83,21 @@ pub struct ShadowQuicServerCfg {
     /// In high packet loss network, it's better to disable black hole detection to avoid unnecessary mtu reset.
     #[serde(default = "default_blackhole_detection")]
     pub blackhole_detection: bool,
+    /// Path of a YAML file persisting users and their traffic statistics.
+    /// Loaded and merged with `users` at startup; written on every user
+    /// change via API, periodically and on graceful shutdown.
+    /// Optional, persistence is disabled when omitted.
+    /// ```yaml
+    /// user-store: "users.yaml"
+    /// ```
+    #[serde(default)]
+    pub user_store: Option<std::path::PathBuf>,
+    /// Interval in seconds for periodically flushing users and traffic
+    /// statistics to the `user-store` file. Default is 60, set to 0 to
+    /// disable periodic flushing (only API changes and shutdown persist).
+    /// Only takes effect when `user-store` is set.
+    #[serde(default = "default_store_flush_interval")]
+    pub store_flush_interval: u64,
 }
 
 /// Jls upstream configuration
@@ -119,6 +134,8 @@ impl Default for ShadowQuicServerCfg {
             gso: default_gso(),
             mtu_discovery: default_mtu_discovery(),
             blackhole_detection: default_blackhole_detection(),
+            user_store: None,
+            store_flush_interval: default_store_flush_interval(),
         }
     }
 }

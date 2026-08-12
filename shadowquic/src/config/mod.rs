@@ -270,6 +270,11 @@ pub fn default_keep_alive_interval() -> u32 {
     0
 }
 
+/// Default user-store flush interval in seconds
+pub fn default_store_flush_interval() -> u64 {
+    60
+}
+
 pub fn default_gso() -> bool {
     true
 }

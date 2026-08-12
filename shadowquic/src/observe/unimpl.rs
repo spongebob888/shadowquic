@@ -37,6 +37,8 @@ impl Observer {
 
     pub async fn clear_all_stats(&self, _usernames: &[String]) {}
 
+    pub async fn restore_stats(&self, _stats: &[UserStats]) {}
+
     pub(crate) async fn wrap_request(&self, req: ProxyRequest) -> ProxyRequest {
         req
     }

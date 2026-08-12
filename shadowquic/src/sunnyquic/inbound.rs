@@ -17,6 +17,7 @@ use crate::{
     quic::QuicConnection,
     squic::inbound::{SQServerConn, SunnyQuicUsers, UserManager},
     sunnyquic::EndServer,
+    utils::user_store,
 };
 
 use crate::squic::{IDStore, SQConn};
@@ -36,6 +37,22 @@ struct SunnyQuicUserManager {
     users: Arc<ArcSwap<HashMap<SunnyCredential, String>>>,
     config: RwLock<SunnyQuicServerCfg>,
     observer: Arc<Observer>,
+}
+
+impl SunnyQuicUserManager {
+    /// Persist current users and traffic stats to the configured store file.
+    async fn persist(&self) {
+        let config = self.config.read().await;
+        let Some(path) = config.user_store.clone() else {
+            return;
+        };
+        let users = config.users.clone();
+        drop(config);
+        let store = user_store::build_store(&users, &self.observer).await;
+        if let Err(error) = user_store::save_store(&path, &store) {
+            error!("failed to persist user store: {}", error);
+        }
+    }
 }
 
 #[async_trait]
@@ -59,6 +76,8 @@ impl UserManager for SunnyQuicUserManager {
             return Err(SQExtError::Other(error.to_string()));
         }
         self.users.store(SunnyQuicServer::gen_users_hash(&config));
+        drop(config);
+        self.persist().await;
         Ok(())
     }
 
@@ -77,7 +96,9 @@ impl UserManager for SunnyQuicUserManager {
             return Err(SQExtError::Other(error.to_string()));
         }
         self.users.store(SunnyQuicServer::gen_users_hash(&config));
+        drop(config);
         self.observer.remove_user(username).await;
+        self.persist().await;
         Ok(())
     }
 
@@ -127,6 +148,7 @@ impl UserManager for SunnyQuicUserManager {
         }
         drop(config);
         self.observer.clear_user_stats(username).await;
+        self.persist().await;
         Ok(())
     }
 
@@ -139,18 +161,31 @@ impl UserManager for SunnyQuicUserManager {
             .collect::<Vec<_>>();
         drop(config);
         self.observer.clear_all_stats(&usernames).await;
+        self.persist().await;
         Ok(())
     }
 }
 
 impl SunnyQuicServer {
-    pub async fn new(cfg: SunnyQuicServerCfg) -> Result<Self, SError> {
+    pub async fn new(mut cfg: SunnyQuicServerCfg) -> Result<Self, SError> {
         let (send, recv) = channel::<ProxyRequest>(10);
+        let store = match &cfg.user_store {
+            Some(path) => user_store::load_store(path)?,
+            None => None,
+        };
+        if let Some(store) = &store {
+            user_store::merge_users(&mut cfg.users, store);
+        }
         let endpoint: EndServer = QuicServer::new(&cfg)
             .await
             .expect("Failed to listening on udp");
         let users = Arc::new(ArcSwap::new(Self::gen_users_hash(&cfg)));
         let observer = Arc::new(Observer::new());
+        if let Some(store) = &store {
+            observer
+                .restore_stats(&user_store::stored_stats(store))
+                .await;
+        }
         let user_manager = Arc::new(SunnyQuicUserManager {
             endpoint: endpoint.clone(),
             users: users.clone(),
@@ -173,6 +208,26 @@ impl SunnyQuicServer {
         self.users.store(Self::gen_users_hash(cfg));
         *self.user_manager.config.write().await = cfg.clone();
         Ok(())
+    }
+
+    /// Periodically flush users and traffic stats to the user store,
+    /// so stats survive unexpected crashes.
+    async fn spawn_store_flush(&self) {
+        let config = self.user_manager.config.read().await;
+        let interval_secs = config.store_flush_interval;
+        let store_enabled = config.user_store.is_some();
+        drop(config);
+        if !store_enabled || interval_secs == 0 {
+            return;
+        }
+        let user_manager = self.user_manager.clone();
+        tokio::spawn(async move {
+            let interval = std::time::Duration::from_secs(interval_secs);
+            loop {
+                tokio::time::sleep(interval).await;
+                user_manager.persist().await;
+            }
+        });
     }
 
     async fn handle_incoming<C: QuicConnection>(
@@ -248,6 +303,12 @@ impl Inbound for SunnyQuicServer {
             }
         };
         tokio::spawn(fut);
+        self.spawn_store_flush().await;
+        Ok(())
+    }
+
+    async fn shutdown(&self) -> Result<(), SError> {
+        self.user_manager.persist().await;
         Ok(())
     }
 }

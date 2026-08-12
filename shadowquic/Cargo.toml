@@ -41,7 +41,7 @@ tproxy = ["dep:etherparse", "dep:libc"]
 [dependencies]
 anyhow = "1.0.100"
 thiserror = "2.0.18"
-tokio = {version = "1.52.3", features = ["io-util", "net","rt","macros","rt-multi-thread"]}
+tokio = {version = "1.52.3", features = ["io-util", "net","rt","macros","rt-multi-thread","signal","time"]}
 tracing = "0.1.44"
 time = { version = "0.3.47", features = ["macros", "local-offset"] }
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt", "ansi", "time", "local-time"]}
