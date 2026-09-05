@@ -60,10 +60,7 @@ async fn test_tproxy_echo() {
 
     let echo_outbound = EchoOutbound;
 
-    let manager = Manager {
-        inbound: Box::new(tproxy_server),
-        outbound: Box::new(echo_outbound),
-    };
+    let manager = Manager::new(Box::new(tproxy_server), Box::new(echo_outbound));
 
     tokio::spawn(manager.run());
 

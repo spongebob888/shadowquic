@@ -178,10 +178,7 @@ async fn spawn_socks_server() {
     .await
     .unwrap();
     let direct_client = DirectOut::new(DirectOutCfg::default());
-    let server = Manager {
-        inbound: Box::new(socks_server),
-        outbound: Box::new(direct_client),
-    };
+    let server = Manager::new(Box::new(socks_server), Box::new(direct_client));
     tokio::spawn(server.run());
     tokio::time::sleep(Duration::from_millis(200)).await;
 }
@@ -259,10 +256,7 @@ async fn shadowquic_client_server(over_stream: bool, port: u16) {
         ..Default::default()
     });
 
-    let client = Manager {
-        inbound: Box::new(socks_server),
-        outbound: Box::new(sq_client),
-    };
+    let client = Manager::new(Box::new(socks_server), Box::new(sq_client));
 
     let sq_server = ShadowQuicServer::new(ShadowQuicServerCfg {
         bind_addr: format!("127.0.0.1:{}", port + 10).parse().unwrap(),
@@ -283,10 +277,7 @@ async fn shadowquic_client_server(over_stream: bool, port: u16) {
     .await
     .unwrap();
     let direct_client = DirectOut::new(DirectOutCfg::default());
-    let server = Manager {
-        inbound: Box::new(sq_server),
-        outbound: Box::new(direct_client),
-    };
+    let server = Manager::new(Box::new(sq_server), Box::new(direct_client));
 
     tokio::spawn(server.run());
 

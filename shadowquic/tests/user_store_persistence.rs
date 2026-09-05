@@ -165,10 +165,7 @@ async fn user_store_periodic_flush_writes_traffic_stats() {
     let sq_server = ShadowQuicServer::new(server_cfg(FLUSH_SERVER_ADDR, path.clone(), 1))
         .await
         .unwrap();
-    let server = Manager {
-        inbound: Box::new(sq_server),
-        outbound: Box::<DirectOut>::default(),
-    };
+    let server = Manager::new(Box::new(sq_server), Box::<DirectOut>::default());
     tokio::spawn(server.run());
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -201,4 +198,52 @@ async fn user_store_periodic_flush_writes_traffic_stats() {
     .expect("periodic flush should persist traffic stats");
 
     let _ = std::fs::remove_file(&path);
+}
+
+/// Regression test: the tmp file must be unique per write. A tmp name derived
+/// deterministically from the target (extension replaced) collided across
+/// different targets sharing a stem — `users.yaml` and `users.json` both
+/// mapped to `users.tmp` — and a target literally named `users.tmp` sat
+/// exactly on `users.yaml`'s legacy tmp path, so writing `users.yaml` after
+/// it destroyed the other store.
+#[test]
+fn tmp_files_never_collide_with_other_store_targets() {
+    let dir = std::env::temp_dir().join(format!("sq-store-collide-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let yaml_target = dir.join("users.yaml");
+    let json_target = dir.join("users.json");
+    // Exactly the legacy tmp path of `yaml_target`: with_extension("tmp")
+    // replaces the extension, mapping users.yaml -> users.tmp.
+    let tmp_named_target = dir.join("users.tmp");
+
+    let store = |marker: &str| UserStore {
+        users: vec![PersistedUser {
+            username: marker.into(),
+            ..Default::default()
+        }],
+    };
+    let first_user = |p: &std::path::Path| {
+        load_store(p)
+            .unwrap()
+            .expect("store file should exist")
+            .users
+            .remove(0)
+            .username
+    };
+
+    // Interleaved writes to different targets that used to share one tmp path.
+    save_store(&yaml_target, &store("yaml-1")).unwrap();
+    save_store(&json_target, &store("json-1")).unwrap();
+    save_store(&yaml_target, &store("yaml-2")).unwrap();
+    assert_eq!(first_user(&yaml_target), "yaml-2");
+    assert_eq!(first_user(&json_target), "json-1");
+
+    // A store whose real path is another store's legacy tmp name: writing the
+    // other store afterwards must not destroy this one.
+    save_store(&tmp_named_target, &store("plain-tmp")).unwrap();
+    save_store(&yaml_target, &store("yaml-3")).unwrap();
+    assert_eq!(first_user(&tmp_named_target), "plain-tmp");
+    assert_eq!(first_user(&yaml_target), "yaml-3");
+
+    let _ = std::fs::remove_dir_all(&dir);
 }

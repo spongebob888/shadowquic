@@ -29,6 +29,8 @@ pub enum SError {
     SocksError(String),
     #[error("Sunnyquic authentication error: {0}")]
     SunnyAuthError(String),
+    #[error("Instance error: {0}")]
+    Instance(String),
 }
 
 pub type SResult<T> = result::Result<T, SError>;

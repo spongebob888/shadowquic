@@ -187,10 +187,7 @@ async fn spawn_mixed_proxy_chain(entry_port: u16, upstream_port: u16) {
         socket_opt: SocketOpt::default(),
     });
 
-    let client = Manager {
-        inbound: Box::new(mixed_server),
-        outbound: Box::new(socks_client),
-    };
+    let client = Manager::new(Box::new(mixed_server), Box::new(socks_client));
 
     // upstream proxy: socks inbound -> direct outbound
     let socks_server = SocksServer::new(SocksServerCfg {
@@ -205,10 +202,7 @@ async fn spawn_mixed_proxy_chain(entry_port: u16, upstream_port: u16) {
 
     let direct = DirectOut::default();
 
-    let server = Manager {
-        inbound: Box::new(socks_server),
-        outbound: Box::new(direct),
-    };
+    let server = Manager::new(Box::new(socks_server), Box::new(direct));
 
     tokio::spawn(server.run());
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -352,10 +346,7 @@ async fn test_http_auth_required() {
 
     let direct = DirectOut::default();
 
-    let manager = Manager {
-        inbound: Box::new(mixed_server),
-        outbound: Box::new(direct),
-    };
+    let manager = Manager::new(Box::new(mixed_server), Box::new(direct));
 
     tokio::spawn(manager.run());
     tokio::time::sleep(Duration::from_millis(100)).await;

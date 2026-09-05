@@ -36,6 +36,11 @@ enum Command {
     /// Call SQuic control-plane APIs using the outbound config
     /// The username must be admin or permission will get denied by server.
     Api {
+        /// Zero-based index of the instance (in config order) whose outbound
+        /// is used for the API. Required when the config has multiple
+        /// shadowquic/sunnyquic outbounds.
+        #[clap(short, long)]
+        instance: Option<usize>,
         #[command(subcommand)]
         command: ApiCommand,
     },
@@ -85,12 +90,83 @@ async fn main() {
                 std::env::current_dir().inspect(|x| info!("current working directory: {:?}", x));
             manager.run().await.expect("shadowquic stopped");
         }
-        Command::Api { command } => {
-            if let Err(error) = call_api(cfg.outbound, command).await {
+        Command::Api { instance, command } => {
+            let outbound = match pick_quic_outbound(&cfg, instance) {
+                Ok(outbound) => outbound,
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(1);
+                }
+            };
+            if let Err(error) = call_api(outbound, command).await {
                 eprintln!("{error}");
                 std::process::exit(1);
             }
         }
+    }
+}
+
+/// Resolves the outbound for control-plane API calls.
+///
+/// With a single shadowquic/sunnyquic outbound it is picked automatically
+/// (backward compatible). With several, the caller must name the instance
+/// explicitly via `--instance <index>`; silently operating on the first one
+/// would risk mutating the wrong remote user store.
+fn pick_quic_outbound(cfg: &Config, instance: Option<usize>) -> Result<OutboundCfg, String> {
+    let is_quic =
+        |o: &OutboundCfg| matches!(o, OutboundCfg::ShadowQuic(_) | OutboundCfg::SunnyQuic(_));
+    let quic_instances: Vec<usize> = cfg
+        .instances
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| is_quic(&i.outbound))
+        .map(|(i, _)| i)
+        .collect();
+
+    let index = match instance {
+        Some(index) => index,
+        None if quic_instances.is_empty() => {
+            return Err("config has no shadowquic or sunnyquic outbound; \
+                 api requires one of those outbound types"
+                .into());
+        }
+        None if quic_instances.len() == 1 => quic_instances[0],
+        None => {
+            let mut msg = String::from(
+                "config has multiple shadowquic/sunnyquic outbounds; \
+                 select one with `--instance <index>` (zero-based):\n",
+            );
+            for &i in &quic_instances {
+                msg.push_str(&format!(
+                    "  instance {}: {} -> {}\n",
+                    i,
+                    cfg.instances[i].outbound.type_name(),
+                    outbound_addr(&cfg.instances[i].outbound)
+                ));
+            }
+            return Err(msg);
+        }
+    };
+
+    match cfg.instances.get(index) {
+        Some(inst) if is_quic(&inst.outbound) => Ok(inst.outbound.clone()),
+        Some(inst) => Err(format!(
+            "instance {index} has a {} outbound; api requires shadowquic or sunnyquic",
+            inst.outbound.type_name()
+        )),
+        None => Err(format!(
+            "instance index {index} out of range (config has {} instance(s))",
+            cfg.instances.len()
+        )),
+    }
+}
+
+fn outbound_addr(outbound: &OutboundCfg) -> String {
+    match outbound {
+        OutboundCfg::ShadowQuic(cfg) => cfg.addr.clone(),
+        OutboundCfg::SunnyQuic(cfg) => cfg.addr.clone(),
+        OutboundCfg::Socks(cfg) => cfg.addr.clone(),
+        OutboundCfg::Direct(_) => "-".into(),
     }
 }
 
@@ -240,4 +316,106 @@ fn setup_log(level: LogLevel) {
     #[cfg(feature = "tokio-console")]
     let sub = sub.with(console_layer);
     sub.init();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shadowquic::config::{
+        DirectOutCfg, InboundCfg, InstanceCfg, ShadowQuicClientCfg, SocksServerCfg,
+    };
+
+    fn config(pairs: Vec<(InboundCfg, OutboundCfg)>) -> Config {
+        Config {
+            instances: pairs
+                .into_iter()
+                .map(|(inbound, outbound)| InstanceCfg { inbound, outbound })
+                .collect(),
+            log_level: LogLevel::default(),
+        }
+    }
+
+    fn socks_inbound(port: u16) -> InboundCfg {
+        InboundCfg::Socks(SocksServerCfg {
+            bind_addr: format!("127.0.0.1:{port}").parse().unwrap(),
+            users: vec![],
+        })
+    }
+
+    fn quic_outbound(port: u16) -> OutboundCfg {
+        OutboundCfg::ShadowQuic(ShadowQuicClientCfg {
+            addr: format!("127.0.0.1:{port}"),
+            ..Default::default()
+        })
+    }
+
+    fn direct_outbound() -> OutboundCfg {
+        OutboundCfg::Direct(DirectOutCfg::default())
+    }
+
+    fn assert_quic_addr(outbound: OutboundCfg, addr: &str) {
+        match outbound {
+            OutboundCfg::ShadowQuic(cfg) => assert_eq!(cfg.addr, addr),
+            other => panic!("expected shadowquic outbound, got {}", other.type_name()),
+        }
+    }
+
+    #[test]
+    fn api_errors_when_config_has_no_quic_outbound() {
+        let cfg = config(vec![
+            (socks_inbound(1080), direct_outbound()),
+            (socks_inbound(1081), direct_outbound()),
+        ]);
+        let err = pick_quic_outbound(&cfg, None).unwrap_err();
+        assert!(err.contains("no shadowquic"), "got: {err}");
+    }
+
+    #[test]
+    fn api_requires_instance_flag_when_multiple_quic_outbounds() {
+        let cfg = config(vec![
+            (socks_inbound(1080), quic_outbound(1443)),
+            (socks_inbound(1081), quic_outbound(1444)),
+        ]);
+        let err = pick_quic_outbound(&cfg, None).unwrap_err();
+        assert!(err.contains("multiple"), "got: {err}");
+        assert!(
+            err.contains("instance 0") && err.contains("instance 1"),
+            "error must list the candidates, got: {err}"
+        );
+    }
+
+    #[test]
+    fn api_rejects_non_quic_instance_target() {
+        let cfg = config(vec![
+            (socks_inbound(1080), quic_outbound(1443)),
+            (socks_inbound(1081), direct_outbound()),
+        ]);
+        let err = pick_quic_outbound(&cfg, Some(1)).unwrap_err();
+        assert!(err.contains("direct"), "got: {err}");
+    }
+
+    #[test]
+    fn api_rejects_out_of_range_instance() {
+        let cfg = config(vec![(socks_inbound(1080), quic_outbound(1443))]);
+        let err = pick_quic_outbound(&cfg, Some(5)).unwrap_err();
+        assert!(err.contains("out of range"), "got: {err}");
+    }
+
+    #[test]
+    fn api_auto_selects_single_quic_outbound() {
+        let cfg = config(vec![
+            (socks_inbound(1080), direct_outbound()),
+            (socks_inbound(1081), quic_outbound(1444)),
+        ]);
+        assert_quic_addr(pick_quic_outbound(&cfg, None).unwrap(), "127.0.0.1:1444");
+    }
+
+    #[test]
+    fn api_selects_instance_by_index() {
+        let cfg = config(vec![
+            (socks_inbound(1080), quic_outbound(1443)),
+            (socks_inbound(1081), quic_outbound(1444)),
+        ]);
+        assert_quic_addr(pick_quic_outbound(&cfg, Some(1)).unwrap(), "127.0.0.1:1444");
+    }
 }

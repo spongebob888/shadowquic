@@ -1,7 +1,10 @@
-use crate::{SDecode, SEncode};
+use crate::{Instance, SDecode, SEncode};
+use serde::de::Error as _;
 use serde::{Deserialize, Serialize};
 use shadowquic_macros::{SDecode, SEncode};
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
+use std::path::{Path, PathBuf};
 use tracing::{Level, warn};
 
 #[cfg(feature = "mixed")]
@@ -27,7 +30,9 @@ pub use crate::config::sunnyquic::*;
 
 /// Overall configuration of shadowquic.
 ///
-/// Example:
+/// Two formats are supported.
+///
+/// Single instance (legacy):
 /// ```yaml
 /// inbound:
 ///   type: xxx
@@ -37,24 +42,170 @@ pub use crate::config::sunnyquic::*;
 ///   xxx: xxx
 /// log-level: trace # or debug, info, warn, error
 /// ```
+///
+/// Multiple instances running concurrently in one process:
+/// ```yaml
+/// instances:
+///   - inbound:
+///       type: mixed
+///       bind-addr: "0.0.0.0:20808"
+///     outbound:
+///       type: shadowquic
+///       addr: "server1.example.com:1443"
+///       username: "my_name"
+///       password: "my_password"
+///       server-name: "cloudflare.com"
+///   - inbound:
+///       type: mixed
+///       bind-addr: "0.0.0.0:20809"
+///     outbound:
+///       type: shadowquic
+///       addr: "server2.example.com:1444"
+///       username: "my_name"
+///       password: "my_password"
+///       server-name: "cloudflare.com"
+/// log-level: info
+/// ```
+/// The two formats cannot be mixed: a config must use either `instances` or
+/// the legacy top-level `inbound`/`outbound` pair.
+///
 /// Supported inbound types are listed in [`InboundCfg`]
 ///
 /// Supported outbound types are listed in [`OutboundCfg`]
-#[derive(Deserialize, Clone, Debug)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+#[derive(Clone, Debug)]
 pub struct Config {
-    pub inbound: InboundCfg,
-    pub outbound: OutboundCfg,
-    #[serde(default)]
+    pub instances: Vec<InstanceCfg>,
     pub log_level: LogLevel,
 }
-impl Config {
-    pub async fn build_manager(self) -> Result<Manager, SError> {
-        Ok(Manager {
-            inbound: self.inbound.build_inbound().await?,
-            outbound: self.outbound.build_outbound().await?,
-        })
+
+/// Internal raw config shape accepting both formats.
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct RawConfig {
+    inbound: Option<InboundCfg>,
+    outbound: Option<OutboundCfg>,
+    instances: Option<Vec<InstanceCfg>>,
+    #[serde(default)]
+    log_level: LogLevel,
+}
+
+impl<'de> Deserialize<'de> for Config {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawConfig::deserialize(deserializer)?;
+        Config::from_raw(raw).map_err(D::Error::custom)
     }
+}
+
+impl Config {
+    fn from_raw(raw: RawConfig) -> Result<Self, String> {
+        let RawConfig {
+            inbound,
+            outbound,
+            instances,
+            log_level,
+        } = raw;
+        match (inbound, outbound, instances) {
+            (Some(inbound), Some(outbound), None) => Ok(Config {
+                instances: vec![InstanceCfg { inbound, outbound }],
+                log_level,
+            }),
+            (None, None, Some(instances)) if !instances.is_empty() => Ok(Config {
+                instances,
+                log_level,
+            }),
+            (None, None, Some(_)) => Err("`instances` must not be empty".into()),
+            (Some(_), Some(_), Some(_)) | (Some(_), None, Some(_)) | (None, Some(_), Some(_)) => {
+                Err("cannot mix `instances` with legacy `inbound`/`outbound` in one config".into())
+            }
+            (Some(_), None, None) => Err(
+                "`outbound` is missing: legacy config requires both `inbound` and `outbound`"
+                    .into(),
+            ),
+            (None, Some(_), None) => Err(
+                "`inbound` is missing: legacy config requires both `inbound` and `outbound`".into(),
+            ),
+            (None, None, None) => {
+                Err("config must define either `instances` or both `inbound` and `outbound`".into())
+            }
+        }
+    }
+
+    pub async fn build_manager(self) -> Result<Manager, SError> {
+        // A user store file is a whole-file snapshot rewritten on every flush
+        // (tmp + rename, no locking): two instances pointing at the same path
+        // would silently overwrite each other's users and traffic stats (last
+        // writer wins). Reject that up front instead of corrupting data later.
+        let mut store_owner: HashMap<PathBuf, usize> = HashMap::new();
+        for (i, cfg) in self.instances.iter().enumerate() {
+            let store = match &cfg.inbound {
+                InboundCfg::ShadowQuic(c) => c.user_store.as_deref(),
+                InboundCfg::SunnyQuic(c) => c.user_store.as_deref(),
+                _ => None,
+            };
+            if let Some(path) = store {
+                // Compare canonicalized keys: literal path equality is
+                // bypassed by `./users.yaml`, symlinks or case-insensitive
+                // filesystems. New inbound kinds with a user store must be
+                // added to the match above.
+                let key = normalize_store_path(path);
+                if let Some(&j) = store_owner.get(&key) {
+                    return Err(SError::Instance(format!(
+                        "instances {j} and {i} share the same user-store path ({}); \
+                         user stores must be unique per instance, otherwise each \
+                         flush overwrites the other's users and traffic stats",
+                        path.display()
+                    )));
+                }
+                store_owner.insert(key, i);
+            }
+        }
+
+        let mut instances = Vec::with_capacity(self.instances.len());
+        for (i, cfg) in self.instances.into_iter().enumerate() {
+            let inbound =
+                cfg.inbound.build_inbound().await.map_err(|e| {
+                    SError::Instance(format!("instance {i} inbound build failed: {e}"))
+                })?;
+            let outbound = cfg.outbound.build_outbound().await.map_err(|e| {
+                SError::Instance(format!("instance {i} outbound build failed: {e}"))
+            })?;
+            instances.push(Instance::new(inbound, outbound));
+        }
+        Ok(Manager::with_instances(instances))
+    }
+}
+
+/// Best-effort normalization of a user-store path for duplicate detection.
+/// The store file may not exist yet, so only the parent directory is
+/// canonicalized — resolving `..`, parent symlinks and case differences in
+/// the *directory* component — and the file name is appended verbatim:
+/// file-name case differences on case-insensitive filesystems are NOT
+/// resolved. A bare file name is resolved against the current directory.
+/// Falls back to the raw path when canonicalization fails. Hard-linked
+/// files (different paths, same inode) are not detected.
+fn normalize_store_path(path: &Path) -> PathBuf {
+    let Some(file) = path.file_name() else {
+        return path.to_path_buf();
+    };
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    parent
+        .canonicalize()
+        .map(|dir| dir.join(file))
+        .unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Configuration of a single proxy instance: an [`InboundCfg`] paired with an [`OutboundCfg`].
+#[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct InstanceCfg {
+    pub inbound: InboundCfg,
+    pub outbound: OutboundCfg,
 }
 
 /// Inbound configuration
@@ -81,6 +232,19 @@ pub enum InboundCfg {
     Tproxy(TproxyServerCfg),
 }
 impl InboundCfg {
+    /// Name of the inbound type, e.g. `"mixed"`, `"shadowquic"`
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            InboundCfg::Socks(_) => "socks",
+            #[cfg(feature = "mixed")]
+            InboundCfg::Mixed(_) => "mixed",
+            InboundCfg::ShadowQuic(_) => "shadowquic",
+            InboundCfg::SunnyQuic(_) => "sunnyquic",
+            #[cfg(all(feature = "tproxy", target_os = "linux"))]
+            InboundCfg::Tproxy(_) => "tproxy",
+        }
+    }
+
     async fn build_inbound(self) -> Result<Box<dyn Inbound>, SError> {
         let r: Box<dyn Inbound> = match self {
             InboundCfg::Socks(cfg) => Box::new(SocksServer::new(cfg).await?),
@@ -116,6 +280,16 @@ pub enum OutboundCfg {
 }
 
 impl OutboundCfg {
+    /// Name of the outbound type, e.g. `"direct"`, `"shadowquic"`
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            OutboundCfg::Socks(_) => "socks",
+            OutboundCfg::ShadowQuic(_) => "shadowquic",
+            OutboundCfg::SunnyQuic(_) => "sunnyquic",
+            OutboundCfg::Direct(_) => "direct",
+        }
+    }
+
     async fn build_outbound(self) -> Result<Box<dyn Outbound>, SError> {
         let r: Box<dyn Outbound> = match self {
             OutboundCfg::Socks(cfg) => Box::new(SocksClient::new(cfg)),
@@ -454,8 +628,32 @@ impl LogLevel {
 mod test {
     use crate::config::{CongestionControl, Interface, ShadowQuicClientCfg};
 
-    use super::Config;
     use super::{CipherSuitePreference, normalize_cipher_suite_preference};
+    use super::{Config, normalize_store_path};
+
+    /// Lexical differences (`dir/./users.yaml`) and symlinked parents must
+    /// resolve to the same duplicate-detection key.
+    #[test]
+    fn normalize_store_path_sees_through_lexical_and_symlink_differences() {
+        let dir = std::env::temp_dir();
+        let key = normalize_store_path(&dir.join("users.yaml"));
+        assert_eq!(
+            normalize_store_path(&dir.join(".").join("users.yaml")),
+            key,
+            "dir/./users.yaml must normalize to dir/users.yaml"
+        );
+        #[cfg(unix)]
+        {
+            let link = dir.join(format!("sq-cfg-norm-{}", std::process::id()));
+            std::os::unix::fs::symlink(&dir, &link).unwrap();
+            assert_eq!(
+                normalize_store_path(&link.join("users.yaml")),
+                key,
+                "symlinked parent must normalize to the real directory"
+            );
+            let _ = std::fs::remove_file(&link);
+        }
+    }
     #[test]
     fn test() {
         let cfgstr = r###"
@@ -478,6 +676,92 @@ inbound:
 outbound:
     type: direct
     dns-strategy: prefer-ipv4
+"###;
+        let cfg: Result<Config, _> = serde_saphyr::from_str(cfgstr);
+        assert!(cfg.is_err());
+    }
+    #[test]
+    fn test_legacy_single_instance() {
+        let cfgstr = r###"
+inbound:
+    type: mixed
+    bind-addr: "0.0.0.0:20808"
+outbound:
+    type: shadowquic
+    addr: "server.example.com:1443"
+    username: "test"
+    password: "test"
+    server-name: "cloudflare.com"
+log-level: info
+"###;
+        let cfg: Config = serde_saphyr::from_str(cfgstr).expect("yaml parsed failed");
+        assert_eq!(cfg.instances.len(), 1);
+        assert_eq!(cfg.instances[0].inbound.type_name(), "mixed");
+    }
+    #[test]
+    fn test_multi_instances() {
+        let cfgstr = r###"
+instances:
+    - inbound:
+          type: mixed
+          bind-addr: "0.0.0.0:20808"
+      outbound:
+          type: shadowquic
+          addr: "server.example.com:1443"
+          username: "test"
+          password: "test"
+          server-name: "cloudflare.com"
+    - inbound:
+          type: mixed
+          bind-addr: "0.0.0.0:20809"
+      outbound:
+          type: shadowquic
+          addr: "server.example.com:1444"
+          username: "test"
+          password: "test"
+          server-name: "cloudflare.com"
+          congestion-control:
+              brutal:
+                  bandwidth: 10000000
+log-level: info
+"###;
+        let cfg: Config = serde_saphyr::from_str(cfgstr).expect("yaml parsed failed");
+        assert_eq!(cfg.instances.len(), 2);
+        assert_eq!(cfg.instances[1].inbound.type_name(), "mixed");
+        assert_eq!(cfg.instances[1].outbound.type_name(), "shadowquic");
+    }
+    #[test]
+    fn test_reject_mixed_formats() {
+        let cfgstr = r###"
+instances:
+    - inbound:
+          type: socks
+          bind-addr: 127.0.0.1:1089
+      outbound:
+          type: direct
+inbound:
+    type: socks
+    bind-addr: 127.0.0.1:1089
+outbound:
+    type: direct
+"###;
+        let cfg: Result<Config, _> = serde_saphyr::from_str(cfgstr);
+        assert!(cfg.is_err());
+    }
+    #[test]
+    fn test_reject_empty_instances() {
+        let cfgstr = r###"
+instances: []
+"###;
+        let cfg: Result<Config, _> = serde_saphyr::from_str(cfgstr);
+        assert!(cfg.is_err());
+    }
+    #[test]
+    fn test_reject_legacy_missing_outbound() {
+        let cfgstr = r###"
+inbound:
+    type: socks
+    bind-addr: 127.0.0.1:1089
 "###;
         let cfg: Result<Config, _> = serde_saphyr::from_str(cfgstr);
         assert!(cfg.is_err());

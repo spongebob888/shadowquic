@@ -176,9 +176,7 @@ impl SunnyQuicServer {
         if let Some(store) = &store {
             user_store::merge_users(&mut cfg.users, store);
         }
-        let endpoint: EndServer = QuicServer::new(&cfg)
-            .await
-            .expect("Failed to listening on udp");
+        let endpoint: EndServer = QuicServer::new(&cfg).await?;
         let users = Arc::new(ArcSwap::new(Self::gen_users_hash(&cfg)));
         let observer = Arc::new(Observer::new());
         if let Some(store) = &store {

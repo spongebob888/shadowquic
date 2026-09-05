@@ -19,6 +19,8 @@ $ shadowquic -c client.yaml
 
 Example config: [client.yaml](./shadowquic/config_examples/client.yaml)
 
+Multiple proxy instances can run in one process (e.g. bbr + brutal dual ports), see [client_multi.yaml](./shadowquic/config_examples/client_multi.yaml). Legacy single-instance configs keep working. All instances share a single tokio runtime with a fixed pool of 8 worker threads (`worker_threads = 8`), so one process serves every chain: much lower memory than one process per chain (matters on routers), traded for shared CPU scheduling between chains. Instances are also not fault-isolated: if one fails, the remaining ones are shut down gracefully and the process exits; run it under a supervisor (systemd/procd).
+
 ### [Clash-rs](https://github.com/Watfaq/clash-rs)
 ```yaml
 # config.yaml

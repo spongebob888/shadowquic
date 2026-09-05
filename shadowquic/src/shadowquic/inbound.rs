@@ -173,9 +173,7 @@ impl ShadowQuicServer {
             user_store::merge_users(&mut cfg.users, store);
         }
 
-        let endpoint: EndServer = QuicServer::new(&cfg)
-            .await
-            .expect("Failed to listening on udp");
+        let endpoint: EndServer = QuicServer::new(&cfg).await?;
         let observer = Arc::new(Observer::new());
         if let Some(store) = &store {
             observer

@@ -234,10 +234,7 @@ async fn shadowquic_user_api_get_stats_tracks_tcp_and_udp_bytes() {
     .await
     .unwrap();
 
-    let server = Manager {
-        inbound: Box::new(sq_server),
-        outbound: Box::<DirectOut>::default(),
-    };
+    let server = Manager::new(Box::new(sq_server), Box::<DirectOut>::default());
     tokio::spawn(server.run());
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -334,10 +331,7 @@ async fn shadowquic_user_api_clear_stats() {
     .await
     .unwrap();
 
-    let server = Manager {
-        inbound: Box::new(sq_server),
-        outbound: Box::<DirectOut>::default(),
-    };
+    let server = Manager::new(Box::new(sq_server), Box::<DirectOut>::default());
     tokio::spawn(server.run());
     tokio::time::sleep(Duration::from_millis(100)).await;
 

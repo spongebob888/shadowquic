@@ -1,0 +1,55 @@
+# Multiple proxy instances in ONE process (bbr + brutal dual ports).
+# Run with: shadowquic -c client_multi.yaml
+#
+# The legacy single-instance format (top-level `inbound:`/`outbound:`) still
+# works and is equivalent to an `instances` list with one entry. The two
+# formats cannot be mixed in one config file.
+#
+# Fault semantics: instances are NOT isolated from each other. If any
+# instance fails to start or exits unexpectedly, the remaining instances
+# are shut down gracefully (flushing their state) and the process exits.
+# Run it under a supervisor (systemd/procd) to restart on failure.
+#
+# Cross-process: two SEPARATE processes must not share one user-store
+# file — writes are last-writer-wins with no locking. The duplicate-store
+# check only protects instances within one process.
+#
+# Resource model: all instances share one runtime (a fixed pool of 8
+# worker threads) in one process — lower memory than one process per
+# chain, at the cost of shared CPU scheduling between chains.
+instances:
+    - inbound:
+          type: mixed
+          bind-addr: "0.0.0.0:20808"
+      outbound:
+          type: shadowquic
+          addr: "server.example.com:1443"
+          username: "my_name"
+          password: "my_password"
+          server-name: "cloudflare.com" # must be the same as jls_upstream in server
+          alpn: ["h3"]
+          initial-mtu: 1200
+          congestion-control: bbr
+          zero-rtt: true
+          gso: false
+          over-stream: false  # true for udp over stream, false for udp over datagram
+          fw-mark: 2
+    - inbound:
+          type: mixed
+          bind-addr: "0.0.0.0:20809"
+      outbound:
+          type: shadowquic
+          addr: "server.example.com:1444"
+          username: "my_name"
+          password: "my_password"
+          server-name: "cloudflare.com"
+          alpn: ["h3"]
+          initial-mtu: 1200
+          congestion-control:
+              brutal:
+                  bandwidth: 10000000 # uploading bandwidth in bps
+          zero-rtt: true
+          gso: false
+          over-stream: false
+          fw-mark: 2
+log-level: "info"

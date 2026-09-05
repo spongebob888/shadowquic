@@ -127,10 +127,7 @@ async fn test_auto_reload_cert() {
     .unwrap();
 
     let direct_client = DirectOut::default();
-    let server = Manager {
-        inbound: Box::new(sq_server),
-        outbound: Box::new(direct_client),
-    };
+    let server = Manager::new(Box::new(sq_server), Box::new(direct_client));
     tokio::spawn(server.run());
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -156,10 +153,7 @@ async fn test_auto_reload_cert() {
         ..Default::default()
     });
 
-    let client_1 = Manager {
-        inbound: Box::new(socks_server_1),
-        outbound: Box::new(sq_client_1),
-    };
+    let client_1 = Manager::new(Box::new(socks_server_1), Box::new(sq_client_1));
     tokio::spawn(client_1.run());
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -240,10 +234,7 @@ async fn test_auto_reload_cert() {
         cert_path: Some(cert_path_2.clone()), // TRUST ONLY CERT 2
         ..Default::default()
     });
-    let client_2 = Manager {
-        inbound: Box::new(socks_server_2),
-        outbound: Box::new(sq_client_2),
-    };
+    let client_2 = Manager::new(Box::new(socks_server_2), Box::new(sq_client_2));
     tokio::spawn(client_2.run());
     tokio::time::sleep(Duration::from_millis(100)).await;
 
