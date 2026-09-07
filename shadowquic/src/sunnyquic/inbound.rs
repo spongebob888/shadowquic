@@ -243,6 +243,7 @@ impl SunnyQuicServer {
                     id_counter: Default::default(),
                     inner: Default::default(),
                 },
+                last_stats_print: Default::default(),
             },
             users: user_hash,
             user_manager: Some(user_manager),

@@ -201,11 +201,10 @@ async fn send_user_extension<C: QuicConnection, R: SDecode>(
 }
 
 async fn print_stats<C: QuicConnection>(sq_conn: &SQConn<C>) -> SResult<()> {
-    static LAST_PRINT: std::sync::LazyLock<tokio::sync::Mutex<Option<std::time::Instant>>> =
-        std::sync::LazyLock::new(|| tokio::sync::Mutex::new(None));
-
+    // Debounce per connection instead of process-wide, so multiple instances
+    // print their stats on independent intervals.
     {
-        let mut last_print = LAST_PRINT.lock().await;
+        let mut last_print = sq_conn.last_stats_print.lock().await;
         if let Some(last) = *last_print
             && last.elapsed() < Duration::from_secs(10)
         {

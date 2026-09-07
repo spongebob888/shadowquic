@@ -71,6 +71,7 @@ impl ShadowQuicClient {
                 id_counter: Default::default(),
                 inner: Default::default(),
             },
+            last_stats_print: Default::default(),
         };
         let conn_clone = conn.clone();
         tokio::spawn(async move {

@@ -232,6 +232,7 @@ impl ShadowQuicServer {
                     id_counter: Default::default(),
                     inner: Default::default(),
                 },
+                last_stats_print: Default::default(),
             },
             users: Arc::new(Default::default()),
             user_manager: Some(user_manager),

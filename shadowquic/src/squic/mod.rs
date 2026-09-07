@@ -11,14 +11,14 @@ use std::{
     mem::replace,
     ops::Deref,
     sync::{Arc, atomic::AtomicU16},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
 use tokio::{
     io::{AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::{
-        RwLock, SetOnce,
+        Mutex, RwLock, SetOnce,
         watch::{Receiver, Sender, channel},
     },
 };
@@ -47,6 +47,9 @@ pub struct SQConn<T: QuicConnection> {
     pub authed: Arc<SetOnce<SResult<String>>>,
     pub(crate) send_id_store: IDStore<()>,
     pub(crate) recv_id_store: IDStore<(AnyUdpSend, SocksAddr)>,
+    /// Gate for stats printing, shared only among clones of one connection,
+    /// so each instance (owning its own connection) debounces independently.
+    pub(crate) last_stats_print: Arc<Mutex<Option<Instant>>>,
 }
 
 async fn wait_sunny_auth<T: QuicConnection>(conn: &SQConn<T>) -> SResult<String> {
