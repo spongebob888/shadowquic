@@ -1,3 +1,4 @@
+pub mod activity_stream;
 pub mod dual_socket;
 pub mod platform;
 pub mod socket_opt;
