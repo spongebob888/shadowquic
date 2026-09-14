@@ -148,6 +148,15 @@ impl QuicConnection for Connection {
     fn close(&self, error_code: u64, reason: &[u8]) {
         self.close(VarInt::from_u64(error_code).unwrap(), reason);
     }
+    fn data_progress(&self) -> Option<u64> {
+        let stats = self.stats();
+        Some(
+            stats.frame_tx.stream
+                + stats.frame_rx.stream
+                + stats.frame_tx.datagram
+                + stats.frame_rx.datagram,
+        )
+    }
 }
 
 #[async_trait]

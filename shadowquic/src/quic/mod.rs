@@ -61,6 +61,21 @@ pub trait QuicConnection: Send + Sync + Clone + 'static {
     fn get_conn_stats(&self) -> Option<ConnStats> {
         None
     }
+    /// Monotonic count of application data frames (STREAM and DATAGRAM) written
+    /// and received, or `None` when the transport cannot report it.
+    ///
+    /// Unlike the packet counters in [`ConnStats`], keep-alive PINGs and pure ACK
+    /// traffic do not advance this, so it remains a "is this connection still
+    /// moving real traffic" signal when `keep_alive_interval` keeps an otherwise
+    /// wedged connection sending.
+    ///
+    /// Retransmissions do advance it, because a frame is counted every time it is
+    /// written into a packet, not only the first time. A connection whose peer has
+    /// stopped granting stream credit therefore still looks active while it has
+    /// unacknowledged application data being resent.
+    fn data_progress(&self) -> Option<u64> {
+        None
+    }
 }
 
 impl<T: QuicConnection> Stoppable for T {

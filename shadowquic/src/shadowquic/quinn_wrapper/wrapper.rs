@@ -150,6 +150,15 @@ impl QuicConnection for Connection {
             current_mtu: stats.path.current_mtu,
         })
     }
+    fn data_progress(&self) -> Option<u64> {
+        let stats = self.stats();
+        Some(
+            stats.frame_tx.stream
+                + stats.frame_rx.stream
+                + stats.frame_tx.datagram
+                + stats.frame_rx.datagram,
+        )
+    }
 }
 
 impl AuthedConn for Connection {
