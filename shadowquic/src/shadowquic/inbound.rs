@@ -270,11 +270,14 @@ impl Inbound for ShadowQuicServer {
                     Ok(conn) => {
                         let request_sender = request_sender.clone();
                         let user_manager = user_manager.clone();
-                        tokio::spawn(async move {
-                            Self::handle_incoming(conn, request_sender, user_manager)
-                                .await
-                                .map_err(|x| error!("{}", x))
-                        });
+                        tokio::spawn(
+                            async move {
+                                Self::handle_incoming(conn, request_sender, user_manager)
+                                    .await
+                                    .map_err(|x| error!("{}", x))
+                            }
+                            .in_current_span(),
+                        );
                     }
                     Err(e) => {
                         error!("Error accepting quic connection: {}", e);
@@ -282,7 +285,7 @@ impl Inbound for ShadowQuicServer {
                 }
             }
         };
-        tokio::spawn(fut);
+        tokio::spawn(fut.in_current_span());
         self.spawn_store_flush().await;
         Ok(())
     }

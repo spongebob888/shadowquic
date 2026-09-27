@@ -15,6 +15,7 @@ use bytes::Bytes;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::{Receiver, channel};
+use tracing::Instrument;
 
 use socket2::{
     Domain, MaybeUninitSlice, MsgHdrMut, Protocol, SockAddr, SockAddrStorage, Socket, Type,
@@ -34,11 +35,14 @@ impl TproxyServer {
 
         {
             let bind_addr = cfg.bind_addr;
-            tokio::spawn(async move {
-                if let Err(e) = handle_udp_tproxy(bind_addr, udp_req_tx).await {
-                    tracing::error!("tproxy udp listener failed: {}", e);
+            tokio::spawn(
+                async move {
+                    if let Err(e) = handle_udp_tproxy(bind_addr, udp_req_tx).await {
+                        tracing::error!("tproxy udp listener failed: {}", e);
+                    }
                 }
-            });
+                .in_current_span(),
+            );
         }
 
         Ok(Self {

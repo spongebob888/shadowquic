@@ -247,20 +247,21 @@ impl Inbound for SocksServer {
             loop {
                 let (stream, addr) = listener.accept().await?;
                 let span = info_span!("socks", src = %addr);
-                let _enter = span.enter();
                 let users = users.clone();
                 let req_send = req_send.clone();
-                tokio::spawn(async move {
-                    handle_tcp(users, stream, req_send)
-                        .in_current_span()
-                        .await
-                        .map_err(|x| error!("failed to handle socks connection: {}", x))
-                });
+                tokio::spawn(
+                    async move {
+                        handle_tcp(users, stream, req_send)
+                            .await
+                            .map_err(|x| error!("failed to handle socks connection: {}", x))
+                    }
+                    .instrument(span),
+                );
             }
             #[allow(unreachable_code)]
             SResult::<()>::Ok(())
         };
-        tokio::spawn(fut);
+        tokio::spawn(fut.in_current_span());
 
         Ok(())
     }

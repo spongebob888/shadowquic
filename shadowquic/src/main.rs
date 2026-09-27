@@ -7,7 +7,7 @@ use shadowquic::{
     squic::inbound::UserManager,
     sunnyquic::outbound::SunnyQuicClient,
 };
-use tracing::{Level, info};
+use tracing::{Instrument, Level, info};
 use tracing_subscriber::{fmt::time::LocalTime, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser)]
@@ -21,9 +21,9 @@ struct Cli {
         value_parser,
         value_name = "FILE",
         default_value = "config.yaml",
-        help = "configuration file"
+        help = "configuration file (repeat to run multiple instances)"
     )]
-    config: PathBuf,
+    config: Vec<PathBuf>,
 
     #[command(subcommand)]
     command: Option<Command>,
@@ -63,33 +63,76 @@ enum ApiCommand {
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 8)]
 async fn main() {
-    let cli = Cli::parse();
-    let content = std::fs::read_to_string(cli.config).expect("can't open config yaml file");
-    let cfg: Config = match serde_saphyr::from_str(&content) {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            eprintln!("failed to parse config file: {e}");
-            std::process::exit(1);
-        }
-    };
+    if let Err(error) = run(Cli::parse()).await {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
+}
+
+async fn run(cli: Cli) -> Result<(), String> {
+    if matches!(cli.command, Some(Command::Api { .. })) && cli.config.len() != 1 {
+        panic!("api requires exactly one configuration file");
+    }
+    // Validate every config before opening any listeners.
+    let configs = cli
+        .config
+        .into_iter()
+        .map(|path| {
+            let content = std::fs::read_to_string(&path)
+                .map_err(|error| format!("can't open config {}: {error}", path.display()))?;
+            let cfg: Config = serde_saphyr::from_str(&content)
+                .map_err(|error| format!("failed to parse config {}: {error}", path.display()))?;
+            Ok((path, cfg))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     match cli.command.unwrap_or(Command::Run) {
         Command::Run => {
-            setup_log(cfg.log_level.clone());
-            let manager = cfg
-                .build_manager()
-                .await
-                .expect("creating inbound/outbound failed");
+            let level = configs
+                .iter()
+                .filter_map(|(_, cfg)| cfg.log_level.clone())
+                .max_by_key(LogLevel::as_tracing_level)
+                .unwrap_or_default();
+            setup_log(level);
+            let mut managers = Vec::with_capacity(configs.len());
+            for (path, cfg) in configs {
+                let span = tracing::info_span!(
+                    "instance",
+                    listen = %cfg.inbound.bind_addr(),
+                );
+                let manager =
+                    cfg.build_manager()
+                        .instrument(span.clone())
+                        .await
+                        .map_err(|error| {
+                            format!("creating instance {} failed: {error}", path.display())
+                        })?;
+                managers.push((path, manager, span));
+            }
 
             info!("shadowquic {} running", env!("CARGO_PKG_VERSION"));
             let _ =
                 std::env::current_dir().inspect(|x| info!("current working directory: {:?}", x));
-            manager.run().await.expect("shadowquic stopped");
+            let mut instances = tokio::task::JoinSet::new();
+            for (path, manager, span) in managers {
+                instances.spawn(
+                    async move {
+                        manager.run().await.map_err(|error| {
+                            format!("instance {} stopped: {error}", path.display())
+                        })
+                    }
+                    .instrument(span),
+                );
+            }
+            // Wait for every instance to flush its state on graceful shutdown.
+            // A fatal error aborts the other instances when the set is dropped.
+            while let Some(result) = instances.join_next().await {
+                result.map_err(|error| format!("instance task failed: {error}"))??;
+            }
+            Ok(())
         }
         Command::Api { command } => {
-            if let Err(error) = call_api(cfg.outbound, command).await {
-                eprintln!("{error}");
-                std::process::exit(1);
-            }
+            let (_, cfg) = configs.into_iter().next().expect("one API config");
+            call_api(cfg.outbound, command).await
         }
     }
 }
@@ -240,4 +283,70 @@ fn setup_log(level: LogLevel) {
     #[cfg(feature = "tokio-console")]
     let sub = sub.with(console_layer);
     sub.init();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_log_levels_take_precedence_over_missing_levels() {
+        let base =
+            "inbound:\n  type: socks\n  bind-addr: '127.0.0.1:1080'\noutbound:\n  type: direct\n";
+        for (levels, expected) in [
+            (["", "log-level: warn\n"], Level::WARN),
+            (["log-level: error\n", "log-level:\n"], Level::ERROR),
+            (["", "log-level: null\n"], Level::INFO),
+            (["log-level: info\n", "log-level: warn\n"], Level::INFO),
+        ] {
+            let configs: Vec<Config> = levels
+                .iter()
+                .map(|level| serde_saphyr::from_str(&format!("{base}{level}")).unwrap())
+                .collect();
+            let selected = configs
+                .iter()
+                .filter_map(|cfg| cfg.log_level.clone())
+                .max_by_key(LogLevel::as_tracing_level)
+                .unwrap_or_default();
+            assert_eq!(selected.as_tracing_level(), expected);
+        }
+    }
+
+    #[test]
+    fn config_arguments() {
+        for (args, expected) in [
+            (vec!["shadowquic"], vec!["config.yaml"]),
+            (vec!["shadowquic", "-c", "one.yaml"], vec!["one.yaml"]),
+            (
+                vec!["shadowquic", "-c", "one.yaml", "--config", "two.yaml"],
+                vec!["one.yaml", "two.yaml"],
+            ),
+            (
+                vec!["shadowquic", "run", "-c", "one.yaml", "-c", "two.yaml"],
+                vec!["one.yaml", "two.yaml"],
+            ),
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert_eq!(
+                cli.config,
+                expected.into_iter().map(PathBuf::from).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "api requires exactly one configuration file")]
+    async fn api_rejects_multiple_configs_before_reading_files() {
+        let cli = Cli::try_parse_from([
+            "shadowquic",
+            "-c",
+            "one.yaml",
+            "-c",
+            "two.yaml",
+            "api",
+            "list-users",
+        ])
+        .unwrap();
+        let _ = run(cli).await;
+    }
 }

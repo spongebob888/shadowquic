@@ -54,9 +54,12 @@ impl<C: QuicConnection> SQServerConn<C> {
         let conn = &self.inner;
         info!(peer_address = %conn.remote_address(), "incoming connection accepted");
         let conn_clone = self.inner.clone();
-        tokio::spawn(async move {
-            let _ = handle_udp_packet_recv(conn_clone).in_current_span().await;
-        });
+        tokio::spawn(
+            async move {
+                let _ = handle_udp_packet_recv(conn_clone).await;
+            }
+            .in_current_span(),
+        );
 
         while conn.close_reason().is_none() {
             select! {

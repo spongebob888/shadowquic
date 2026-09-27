@@ -45,8 +45,9 @@ pub use crate::config::sunnyquic::*;
 pub struct Config {
     pub inbound: InboundCfg,
     pub outbound: OutboundCfg,
+    /// Omitted or null levels defer to other instances, falling back to info.
     #[serde(default)]
-    pub log_level: LogLevel,
+    pub log_level: Option<LogLevel>,
 }
 impl Config {
     pub async fn build_manager(self) -> Result<Manager, SError> {
@@ -81,6 +82,19 @@ pub enum InboundCfg {
     Tproxy(TproxyServerCfg),
 }
 impl InboundCfg {
+    /// Configured address on which this instance accepts incoming connections.
+    pub fn bind_addr(&self) -> SocketAddr {
+        match self {
+            Self::Socks(cfg) => cfg.bind_addr,
+            #[cfg(feature = "mixed")]
+            Self::Mixed(cfg) => cfg.bind_addr,
+            Self::ShadowQuic(cfg) => cfg.bind_addr,
+            Self::SunnyQuic(cfg) => cfg.bind_addr,
+            #[cfg(all(feature = "tproxy", target_os = "linux"))]
+            Self::Tproxy(cfg) => cfg.bind_addr,
+        }
+    }
+
     async fn build_inbound(self) -> Result<Box<dyn Inbound>, SError> {
         let r: Box<dyn Inbound> = match self {
             InboundCfg::Socks(cfg) => Box::new(SocksServer::new(cfg).await?),

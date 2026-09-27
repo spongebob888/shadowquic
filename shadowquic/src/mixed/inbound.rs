@@ -119,21 +119,22 @@ impl Inbound for MixedServer {
             loop {
                 let (stream, addr) = listener.accept().await?;
                 let span = info_span!("mixed", src = %addr);
-                let _enter = span.enter();
                 let http = http.clone();
                 let users = users.clone();
                 let req_send = req_send.clone();
-                tokio::spawn(async move {
-                    handle_connection(stream, http, users, req_send)
-                        .in_current_span()
-                        .await
-                        .map_err(|x| error!("failed to handle mixed connection: {}", x))
-                });
+                tokio::spawn(
+                    async move {
+                        handle_connection(stream, http, users, req_send)
+                            .await
+                            .map_err(|x| error!("failed to handle mixed connection: {}", x))
+                    }
+                    .instrument(span),
+                );
             }
             #[allow(unreachable_code)]
             SResult::<()>::Ok(())
         };
-        tokio::spawn(fut);
+        tokio::spawn(fut.in_current_span());
 
         Ok(())
     }

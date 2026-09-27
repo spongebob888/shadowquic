@@ -19,6 +19,23 @@ $ shadowquic -c client.yaml
 
 Example config: [client.yaml](./shadowquic/config_examples/client.yaml)
 
+### Multiple instances
+
+Repeat `-c` (or `--config`) to run one instance per configuration in the same process:
+
+```bash
+$ shadowquic -c config1.yaml -c config2.yaml
+```
+
+The explicit `run` subcommand also supports multiple configs. Without `-c`,
+ShadowQUIC loads `config.yaml`. Each instance uses its own inbound and outbound;
+configure distinct listener addresses or ports and separate user/statistics files
+where applicable. Relative paths are resolved from the working directory.
+Logging uses the most verbose explicitly configured `log-level`, ignoring omitted
+or null values. If none is specified, logging defaults to `info`. Ctrl-C or SIGTERM
+shuts down all instances. A fatal startup or runtime error stops the process.
+The `api` subcommand accepts exactly one config.
+
 ### [Clash-rs](https://github.com/Watfaq/clash-rs)
 ```yaml
 # config.yaml
@@ -78,4 +95,3 @@ Configuration detail can be found in [Documentation](https://spongebob888.github
  * [TUIC Itsusinn fork](https://github.com/Itsusinn/tuic)
  * [leaf](https://github.com/eycorsican/leaf)
  * [clash-rs](https://github.com/Watfaq/clash-rs)
-
