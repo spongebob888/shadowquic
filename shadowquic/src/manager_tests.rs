@@ -109,6 +109,8 @@ async fn check_manager(fail_init: bool, fail_shutdown: bool) {
             ),
         ]),
         default_outbound: "selected".into(),
+        #[cfg(feature = "plugin")]
+        router: None,
     };
     let result = tokio::time::timeout(
         Duration::from_secs(5),

@@ -28,6 +28,8 @@ mod sunnyquic;
 pub use crate::config::serde_utils::*;
 pub use crate::config::shadowquic::*;
 pub use crate::config::sunnyquic::*;
+#[cfg(feature = "plugin")]
+use crate::plugin::router::Router;
 
 /// Overall configuration of shadowquic.
 ///
@@ -42,6 +44,10 @@ pub use crate::config::sunnyquic::*;
 ///   type: xxx
 ///   xxx: xxx
 /// default-outbound: proxy-out
+/// router: |
+///   return function(ctx) return "proxy-out" end
+/// # Or load the source from a file:
+/// router-script: route.luau
 /// log-level: trace # or debug, info, warn, error
 /// ```
 /// Supported inbound types are listed in [`InboundCfg`]
@@ -57,6 +63,12 @@ pub struct Config {
     /// Tag of the outbound used by every inbound. Defaults to the first outbound.
     #[serde(default)]
     pub default_outbound: Option<String>,
+    /// Optional inline Luau source that selects an outbound for each request.
+    #[serde(default)]
+    pub router: Option<String>,
+    /// Optional path to a Luau script that selects an outbound for each request.
+    #[serde(default)]
+    pub router_script: Option<std::path::PathBuf>,
     #[serde(default)]
     pub log_level: LogLevel,
 }
@@ -105,6 +117,17 @@ impl Config {
                 "default outbound tag does not match a configured outbound: {tag}"
             )));
         }
+        if self.router.is_some() && self.router_script.is_some() {
+            return Err(SError::InvalidConfig(
+                "configure either `router` or `router-script`, not both".into(),
+            ));
+        }
+        #[cfg(not(feature = "plugin"))]
+        if self.router.is_some() || self.router_script.is_some() {
+            return Err(SError::InvalidConfig(
+                "router config requires building with the `plugin` feature".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -113,6 +136,16 @@ impl Config {
         let default_outbound = self
             .default_outbound
             .unwrap_or_else(|| self.outbounds[0].tag().to_owned());
+        #[cfg(feature = "plugin")]
+        let router = match (self.router.as_deref(), self.router_script.as_deref()) {
+            (Some(source), None) => Some(Router::from_source(source).map_err(|error| {
+                SError::InvalidConfig(format!("failed to load inline router script: {error}"))
+            })?),
+            (None, Some(path)) => Some(Router::load(path)?),
+            (None, None) => None,
+            (Some(_), Some(_)) => unreachable!("validated above"),
+        }
+        .map(Arc::new);
         let mut inbounds = HashMap::new();
         let mut outbounds = HashMap::new();
         for cfg in self.outbounds {
@@ -125,6 +158,8 @@ impl Config {
             inbounds,
             outbounds,
             default_outbound,
+            #[cfg(feature = "plugin")]
+            router,
         })
     }
 }
@@ -581,6 +616,55 @@ outbounds:
 "#,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn router_accepts_inline_source_or_script_path() {
+        let inline: Config = serde_saphyr::from_str(
+            r#"
+inbounds:
+  - {tag: in, type: socks, bind-addr: "127.0.0.1:0"}
+outbounds:
+  - {tag: out, type: direct}
+router: |
+  return function(ctx) return "out" end
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            inline.router.as_deref(),
+            Some("return function(ctx) return \"out\" end\n")
+        );
+        assert!(inline.router_script.is_none());
+
+        let from_file: Config = serde_saphyr::from_str(
+            r#"
+inbounds:
+  - {tag: in, type: socks, bind-addr: "127.0.0.1:0"}
+outbounds:
+  - {tag: out, type: direct}
+router-script: router.luau
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            from_file.router_script.as_deref(),
+            Some(std::path::Path::new("router.luau"))
+        );
+        assert!(from_file.router.is_none());
+    }
+
+    #[test]
+    fn router_source_and_script_path_are_mutually_exclusive() {
+        let mut cfg = multi_config();
+        cfg.router = Some("return function(_) return 'out' end".into());
+        cfg.router_script = Some("router.luau".into());
+        assert!(
+            cfg.validate()
+                .unwrap_err()
+                .to_string()
+                .contains("configure either `router` or `router-script`, not both")
+        );
     }
 
     #[tokio::test]

@@ -23,6 +23,8 @@ pub mod http;
 pub mod mixed;
 pub mod msgs;
 mod observe;
+#[cfg(feature = "plugin")]
+pub mod plugin;
 pub mod quic;
 pub mod shadowquic;
 pub mod socks;
@@ -170,6 +172,8 @@ pub struct Manager {
     pub outbounds: HashMap<String, Arc<dyn Outbound>>,
     /// Tag of the first configured outbound, used by every inbound.
     pub default_outbound: String,
+    #[cfg(feature = "plugin")]
+    pub router: Option<Arc<plugin::router::Router>>,
 }
 
 /// Resolves when a shutdown signal is received (Ctrl-C, plus SIGTERM on unix).
@@ -197,6 +201,8 @@ impl Manager {
             inbounds: HashMap::from([("inbound".into(), inbound)]),
             outbounds: HashMap::from([("outbound".into(), outbound)]),
             default_outbound: "outbound".into(),
+            #[cfg(feature = "plugin")]
+            router: None,
         }
     }
 
@@ -227,11 +233,17 @@ impl Manager {
                 return Err(error);
             }
         }
+        let outbounds = Arc::new(self.outbounds);
+        #[cfg(feature = "plugin")]
+        let router = self.router;
+        let default_outbound = self.default_outbound;
         let (stop, stopped) = tokio::sync::watch::channel(false);
         let mut tasks = tokio::task::JoinSet::new();
         for (tag, mut inbound) in self.inbounds {
-            let outbound_tag = self.default_outbound.clone();
-            let outbound = self.outbounds[&outbound_tag].clone();
+            let outbounds = outbounds.clone();
+            #[cfg(feature = "plugin")]
+            let router = router.clone();
+            let default_outbound = default_outbound.clone();
             let mut stopped = stopped.clone();
             tasks.spawn(async move {
                 loop {
@@ -240,6 +252,25 @@ impl Manager {
                         _ = stopped.changed() => break,
                         req = inbound.accept() => match req {
                             Ok(req) => {
+                                #[cfg(feature = "plugin")]
+                                let outbound_tag = match router.as_ref() {
+                                    Some(router) => match router.route(
+                                        &plugin::router::RouteContext::from_request(&req),
+                                    ) {
+                                        Ok(tag) => tag,
+                                        Err(error) => {
+                                            error!(inbound = %tag, %error, "routing request failed");
+                                            continue;
+                                        }
+                                    },
+                                    None => default_outbound.clone(),
+                                };
+                                #[cfg(not(feature = "plugin"))]
+                                let outbound_tag = default_outbound.clone();
+                                let Some(outbound) = outbounds.get(&outbound_tag).cloned() else {
+                                    error!(inbound = %tag, outbound = %outbound_tag, "router selected an unknown outbound");
+                                    continue;
+                                };
                                 tokio::select! {
                                     biased;
                                     _ = stopped.changed() => break,
