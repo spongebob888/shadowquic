@@ -57,8 +57,9 @@ Example config [server.yaml](./shadowquic/config_examples/server.yaml)
 Configuration detail can be found in [Documentation](https://spongebob888.github.io/shadowquic/configuration/)
 
 Use `inbounds` and `outbounds` lists. Every endpoint requires a nonempty `tag`,
-unique within its list. All inbounds run concurrently and use the first outbound
-in config order. For example:
+unique within its list. All inbounds run concurrently and route through the
+outbound named by `default-outbound`; if omitted, the first outbound in the list
+is used. For example:
 
 ```yaml
 inbounds:
@@ -74,6 +75,7 @@ outbounds:
 - type: socks
   tag: upstream
   addr: "127.0.0.1:1082"
+default-outbound: direct
 ```
 
 Both listeners above use `direct`. Additional outbounds are available by tag;

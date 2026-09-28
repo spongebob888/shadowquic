@@ -41,6 +41,7 @@ pub use crate::config::sunnyquic::*;
 /// - tag: proxy-out
 ///   type: xxx
 ///   xxx: xxx
+/// default-outbound: proxy-out
 /// log-level: trace # or debug, info, warn, error
 /// ```
 /// Supported inbound types are listed in [`InboundCfg`]
@@ -51,8 +52,11 @@ pub use crate::config::sunnyquic::*;
 pub struct Config {
     /// Listeners to run concurrently. Tags must be nonempty and unique within this list.
     pub inbounds: Vec<InboundCfg>,
-    /// Available outbounds. The first entry handles traffic from every inbound.
+    /// Available outbounds.
     pub outbounds: Vec<OutboundCfg>,
+    /// Tag of the outbound used by every inbound. Defaults to the first outbound.
+    #[serde(default)]
+    pub default_outbound: Option<String>,
     #[serde(default)]
     pub log_level: LogLevel,
 }
@@ -94,12 +98,21 @@ impl Config {
                 }
             }
         }
+        if let Some(tag) = &self.default_outbound
+            && !self.outbounds.iter().any(|outbound| outbound.tag() == tag)
+        {
+            return Err(SError::InvalidConfig(format!(
+                "default outbound tag does not match a configured outbound: {tag}"
+            )));
+        }
         Ok(())
     }
 
     pub async fn build_manager(self) -> Result<Manager, SError> {
         self.validate()?;
-        let default_outbound = self.outbounds[0].tag().to_owned();
+        let default_outbound = self
+            .default_outbound
+            .unwrap_or_else(|| self.outbounds[0].tag().to_owned());
         let mut inbounds = HashMap::new();
         let mut outbounds = HashMap::new();
         for cfg in self.outbounds {
