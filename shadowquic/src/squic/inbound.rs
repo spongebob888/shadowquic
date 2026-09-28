@@ -93,7 +93,9 @@ impl<C: QuicConnection> SQServerConn<C> {
                 let tcp: TcpSession = TcpSession {
                     stream: Box::new(Unsplit { s: send, r: recv }),
                     dst,
+                    src_addr: Some(self.inner.conn.remote_address()),
                     user_context: UserContext {
+                        src_addr: Some(self.inner.conn.remote_address()),
                         stats: Some(StatsContext {
                             username: user,
                             conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),
@@ -119,6 +121,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                         None,
                         dst.clone(),
                         UserContext {
+                            src_addr: Some(self.inner.conn.remote_address()),
                             stats: Some(StatsContext {
                                 username: user,
                                 conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),

@@ -95,6 +95,7 @@ impl Inbound for TproxyServer {
                 // here; this only keeps every accepted socket behaving the same.
                 let _ = stream.set_nodelay(true);
                 tracing::info!("accepted tcp connection from {}", stream.peer_addr().unwrap());
+                let src_addr = stream.peer_addr().ok();
                 let orig_dst = stream.local_addr().map_err(|e| SError::SocksError(e.to_string()))?;
                 let dst = SocksAddr {
                     addr: match orig_dst.ip() {
@@ -106,6 +107,7 @@ impl Inbound for TproxyServer {
                 Ok(ProxyRequest::Tcp(TcpSession {
                     stream: Box::new(stream),
                     dst,
+                    src_addr,
                     user_context: Default::default(),
                 }))
             }
@@ -299,6 +301,7 @@ async fn handle_udp_tproxy(
                             let req: ProxyRequest<AnyTcp, AnyUdpRecv, AnyUdpSend> =
                                 ProxyRequest::Udp(UdpSession {
                                     dst: orig_dst.into(),
+                                    src_addr: Some(client_addr),
                                     send: send as Arc<dyn UdpSend>,
                                     recv: Box::new(rx) as Box<dyn UdpRecv>,
                                     stream: None,

@@ -301,7 +301,11 @@ impl AsyncWrite for TrackedTcp {
     }
 }
 
-impl TcpTrait for TrackedTcp {}
+impl TcpTrait for TrackedTcp {
+    fn peer_addr(&self) -> Option<std::net::SocketAddr> {
+        self.inner.peer_addr()
+    }
+}
 
 struct TrackedUdpRecv {
     inner: AnyUdpRecv,
@@ -353,6 +357,7 @@ impl Observer {
                     stream: Box::new(TrackedTcp::new(tcp.stream, tcp_recv, tcp_sent, tcp_conns))
                         as AnyTcp,
                     dst: tcp.dst,
+                    src_addr: tcp.src_addr,
                     user_context: tcp.user_context,
                 })
             }
@@ -378,6 +383,7 @@ impl Observer {
                     stream: udp.stream,
                     bind_addr: udp.bind_addr,
                     dst: udp.dst,
+                    src_addr: udp.src_addr,
                     user_context: udp.user_context,
                 })
             }

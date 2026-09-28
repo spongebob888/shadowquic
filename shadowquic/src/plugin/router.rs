@@ -12,9 +12,12 @@
 //! file. Configure only one of these fields.
 //!
 //! The script must return a function. ShadowQUIC calls it with one context
-//! table containing `dst_domain`, `dst_ip_v4`, `dst_ip_v6`, `dst_port`, and
-//! optional `stats_context` fields. IP values are strings. When the request is
-//! authenticated, `stats_context` contains `username` and `conn_id`; otherwise
+//! table containing `network_type` (`"tcp"` or `"udp"`), `dst_domain`,
+//! `dst_ip_v4`, `dst_ip_v6`, `dst_port`, and
+//! source address fields `src_addr`, `src_ip_v4`, `src_ip_v6`, and `src_port`,
+//! plus optional `stats_context`. Address values are strings. Source fields
+//! are nil when the inbound does not provide a source address. When the request
+//! is authenticated, `stats_context` contains `username` and `conn_id`; otherwise
 //! it is nil.
 //!
 //! Return an outbound tag to route the request, or `nil, error_message` to
@@ -33,7 +36,7 @@
 //! [`RouteContext`] for the Rust interfaces.
 
 use std::{
-    net::{Ipv4Addr, Ipv6Addr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     path::Path,
     sync::Mutex,
 };
@@ -46,28 +49,49 @@ use crate::{
     msgs::socks5::{AddrOrDomain, SocksAddr},
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetworkType {
+    Tcp,
+    Udp,
+}
 /// Request information exposed to a routing script.
 pub struct RouteContext {
     pub dst_domain: Option<String>,
     pub dst_ip_v4: Option<Ipv4Addr>,
     pub dst_ip_v6: Option<Ipv6Addr>,
     pub dst_port: Option<u16>,
+    pub src_addr: Option<SocketAddr>,
+    pub src_ip_v4: Option<Ipv4Addr>,
+    pub src_ip_v6: Option<Ipv6Addr>,
+    pub src_port: Option<u16>,
     pub stats_context: Option<StatsContext>,
+    pub network_type: NetworkType,
 }
 
 impl RouteContext {
     pub(crate) fn from_request(req: &ProxyRequest) -> Self {
         match req {
             ProxyRequest::Tcp(TcpSession {
-                dst, user_context, ..
-            }) => Self::from_dst(dst, user_context.stats.clone()),
+                dst,
+                src_addr,
+                user_context,
+                ..
+            }) => Self::from_dst(dst, *src_addr, NetworkType::Tcp, user_context.stats.clone()),
             ProxyRequest::Udp(UdpSession {
-                dst, user_context, ..
-            }) => Self::from_dst(dst, user_context.stats.clone()),
+                dst,
+                src_addr,
+                user_context,
+                ..
+            }) => Self::from_dst(dst, *src_addr, NetworkType::Udp, user_context.stats.clone()),
         }
     }
 
-    fn from_dst(dst: &SocksAddr, stats_context: Option<StatsContext>) -> Self {
+    fn from_dst(
+        dst: &SocksAddr,
+        src_addr: Option<SocketAddr>,
+        network_type: NetworkType,
+        stats_context: Option<StatsContext>,
+    ) -> Self {
         let (dst_domain, dst_ip_v4, dst_ip_v6) = match &dst.addr {
             AddrOrDomain::Domain(domain) => (
                 std::str::from_utf8(&domain.contents)
@@ -84,16 +108,38 @@ impl RouteContext {
             dst_ip_v4,
             dst_ip_v6,
             dst_port: Some(dst.port),
+            src_ip_v4: src_addr.and_then(|addr| match addr.ip() {
+                std::net::IpAddr::V4(ip) => Some(ip),
+                std::net::IpAddr::V6(_) => None,
+            }),
+            src_ip_v6: src_addr.and_then(|addr| match addr.ip() {
+                std::net::IpAddr::V6(ip) => Some(ip),
+                std::net::IpAddr::V4(_) => None,
+            }),
+            src_port: src_addr.map(|addr| addr.port()),
+            src_addr,
             stats_context,
+            network_type,
         }
     }
 
     fn to_lua(&self, lua: &Lua) -> mlua::Result<Table> {
         let context = lua.create_table()?;
+        context.set(
+            "network_type",
+            match self.network_type {
+                NetworkType::Tcp => "tcp",
+                NetworkType::Udp => "udp",
+            },
+        )?;
         context.set("dst_domain", self.dst_domain.as_deref())?;
         context.set("dst_ip_v4", self.dst_ip_v4.map(|addr| addr.to_string()))?;
         context.set("dst_ip_v6", self.dst_ip_v6.map(|addr| addr.to_string()))?;
         context.set("dst_port", self.dst_port)?;
+        context.set("src_addr", self.src_addr.map(|addr| addr.to_string()))?;
+        context.set("src_ip_v4", self.src_ip_v4.map(|addr| addr.to_string()))?;
+        context.set("src_ip_v6", self.src_ip_v6.map(|addr| addr.to_string()))?;
+        context.set("src_port", self.src_port)?;
 
         let stats = if let Some(stats) = &self.stats_context {
             let table = lua.create_table()?;
@@ -176,7 +222,12 @@ mod tests {
             dst_ip_v4: None,
             dst_ip_v6: None,
             dst_port: Some(443),
+            src_addr: Some("192.0.2.1:54321".parse().unwrap()),
+            src_ip_v4: Some("192.0.2.1".parse().unwrap()),
+            src_ip_v6: None,
+            src_port: Some(54321),
             stats_context: None,
+            network_type: NetworkType::Tcp,
         }
     }
 
@@ -185,7 +236,12 @@ mod tests {
         let router = Router::from_source(
             r#"
                 return function(ctx)
-                    if ctx.dst_domain == "api.example" and ctx.dst_port == 443 then
+                    if ctx.dst_domain == "api.example"
+                        and ctx.network_type == "tcp"
+                        and ctx.dst_port == 443
+                        and ctx.src_addr == "192.0.2.1:54321"
+                        and ctx.src_ip_v4 == "192.0.2.1"
+                        and ctx.src_port == 54321 then
                         return "secure"
                     end
                     return "direct"

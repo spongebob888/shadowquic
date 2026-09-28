@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     future::Future,
+    net::SocketAddr,
     sync::{Arc, Weak},
 };
 
@@ -68,6 +69,8 @@ pub type UserName = String;
 pub struct TcpSession<IO = AnyTcp> {
     pub stream: IO,
     pub dst: SocksAddr,
+    /// Address of the client that opened this session, when available.
+    pub src_addr: Option<SocketAddr>,
     #[allow(dead_code)]
     user_context: UserContext,
 }
@@ -80,6 +83,10 @@ pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
     bind_addr: SocksAddr,
     /// Destination of the first received datagram. Later packets may target other addresses.
     dst: SocksAddr,
+    /// Address of the client that opened this session, when available.
+    /// It is the address of the TCP control stream and
+    /// may differs from the source address of the first datagram
+    pub src_addr: Option<SocketAddr>,
     #[allow(dead_code)]
     user_context: UserContext,
 }
@@ -95,6 +102,10 @@ impl UdpSession {
         let first = recv.recv_from().await?;
         Ok(Self {
             dst: first.1.clone(),
+            src_addr: stream
+                .as_ref()
+                .and_then(|stream| stream.peer_addr())
+                .or(user_context.src_addr),
             recv: Box::new(FirstPacketUdpRecv {
                 first: Some(first),
                 inner: recv,
@@ -126,6 +137,7 @@ impl UdpRecv for FirstPacketUdpRecv {
 /// Per-session context, present even when statistics are not tracked.
 #[derive(Clone, Default)]
 pub struct UserContext {
+    pub src_addr: Option<SocketAddr>,
     pub stats: Option<StatsContext>,
 }
 /// Authenticated connection metadata used for statistics and connection control.
@@ -139,8 +151,16 @@ pub struct StatsContext {
 pub type AnyTcp = Box<dyn TcpTrait>;
 pub type AnyUdpSend = Arc<dyn UdpSend>;
 pub type AnyUdpRecv = Box<dyn UdpRecv>;
-pub trait TcpTrait: AsyncRead + AsyncWrite + Unpin + Send + Sync {}
-impl TcpTrait for TcpStream {}
+pub trait TcpTrait: AsyncRead + AsyncWrite + Unpin + Send + Sync {
+    fn peer_addr(&self) -> Option<SocketAddr> {
+        None
+    }
+}
+impl TcpTrait for TcpStream {
+    fn peer_addr(&self) -> Option<SocketAddr> {
+        TcpStream::peer_addr(self).ok()
+    }
+}
 
 #[async_trait]
 pub trait Inbound<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend>: Send + Sync + Unpin {

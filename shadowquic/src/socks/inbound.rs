@@ -49,10 +49,12 @@ impl SocksServer {
     {
         let users_arc = Arc::new(users.to_vec());
         let (s, req, socket) = handle_socks(users_arc, stream, local_addr).await?;
+        let src_addr = s.peer_addr();
         match req.cmd {
             SOCKS5_CMD_TCP_CONNECT => Ok(ProxyRequest::Tcp(TcpSession {
                 stream: Box::new(s),
                 dst: req.dst,
+                src_addr,
                 user_context: Default::default(),
             })),
             SOCKS5_CMD_UDP_ASSOCIATE => {
@@ -200,9 +202,11 @@ async fn handle_tcp(
     let req = match req.cmd {
         SOCKS5_CMD_TCP_CONNECT => {
             info!(dst = %req.dst, "tcp connect request accepted");
+            let src_addr = s.peer_addr().ok();
             ProxyRequest::Tcp(TcpSession {
                 stream: Box::new(s) as Box<dyn crate::TcpTrait>,
                 dst: req.dst,
+                src_addr,
                 user_context: Default::default(),
             })
         }

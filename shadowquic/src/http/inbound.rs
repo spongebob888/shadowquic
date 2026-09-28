@@ -39,6 +39,7 @@ impl HttpProxyServer {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static + TcpTrait,
     {
+        let src_addr = stream.peer_addr();
         let (header, remain) = Self::read_header(&mut stream).await?;
         let text = str::from_utf8(&header)
             .map_err(|_| SError::SocksError("invalid http request".into()))?;
@@ -76,6 +77,7 @@ impl HttpProxyServer {
             return Ok(ProxyRequest::Tcp(TcpSession {
                 stream: Box::new(stream),
                 dst,
+                src_addr,
                 user_context: Default::default(),
             }));
         }
@@ -89,6 +91,7 @@ impl HttpProxyServer {
         Ok(ProxyRequest::Tcp(TcpSession {
             stream: Box::new(stream),
             dst,
+            src_addr,
             user_context: Default::default(),
         }))
     }

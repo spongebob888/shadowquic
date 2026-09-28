@@ -59,6 +59,7 @@ fn request() -> ProxyRequest {
             .parse::<std::net::SocketAddr>()
             .unwrap()
             .into(),
+        src_addr: None,
         recv: Box::new(recv),
         send: Arc::new(send),
         stream: None,
