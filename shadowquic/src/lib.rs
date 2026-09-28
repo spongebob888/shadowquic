@@ -91,7 +91,7 @@ pub trait Inbound<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend>: Send + Sync + Unp
 
 #[async_trait]
 pub trait Outbound<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend>: Send + Sync + Unpin {
-    async fn handle(&mut self, req: ProxyRequest<T, I, O>) -> Result<(), SError>;
+    async fn handle(&self, req: ProxyRequest<T, I, O>) -> Result<(), SError>;
 }
 
 #[async_trait]
@@ -138,7 +138,7 @@ impl Manager {
     pub async fn run(self) -> Result<(), SError> {
         self.inbound.init().await?;
         let mut inbound = self.inbound;
-        let mut outbound = self.outbound;
+        let outbound = self.outbound;
         let shutdown = shutdown_signal();
         tokio::pin!(shutdown);
         loop {

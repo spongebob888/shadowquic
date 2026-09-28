@@ -17,7 +17,7 @@ pub struct EchoOutbound;
 
 #[async_trait]
 impl Outbound for EchoOutbound {
-    async fn handle(&mut self, req: ProxyRequest) -> Result<(), SError> {
+    async fn handle(&self, req: ProxyRequest) -> Result<(), SError> {
         match req {
             ProxyRequest::Tcp(mut session) => {
                 tokio::spawn(async move {

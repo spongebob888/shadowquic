@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use std::{net::ToSocketAddrs, sync::Arc};
-use tokio::sync::{OnceCell, SetOnce};
+use tokio::sync::{Mutex, OnceCell, SetOnce};
 
 use super::quinn_wrapper::EndClient;
 use tracing::{error, info};
@@ -20,7 +20,7 @@ use crate::squic::{IDStore, SQConn, handle_udp_packet_recv};
 pub type ShadowQuicConn = SQConn<<EndClient as QuicClient>::C>;
 
 pub struct ShadowQuicClient {
-    pub quic_conn: Option<ShadowQuicConn>,
+    pub quic_conn: Mutex<Option<ShadowQuicConn>>,
     pub config: ShadowQuicClientCfg,
     pub quic_end: OnceCell<EndClient>,
     pub socket_factory: Arc<dyn SocketFactory>,
@@ -28,7 +28,7 @@ pub struct ShadowQuicClient {
 impl ShadowQuicClient {
     pub fn new(cfg: ShadowQuicClientCfg) -> Self {
         Self {
-            quic_conn: None,
+            quic_conn: Mutex::new(None),
             quic_end: OnceCell::new(),
             socket_factory: Arc::new(UdpSocketFactory {
                 addr: cfg.addr.clone(),
@@ -80,19 +80,20 @@ impl ShadowQuicClient {
         });
         Ok(conn)
     }
-    async fn prepare_conn(&mut self) -> Result<(), SError> {
+    async fn prepare_conn(&self) -> Result<ShadowQuicConn, SError> {
+        // Serialize cache refreshes so concurrent requests reuse one connection.
+        let mut quic_conn = self.quic_conn.lock().await;
         // delete connection if closed.
-        self.quic_conn.take_if(|x| {
+        quic_conn.take_if(|x| {
             x.close_reason().is_some_and(|x| {
                 info!("quic connection closed due to {}", x);
                 true
             })
         });
-        // Creating new connectin
-        if self.quic_conn.is_none() {
-            self.quic_conn = Some(self.get_conn().await?);
+        if quic_conn.is_none() {
+            *quic_conn = Some(self.get_conn().await?);
         }
-        Ok(())
+        Ok(quic_conn.as_ref().unwrap().clone())
     }
 }
 
@@ -181,10 +182,8 @@ impl UserManager for ShadowQuicClient {
 
 #[async_trait]
 impl Outbound for ShadowQuicClient {
-    async fn handle(&mut self, req: crate::ProxyRequest) -> Result<(), crate::error::SError> {
-        self.prepare_conn().await?;
-
-        let conn = self.quic_conn.as_mut().unwrap().clone();
+    async fn handle(&self, req: crate::ProxyRequest) -> Result<(), crate::error::SError> {
+        let conn = self.prepare_conn().await?;
 
         let over_stream = self.config.over_stream;
         outbound::handle_request(req, conn, over_stream).await?;
