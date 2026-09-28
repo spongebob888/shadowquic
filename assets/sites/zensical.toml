@@ -5,18 +5,28 @@ site_url = "https://spongebob888.github.io/shadowquic/"
 repo_url = "https://github.com/spongebob888/shadowquic"
 repo_name = "spongebob888/shadowquic"
 edit_uri = ""
-docs_dir = "docs"
+docs_dir = "docs/en"
+site_dir = "site-en"
 
 # >>> generated nav
 nav = [
   { "Home" = "index.md" },
+  { "Guide" = [
+    { "Guide" = "guide/index.md" },
+    { "What is ShadowQUIC?" = "guide/what-is.md" },
+    { "Quick Start" = "guide/quickstart.md" },
+    { "Configuration explained" = "guide/configuration.md" },
+    { "FAQ" = "guide/faq.md" }
+  ] },
   { "Configuration" = [
     { "Overview" = "configuration/index.md" },
     { "Inbound" = [
       { "Overview" = "configuration/inbound/index.md" },
       { "Socks server" = "configuration/inbound/socks.md" },
+      { "Mixed server" = "configuration/inbound/mixed.md" },
       { "ShadowQuic server" = "configuration/inbound/shadowquic.md" },
-      { "SunnyQuic server" = "configuration/inbound/sunnyquic.md" }
+      { "SunnyQuic server" = "configuration/inbound/sunnyquic.md" },
+      { "Tproxy server" = "configuration/inbound/tproxy.md" }
     ] },
     { "Outbound" = [
       { "Overview" = "configuration/outbound/index.md" },
@@ -37,10 +47,15 @@ nav = [
       { "Interface" = "configuration/shared/interface.md" }
     ] }
   ] },
-  { "API" = "api.md" },
-  { "Protocol" = "protocol/index.md" }
+  { "API" = "api.md" }
 ]
 # <<< generated nav
+
+[project.extra]
+alternate = [
+  { name = "English", link = "/shadowquic/", lang = "en" },
+  { name = "简体中文", link = "/shadowquic/zh/", lang = "zh" },
+]
 
 [project.theme]
 features = [

@@ -1,0 +1,108 @@
+[project]
+site_name = "shadowquic"
+site_description = "一个带 SNI 伪装的 0-RTT QUIC 代理"
+site_url = "https://spongebob888.github.io/shadowquic/zh/"
+repo_url = "https://github.com/spongebob888/shadowquic"
+repo_name = "spongebob888/shadowquic"
+edit_uri = ""
+docs_dir = "docs/zh"
+site_dir = "site-zh"
+
+# >>> generated nav
+nav = [
+  { "首页" = "index.md" },
+  { "入门指南" = [
+    { "入门指南" = "guide/index.md" },
+    { "什么是 ShadowQUIC？" = "guide/what-is.md" },
+    { "快速上手" = "guide/quickstart.md" },
+    { "配置大白话" = "guide/configuration.md" },
+    { "常见问题" = "guide/faq.md" }
+  ] },
+  { "配置" = [
+    { "概览" = "configuration/index.md" },
+    { "入站" = [
+      { "概览" = "configuration/inbound/index.md" },
+      { "Socks 服务端" = "configuration/inbound/socks.md" },
+      { "Mixed 服务端" = "configuration/inbound/mixed.md" },
+      { "ShadowQuic 服务端" = "configuration/inbound/shadowquic.md" },
+      { "SunnyQuic 服务端" = "configuration/inbound/sunnyquic.md" },
+      { "Tproxy 服务端" = "configuration/inbound/tproxy.md" }
+    ] },
+    { "出站" = [
+      { "概览" = "configuration/outbound/index.md" },
+      { "Socks 出站" = "configuration/outbound/socks.md" },
+      { "ShadowQuic 出站" = "configuration/outbound/shadowquic.md" },
+      { "SunnyQuic 出站" = "configuration/outbound/sunnyquic.md" },
+      { "Direct 出站" = "configuration/outbound/direct.md" }
+    ] },
+    { "共享类型" = [
+      { "日志级别" = "configuration/shared/loglevel.md" },
+      { "认证用户" = "configuration/shared/authuser.md" },
+      { "JLS 上游" = "configuration/shared/jlsupstream.md" },
+      { "拥塞控制" = "configuration/shared/congestioncontrol.md" },
+      { "Brutal 参数" = "configuration/shared/brutalparams.md" },
+      { "Socket 选项" = "configuration/shared/socketopt.md" },
+      { "密码套件偏好" = "configuration/shared/ciphersuitepreference.md" },
+      { "DNS 策略" = "configuration/shared/dnsstrategy.md" },
+      { "接口" = "configuration/shared/interface.md" }
+    ] }
+  ] },
+  { "API" = "api.md" }
+]
+# <<< generated nav
+
+[project.extra]
+alternate = [
+  { name = "English", link = "/shadowquic/", lang = "en" },
+  { name = "简体中文", link = "/shadowquic/zh/", lang = "zh" },
+]
+
+[project.theme]
+language = "zh"
+features = [
+  "navigation.tabs",
+  "navigation.sections",
+  "navigation.expand",
+  "navigation.top",
+  "navigation.indexes",
+  "content.code.copy",
+  "content.code.annotate",
+  "search.suggest",
+  "search.highlight",
+  "toc.follow"
+]
+
+[project.theme.icon]
+repo = "fontawesome/brands/github"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "indigo"
+accent = "indigo"
+toggle.icon = "lucide/sun"
+toggle.name = "切换到深色模式"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "indigo"
+accent = "indigo"
+toggle.icon = "lucide/moon"
+toggle.name = "切换到浅色模式"
+
+[project.markdown_extensions.admonition]
+[project.markdown_extensions.attr_list]
+[project.markdown_extensions.def_list]
+[project.markdown_extensions.md_in_html]
+[project.markdown_extensions.tables]
+[project.markdown_extensions.toc]
+permalink = true
+[project.markdown_extensions.pymdownx.details]
+[project.markdown_extensions.pymdownx.highlight]
+anchor_linenums = true
+[project.markdown_extensions.pymdownx.inlinehilite]
+[project.markdown_extensions.pymdownx.snippets]
+[project.markdown_extensions.pymdownx.superfences]
+[project.markdown_extensions.pymdownx.tabbed]
+alternate_style = true
