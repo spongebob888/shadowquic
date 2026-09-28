@@ -64,6 +64,7 @@ pub struct RouteContext {
     pub src_ip_v4: Option<Ipv4Addr>,
     pub src_ip_v6: Option<Ipv6Addr>,
     pub src_port: Option<u16>,
+    /// Only valid for shadowquic/sunnyquic inbound requests.
     pub stats_context: Option<StatsContext>,
     pub network_type: NetworkType,
 }
