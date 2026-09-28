@@ -90,6 +90,10 @@ impl Inbound for TproxyServer {
         tokio::select! {
             res = self.tcp_listener.accept() => {
                 let (stream, _) = res?;
+                // Nothing is written field by field on this path, so unlike the
+                // other two inbounds there is no measured handshake delay to fix
+                // here; this only keeps every accepted socket behaving the same.
+                let _ = stream.set_nodelay(true);
                 tracing::info!("accepted tcp connection from {}", stream.peer_addr().unwrap());
                 let orig_dst = stream.local_addr().map_err(|e| SError::SocksError(e.to_string()))?;
                 let dst = SocksAddr {

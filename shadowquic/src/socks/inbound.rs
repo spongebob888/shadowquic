@@ -246,6 +246,13 @@ impl Inbound for SocksServer {
         let fut = async move {
             loop {
                 let (stream, addr) = listener.accept().await?;
+                // The SOCKS5 replies are written field by field (src/msgs/socks5.rs),
+                // so with Nagle enabled every field after the first waits for the peer
+                // to acknowledge the previous one. A peer that delays that
+                // acknowledgement — Linux does, by up to 40ms — makes every handshake
+                // cost that much. Measured on loopback: ~41ms without this line,
+                // ~0.4ms with it.
+                let _ = stream.set_nodelay(true);
                 let span = info_span!("socks", src = %addr);
                 let _enter = span.enter();
                 let users = users.clone();

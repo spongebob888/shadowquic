@@ -118,6 +118,10 @@ impl Inbound for MixedServer {
         let fut = async move {
             loop {
                 let (stream, addr) = listener.accept().await?;
+                // Same reason as socks/inbound.rs: the handshake replies are written
+                // field by field, so Nagle plus the peer's delayed ACK costs about
+                // 40ms per connection unless it is off.
+                let _ = stream.set_nodelay(true);
                 let span = info_span!("mixed", src = %addr);
                 let _enter = span.enter();
                 let http = http.clone();
