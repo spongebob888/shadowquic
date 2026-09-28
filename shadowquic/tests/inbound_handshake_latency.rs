@@ -127,6 +127,7 @@ async fn the_socks_inbound_handshake_is_not_delayed() {
     // Held for the whole test: dropping it closes the request channel, and the
     // handlers would then log an error after the handshake they are here to time.
     let inbound = SocksServer::new(SocksServerCfg {
+        tag: "test-socks".into(),
         bind_addr: addr,
         users: vec![],
     })
@@ -163,6 +164,7 @@ async fn the_mixed_inbound_handshake_is_not_delayed() {
 
     let addr = unused_tcp_addr();
     let inbound = MixedServer::new(MixedServerCfg {
+        tag: "test-mixed".into(),
         bind_addr: addr,
         users: vec![],
     })
