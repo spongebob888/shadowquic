@@ -52,6 +52,13 @@ impl ProxyRequest {
             ProxyRequest::Udp(UdpSession { dst, .. }) => dst,
         }
     }
+
+    pub(crate) fn set_dst(&mut self, dst: SocksAddr) {
+        match self {
+            ProxyRequest::Tcp(session) => session.dst = dst,
+            ProxyRequest::Udp(session) => session.dst = dst,
+        }
+    }
 }
 /// Udp socket only use immutable reference to self
 /// So it can be safely wrapped by Arc and cloned to work in duplex way.
@@ -282,18 +289,28 @@ impl Manager {
                         biased;
                         _ = stopped.changed() => break,
                         req = inbound.accept() => match req {
-                            Ok(req) => {
+                            Ok(mut req) => {
                                 #[cfg(feature = "plugin")]
                                 let outbound_tag = match router.as_ref() {
-                                    Some(router) => match router.route(
-                                        &plugin::router::RouteContext::from_request(&req),
-                                    ) {
-                                        Ok(tag) => tag,
-                                        Err(error) => {
-                                            error!(inbound = %tag, %error, "routing request failed");
-                                            continue;
+                                    Some(router) => {
+                                        let mut context = plugin::router::RouteContext::from_request(&req);
+                                        match router.route(&mut context) {
+                                            Ok(outbound_tag) => match context.destination() {
+                                                Ok(dst) => {
+                                                    req.set_dst(dst);
+                                                    outbound_tag
+                                                }
+                                                Err(error) => {
+                                                    error!(inbound = %tag, %error, "invalid rewritten destination");
+                                                    continue;
+                                                }
+                                            },
+                                            Err(error) => {
+                                                error!(inbound = %tag, %error, "routing request failed");
+                                                continue;
+                                            }
                                         }
-                                    },
+                                    }
                                     None => default_outbound.clone(),
                                 };
                                 #[cfg(not(feature = "plugin"))]

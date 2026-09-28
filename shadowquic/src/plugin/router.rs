@@ -12,13 +12,14 @@
 //! file. Configure only one of these fields.
 //!
 //! The script must return a function. ShadowQUIC calls it with one context
-//! table containing `network_type` (`"tcp"` or `"udp"`), `dst_domain`,
+//! userdata containing `network_type` (`"tcp"` or `"udp"`), `dst_domain`,
 //! `dst_ip_v4`, `dst_ip_v6`, `dst_port`, and
 //! source address fields `src_addr`, `src_ip_v4`, `src_ip_v6`, and `src_port`,
 //! plus optional `stats_context`. Address values are strings. Source fields
 //! are nil when the inbound does not provide a source address. When the request
 //! is authenticated, `stats_context` contains `username` and `conn_id`; otherwise
-//! it is nil.
+//! it is nil. Scripts may update `dst_domain`, `dst_ip_v4`, `dst_ip_v6`, and
+//! `dst_port`; setting one destination name or IP clears the other name/IP fields.
 //!
 //! Return an outbound tag to route the request, or `nil, error_message` to
 //! reject routing. The tag must match an outbound in the config.
@@ -41,7 +42,7 @@ use std::{
     sync::Mutex,
 };
 
-use mlua::{Function, Lua, Table};
+use mlua::{Function, Lua, UserData, UserDataFields};
 
 use crate::{
     ProxyRequest, StatsContext, TcpSession, UdpSession,
@@ -55,6 +56,7 @@ pub enum NetworkType {
     Udp,
 }
 /// Request information exposed to a routing script.
+#[derive(Clone)]
 pub struct RouteContext {
     pub dst_domain: Option<String>,
     pub dst_ip_v4: Option<Ipv4Addr>,
@@ -67,6 +69,77 @@ pub struct RouteContext {
     /// Only valid for shadowquic/sunnyquic inbound requests.
     pub stats_context: Option<StatsContext>,
     pub network_type: NetworkType,
+}
+impl UserData for RouteContext {
+    fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
+        fields.add_field_method_get("network_type", |_, this| {
+            Ok(match this.network_type {
+                NetworkType::Tcp => "tcp",
+                NetworkType::Udp => "udp",
+            })
+        });
+        fields.add_field_method_get("dst_domain", |_, this| Ok(this.dst_domain.clone()));
+        fields.add_field_method_get("dst_ip_v4", |_, this| {
+            Ok(this.dst_ip_v4.map(|addr| addr.to_string()))
+        });
+        fields.add_field_method_get("dst_ip_v6", |_, this| {
+            Ok(this.dst_ip_v6.map(|addr| addr.to_string()))
+        });
+        fields.add_field_method_get("dst_port", |_, this| Ok(this.dst_port));
+        fields.add_field_method_set("dst_domain", |_, this, value: Option<String>| {
+            this.dst_domain = value;
+            if this.dst_domain.is_some() {
+                this.dst_ip_v4 = None;
+                this.dst_ip_v6 = None;
+            }
+            Ok(())
+        });
+        fields.add_field_method_set("dst_ip_v4", |_, this, value: Option<String>| {
+            this.dst_ip_v4 = value
+                .map(|value| value.parse())
+                .transpose()
+                .map_err(mlua::Error::external)?;
+            if this.dst_ip_v4.is_some() {
+                this.dst_domain = None;
+                this.dst_ip_v6 = None;
+            }
+            Ok(())
+        });
+        fields.add_field_method_set("dst_ip_v6", |_, this, value: Option<String>| {
+            this.dst_ip_v6 = value
+                .map(|value| value.parse())
+                .transpose()
+                .map_err(mlua::Error::external)?;
+            if this.dst_ip_v6.is_some() {
+                this.dst_domain = None;
+                this.dst_ip_v4 = None;
+            }
+            Ok(())
+        });
+        fields.add_field_method_set("dst_port", |_, this, value: Option<u16>| {
+            this.dst_port = value;
+            Ok(())
+        });
+        fields.add_field_method_get("src_addr", |_, this| {
+            Ok(this.src_addr.map(|addr| addr.to_string()))
+        });
+        fields.add_field_method_get("src_ip_v4", |_, this| {
+            Ok(this.src_ip_v4.map(|addr| addr.to_string()))
+        });
+        fields.add_field_method_get("src_ip_v6", |_, this| {
+            Ok(this.src_ip_v6.map(|addr| addr.to_string()))
+        });
+        fields.add_field_method_get("src_port", |_, this| Ok(this.src_port));
+        fields.add_field_method_get("stats_context", |lua, this| {
+            let Some(stats) = &this.stats_context else {
+                return Ok(None);
+            };
+            let table = lua.create_table()?;
+            table.set("username", stats.username.as_str())?;
+            table.set("conn_id", stats.conn_id)?;
+            Ok(Some(table))
+        });
+    }
 }
 
 impl RouteContext {
@@ -123,36 +196,6 @@ impl RouteContext {
             network_type,
         }
     }
-
-    fn to_lua(&self, lua: &Lua) -> mlua::Result<Table> {
-        let context = lua.create_table()?;
-        context.set(
-            "network_type",
-            match self.network_type {
-                NetworkType::Tcp => "tcp",
-                NetworkType::Udp => "udp",
-            },
-        )?;
-        context.set("dst_domain", self.dst_domain.as_deref())?;
-        context.set("dst_ip_v4", self.dst_ip_v4.map(|addr| addr.to_string()))?;
-        context.set("dst_ip_v6", self.dst_ip_v6.map(|addr| addr.to_string()))?;
-        context.set("dst_port", self.dst_port)?;
-        context.set("src_addr", self.src_addr.map(|addr| addr.to_string()))?;
-        context.set("src_ip_v4", self.src_ip_v4.map(|addr| addr.to_string()))?;
-        context.set("src_ip_v6", self.src_ip_v6.map(|addr| addr.to_string()))?;
-        context.set("src_port", self.src_port)?;
-
-        let stats = if let Some(stats) = &self.stats_context {
-            let table = lua.create_table()?;
-            table.set("username", stats.username.as_str())?;
-            table.set("conn_id", stats.conn_id)?;
-            Some(table)
-        } else {
-            None
-        };
-        context.set("stats_context", stats)?;
-        Ok(context)
-    }
 }
 
 /// A sandboxed Luau router. The script returns a function that accepts one
@@ -191,25 +234,55 @@ impl Router {
         })
     }
 
-    pub fn route(&self, context: &RouteContext) -> Result<String, SError> {
+    pub fn route(&self, context: &mut RouteContext) -> Result<String, SError> {
         let inner = self
             .inner
             .lock()
             .map_err(|_| SError::RouterError("router runtime lock was poisoned".into()))?;
-        let context = context
-            .to_lua(&inner.lua)
+        let userdata = inner
+            .lua
+            .create_userdata(context.clone())
             .map_err(|error| SError::RouterError(error.to_string()))?;
         let (tag, error): (Option<String>, Option<String>) = inner
             .route
-            .call(context)
+            .call(userdata.clone())
             .map_err(|error| SError::RouterError(error.to_string()))?;
         match (tag, error) {
-            (Some(tag), _) if !tag.trim().is_empty() => Ok(tag),
+            (Some(tag), _) if !tag.trim().is_empty() => {
+                *context = userdata
+                    .borrow::<RouteContext>()
+                    .map_err(|error| SError::RouterError(error.to_string()))?
+                    .clone();
+                Ok(tag)
+            }
             (_, Some(error)) if !error.trim().is_empty() => Err(SError::RouterError(error)),
             _ => Err(SError::RouterError(
                 "router must return an outbound tag or nil and an error message".into(),
             )),
         }
+    }
+}
+
+impl RouteContext {
+    pub(crate) fn destination(&self) -> Result<SocksAddr, SError> {
+        let port = self
+            .dst_port
+            .ok_or_else(|| SError::RouterError("router cleared the destination port".into()))?;
+        let addr = match (self.dst_domain.as_deref(), self.dst_ip_v4, self.dst_ip_v6) {
+            (Some(domain), None, None)
+                if !domain.is_empty() && domain.len() <= u8::MAX as usize =>
+            {
+                return Ok(SocksAddr::from_domain(domain.to_owned(), port));
+            }
+            (None, Some(ip), None) => AddrOrDomain::V4(ip.octets()),
+            (None, None, Some(ip)) => AddrOrDomain::V6(ip.octets()),
+            _ => {
+                return Err(SError::RouterError(
+                    "router must set exactly one valid destination domain or IP address".into(),
+                ));
+            }
+        };
+        Ok(SocksAddr { addr, port })
     }
 }
 
@@ -243,7 +316,16 @@ mod tests {
                         and ctx.src_addr == "192.0.2.1:54321"
                         and ctx.src_ip_v4 == "192.0.2.1"
                         and ctx.src_port == 54321 then
-                        return "secure"
+                        ctx.dst_domain = "mutable.example"
+                        ctx.dst_ip_v6 = "2001:db8::1"
+                        ctx.dst_ip_v4 = "192.0.2.44"
+                        ctx.dst_port = 8443
+                        if ctx.dst_domain == nil
+                            and ctx.dst_ip_v6 == nil
+                            and ctx.dst_ip_v4 == "192.0.2.44"
+                            and ctx.dst_port == 8443 then
+                            return "secure"
+                        end
                     end
                     return "direct"
                 end
@@ -251,7 +333,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(router.route(&context()).unwrap(), "secure");
+        let mut context = context();
+        assert_eq!(router.route(&mut context).unwrap(), "secure");
+        let rewritten = context.destination().unwrap();
+        assert_eq!(rewritten.to_string(), "192.0.2.44:8443");
     }
 
     #[test]
@@ -260,7 +345,7 @@ mod tests {
             Router::from_source(r#"return function(_) return nil, "blocked by policy" end"#)
                 .unwrap();
 
-        let error = router.route(&context()).unwrap_err();
+        let error = router.route(&mut context()).unwrap_err();
         assert!(error.to_string().contains("blocked by policy"));
     }
 
@@ -268,7 +353,7 @@ mod tests {
     fn lua_router_rejects_invalid_return_values() {
         let router = Router::from_source(r#"return function(_) return nil end"#).unwrap();
 
-        let error = router.route(&context()).unwrap_err();
+        let error = router.route(&mut context()).unwrap_err();
         assert!(
             error
                 .to_string()
