@@ -46,14 +46,6 @@ pub enum Dispatch {
     StillActive,
 }
 
-/// The relay watchdog's deadline for a configured half-close timeout in seconds.
-///
-/// Zero disables the watchdog: a zero deadline would fire immediately, ending
-/// every session as soon as its first direction finished.
-pub fn half_close_grace(secs: u64) -> Option<Duration> {
-    (secs > 0).then(|| Duration::from_secs(secs))
-}
-
 /// Dispatches `req` under [`HANDLE_TIMEOUT`] and starts its relay.
 ///
 /// [`handle_request`] spawns the relay and returns before it runs, so this bound

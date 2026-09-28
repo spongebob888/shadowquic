@@ -517,14 +517,37 @@ impl PartialEq for CongestionControl {
 /// ```yaml
 /// tag: proxy
 /// dns-strategy: prefer-ipv4 # or prefer-ipv6, ipv4-only, ipv6-only
+/// half-close-timeout: 600 # seconds, 0 disables the watchdog
 /// ```
-#[derive(Deserialize, Clone, Debug, Default)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct DirectOutCfg {
     /// Required label for this endpoint.
     pub tag: String,
     #[serde(default)]
     pub dns_strategy: DnsStrategy,
+    /// Seconds a relay may stay silent after one of its directions has
+    /// finished, before the session is given up. 0 disables the watchdog.
+    /// Default 600.
+    ///
+    /// This is the server half of the same bound the clients apply: a relay
+    /// that waits forever on a peer which never closes holds its QUIC
+    /// bi-stream, and the stream credit is only returned once *both* ends of
+    /// the relay have dropped their stream halves. Without this bound a
+    /// server-side relay that never ends keeps the client's credit consumed
+    /// even after the client has given its own half up.
+    #[serde(default = "default_half_close_timeout")]
+    pub half_close_timeout: u64,
+}
+
+impl Default for DirectOutCfg {
+    fn default() -> Self {
+        Self {
+            tag: String::new(),
+            dns_strategy: DnsStrategy::default(),
+            half_close_timeout: default_half_close_timeout(),
+        }
+    }
 }
 
 /// Outbound that discards every request.
