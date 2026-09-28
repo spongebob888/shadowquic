@@ -96,6 +96,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                     src_addr: Some(self.inner.conn.remote_address()),
                     user_context: UserContext {
                         src_addr: Some(self.inner.conn.remote_address()),
+                        inbound_tag: String::new(),
                         stats: Some(StatsContext {
                             username: user,
                             conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),
@@ -122,6 +123,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                         dst.clone(),
                         UserContext {
                             src_addr: Some(self.inner.conn.remote_address()),
+                            inbound_tag: String::new(),
                             stats: Some(StatsContext {
                                 username: user,
                                 conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),

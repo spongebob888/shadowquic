@@ -12,7 +12,7 @@
 //! file. Configure only one of these fields.
 //!
 //! The script must return a function. ShadowQUIC calls it with one context
-//! userdata containing `network_type` (`"tcp"` or `"udp"`), `dst_domain`,
+//! userdata containing `inbound_tag`, `network_type` (`"tcp"` or `"udp"`), `dst_domain`,
 //! `dst_ip_v4`, `dst_ip_v6`, `dst_port`, and
 //! source address fields `src_addr`, `src_ip_v4`, `src_ip_v6`, and `src_port`,
 //! plus optional `stats_context`. Address values are strings. Source fields
@@ -66,12 +66,14 @@ pub struct RouteContext {
     pub src_ip_v4: Option<Ipv4Addr>,
     pub src_ip_v6: Option<Ipv6Addr>,
     pub src_port: Option<u16>,
+    pub inbound_tag: String,
     /// Only valid for shadowquic/sunnyquic inbound requests.
     pub stats_context: Option<StatsContext>,
     pub network_type: NetworkType,
 }
 impl UserData for RouteContext {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
+        fields.add_field_method_get("inbound_tag", |_, this| Ok(this.inbound_tag.clone()));
         fields.add_field_method_get("network_type", |_, this| {
             Ok(match this.network_type {
                 NetworkType::Tcp => "tcp",
@@ -150,19 +152,32 @@ impl RouteContext {
                 src_addr,
                 user_context,
                 ..
-            }) => Self::from_dst(dst, *src_addr, NetworkType::Tcp, user_context.stats.clone()),
+            }) => Self::from_dst(
+                dst,
+                *src_addr,
+                &user_context.inbound_tag,
+                NetworkType::Tcp,
+                user_context.stats.clone(),
+            ),
             ProxyRequest::Udp(UdpSession {
                 dst,
                 src_addr,
                 user_context,
                 ..
-            }) => Self::from_dst(dst, *src_addr, NetworkType::Udp, user_context.stats.clone()),
+            }) => Self::from_dst(
+                dst,
+                *src_addr,
+                &user_context.inbound_tag,
+                NetworkType::Udp,
+                user_context.stats.clone(),
+            ),
         }
     }
 
     fn from_dst(
         dst: &SocksAddr,
         src_addr: Option<SocketAddr>,
+        inbound_tag: &str,
         network_type: NetworkType,
         stats_context: Option<StatsContext>,
     ) -> Self {
@@ -192,6 +207,7 @@ impl RouteContext {
             }),
             src_port: src_addr.map(|addr| addr.port()),
             src_addr,
+            inbound_tag: inbound_tag.to_owned(),
             stats_context,
             network_type,
         }
@@ -300,6 +316,7 @@ mod tests {
             src_ip_v4: Some("192.0.2.1".parse().unwrap()),
             src_ip_v6: None,
             src_port: Some(54321),
+            inbound_tag: "socks-in".into(),
             stats_context: None,
             network_type: NetworkType::Tcp,
         }
@@ -311,6 +328,7 @@ mod tests {
             r#"
                 return function(ctx)
                     if ctx.dst_domain == "api.example"
+                        and ctx.inbound_tag == "socks-in"
                         and ctx.network_type == "tcp"
                         and ctx.dst_port == 443
                         and ctx.src_addr == "192.0.2.1:54321"

@@ -59,6 +59,13 @@ impl ProxyRequest {
             ProxyRequest::Udp(session) => session.dst = dst,
         }
     }
+
+    pub(crate) fn set_inbound_tag(&mut self, tag: String) {
+        match self {
+            ProxyRequest::Tcp(session) => session.user_context.inbound_tag = tag,
+            ProxyRequest::Udp(session) => session.user_context.inbound_tag = tag,
+        }
+    }
 }
 /// Udp socket only use immutable reference to self
 /// So it can be safely wrapped by Arc and cloned to work in duplex way.
@@ -146,6 +153,7 @@ impl UdpRecv for FirstPacketUdpRecv {
 #[derive(Clone, Default)]
 pub struct UserContext {
     pub src_addr: Option<SocketAddr>,
+    pub inbound_tag: String,
     pub stats: Option<StatsContext>,
 }
 /// Authenticated connection metadata used for statistics and connection control.
@@ -290,6 +298,7 @@ impl Manager {
                         _ = stopped.changed() => break,
                         req = inbound.accept() => match req {
                             Ok(mut req) => {
+                                req.set_inbound_tag(tag.clone());
                                 #[cfg(feature = "plugin")]
                                 let outbound_tag = match router.as_ref() {
                                     Some(router) => {
