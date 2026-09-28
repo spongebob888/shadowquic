@@ -12,7 +12,7 @@ use tokio::net::TcpStream;
 
 use async_trait::async_trait;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tracing::{error, info};
+use tracing::{Instrument, error, info, info_span};
 
 pub mod config;
 pub mod direct;
@@ -41,6 +41,15 @@ mod manager_tests;
 pub enum ProxyRequest<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend> {
     Tcp(TcpSession<T>),
     Udp(UdpSession<I, O>),
+}
+
+impl ProxyRequest {
+    pub fn dst(&self) -> &SocksAddr {
+        match self {
+            ProxyRequest::Tcp(TcpSession { dst, .. }) => dst,
+            ProxyRequest::Udp(UdpSession { dst, .. }) => dst,
+        }
+    }
 }
 /// Udp socket only use immutable reference to self
 /// So it can be safely wrapped by Arc and cloned to work in duplex way.
@@ -240,6 +249,7 @@ impl Manager {
         let (stop, stopped) = tokio::sync::watch::channel(false);
         let mut tasks = tokio::task::JoinSet::new();
         for (tag, mut inbound) in self.inbounds {
+            let inbound_span = info_span!("inbound", tag = %tag);
             let outbounds = outbounds.clone();
             #[cfg(feature = "plugin")]
             let router = router.clone();
@@ -271,10 +281,13 @@ impl Manager {
                                     error!(inbound = %tag, outbound = %outbound_tag, "router selected an unknown outbound");
                                     continue;
                                 };
+                                tracing::debug!(inbound = %tag, outbound = %outbound_tag, dst = %req.dst(), "routing request");
                                 tokio::select! {
                                     biased;
                                     _ = stopped.changed() => break,
-                                    result = outbound.handle(req) => {
+                                    result = outbound.handle(req).instrument(
+                                        info_span!("outbound", tag = %outbound_tag)
+                                    ) => {
                                         if let Err(error) = result {
                                             error!(inbound = %tag, outbound = %outbound_tag, %error, "error handling request");
                                         }
@@ -289,7 +302,7 @@ impl Manager {
                     }
                 }
                 inbound.shutdown().await
-            });
+            }.instrument(inbound_span));
         }
         tokio::pin!(shutdown);
         let mut result = Ok(());

@@ -9,7 +9,7 @@ description = { workspace = true }
 license = { workspace = true}
 readme = { workspace = true}
 [features]
-default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", "mixed"]
+default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", "mixed", "plugin"]
 statistics = ["dep:portable-atomic"]
 mixed = ["dep:base64"]
 plugin = ["dep:mlua"]
