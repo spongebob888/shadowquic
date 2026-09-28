@@ -13,6 +13,7 @@ use crate::mixed::inbound::MixedServer;
 use crate::{
     Inbound, Manager, Outbound,
     direct::outbound::DirectOut,
+    drop_outbound::DropOutbound,
     error::SError,
     shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
     socks::{inbound::SocksServer, outbound::SocksClient},
@@ -220,7 +221,7 @@ impl InboundCfg {
 /// example:
 /// ```yaml
 /// tag: proxy
-/// type: socks # or shadowquic or direct
+/// type: socks # or shadowquic, sunnyquic, direct, or drop
 /// addr: "127.0.0.1:443" # "[::1]:443"
 /// xxx: xxx # other field depending on type
 /// ```
@@ -235,6 +236,8 @@ pub enum OutboundCfg {
     #[serde(rename = "sunnyquic")]
     SunnyQuic(SunnyQuicClientCfg),
     Direct(DirectOutCfg),
+    #[serde(rename = "drop")]
+    Drop(DropOutCfg),
 }
 
 impl OutboundCfg {
@@ -245,6 +248,7 @@ impl OutboundCfg {
             Self::ShadowQuic(cfg) => &cfg.tag,
             Self::SunnyQuic(cfg) => &cfg.tag,
             Self::Direct(cfg) => &cfg.tag,
+            Self::Drop(cfg) => &cfg.tag,
         }
     }
 
@@ -254,6 +258,7 @@ impl OutboundCfg {
             OutboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicClient::new(cfg)),
             OutboundCfg::SunnyQuic(cfg) => Box::new(SunnyQuicClient::new(cfg)),
             OutboundCfg::Direct(cfg) => Box::new(DirectOut::new(cfg)),
+            OutboundCfg::Drop(_) => Box::new(DropOutbound),
         };
         Ok(r)
     }
@@ -505,6 +510,14 @@ pub struct DirectOutCfg {
     pub tag: String,
     #[serde(default)]
     pub dns_strategy: DnsStrategy,
+}
+
+/// Outbound that discards every request.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct DropOutCfg {
+    /// Required label for this endpoint.
+    pub tag: String,
 }
 /// DNS resolution strategy
 /// Default is `prefer-ipv4`
@@ -767,6 +780,7 @@ router-script: router.luau
         ];
         let outbounds = [
             "type: direct\n",
+            "type: drop\n",
             "type: socks\naddr: localhost:1080\n",
             "type: shadowquic\naddr: localhost:443\nusername: test\npassword: test\nserver-name: localhost\n",
             "type: sunnyquic\naddr: localhost:443\nusername: test\npassword: test\nserver-name: localhost\n",
@@ -794,6 +808,14 @@ router-script: router.luau
                 assert_eq!(cfg.tag(), expected);
             }
         }
+    }
+
+    #[tokio::test]
+    async fn drop_outbound_config_builds() {
+        let cfg: super::OutboundCfg =
+            serde_saphyr::from_str("type: drop\ntag: blackhole\n").unwrap();
+        assert_eq!(cfg.tag(), "blackhole");
+        assert!(cfg.build_outbound().await.is_ok());
     }
 
     #[test]

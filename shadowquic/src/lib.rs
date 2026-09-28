@@ -17,6 +17,7 @@ use tracing::{Instrument, error, info, info_span};
 
 pub mod config;
 pub mod direct;
+mod drop_outbound;
 pub mod error;
 #[cfg(feature = "mixed")]
 pub mod http;

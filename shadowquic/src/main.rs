@@ -169,7 +169,7 @@ async fn call_api(outbound: OutboundCfg, command: ApiCommand) -> Result<(), Stri
             let client = SunnyQuicClient::new(cfg);
             call_user_manager_api(&client, command).await
         }
-        OutboundCfg::Socks(_) | OutboundCfg::Direct(_) => {
+        OutboundCfg::Socks(_) | OutboundCfg::Direct(_) | OutboundCfg::Drop(_) => {
             Err("api requires a shadowquic or sunnyquic outbound config".into())
         }
     }
