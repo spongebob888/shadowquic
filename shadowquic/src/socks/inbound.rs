@@ -131,7 +131,8 @@ where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
     let mut s = authenticate(users, s).await?;
-    let req = socks5::CmdReq::decode(&mut s).await?;
+    let mut req = socks5::CmdReq::decode(&mut s).await?;
+    normalize_ip_domain(&mut req.dst);
 
     let addr = match req.dst.addr {
         AddrOrDomain::V4(_) | AddrOrDomain::Domain(_) => AddrOrDomain::V4([0u8, 0u8, 0u8, 0u8]),
@@ -164,6 +165,25 @@ where
 
     reply.encode(&mut s).await?;
     Ok((s, req, socket))
+}
+
+/// SOCKS clients sometimes encode an IP literal using the domain address type.
+/// Store it as the corresponding IP type so downstream protocols can use it
+/// without performing DNS resolution.
+fn normalize_ip_domain(addr: &mut socks5::SocksAddr) {
+    let socks5::AddrOrDomain::Domain(domain) = &addr.addr else {
+        return;
+    };
+    let Ok(domain) = std::str::from_utf8(&domain.contents) else {
+        return;
+    };
+    let Ok(ip) = domain.parse::<std::net::IpAddr>() else {
+        return;
+    };
+    addr.addr = match ip {
+        std::net::IpAddr::V4(ip) => socks5::AddrOrDomain::V4(ip.octets()),
+        std::net::IpAddr::V6(ip) => socks5::AddrOrDomain::V6(ip.octets()),
+    };
 }
 
 // Handle a single TCP connection task (upstream style)
