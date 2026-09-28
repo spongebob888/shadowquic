@@ -112,24 +112,27 @@ impl<C: QuicConnection> SQServerConn<C> {
                 info!(bind_addr = %dst, "udp associate request accepted");
                 let (local_send, udp_recv) = channel::<(Bytes, SocksAddr)>(10);
                 let (udp_send, local_recv) = channel::<(Bytes, SocksAddr)>(10);
-                let udp: UdpSession = UdpSession {
-                    send: Arc::new(udp_send),
-                    recv: Box::new(udp_recv),
-                    stream: None,
-                    bind_addr: dst.clone(),
-                    user_context: UserContext {
-                        stats: Some(StatsContext {
-                            username: user,
-                            conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),
-                            conn_id: self.inner.conn.peer_id(),
-                        }),
-                    },
+                let publish_request = async {
+                    let udp = UdpSession::from_recv(
+                        Arc::new(udp_send),
+                        Box::new(udp_recv),
+                        None,
+                        dst.clone(),
+                        UserContext {
+                            stats: Some(StatsContext {
+                                username: user,
+                                conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),
+                                conn_id: self.inner.conn.peer_id(),
+                            }),
+                        },
+                    )
+                    .await?;
+                    req_send
+                        .send(ProxyRequest::Udp(udp))
+                        .await
+                        .map_err(|_| SError::OutboundUnavailable)
                 };
                 let local_send = Arc::new(local_send);
-                req_send
-                    .send(ProxyRequest::Udp(udp))
-                    .await
-                    .map_err(|_| SError::OutboundUnavailable)?;
                 let fut1 = handle_udp_send(
                     send,
                     Box::new(local_recv),
@@ -137,7 +140,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                     req == &SQReq::SQAssociatOverStream(dst.clone()),
                 );
                 let fut2 = handle_udp_recv_ctrl(recv, local_send, self.inner.clone());
-                tokio::try_join!(fut1, fut2)?;
+                tokio::try_join!(fut1, fut2, publish_request)?;
             }
             SQReq::SQAuthenticate(passwd_hash) => {
                 if let Some(name) = self.users.get(passwd_hash.as_ref()) {

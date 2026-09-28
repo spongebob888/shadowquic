@@ -57,13 +57,15 @@ impl SocksServer {
             })),
             SOCKS5_CMD_UDP_ASSOCIATE => {
                 let socket = Arc::new(socket.unwrap());
-                Ok(ProxyRequest::Udp(UdpSession {
-                    send: Arc::new(UdpSocksWrap(socket.clone(), Default::default())),
-                    recv: Box::new(UdpSocksWrap(socket, Default::default())),
-                    bind_addr: req.dst,
-                    stream: Some(Box::new(s)),
-                    user_context: Default::default(),
-                }))
+                let session = UdpSession::from_recv(
+                    Arc::new(UdpSocksWrap(socket.clone(), Default::default())),
+                    Box::new(UdpSocksWrap(socket, Default::default())),
+                    Some(Box::new(s)),
+                    req.dst,
+                    Default::default(),
+                )
+                .await?;
+                Ok(ProxyRequest::Udp(session))
             }
             _ => Err(SError::ProtocolViolation),
         }
@@ -187,14 +189,16 @@ async fn handle_tcp(
         SOCKS5_CMD_UDP_ASSOCIATE => {
             info!(bind_dst = %req.dst, "udp associate request accepted");
             let socket = Arc::new(socket.unwrap());
-            ProxyRequest::Udp(UdpSession {
-                send: Arc::new(UdpSocksWrap(socket.clone(), Default::default()))
-                    as Arc<dyn crate::UdpSend>,
-                recv: Box::new(UdpSocksWrap(socket, Default::default())) as Box<dyn crate::UdpRecv>,
-                bind_addr: req.dst,
-                stream: Some(Box::new(s) as Box<dyn crate::TcpTrait>),
-                user_context: Default::default(),
-            })
+            ProxyRequest::Udp(
+                UdpSession::from_recv(
+                    Arc::new(UdpSocksWrap(socket.clone(), Default::default())),
+                    Box::new(UdpSocksWrap(socket, Default::default())),
+                    Some(Box::new(s)),
+                    req.dst,
+                    Default::default(),
+                )
+                .await?,
+            )
         }
         _ => {
             return Err(SError::ProtocolViolation);

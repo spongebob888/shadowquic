@@ -377,6 +377,7 @@ impl Observer {
                     }) as AnyUdpSend,
                     stream: udp.stream,
                     bind_addr: udp.bind_addr,
+                    dst: udp.dst,
                     user_context: udp.user_context,
                 })
             }

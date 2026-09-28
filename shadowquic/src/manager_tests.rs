@@ -55,6 +55,10 @@ impl Outbound for TestOutbound {
 fn request() -> ProxyRequest {
     let (send, recv) = mpsc::channel(1);
     ProxyRequest::Udp(UdpSession {
+        dst: "127.0.0.1:53"
+            .parse::<std::net::SocketAddr>()
+            .unwrap()
+            .into(),
         recv: Box::new(recv),
         send: Arc::new(send),
         stream: None,

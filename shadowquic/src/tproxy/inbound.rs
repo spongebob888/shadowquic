@@ -298,6 +298,7 @@ async fn handle_udp_tproxy(
 
                             let req: ProxyRequest<AnyTcp, AnyUdpRecv, AnyUdpSend> =
                                 ProxyRequest::Udp(UdpSession {
+                                    dst: orig_dst.into(),
                                     send: send as Arc<dyn UdpSend>,
                                     recv: Box::new(rx) as Box<dyn UdpRecv>,
                                     stream: None,

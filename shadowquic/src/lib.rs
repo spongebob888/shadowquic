@@ -67,9 +67,51 @@ pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
     /// Control stream, should be kept alive during session.
     stream: Option<AnyTcp>,
     bind_addr: SocksAddr,
+    /// Destination of the first received datagram. Later packets may target other addresses.
+    dst: SocksAddr,
     #[allow(dead_code)]
     user_context: UserContext,
 }
+impl UdpSession {
+    /// Wait for the first datagram and retain it for the outbound receiver.
+    pub(crate) async fn from_recv(
+        send: AnyUdpSend,
+        mut recv: AnyUdpRecv,
+        stream: Option<AnyTcp>,
+        bind_addr: SocksAddr,
+        user_context: UserContext,
+    ) -> Result<Self, SError> {
+        let first = recv.recv_from().await?;
+        Ok(Self {
+            dst: first.1.clone(),
+            recv: Box::new(FirstPacketUdpRecv {
+                first: Some(first),
+                inner: recv,
+            }),
+            send,
+            stream,
+            bind_addr,
+            user_context,
+        })
+    }
+}
+
+struct FirstPacketUdpRecv {
+    first: Option<(Bytes, SocksAddr)>,
+    inner: AnyUdpRecv,
+}
+
+#[async_trait]
+impl UdpRecv for FirstPacketUdpRecv {
+    async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr), SError> {
+        if let Some(packet) = self.first.take() {
+            Ok(packet)
+        } else {
+            self.inner.recv_from().await
+        }
+    }
+}
+
 /// Per-session context, present even when statistics are not tracked.
 #[derive(Clone, Default)]
 pub struct UserContext {
