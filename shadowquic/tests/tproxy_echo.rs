@@ -53,6 +53,7 @@ async fn test_tproxy_echo() {
         .try_init();
 
     let tproxy_server = TproxyServer::new(TproxyServerCfg {
+        tag: String::new(),
         bind_addr: "0.0.0.0:1089".parse().unwrap(),
     })
     .await

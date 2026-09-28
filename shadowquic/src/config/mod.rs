@@ -30,9 +30,11 @@ pub use crate::config::sunnyquic::*;
 /// Example:
 /// ```yaml
 /// inbound:
+///   tag: proxy-in
 ///   type: xxx
 ///   xxx: xxx
 /// outbound:
+///   tag: proxy-out
 ///   type: xxx
 ///   xxx: xxx
 /// log-level: trace # or debug, info, warn, error
@@ -60,6 +62,7 @@ impl Config {
 /// Inbound configuration
 /// example:
 /// ```yaml
+/// tag: proxy
 /// type: socks # or shadowquic
 /// bind-addr: "0.0.0.0:443" # "[::]:443"
 /// xxx: xxx # other field depending on type
@@ -81,6 +84,19 @@ pub enum InboundCfg {
     Tproxy(TproxyServerCfg),
 }
 impl InboundCfg {
+    /// Returns the endpoint label.
+    pub fn tag(&self) -> &str {
+        match self {
+            Self::Socks(cfg) => &cfg.tag,
+            #[cfg(feature = "mixed")]
+            Self::Mixed(cfg) => &cfg.tag,
+            Self::ShadowQuic(cfg) => &cfg.tag,
+            Self::SunnyQuic(cfg) => &cfg.tag,
+            #[cfg(all(feature = "tproxy", target_os = "linux"))]
+            Self::Tproxy(cfg) => &cfg.tag,
+        }
+    }
+
     async fn build_inbound(self) -> Result<Box<dyn Inbound>, SError> {
         let r: Box<dyn Inbound> = match self {
             InboundCfg::Socks(cfg) => Box::new(SocksServer::new(cfg).await?),
@@ -98,6 +114,7 @@ impl InboundCfg {
 /// Outbound configuration
 /// example:
 /// ```yaml
+/// tag: proxy
 /// type: socks # or shadowquic or direct
 /// addr: "127.0.0.1:443" # "[::1]:443"
 /// xxx: xxx # other field depending on type
@@ -116,6 +133,16 @@ pub enum OutboundCfg {
 }
 
 impl OutboundCfg {
+    /// Returns the endpoint label.
+    pub fn tag(&self) -> &str {
+        match self {
+            Self::Socks(cfg) => &cfg.tag,
+            Self::ShadowQuic(cfg) => &cfg.tag,
+            Self::SunnyQuic(cfg) => &cfg.tag,
+            Self::Direct(cfg) => &cfg.tag,
+        }
+    }
+
     async fn build_outbound(self) -> Result<Box<dyn Outbound>, SError> {
         let r: Box<dyn Outbound> = match self {
             OutboundCfg::Socks(cfg) => Box::new(SocksClient::new(cfg)),
@@ -131,6 +158,7 @@ impl OutboundCfg {
 ///
 /// Example:
 /// ```yaml
+/// tag: proxy
 /// bind-addr: "0.0.0.0:1089" # or "[::]:1089" for dualstack
 /// users:
 ///  - username: "username"
@@ -139,6 +167,8 @@ impl OutboundCfg {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SocksServerCfg {
+    /// Required label for this endpoint.
+    pub tag: String,
     /// Server binding address. e.g. `0.0.0.0:1089`, `[::1]:1089`
     pub bind_addr: SocketAddr,
     /// Socks5 username, optional
@@ -153,6 +183,7 @@ pub struct SocksServerCfg {
 ///
 /// Example:
 /// ```yaml
+/// tag: proxy
 /// type: mixed
 /// bind-addr: "0.0.0.0:1080"
 /// ```
@@ -160,6 +191,8 @@ pub struct SocksServerCfg {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct MixedServerCfg {
+    /// Required label for this endpoint.
+    pub tag: String,
     /// Server binding address. e.g. `0.0.0.0:1080`, `[::]:1080`
     pub bind_addr: SocketAddr,
     /// Socks5 username, optional
@@ -172,12 +205,15 @@ pub struct MixedServerCfg {
 ///
 /// Example:
 /// ```yaml
+/// tag: proxy
 /// bind-addr: "0.0.0.0:1089" # or "[::]:1089" for dualstack
 /// ```
 #[cfg(all(feature = "tproxy", target_os = "linux"))]
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct TproxyServerCfg {
+    /// Required label for this endpoint.
+    pub tag: String,
     /// Server binding address. e.g. `0.0.0.0:1089`, `[::1]:1089`
     pub bind_addr: SocketAddr,
 }
@@ -193,11 +229,14 @@ pub struct AuthUser {
 /// Socks outbound configuration
 /// Example:
 /// ```yaml
+/// tag: proxy
 /// addr: "12.34.56.7:1089" # or "[12:ff::ff]:1089" for dualstack
 /// ```
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SocksClientCfg {
+    /// Required label for this endpoint.
+    pub tag: String,
     pub addr: String,
     /// SOCKS5 username, optional
     pub username: Option<String>,
@@ -351,11 +390,14 @@ impl PartialEq for CongestionControl {
 /// Configuration of direct outbound
 /// Example:
 /// ```yaml
+/// tag: proxy
 /// dns-strategy: prefer-ipv4 # or prefer-ipv6, ipv4-only, ipv6-only
 /// ```
 #[derive(Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct DirectOutCfg {
+    /// Required label for this endpoint.
+    pub tag: String,
     #[serde(default)]
     pub dns_strategy: DnsStrategy,
 }
@@ -456,13 +498,58 @@ mod test {
 
     use super::Config;
     use super::{CipherSuitePreference, normalize_cipher_suite_preference};
+
+    #[test]
+    fn endpoint_tags() {
+        let inbounds = [
+            "type: socks\nbind-addr: 127.0.0.1:1080\n",
+            #[cfg(feature = "mixed")]
+            "type: mixed\nbind-addr: 127.0.0.1:1080\n",
+            #[cfg(all(feature = "tproxy", target_os = "linux"))]
+            "type: tproxy\nbind-addr: 127.0.0.1:1080\n",
+            "type: shadowquic\nbind-addr: 127.0.0.1:443\nusers: []\njls-upstream:\n  addr: localhost:443\n",
+            "type: sunnyquic\nbind-addr: 127.0.0.1:443\nusers: []\nserver-name: localhost\ncert-path: cert.pem\nkey-path: key.pem\n",
+        ];
+        let outbounds = [
+            "type: direct\n",
+            "type: socks\naddr: localhost:1080\n",
+            "type: shadowquic\naddr: localhost:443\nusername: test\npassword: test\nserver-name: localhost\n",
+            "type: sunnyquic\naddr: localhost:443\nusername: test\npassword: test\nserver-name: localhost\n",
+        ];
+        for yaml in inbounds {
+            let err = serde_saphyr::from_str::<super::InboundCfg>(yaml).unwrap_err();
+            assert!(err.to_string().contains("missing field `tag`"), "{err}");
+        }
+        for yaml in outbounds {
+            let err = serde_saphyr::from_str::<super::OutboundCfg>(yaml).unwrap_err();
+            assert!(err.to_string().contains("missing field `tag`"), "{err}");
+        }
+        for (tag_yaml, expected) in [
+            ("tag: test-endpoint\n", "test-endpoint"),
+            ("tag: \"\"\n", ""),
+        ] {
+            for yaml in inbounds {
+                let cfg: super::InboundCfg =
+                    serde_saphyr::from_str(&format!("{yaml}{tag_yaml}")).unwrap();
+                assert_eq!(cfg.tag(), expected);
+            }
+            for yaml in outbounds {
+                let cfg: super::OutboundCfg =
+                    serde_saphyr::from_str(&format!("{yaml}{tag_yaml}")).unwrap();
+                assert_eq!(cfg.tag(), expected);
+            }
+        }
+    }
+
     #[test]
     fn test() {
         let cfgstr = r###"
 inbound:
+    tag: socks-in
     type: socks
     bind-addr: 127.0.0.1:1089
 outbound:
+    tag: direct-out
     type: direct
     dns-strategy: prefer-ipv4
 "###;
@@ -472,10 +559,12 @@ outbound:
     fn test_fail() {
         let cfgstr = r###"
 inbound:
+    tag: socks-in
     type: socks
     bind-addr: 127.0.0.1:1089
     dhjsj: jkj
 outbound:
+    tag: direct-out
     type: direct
     dns-strategy: prefer-ipv4
 "###;
@@ -485,6 +574,7 @@ outbound:
     #[test]
     fn test_cc() {
         let cfgstr = r###"
+        tag: proxy-out
         username: "test"
         password: "test"
         addr: "127.0.0.1:1080"
@@ -506,6 +596,7 @@ outbound:
     #[test]
     fn test_socketopt() {
         let cfgstr = r###"
+        tag: proxy-out
         username: "test"
         password: "test"
         addr: "127.0.0.1:1080"

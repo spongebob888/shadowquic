@@ -105,9 +105,11 @@ def write_config():
     """Write shadowquic TPROXY config file."""
     config = f"""\
 inbound:
+  tag: tproxy-inbound
   type: tproxy
   bind-addr: "{BIND_ADDR}"
 outbound:
+  tag: direct-outbound
   type: direct
 log-level: trace
 """

@@ -1,10 +1,12 @@
 inbound:
+    tag: socks-inbound
     type: socks
     bind-addr: "[::]:1089"
     # users:
     #     - username: "username"
     #       password: "password"
 outbound:
+    tag: socks-outbound
     type: socks
     addr: "192.168.7.1:1089"
     # username: "username"

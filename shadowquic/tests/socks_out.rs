@@ -109,12 +109,14 @@ async fn spawn_socks() {
     trace!("Running");
 
     let socks_server = SocksServer::new(SocksServerCfg {
+        tag: String::new(),
         bind_addr: "127.0.0.1:1093".parse().unwrap(),
         users: vec![],
     })
     .await
     .unwrap();
     let sq_client = SocksClient::new(SocksClientCfg {
+        tag: String::new(),
         addr: "[::1]:1094".into(),
         username: Some("test".into()),
         password: Some("test".into()),
@@ -127,6 +129,7 @@ async fn spawn_socks() {
     };
 
     let sq_server = SocksServer::new(SocksServerCfg {
+        tag: String::new(),
         bind_addr: "[::1]:1094".parse().unwrap(),
         users: vec![AuthUser {
             username: "test".into(),

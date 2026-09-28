@@ -55,6 +55,20 @@ $ shadowquic -c server.yaml
 Example config [server.yaml](./shadowquic/config_examples/server.yaml)
 
 Configuration detail can be found in [Documentation](https://spongebob888.github.io/shadowquic/configuration/)
+
+Every inbound and outbound requires an explicit `tag` string. Omitting it causes
+a configuration parsing error. For example:
+
+```yaml
+inbound:
+  type: socks
+  tag: local-socks
+  bind-addr: "127.0.0.1:1080"
+outbound:
+  type: direct
+  tag: direct
+```
+
 ## Other Clients
 - [husi](https://github.com/xchacha20-poly1305/husi)
 - nekobox: [usage](./document/clients/windows.md)
@@ -78,4 +92,3 @@ Configuration detail can be found in [Documentation](https://spongebob888.github
  * [TUIC Itsusinn fork](https://github.com/Itsusinn/tuic)
  * [leaf](https://github.com/eycorsican/leaf)
  * [clash-rs](https://github.com/Watfaq/clash-rs)
-

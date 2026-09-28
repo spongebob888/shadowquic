@@ -123,6 +123,7 @@ configure_system() {
     log_info "Creating $INSTANCE config..."
     cat > "$CONFIG_DIR/$INSTANCE.yaml" <<EOF
 inbound:
+    tag: shadowquic-inbound
     type: shadowquic
     bind-addr: "$bind_addr"
     users:
@@ -134,6 +135,7 @@ inbound:
     congestion-control: bbr
     zero-rtt: true
 outbound:
+    tag: direct-outbound
     type: direct
     dns-strategy: prefer-ipv4 # or prefer-ipv6, ipv4-only, ipv6-only
 log-level: "info"
