@@ -15,6 +15,7 @@
           openssl_3.dev
           sqlite
           libclang
+          stdenv.cc.cc.lib
         ];
         pythonEnv = pkgs.python3.withPackages (ps: with ps; [
 	          pycurl
