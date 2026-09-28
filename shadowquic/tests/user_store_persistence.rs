@@ -165,10 +165,7 @@ async fn user_store_periodic_flush_writes_traffic_stats() {
     let sq_server = ShadowQuicServer::new(server_cfg(FLUSH_SERVER_ADDR, path.clone(), 1))
         .await
         .unwrap();
-    let server = Manager {
-        inbound: Box::new(sq_server),
-        outbound: Box::<DirectOut>::default(),
-    };
+    let server = Manager::single(Box::new(sq_server), std::sync::Arc::<DirectOut>::default());
     tokio::spawn(server.run());
     tokio::time::sleep(Duration::from_millis(100)).await;
 

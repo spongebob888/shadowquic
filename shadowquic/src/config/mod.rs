@@ -1,7 +1,11 @@
 use crate::{SDecode, SEncode};
 use serde::{Deserialize, Serialize};
 use shadowquic_macros::{SDecode, SEncode};
-use std::net::{IpAddr, SocketAddr};
+use std::{
+    collections::{HashMap, HashSet},
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+};
 use tracing::{Level, warn};
 
 #[cfg(feature = "mixed")]
@@ -29,12 +33,12 @@ pub use crate::config::sunnyquic::*;
 ///
 /// Example:
 /// ```yaml
-/// inbound:
-///   tag: proxy-in
+/// inbounds:
+/// - tag: proxy-in
 ///   type: xxx
 ///   xxx: xxx
-/// outbound:
-///   tag: proxy-out
+/// outbounds:
+/// - tag: proxy-out
 ///   type: xxx
 ///   xxx: xxx
 /// log-level: trace # or debug, info, warn, error
@@ -45,16 +49,69 @@ pub use crate::config::sunnyquic::*;
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Config {
-    pub inbound: InboundCfg,
-    pub outbound: OutboundCfg,
+    /// Listeners to run concurrently. Tags must be nonempty and unique within this list.
+    pub inbounds: Vec<InboundCfg>,
+    /// Available outbounds. The first entry handles traffic from every inbound.
+    pub outbounds: Vec<OutboundCfg>,
     #[serde(default)]
     pub log_level: LogLevel,
 }
 impl Config {
+    /// Validate endpoint identities before opening any listeners.
+    pub fn validate(&self) -> Result<(), SError> {
+        for (kind, tags) in [
+            (
+                "inbound",
+                self.inbounds
+                    .iter()
+                    .map(InboundCfg::tag)
+                    .collect::<Vec<_>>(),
+            ),
+            (
+                "outbound",
+                self.outbounds
+                    .iter()
+                    .map(OutboundCfg::tag)
+                    .collect::<Vec<_>>(),
+            ),
+        ] {
+            if tags.is_empty() {
+                return Err(SError::InvalidConfig(format!(
+                    "at least one {kind} is required"
+                )));
+            }
+            let mut seen = HashSet::new();
+            for tag in tags {
+                if tag.trim().is_empty() {
+                    return Err(SError::InvalidConfig(format!(
+                        "{kind} tag must not be empty"
+                    )));
+                }
+                if !seen.insert(tag) {
+                    return Err(SError::InvalidConfig(format!(
+                        "duplicate {kind} tag: {tag}"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub async fn build_manager(self) -> Result<Manager, SError> {
+        self.validate()?;
+        let default_outbound = self.outbounds[0].tag().to_owned();
+        let mut inbounds = HashMap::new();
+        let mut outbounds = HashMap::new();
+        for cfg in self.outbounds {
+            outbounds.insert(cfg.tag().to_owned(), Arc::from(cfg.build_outbound().await?));
+        }
+        for cfg in self.inbounds {
+            inbounds.insert(cfg.tag().to_owned(), cfg.build_inbound().await?);
+        }
         Ok(Manager {
-            inbound: self.inbound.build_inbound().await?,
-            outbound: self.outbound.build_outbound().await?,
+            inbounds,
+            outbounds,
+            default_outbound,
         })
     }
 }
@@ -499,6 +556,107 @@ mod test {
     use super::Config;
     use super::{CipherSuitePreference, normalize_cipher_suite_preference};
 
+    fn multi_config() -> Config {
+        serde_saphyr::from_str(
+            r#"
+inbounds:
+  - {tag: one, type: socks, bind-addr: "127.0.0.1:0"}
+  - {tag: two, type: socks, bind-addr: "127.0.0.1:0"}
+outbounds:
+  - {tag: z-first, type: direct}
+  - {tag: a-second, type: direct}
+"#,
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn builds_all_endpoints_and_preserves_first_outbound() {
+        let manager = multi_config().build_manager().await.unwrap();
+        assert_eq!(manager.inbounds.len(), 2);
+        assert_eq!(manager.outbounds.len(), 2);
+        assert!(manager.inbounds.contains_key("one"));
+        assert!(manager.outbounds.contains_key("a-second"));
+        assert_eq!(manager.default_outbound, "z-first");
+    }
+
+    #[test]
+    fn rejects_invalid_endpoint_lists() {
+        let mut cfg = multi_config();
+        cfg.inbounds.push(cfg.inbounds[0].clone());
+        assert!(
+            cfg.validate()
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate inbound")
+        );
+        let mut cfg = multi_config();
+        cfg.outbounds.push(cfg.outbounds[0].clone());
+        assert!(
+            cfg.validate()
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate outbound")
+        );
+        let mut cfg = multi_config();
+        cfg.inbounds.clear();
+        assert!(
+            cfg.validate()
+                .unwrap_err()
+                .to_string()
+                .contains("at least one inbound")
+        );
+        let mut cfg = multi_config();
+        cfg.outbounds.clear();
+        assert!(
+            cfg.validate()
+                .unwrap_err()
+                .to_string()
+                .contains("at least one outbound")
+        );
+        for tag in ["", "   "] {
+            let mut cfg = multi_config();
+            let super::InboundCfg::Socks(inbound) = &mut cfg.inbounds[0] else {
+                unreachable!()
+            };
+            inbound.tag = tag.into();
+            assert!(
+                cfg.validate()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("inbound tag must not be empty")
+            );
+            let mut cfg = multi_config();
+            let super::OutboundCfg::Direct(outbound) = &mut cfg.outbounds[0] else {
+                unreachable!()
+            };
+            outbound.tag = tag.into();
+            assert!(
+                cfg.validate()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("outbound tag must not be empty")
+            );
+        }
+    }
+
+    #[test]
+    fn bundled_configs_are_valid() {
+        for yaml in [
+            include_str!("../../config_examples/client.yaml"),
+            include_str!("../../config_examples/client_brutal.yaml"),
+            include_str!("../../config_examples/client_sunnyquic.yaml"),
+            include_str!("../../config_examples/server.yaml"),
+            include_str!("../../config_examples/server_sunnyquic.yaml"),
+            include_str!("../../config_examples/socks2socks.yaml"),
+        ] {
+            serde_saphyr::from_str::<Config>(yaml)
+                .unwrap()
+                .validate()
+                .unwrap();
+        }
+    }
+
     #[test]
     fn endpoint_tags() {
         let inbounds = [
@@ -544,12 +702,12 @@ mod test {
     #[test]
     fn test() {
         let cfgstr = r###"
-inbound:
-    tag: socks-in
+inbounds:
+  - tag: socks-in
     type: socks
     bind-addr: 127.0.0.1:1089
-outbound:
-    tag: direct-out
+outbounds:
+  - tag: direct-out
     type: direct
     dns-strategy: prefer-ipv4
 "###;
@@ -558,13 +716,13 @@ outbound:
     #[test]
     fn test_fail() {
         let cfgstr = r###"
-inbound:
-    tag: socks-in
+inbounds:
+  - tag: socks-in
     type: socks
     bind-addr: 127.0.0.1:1089
     dhjsj: jkj
-outbound:
-    tag: direct-out
+outbounds:
+  - tag: direct-out
     type: direct
     dns-strategy: prefer-ipv4
 "###;

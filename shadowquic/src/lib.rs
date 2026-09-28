@@ -1,4 +1,8 @@
-use std::sync::{Arc, Weak};
+use std::{
+    collections::HashMap,
+    future::Future,
+    sync::{Arc, Weak},
+};
 
 use bytes::Bytes;
 use error::SError;
@@ -30,6 +34,8 @@ pub mod utils;
 
 pub use msgs::SDecode;
 pub use msgs::SEncode;
+#[cfg(test)]
+mod manager_tests;
 pub enum ProxyRequest<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend> {
     Tcp(TcpSession<T>),
     Udp(UdpSession<I, O>),
@@ -112,8 +118,10 @@ impl UdpRecv for Receiver<(Bytes, SocksAddr)> {
     }
 }
 pub struct Manager {
-    pub inbound: Box<dyn Inbound>,
-    pub outbound: Box<dyn Outbound>,
+    pub inbounds: HashMap<String, Box<dyn Inbound>>,
+    pub outbounds: HashMap<String, Arc<dyn Outbound>>,
+    /// Tag of the first configured outbound, used by every inbound.
+    pub default_outbound: String,
 }
 
 /// Resolves when a shutdown signal is received (Ctrl-C, plus SIGTERM on unix).
@@ -135,31 +143,102 @@ async fn shutdown_signal() {
 }
 
 impl Manager {
+    /// Construct a manager for one inbound/outbound pair.
+    pub fn single(inbound: Box<dyn Inbound>, outbound: Arc<dyn Outbound>) -> Self {
+        Self {
+            inbounds: HashMap::from([("inbound".into(), inbound)]),
+            outbounds: HashMap::from([("outbound".into(), outbound)]),
+            default_outbound: "outbound".into(),
+        }
+    }
+
     pub async fn run(self) -> Result<(), SError> {
-        self.inbound.init().await?;
-        let mut inbound = self.inbound;
-        let outbound = self.outbound;
-        let shutdown = shutdown_signal();
-        tokio::pin!(shutdown);
-        loop {
-            tokio::select! {
-                _ = &mut shutdown => {
-                    info!("shutdown signal received, persisting users and stats");
-                    inbound.shutdown().await?;
-                    return Ok(());
-                }
-                req = inbound.accept() => match req {
-                    Ok(req) => match outbound.handle(req).await {
-                        Ok(_) => {}
-                        Err(e) => {
-                            error!("error during handling request: {}", e)
-                        }
-                    },
-                    Err(e) => {
-                        error!("error during accepting request: {}", e)
+        self.run_until(shutdown_signal()).await
+    }
+
+    /// Run all listeners until the supplied shutdown future completes.
+    pub async fn run_until(self, shutdown: impl Future<Output = ()>) -> Result<(), SError> {
+        if self.inbounds.is_empty() || self.outbounds.is_empty() {
+            return Err(SError::InvalidConfig(
+                "inbounds and outbounds must not be empty".into(),
+            ));
+        }
+        if !self.outbounds.contains_key(&self.default_outbound) {
+            return Err(SError::InvalidConfig(
+                "default outbound does not exist".into(),
+            ));
+        }
+        for (tag, inbound) in &self.inbounds {
+            if let Err(error) = inbound.init().await {
+                error!(inbound = %tag, %error, "inbound initialization failed");
+                for (tag, inbound) in &self.inbounds {
+                    if let Err(error) = inbound.shutdown().await {
+                        error!(inbound = %tag, %error, "inbound shutdown failed");
                     }
+                }
+                return Err(error);
+            }
+        }
+        let (stop, stopped) = tokio::sync::watch::channel(false);
+        let mut tasks = tokio::task::JoinSet::new();
+        for (tag, mut inbound) in self.inbounds {
+            let outbound_tag = self.default_outbound.clone();
+            let outbound = self.outbounds[&outbound_tag].clone();
+            let mut stopped = stopped.clone();
+            tasks.spawn(async move {
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = stopped.changed() => break,
+                        req = inbound.accept() => match req {
+                            Ok(req) => {
+                                tokio::select! {
+                                    biased;
+                                    _ = stopped.changed() => break,
+                                    result = outbound.handle(req) => {
+                                        if let Err(error) = result {
+                                            error!(inbound = %tag, outbound = %outbound_tag, %error, "error handling request");
+                                        }
+                                    }
+                                }
+                            }
+                            Err(error) => {
+                                error!(inbound = %tag, %error, "error accepting request");
+                                tokio::task::yield_now().await;
+                            }
+                        }
+                    }
+                }
+                inbound.shutdown().await
+            });
+        }
+        tokio::pin!(shutdown);
+        let mut result = Ok(());
+        tokio::select! {
+            _ = &mut shutdown => {
+                info!("shutdown requested, persisting users and stats");
+            }
+            task = tasks.join_next() => {
+                result = match task {
+                    Some(Ok(Err(error))) => Err(error),
+                    Some(Err(error)) => Err(SError::Io(std::io::Error::other(error))),
+                    _ => Err(SError::InboundUnavailable),
+                };
+            }
+        }
+        let _ = stop.send(true);
+        while let Some(task) = tasks.join_next().await {
+            let task_result = match task {
+                Ok(result) => result,
+                Err(error) => Err(SError::Io(std::io::Error::other(error))),
+            };
+            if let Err(error) = task_result {
+                error!(%error, "inbound shutdown failed");
+                if result.is_ok() {
+                    result = Err(error);
                 }
             }
         }
+        result
     }
 }

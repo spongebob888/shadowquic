@@ -1209,10 +1209,12 @@ so they stay in sync with the actual deserializer.
 ## Example
 
 ```yaml
-inbound:
+inbounds:
+- tag: socks-in
   type: socks
   bind-addr: "127.0.0.1:1089"
-outbound:
+outbounds:
+- tag: proxy-out
   type: shadowquic
   addr: "your.server.example:443"
   username: "alice"

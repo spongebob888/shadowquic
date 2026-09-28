@@ -56,18 +56,29 @@ Example config [server.yaml](./shadowquic/config_examples/server.yaml)
 
 Configuration detail can be found in [Documentation](https://spongebob888.github.io/shadowquic/configuration/)
 
-Every inbound and outbound requires an explicit `tag` string. Omitting it causes
-a configuration parsing error. For example:
+Use `inbounds` and `outbounds` lists. Every endpoint requires a nonempty `tag`,
+unique within its list. All inbounds run concurrently and use the first outbound
+in config order. For example:
 
 ```yaml
-inbound:
-  type: socks
+inbounds:
+- type: socks
   tag: local-socks
   bind-addr: "127.0.0.1:1080"
-outbound:
-  type: direct
+- type: socks
+  tag: second-socks
+  bind-addr: "127.0.0.1:1081"
+outbounds:
+- type: direct
   tag: direct
+- type: socks
+  tag: upstream
+  addr: "127.0.0.1:1082"
 ```
+
+Both listeners above use `direct`. Additional outbounds are available by tag;
+API commands select one with `api --outbound TAG`. Existing singular
+`inbound`/`outbound` configs must be converted to lists.
 
 ## Other Clients
 - [husi](https://github.com/xchacha20-poly1305/husi)

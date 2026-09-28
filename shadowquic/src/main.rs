@@ -36,6 +36,9 @@ enum Command {
     /// Call SQuic control-plane APIs using the outbound config
     /// The username must be admin or permission will get denied by server.
     Api {
+        /// Tag of the outbound to use (required when more than one is configured).
+        #[arg(long)]
+        outbound: Option<String>,
         #[command(subcommand)]
         command: ApiCommand,
     },
@@ -85,12 +88,74 @@ async fn main() {
                 std::env::current_dir().inspect(|x| info!("current working directory: {:?}", x));
             manager.run().await.expect("shadowquic stopped");
         }
-        Command::Api { command } => {
-            if let Err(error) = call_api(cfg.outbound, command).await {
+        Command::Api { outbound, command } => {
+            let result = match select_api_outbound(cfg, outbound.as_deref()) {
+                Ok(outbound) => call_api(outbound, command).await,
+                Err(error) => Err(error),
+            };
+            if let Err(error) = result {
                 eprintln!("{error}");
                 std::process::exit(1);
             }
         }
+    }
+}
+
+fn select_api_outbound(cfg: Config, tag: Option<&str>) -> Result<OutboundCfg, String> {
+    cfg.validate().map_err(|error| error.to_string())?;
+    if let Some(tag) = tag {
+        cfg.outbounds
+            .into_iter()
+            .find(|cfg| cfg.tag() == tag)
+            .ok_or_else(|| format!("unknown outbound tag: {tag}"))
+    } else if cfg.outbounds.len() == 1 {
+        Ok(cfg.outbounds.into_iter().next().unwrap())
+    } else {
+        Err("multiple outbounds configured; select one with --outbound TAG".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_selects_outbound_by_tag() {
+        let cfg: Config = serde_saphyr::from_str(
+            r#"
+inbounds:
+  - {tag: local, type: socks, bind-addr: "127.0.0.1:0"}
+outbounds:
+  - {tag: first, type: direct}
+  - {tag: second, type: direct}
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            select_api_outbound(cfg.clone(), Some("second"))
+                .unwrap()
+                .tag(),
+            "second"
+        );
+        assert!(
+            select_api_outbound(cfg.clone(), Some("missing"))
+                .unwrap_err()
+                .contains("unknown outbound")
+        );
+        assert!(
+            select_api_outbound(cfg.clone(), None)
+                .unwrap_err()
+                .contains("--outbound")
+        );
+        let mut single = cfg;
+        single.outbounds.truncate(1);
+        assert_eq!(select_api_outbound(single, None).unwrap().tag(), "first");
+
+        let cli = Cli::try_parse_from(["shadowquic", "api", "--outbound", "second", "list-users"])
+            .unwrap();
+        assert!(
+            matches!(cli.command, Some(Command::Api { outbound: Some(tag), .. }) if tag == "second")
+        );
     }
 }
 

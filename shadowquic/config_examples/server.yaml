@@ -1,5 +1,5 @@
-inbound:
-    tag: shadowquic-inbound
+inbounds:
+  - tag: shadowquic-inbound
     type: shadowquic
     bind-addr: "0.0.0.0:1443"
     users:
@@ -15,8 +15,8 @@ inbound:
     congestion-control: bbr
     zero-rtt: true
     gso: true # Enable Quinn Generic Segmentation Offload (GSO)
-outbound:
-    tag: direct-outbound
+outbounds:
+  - tag: direct-outbound
     type: direct
     dns-strategy: prefer-ipv4 # or prefer-ipv6, ipv4-only, ipv6-only
 log-level: "trace"
