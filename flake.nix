@@ -9,6 +9,8 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        muslCc = pkgs.pkgsCross.musl64.stdenv.cc;
+        muslTargetPrefix = muslCc.targetPrefix;
 
         libraries = with pkgs;[
           glib
@@ -43,6 +45,7 @@
           act
           rustup
           uv
+          muslCc
         ];
       in
       {
@@ -52,6 +55,10 @@
           shellHook =
             ''
               export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath libraries}:$LD_LIBRARY_PATH
+              export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=${muslCc}/bin/${muslTargetPrefix}gcc
+              export CC_x86_64_unknown_linux_musl=${muslCc}/bin/${muslTargetPrefix}gcc
+              export CXX_x86_64_unknown_linux_musl=${muslCc}/bin/${muslTargetPrefix}g++
+              export LUAU_CXXFLAGS=-U_FORTIFY_SOURCE
               export XDG_DATA_DIRS=${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:$XDG_DATA_DIRS
             '';
         };
