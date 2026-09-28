@@ -76,7 +76,7 @@ impl HttpProxyServer {
             return Ok(ProxyRequest::Tcp(TcpSession {
                 stream: Box::new(stream),
                 dst,
-                user_context: None,
+                user_context: Default::default(),
             }));
         }
 
@@ -89,7 +89,7 @@ impl HttpProxyServer {
         Ok(ProxyRequest::Tcp(TcpSession {
             stream: Box::new(stream),
             dst,
-            user_context: None,
+            user_context: Default::default(),
         }))
     }
 

@@ -62,7 +62,7 @@ fn request() -> ProxyRequest {
             .parse::<std::net::SocketAddr>()
             .unwrap()
             .into(),
-        user_context: None,
+        user_context: Default::default(),
     })
 }
 

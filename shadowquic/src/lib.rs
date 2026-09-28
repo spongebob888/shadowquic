@@ -58,7 +58,7 @@ pub struct TcpSession<IO = AnyTcp> {
     pub stream: IO,
     pub dst: SocksAddr,
     #[allow(dead_code)]
-    user_context: Option<UserContext>,
+    user_context: UserContext,
 }
 
 pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
@@ -68,10 +68,16 @@ pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
     stream: Option<AnyTcp>,
     bind_addr: SocksAddr,
     #[allow(dead_code)]
-    user_context: Option<UserContext>,
+    user_context: UserContext,
 }
-#[derive(Clone)]
+/// Per-session context, present even when statistics are not tracked.
+#[derive(Clone, Default)]
 pub struct UserContext {
+    pub stats: Option<StatsContext>,
+}
+/// Authenticated connection metadata used for statistics and connection control.
+#[derive(Clone)]
+pub struct StatsContext {
     pub username: UserName,
     pub conn_handle: Weak<dyn Stoppable>,
     pub conn_id: u64,

@@ -9,7 +9,7 @@ use tokio::{
 use tracing::{Instrument, info, info_span, trace};
 
 use crate::{
-    ProxyRequest, Stoppable, TcpSession, TcpTrait, UdpSession, UserContext,
+    ProxyRequest, StatsContext, Stoppable, TcpSession, TcpTrait, UdpSession, UserContext,
     config::AuthUser,
     error::{SError, SResult},
     msgs::{
@@ -93,11 +93,13 @@ impl<C: QuicConnection> SQServerConn<C> {
                 let tcp: TcpSession = TcpSession {
                     stream: Box::new(Unsplit { s: send, r: recv }),
                     dst,
-                    user_context: Some(UserContext {
-                        username: user,
-                        conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),
-                        conn_id: self.inner.conn.peer_id(),
-                    }),
+                    user_context: UserContext {
+                        stats: Some(StatsContext {
+                            username: user,
+                            conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),
+                            conn_id: self.inner.conn.peer_id(),
+                        }),
+                    },
                 };
                 req_send
                     .send(ProxyRequest::Tcp(tcp))
@@ -115,11 +117,13 @@ impl<C: QuicConnection> SQServerConn<C> {
                     recv: Box::new(udp_recv),
                     stream: None,
                     bind_addr: dst.clone(),
-                    user_context: Some(UserContext {
-                        username: user,
-                        conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),
-                        conn_id: self.inner.conn.peer_id(),
-                    }),
+                    user_context: UserContext {
+                        stats: Some(StatsContext {
+                            username: user,
+                            conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),
+                            conn_id: self.inner.conn.peer_id(),
+                        }),
+                    },
                 };
                 let local_send = Arc::new(local_send);
                 req_send

@@ -106,7 +106,7 @@ impl Inbound for TproxyServer {
                 Ok(ProxyRequest::Tcp(TcpSession {
                     stream: Box::new(stream),
                     dst,
-                    user_context: None,
+                    user_context: Default::default(),
                 }))
             }
             Some(req) = self.udp_req_rx.recv() => {
@@ -308,7 +308,7 @@ async fn handle_udp_tproxy(
                                         },
                                         port: 0,
                                     },
-                                    user_context: None,
+                                    user_context: Default::default(),
                                 });
 
                             if req_tx.send(req).await.is_err() {

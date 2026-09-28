@@ -53,7 +53,7 @@ impl SocksServer {
             SOCKS5_CMD_TCP_CONNECT => Ok(ProxyRequest::Tcp(TcpSession {
                 stream: Box::new(s),
                 dst: req.dst,
-                user_context: None,
+                user_context: Default::default(),
             })),
             SOCKS5_CMD_UDP_ASSOCIATE => {
                 let socket = Arc::new(socket.unwrap());
@@ -62,7 +62,7 @@ impl SocksServer {
                     recv: Box::new(UdpSocksWrap(socket, Default::default())),
                     bind_addr: req.dst,
                     stream: Some(Box::new(s)),
-                    user_context: None,
+                    user_context: Default::default(),
                 }))
             }
             _ => Err(SError::ProtocolViolation),
@@ -181,7 +181,7 @@ async fn handle_tcp(
             ProxyRequest::Tcp(TcpSession {
                 stream: Box::new(s) as Box<dyn crate::TcpTrait>,
                 dst: req.dst,
-                user_context: None,
+                user_context: Default::default(),
             })
         }
         SOCKS5_CMD_UDP_ASSOCIATE => {
@@ -193,7 +193,7 @@ async fn handle_tcp(
                 recv: Box::new(UdpSocksWrap(socket, Default::default())) as Box<dyn crate::UdpRecv>,
                 bind_addr: req.dst,
                 stream: Some(Box::new(s) as Box<dyn crate::TcpTrait>),
-                user_context: None,
+                user_context: Default::default(),
             })
         }
         _ => {
