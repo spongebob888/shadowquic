@@ -2,11 +2,11 @@
   "nodes": {
     "crane": {
       "locked": {
-        "lastModified": 1779130139,
-        "narHash": "sha256-BLrtr42azquO7MdGFU5a7KiMl3YpFlTeIXqy1fT5GlQ=",
+        "lastModified": 1789760033,
+        "narHash": "sha256-jtT4yxZpR8seYnlCMMWSSPlFN92zO6ICuZ8pJrmi86k=",
         "owner": "ipetkov",
         "repo": "crane",
-        "rev": "edb38893982a3338972bb4a2ec7ce7c29ba10fd9",
+        "rev": "73b980519cefc727a5f6cc8e5c0947a2f9be6edd",
         "type": "github"
       },
       "original": {
@@ -35,12 +35,11 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1779475168,
-        "narHash": "sha256-gm3D4FF9EcZlXK/ZnsC6IYzpEQplOoT+LPTurzOPyrk=",
-        "owner": "NixOS",
-        "repo": "nixpkgs",
-        "rev": "a0991c886dc83e6e9de01d5266e4842985b1850e",
-        "type": "github"
+        "lastModified": 1790570722,
+        "narHash": "sha256-XfhTbc76cWAtJ9fmly6V04gaAQxjY+O445z80Ol6Pu4=",
+        "rev": "419fe0f449b3fbe3bdd53d9840288db4509ec32e",
+        "type": "tarball",
+        "url": "https://releases.nixos.org/nixpkgs/nixpkgs-26.11pre1080803.419fe0f449b3/nixexprs.tar.zst"
       },
       "original": {
         "id": "nixpkgs",

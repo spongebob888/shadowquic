@@ -5,6 +5,10 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum SError {
+    #[error("invalid configuration: {0}")]
+    InvalidConfig(String),
+    #[error("router error: {0}")]
+    RouterError(String),
     #[error("Protocol Violated")]
     ProtocolViolation,
     #[error("Protocol Unimplemented")]

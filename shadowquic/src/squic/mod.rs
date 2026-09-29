@@ -11,14 +11,14 @@ use std::{
     mem::replace,
     ops::Deref,
     sync::{Arc, atomic::AtomicU16},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
 use tokio::{
     io::{AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::{
-        RwLock, SetOnce,
+        Mutex, RwLock, SetOnce,
         watch::{Receiver, Sender, channel},
     },
 };
@@ -30,7 +30,7 @@ use crate::{
     msgs::{
         SDecode, SEncode,
         socks5::SocksAddr,
-        squic::{SQPacketDatagramHeader, SQReq, SQUdpControlHeader, SunnyCredential},
+        squic::{ConnStats, SQPacketDatagramHeader, SQReq, SQUdpControlHeader, SunnyCredential},
     },
     quic::QuicConnection,
 };
@@ -47,6 +47,14 @@ pub struct SQConn<T: QuicConnection> {
     pub authed: Arc<SetOnce<SResult<String>>>,
     pub(crate) send_id_store: IDStore<()>,
     pub(crate) recv_id_store: IDStore<(AnyUdpSend, SocksAddr)>,
+    /// Latest successful peer stats response and the time it was received.
+    pub stats: Arc<Mutex<Option<SQConnStats>>>,
+}
+
+pub struct SQConnStats {
+    pub uplink: ConnStats,
+    pub downlink: ConnStats,
+    pub time: Instant,
 }
 
 async fn wait_sunny_auth<T: QuicConnection>(conn: &SQConn<T>) -> SResult<String> {

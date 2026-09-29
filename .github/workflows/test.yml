@@ -38,12 +38,10 @@ jobs:
           nix develop --command \
             cargo build --verbose
       - run: |
-          sudo apt-get update && sudo apt-get install -y libstdc++6
-      - run: |
           nix develop --command \
             cargo test --release --verbose
       - run: |
           nix develop --command \
             uv run ./scripts/main_test.py 
 
-   
+  

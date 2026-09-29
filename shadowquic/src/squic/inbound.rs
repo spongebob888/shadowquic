@@ -9,7 +9,7 @@ use tokio::{
 use tracing::{Instrument, info, info_span, trace};
 
 use crate::{
-    ProxyRequest, Stoppable, TcpSession, TcpTrait, UdpSession, UserContext,
+    ProxyRequest, StatsContext, Stoppable, TcpSession, TcpTrait, UdpSession, UserContext,
     config::AuthUser,
     error::{SError, SResult},
     msgs::{
@@ -54,9 +54,12 @@ impl<C: QuicConnection> SQServerConn<C> {
         let conn = &self.inner;
         info!(peer_address = %conn.remote_address(), "incoming connection accepted");
         let conn_clone = self.inner.clone();
-        tokio::spawn(async move {
-            let _ = handle_udp_packet_recv(conn_clone).in_current_span().await;
-        });
+        tokio::spawn(
+            async move {
+                let _ = handle_udp_packet_recv(conn_clone).await;
+            }
+            .in_current_span(),
+        );
 
         while conn.close_reason().is_none() {
             select! {
@@ -64,7 +67,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                     let (send, recv, id) = bi?;
                     let span = info_span!("bistream", id = id);
                     trace!("bistream accepted");
-                    tokio::spawn(self.clone().handle_bistream(send, recv, req_send.clone()).instrument(span).in_current_span());
+                    tokio::spawn(self.clone().handle_bistream(send, recv, req_send.clone()).instrument(span));
                 },
             }
         }
@@ -93,11 +96,16 @@ impl<C: QuicConnection> SQServerConn<C> {
                 let tcp: TcpSession = TcpSession {
                     stream: Box::new(Unsplit { s: send, r: recv }),
                     dst,
-                    user_context: Some(UserContext {
-                        username: user,
-                        conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),
-                        conn_id: self.inner.conn.peer_id(),
-                    }),
+                    src_addr: Some(self.inner.conn.remote_address()),
+                    user_context: UserContext {
+                        src_addr: Some(self.inner.conn.remote_address()),
+                        inbound_tag: String::new(),
+                        stats: Some(StatsContext {
+                            username: user,
+                            conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),
+                            conn_id: self.inner.conn.peer_id(),
+                        }),
+                    },
                 };
                 req_send
                     .send(ProxyRequest::Tcp(tcp))
@@ -110,22 +118,29 @@ impl<C: QuicConnection> SQServerConn<C> {
                 info!(bind_addr = %dst, "udp associate request accepted");
                 let (local_send, udp_recv) = channel::<(Bytes, SocksAddr)>(10);
                 let (udp_send, local_recv) = channel::<(Bytes, SocksAddr)>(10);
-                let udp: UdpSession = UdpSession {
-                    send: Arc::new(udp_send),
-                    recv: Box::new(udp_recv),
-                    stream: None,
-                    bind_addr: dst.clone(),
-                    user_context: Some(UserContext {
-                        username: user,
-                        conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),
-                        conn_id: self.inner.conn.peer_id(),
-                    }),
+                let publish_request = async {
+                    let udp = UdpSession::from_recv(
+                        Arc::new(udp_send),
+                        Box::new(udp_recv),
+                        None,
+                        dst.clone(),
+                        UserContext {
+                            src_addr: Some(self.inner.conn.remote_address()),
+                            inbound_tag: String::new(),
+                            stats: Some(StatsContext {
+                                username: user,
+                                conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),
+                                conn_id: self.inner.conn.peer_id(),
+                            }),
+                        },
+                    )
+                    .await?;
+                    req_send
+                        .send(ProxyRequest::Udp(udp))
+                        .await
+                        .map_err(|_| SError::OutboundUnavailable)
                 };
                 let local_send = Arc::new(local_send);
-                req_send
-                    .send(ProxyRequest::Udp(udp))
-                    .await
-                    .map_err(|_| SError::OutboundUnavailable)?;
                 let fut1 = handle_udp_send(
                     send,
                     Box::new(local_recv),
@@ -133,7 +148,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                     req == &SQReq::SQAssociatOverStream(dst.clone()),
                 );
                 let fut2 = handle_udp_recv_ctrl(recv, local_send, self.inner.clone());
-                tokio::try_join!(fut1, fut2)?;
+                tokio::try_join!(fut1, fut2, publish_request)?;
             }
             SQReq::SQAuthenticate(passwd_hash) => {
                 if let Some(name) = self.users.get(passwd_hash.as_ref()) {

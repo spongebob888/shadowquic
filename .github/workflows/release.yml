@@ -241,12 +241,27 @@ jobs:
         if: matrix.tool == 'cross'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libstdc++-12-dev
+          sudo apt-get install -y build-essential libstdc++-14-dev g++-14 g++-arm-linux-gnueabi g++-arm-linux-gnueabihf g++-aarch64-linux-gnu
 
       # Don't know why it's not installed
       - name: Install Windows ARM target
         if: matrix.target == 'aarch64-pc-windows-msvc'
         run: rustup target add aarch64-pc-windows-msvc
+
+      # LuaJIT's build script needs both host and target architectures to build
+      # its x64 code generators before assembling the ARM64 VM.
+      - name: Configure Windows ARM compiler environment
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_arm64
+
+      # cross 0.2.5 applies a seccomp profile without an archMap to 32-bit
+      # Android containers, which kills the 32-bit host tools LuaJIT builds
+      # there. Pre-create a corrected profile (cross only writes it if absent).
+      - name: Prepare cross Android seccomp profiles
+        if: matrix.tool == 'cross'
+        run: bash scripts/fix-cross-seccomp.sh
 
       - name: Cargo fmt
         uses: clechasseur/rs-cargo@v4
@@ -260,8 +275,6 @@ jobs:
           tool: ${{ matrix.tool }}
           command: clippy
           args: --all --target ${{ matrix.target }} ${{ matrix.extra-args }} -- -D warnings
-        env:
-          RUSTFLAGS: ${{ matrix.rustflags }}
 
       - name: Cargo test
         uses: clechasseur/rs-cargo@v4
@@ -272,7 +285,6 @@ jobs:
           args: --all --release --target ${{ matrix.target }} ${{ matrix.extra-args }}
         env:
           CROSS_CONTAINER_OPTS: "--network host"
-          RUSTFLAGS: ${{ matrix.rustflags }}
 
       - name: Cargo build
         uses: clechasseur/rs-cargo@v4
@@ -280,8 +292,6 @@ jobs:
           tool: ${{ matrix.tool }}
           command: build
           args: --workspace --release --target ${{ matrix.target }} ${{ matrix.extra-args }}
-        env:
-          RUSTFLAGS: ${{ matrix.rustflags }}
 
       - name: Rename binary
         run: mv target/${{ matrix.target }}/release/${{ env.PACKAGE }}${{ matrix.postfix }} ${{ env.PACKAGE }}-${{ matrix.release-name || matrix.target }}${{ matrix.postfix }}

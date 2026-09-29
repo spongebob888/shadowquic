@@ -68,4 +68,11 @@ where
     }
 }
 
-impl<S> TcpTrait for ReplayStream<S> where S: TcpTrait {}
+impl<S> TcpTrait for ReplayStream<S>
+where
+    S: TcpTrait,
+{
+    fn peer_addr(&self) -> Option<std::net::SocketAddr> {
+        self.inner.peer_addr()
+    }
+}

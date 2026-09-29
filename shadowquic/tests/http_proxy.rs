@@ -174,6 +174,7 @@ fn init_tracing() {
 async fn spawn_mixed_proxy_chain(entry_port: u16, upstream_port: u16) {
     // entry proxy: mixed inbound -> socks outbound
     let mixed_server = MixedServer::new(MixedServerCfg {
+        tag: String::new(),
         bind_addr: format!("127.0.0.1:{}", entry_port).parse().unwrap(),
         users: vec![],
     })
@@ -181,19 +182,18 @@ async fn spawn_mixed_proxy_chain(entry_port: u16, upstream_port: u16) {
     .unwrap();
 
     let socks_client = SocksClient::new(SocksClientCfg {
+        tag: String::new(),
         addr: format!("[::1]:{}", upstream_port).into(),
         username: Some("test".into()),
         password: Some("test".into()),
         socket_opt: SocketOpt::default(),
     });
 
-    let client = Manager {
-        inbound: Box::new(mixed_server),
-        outbound: Box::new(socks_client),
-    };
+    let client = Manager::single(Box::new(mixed_server), std::sync::Arc::new(socks_client));
 
     // upstream proxy: socks inbound -> direct outbound
     let socks_server = SocksServer::new(SocksServerCfg {
+        tag: String::new(),
         bind_addr: format!("[::1]:{}", upstream_port).parse().unwrap(),
         users: vec![AuthUser {
             username: "test".into(),
@@ -205,10 +205,7 @@ async fn spawn_mixed_proxy_chain(entry_port: u16, upstream_port: u16) {
 
     let direct = DirectOut::default();
 
-    let server = Manager {
-        inbound: Box::new(socks_server),
-        outbound: Box::new(direct),
-    };
+    let server = Manager::single(Box::new(socks_server), std::sync::Arc::new(direct));
 
     tokio::spawn(server.run());
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -341,6 +338,7 @@ async fn test_http_auth_required() {
     let upstream_port = 11097;
 
     let mixed_server = MixedServer::new(MixedServerCfg {
+        tag: String::new(),
         bind_addr: format!("127.0.0.1:{}", entry_port).parse().unwrap(),
         users: vec![AuthUser {
             username: "myuser".into(),
@@ -352,10 +350,7 @@ async fn test_http_auth_required() {
 
     let direct = DirectOut::default();
 
-    let manager = Manager {
-        inbound: Box::new(mixed_server),
-        outbound: Box::new(direct),
-    };
+    let manager = Manager::single(Box::new(mixed_server), std::sync::Arc::new(direct));
 
     tokio::spawn(manager.run());
     tokio::time::sleep(Duration::from_millis(100)).await;

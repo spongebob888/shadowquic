@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 
 use tokio::io::AsyncReadExt;
@@ -20,7 +20,7 @@ use crate::{
     squic::{handle_udp_recv_ctrl, handle_udp_send},
 };
 
-use super::{SQConn, inbound::Unsplit};
+use super::{SQConn, SQConnStats, inbound::Unsplit};
 
 /// Handling a proxy request and starting proxy task with given squic connection
 pub async fn handle_request<C: QuicConnection>(
@@ -94,9 +94,12 @@ pub async fn handle_request<C: QuicConnection>(
         }
         Ok(()) as Result<(), SError>
     };
-    tokio::spawn(async {
-        let _ = fut.instrument(_span).await.map_err(|x| error!("{}", x));
-    });
+    tokio::spawn(
+        async {
+            let _ = fut.await.map_err(|x| error!("{}", x));
+        }
+        .instrument(_span),
+    );
     Ok(())
 }
 
@@ -201,41 +204,45 @@ async fn send_user_extension<C: QuicConnection, R: SDecode>(
 }
 
 async fn print_stats<C: QuicConnection>(sq_conn: &SQConn<C>) -> SResult<()> {
-    static LAST_PRINT: std::sync::LazyLock<tokio::sync::Mutex<Option<std::time::Instant>>> =
-        std::sync::LazyLock::new(|| tokio::sync::Mutex::new(None));
-
     {
-        let mut last_print = LAST_PRINT.lock().await;
-        if let Some(last) = *last_print
-            && last.elapsed() < Duration::from_secs(10)
+        let cached_stats = sq_conn.stats.lock().await;
+        if cached_stats
+            .as_ref()
+            .is_some_and(|stats| stats.time.elapsed() < Duration::from_secs(10))
         {
             return Ok(());
         }
-        *last_print = Some(std::time::Instant::now());
     }
 
-    let stats = sq_conn.get_conn_stats().ok_or(SError::ProtocolUnimpl)?;
-    info!(
-        packet_loss_rate=%format!("{:.2}%", stats.lost_packets as f32 / (stats.sent_packets + 1) as f32 * 100.0),
-        rtt = %format!("{:.1}ms", stats.rtt),
-        mtu = stats.current_mtu,
-        "uplink stats",
-    );
-    let stats = tokio::time::timeout(Duration::from_secs(10), get_peer_conn_stats(sq_conn)).await;
-    let stats = match stats {
-        Ok(Ok(Ok(s))) => s,
-        _ => {
-            trace!("failed to get peer conn stats. Api may not be implemented");
-            return Err(SError::ProtocolUnimpl);
-        }
-    };
-    info!(
-        packet_loss_rate=%format!("{:.2}%", stats.lost_packets as f32 / (stats.sent_packets + 1) as f32 * 100.0),
-        rtt = %format!("{:.1}ms", stats.rtt),
-        mtu = stats.current_mtu,
-        "downlink stats",
-    );
+    let uplink = sq_conn.get_conn_stats().ok_or(SError::ProtocolUnimpl)?;
+    log_conn_stats(&uplink, "uplink");
+
+    let downlink =
+        match tokio::time::timeout(Duration::from_secs(10), get_peer_conn_stats(sq_conn)).await {
+            Ok(Ok(Ok(stats))) => stats,
+            _ => {
+                trace!("failed to get peer conn stats. Api may not be implemented");
+                return Err(SError::ProtocolUnimpl);
+            }
+        };
+    log_conn_stats(&downlink, "downlink");
+
+    *sq_conn.stats.lock().await = Some(SQConnStats {
+        uplink,
+        downlink,
+        time: Instant::now(),
+    });
     Ok(())
+}
+
+fn log_conn_stats(stats: &ConnStats, direction: &'static str) {
+    info!(
+        packet_loss_rate=%format!("{:.2}%", stats.lost_packets as f32 / (stats.sent_packets + 1) as f32 * 100.0),
+        rtt = %format!("{:.1}ms", stats.rtt),
+        mtu = stats.current_mtu,
+        "{} connection stats",
+        direction
+    );
 }
 
 /// associate a udp socket in the remote server
@@ -264,12 +271,15 @@ pub async fn associate_udp<C: QuicConnection>(
     let fut2 = handle_udp_recv_ctrl(recv, local_send, conn.clone());
     let fut1 = handle_udp_send(send, Box::new(local_recv), conn.clone(), over_stream);
 
-    tokio::spawn(async {
-        match tokio::try_join!(fut1, fut2) {
-            Err(e) => error!("udp association ended due to {}", e),
-            Ok(_) => trace!("udp association ended"),
+    tokio::spawn(
+        async {
+            match tokio::try_join!(fut1, fut2) {
+                Err(e) => error!("udp association ended due to {}", e),
+                Ok(_) => trace!("udp association ended"),
+            }
         }
-    });
+        .in_current_span(),
+    );
 
     Ok((udp_send, udp_recv))
 }

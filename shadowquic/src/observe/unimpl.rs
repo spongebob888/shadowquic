@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::{ProxyRequest, UserContext, msgs::squic::UserStats};
+use crate::{ProxyRequest, StatsContext, msgs::squic::UserStats};
 
 #[derive(Default, Clone)]
 pub struct ProxyStatsAtm;
@@ -13,7 +13,7 @@ impl Observer {
         Self
     }
 
-    pub async fn on_new_request(&self, _user_context: &UserContext) -> ProxyStatsAtm {
+    pub async fn on_new_request(&self, _stats_context: &StatsContext) -> ProxyStatsAtm {
         ProxyStatsAtm
     }
 

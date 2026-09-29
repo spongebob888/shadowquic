@@ -8,6 +8,7 @@ use std::{
     },
     time::Duration,
 };
+use tracing::Instrument;
 
 use super::brutal::BrutalConfig;
 use async_trait::async_trait;
@@ -179,13 +180,16 @@ impl QuicClient for EndClient {
             match conn.into_0rtt() {
                 Ok((x, accepted)) => {
                     let conn_clone = x.clone();
-                    tokio::spawn(async move {
-                        debug!("zero rtt accepted: {}", accepted.await);
-                        if conn_clone.is_jls() == Some(false) {
-                            error!("JLS hijacked or wrong pwd/iv");
-                            conn_clone.close(0u8.into(), b"");
+                    tokio::spawn(
+                        async move {
+                            debug!("zero rtt accepted: {}", accepted.await);
+                            if conn_clone.is_jls() == Some(false) {
+                                error!("JLS hijacked or wrong pwd/iv");
+                                conn_clone.close(0u8.into(), b"");
+                            }
                         }
-                    });
+                        .in_current_span(),
+                    );
                     trace!("trying 0-rtt quic connection");
                     x
                 }
@@ -394,13 +398,16 @@ impl QuicServer for EndServer {
                     match conn.into_0rtt() {
                         Ok((conn, accepted)) => {
                             let conn_clone = conn.clone();
-                            tokio::spawn(async move {
-                                debug!("zero rtt accepted:{}", accepted.await);
-                                if conn_clone.is_jls() == Some(false) {
-                                    error!("JLS hijacked or wrong pwd/iv");
-                                    conn_clone.close(0u8.into(), b"");
+                            tokio::spawn(
+                                async move {
+                                    debug!("zero rtt accepted:{}", accepted.await);
+                                    if conn_clone.is_jls() == Some(false) {
+                                        error!("JLS hijacked or wrong pwd/iv");
+                                        conn_clone.close(0u8.into(), b"");
+                                    }
                                 }
-                            });
+                                .in_current_span(),
+                            );
                             conn
                         }
                         Err(conn) => conn.await?,

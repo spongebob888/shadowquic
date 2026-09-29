@@ -43,7 +43,7 @@ impl std::fmt::Debug for SocksClient {
 
 #[async_trait]
 impl Outbound for SocksClient {
-    async fn handle(&mut self, req: ProxyRequest) -> Result<(), SError> {
+    async fn handle(&self, req: ProxyRequest) -> Result<(), SError> {
         let span = info_span!("socks", server = self.cfg.addr);
         let client = self.clone();
         let fut = async move {

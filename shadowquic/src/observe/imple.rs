@@ -20,8 +20,8 @@ use tokio::{
 use tracing::info;
 
 use crate::{
-    AnyTcp, AnyUdpRecv, AnyUdpSend, ProxyRequest, TcpSession, TcpTrait, UdpRecv, UdpSend,
-    UdpSession, UserContext, UserName,
+    AnyTcp, AnyUdpRecv, AnyUdpSend, ProxyRequest, StatsContext, TcpSession, TcpTrait, UdpRecv,
+    UdpSend, UdpSession, UserName,
     error::SError,
     msgs::{socks5::SocksAddr, squic::UserStats},
 };
@@ -64,22 +64,22 @@ impl ProxyStatsAtm {
 #[derive(Clone, Default)]
 pub struct Observer {
     pub user_stats: Arc<Mutex<HashMap<UserName, ProxyStatsAtm>>>,
-    pub conns: Arc<Mutex<HashMap<u64, UserContext>>>,
+    pub conns: Arc<Mutex<HashMap<u64, StatsContext>>>,
 }
 impl Observer {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub async fn on_new_request(&self, user_context: &UserContext) -> ProxyStatsAtm {
+    pub async fn on_new_request(&self, stats_context: &StatsContext) -> ProxyStatsAtm {
         let mut conns = self.conns.lock().await;
-        conns.insert(user_context.conn_id, user_context.clone());
+        conns.insert(stats_context.conn_id, stats_context.clone());
         conns.retain(|_, ctx| ctx.conn_handle.upgrade().is_some());
         drop(conns);
         self.user_stats
             .lock()
             .await
-            .entry(user_context.username.clone())
+            .entry(stats_context.username.clone())
             .or_default()
             .clone()
     }
@@ -301,7 +301,11 @@ impl AsyncWrite for TrackedTcp {
     }
 }
 
-impl TcpTrait for TrackedTcp {}
+impl TcpTrait for TrackedTcp {
+    fn peer_addr(&self) -> Option<std::net::SocketAddr> {
+        self.inner.peer_addr()
+    }
+}
 
 struct TrackedUdpRecv {
     inner: AnyUdpRecv,
@@ -343,25 +347,26 @@ impl Observer {
     pub(crate) async fn wrap_request(&self, req: ProxyRequest) -> ProxyRequest {
         match req {
             ProxyRequest::Tcp(tcp) => {
-                let Some(user_context) = tcp.user_context else {
+                let Some(stats_context) = &tcp.user_context.stats else {
                     return ProxyRequest::Tcp(tcp);
                 };
-                let stats = self.on_new_request(&user_context).await;
+                let stats = self.on_new_request(stats_context).await;
                 let (tcp_recv, tcp_sent, tcp_conns) = stats.tcp_counters();
 
                 ProxyRequest::Tcp(TcpSession {
                     stream: Box::new(TrackedTcp::new(tcp.stream, tcp_recv, tcp_sent, tcp_conns))
                         as AnyTcp,
                     dst: tcp.dst,
-                    user_context: Some(user_context),
+                    src_addr: tcp.src_addr,
+                    user_context: tcp.user_context,
                 })
             }
             ProxyRequest::Udp(udp) => {
-                let Some(user_context) = udp.user_context else {
+                let Some(stats_context) = &udp.user_context.stats else {
                     return ProxyRequest::Udp(udp);
                 };
 
-                let stats = self.on_new_request(&user_context).await;
+                let stats = self.on_new_request(stats_context).await;
                 let (udp_recv, udp_sent, udp_conns) = stats.udp_counters();
                 udp_conns.fetch_add(1, Ordering::Relaxed);
 
@@ -377,7 +382,9 @@ impl Observer {
                     }) as AnyUdpSend,
                     stream: udp.stream,
                     bind_addr: udp.bind_addr,
-                    user_context: Some(user_context),
+                    dst: udp.dst,
+                    src_addr: udp.src_addr,
+                    user_context: udp.user_context,
                 })
             }
         }

@@ -1,8 +1,12 @@
 # API Subcommand
 
 The `api` subcommand calls the SQuic user-management control-plane APIs through
-the `outbound` section of a config file. The outbound must be `shadowquic` or
+an entry in the `outbounds` list of a config file. The outbound must be `shadowquic` or
 `sunnyquic`; `socks` and `direct` outbounds do not implement these APIs.
+
+With multiple outbounds, select the target by tag:
+`shadowquic api --outbound proxy-out list-users`.
+When only one outbound is configured, the tag option may be omitted.
 
 The configured outbound username must start with `admin`, such as `admin`,
 `admin_bob`, or `admin123`. Other users can still proxy traffic, but API calls

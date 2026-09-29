@@ -1,14 +1,19 @@
 use crate::{SDecode, SEncode};
 use serde::{Deserialize, Serialize};
 use shadowquic_macros::{SDecode, SEncode};
-use std::net::{IpAddr, SocketAddr};
-use tracing::{Level, warn};
+use std::{
+    collections::{HashMap, HashSet},
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+};
+use tracing::{Instrument, Level, info_span, warn};
 
 #[cfg(feature = "mixed")]
 use crate::mixed::inbound::MixedServer;
 use crate::{
     Inbound, Manager, Outbound,
     direct::outbound::DirectOut,
+    drop_outbound::DropOutbound,
     error::SError,
     shadowquic::{inbound::ShadowQuicServer, outbound::ShadowQuicClient},
     socks::{inbound::SocksServer, outbound::SocksClient},
@@ -24,35 +29,148 @@ mod sunnyquic;
 pub use crate::config::serde_utils::*;
 pub use crate::config::shadowquic::*;
 pub use crate::config::sunnyquic::*;
+#[cfg(feature = "plugin")]
+use crate::plugin::router::Router;
 
 /// Overall configuration of shadowquic.
 ///
 /// Example:
 /// ```yaml
-/// inbound:
+/// inbounds:
+/// - tag: proxy-in
 ///   type: xxx
 ///   xxx: xxx
-/// outbound:
+/// outbounds:
+/// - tag: proxy-out
 ///   type: xxx
 ///   xxx: xxx
+/// default-outbound: proxy-out
+/// router: |
+///   return function(ctx) return "proxy-out" end
+/// # Or load the source from a file:
+/// router-script: route.lua
 /// log-level: trace # or debug, info, warn, error
 /// ```
 /// Supported inbound types are listed in [`InboundCfg`]
 ///
 /// Supported outbound types are listed in [`OutboundCfg`]
+///
+/// Legacy `inbound` and `outbound` objects are also accepted. Missing tags on
+/// these objects default to `inbound` and `outbound`, respectively.
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Config {
-    pub inbound: InboundCfg,
-    pub outbound: OutboundCfg,
+    /// Listeners to run concurrently. Tags must be nonempty and unique within this list.
+    #[serde(alias = "inbound", deserialize_with = "deserialize_inbounds")]
+    pub inbounds: Vec<InboundCfg>,
+    /// Available outbounds.
+    #[serde(alias = "outbound", deserialize_with = "deserialize_outbounds")]
+    pub outbounds: Vec<OutboundCfg>,
+    /// Tag of the outbound used by every inbound. Defaults to the first outbound.
+    #[serde(default)]
+    pub default_outbound: Option<String>,
+    /// Optional inline Luau source that selects an outbound for each request.
+    #[serde(default)]
+    pub router: Option<String>,
+    /// Optional path to a Luau script that selects an outbound for each request.
+    /// File changes reload automatically; failed reloads keep the current router.
+    #[serde(default)]
+    pub router_script: Option<std::path::PathBuf>,
     #[serde(default)]
     pub log_level: LogLevel,
 }
 impl Config {
+    /// Validate endpoint identities before opening any listeners.
+    pub fn validate(&self) -> Result<(), SError> {
+        for (kind, tags) in [
+            (
+                "inbound",
+                self.inbounds
+                    .iter()
+                    .map(InboundCfg::tag)
+                    .collect::<Vec<_>>(),
+            ),
+            (
+                "outbound",
+                self.outbounds
+                    .iter()
+                    .map(OutboundCfg::tag)
+                    .collect::<Vec<_>>(),
+            ),
+        ] {
+            if tags.is_empty() {
+                return Err(SError::InvalidConfig(format!(
+                    "at least one {kind} is required"
+                )));
+            }
+            let mut seen = HashSet::new();
+            for tag in tags {
+                if tag.trim().is_empty() {
+                    return Err(SError::InvalidConfig(format!(
+                        "{kind} tag must not be empty"
+                    )));
+                }
+                if !seen.insert(tag) {
+                    return Err(SError::InvalidConfig(format!(
+                        "duplicate {kind} tag: {tag}"
+                    )));
+                }
+            }
+        }
+        if let Some(tag) = &self.default_outbound
+            && !self.outbounds.iter().any(|outbound| outbound.tag() == tag)
+        {
+            return Err(SError::InvalidConfig(format!(
+                "default outbound tag does not match a configured outbound: {tag}"
+            )));
+        }
+        if self.router.is_some() && self.router_script.is_some() {
+            return Err(SError::InvalidConfig(
+                "configure either `router` or `router-script`, not both".into(),
+            ));
+        }
+        #[cfg(not(feature = "plugin"))]
+        if self.router.is_some() || self.router_script.is_some() {
+            return Err(SError::InvalidConfig(
+                "router config requires building with the `plugin` feature".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub async fn build_manager(self) -> Result<Manager, SError> {
+        self.validate()?;
+        let default_outbound = self
+            .default_outbound
+            .unwrap_or_else(|| self.outbounds[0].tag().to_owned());
+        #[cfg(feature = "plugin")]
+        let router = match (self.router.as_deref(), self.router_script.as_deref()) {
+            (Some(source), None) => Some(Router::from_source(source).map_err(|error| {
+                SError::InvalidConfig(format!("failed to load inline router script: {error}"))
+            })?),
+            (None, Some(path)) => Some(Router::load(path)?),
+            (None, None) => None,
+            (Some(_), Some(_)) => unreachable!("validated above"),
+        }
+        .map(Arc::new);
+        let mut inbounds = HashMap::new();
+        let mut outbounds = HashMap::new();
+        for cfg in self.outbounds {
+            let tag = cfg.tag().to_owned();
+            let span = info_span!("outbound", tag = %tag);
+            outbounds.insert(tag, Arc::from(cfg.build_outbound().instrument(span).await?));
+        }
+        for cfg in self.inbounds {
+            let tag = cfg.tag().to_owned();
+            let span = info_span!("inbound", tag = %tag);
+            inbounds.insert(tag, cfg.build_inbound().instrument(span).await?);
+        }
         Ok(Manager {
-            inbound: self.inbound.build_inbound().await?,
-            outbound: self.outbound.build_outbound().await?,
+            inbounds,
+            outbounds,
+            default_outbound,
+            #[cfg(feature = "plugin")]
+            router,
         })
     }
 }
@@ -60,6 +178,7 @@ impl Config {
 /// Inbound configuration
 /// example:
 /// ```yaml
+/// tag: proxy
 /// type: socks # or shadowquic
 /// bind-addr: "0.0.0.0:443" # "[::]:443"
 /// xxx: xxx # other field depending on type
@@ -81,6 +200,19 @@ pub enum InboundCfg {
     Tproxy(TproxyServerCfg),
 }
 impl InboundCfg {
+    /// Returns the endpoint label.
+    pub fn tag(&self) -> &str {
+        match self {
+            Self::Socks(cfg) => &cfg.tag,
+            #[cfg(feature = "mixed")]
+            Self::Mixed(cfg) => &cfg.tag,
+            Self::ShadowQuic(cfg) => &cfg.tag,
+            Self::SunnyQuic(cfg) => &cfg.tag,
+            #[cfg(all(feature = "tproxy", target_os = "linux"))]
+            Self::Tproxy(cfg) => &cfg.tag,
+        }
+    }
+
     async fn build_inbound(self) -> Result<Box<dyn Inbound>, SError> {
         let r: Box<dyn Inbound> = match self {
             InboundCfg::Socks(cfg) => Box::new(SocksServer::new(cfg).await?),
@@ -98,7 +230,8 @@ impl InboundCfg {
 /// Outbound configuration
 /// example:
 /// ```yaml
-/// type: socks # or shadowquic or direct
+/// tag: proxy
+/// type: socks # or shadowquic, sunnyquic, direct, or drop
 /// addr: "127.0.0.1:443" # "[::1]:443"
 /// xxx: xxx # other field depending on type
 /// ```
@@ -113,15 +246,29 @@ pub enum OutboundCfg {
     #[serde(rename = "sunnyquic")]
     SunnyQuic(SunnyQuicClientCfg),
     Direct(DirectOutCfg),
+    #[serde(rename = "drop")]
+    Drop(DropOutCfg),
 }
 
 impl OutboundCfg {
+    /// Returns the endpoint label.
+    pub fn tag(&self) -> &str {
+        match self {
+            Self::Socks(cfg) => &cfg.tag,
+            Self::ShadowQuic(cfg) => &cfg.tag,
+            Self::SunnyQuic(cfg) => &cfg.tag,
+            Self::Direct(cfg) => &cfg.tag,
+            Self::Drop(cfg) => &cfg.tag,
+        }
+    }
+
     async fn build_outbound(self) -> Result<Box<dyn Outbound>, SError> {
         let r: Box<dyn Outbound> = match self {
             OutboundCfg::Socks(cfg) => Box::new(SocksClient::new(cfg)),
             OutboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicClient::new(cfg)),
             OutboundCfg::SunnyQuic(cfg) => Box::new(SunnyQuicClient::new(cfg)),
             OutboundCfg::Direct(cfg) => Box::new(DirectOut::new(cfg)),
+            OutboundCfg::Drop(_) => Box::new(DropOutbound),
         };
         Ok(r)
     }
@@ -131,6 +278,7 @@ impl OutboundCfg {
 ///
 /// Example:
 /// ```yaml
+/// tag: proxy
 /// bind-addr: "0.0.0.0:1089" # or "[::]:1089" for dualstack
 /// users:
 ///  - username: "username"
@@ -139,6 +287,8 @@ impl OutboundCfg {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SocksServerCfg {
+    /// Required label for this endpoint.
+    pub tag: String,
     /// Server binding address. e.g. `0.0.0.0:1089`, `[::1]:1089`
     pub bind_addr: SocketAddr,
     /// Socks5 username, optional
@@ -153,6 +303,7 @@ pub struct SocksServerCfg {
 ///
 /// Example:
 /// ```yaml
+/// tag: proxy
 /// type: mixed
 /// bind-addr: "0.0.0.0:1080"
 /// ```
@@ -160,6 +311,8 @@ pub struct SocksServerCfg {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct MixedServerCfg {
+    /// Required label for this endpoint.
+    pub tag: String,
     /// Server binding address. e.g. `0.0.0.0:1080`, `[::]:1080`
     pub bind_addr: SocketAddr,
     /// Socks5 username, optional
@@ -172,12 +325,15 @@ pub struct MixedServerCfg {
 ///
 /// Example:
 /// ```yaml
+/// tag: proxy
 /// bind-addr: "0.0.0.0:1089" # or "[::]:1089" for dualstack
 /// ```
 #[cfg(all(feature = "tproxy", target_os = "linux"))]
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct TproxyServerCfg {
+    /// Required label for this endpoint.
+    pub tag: String,
     /// Server binding address. e.g. `0.0.0.0:1089`, `[::1]:1089`
     pub bind_addr: SocketAddr,
 }
@@ -193,11 +349,14 @@ pub struct AuthUser {
 /// Socks outbound configuration
 /// Example:
 /// ```yaml
+/// tag: proxy
 /// addr: "12.34.56.7:1089" # or "[12:ff::ff]:1089" for dualstack
 /// ```
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SocksClientCfg {
+    /// Required label for this endpoint.
+    pub tag: String,
     pub addr: String,
     /// SOCKS5 username, optional
     pub username: Option<String>,
@@ -351,13 +510,24 @@ impl PartialEq for CongestionControl {
 /// Configuration of direct outbound
 /// Example:
 /// ```yaml
+/// tag: proxy
 /// dns-strategy: prefer-ipv4 # or prefer-ipv6, ipv4-only, ipv6-only
 /// ```
 #[derive(Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct DirectOutCfg {
+    /// Required label for this endpoint.
+    pub tag: String,
     #[serde(default)]
     pub dns_strategy: DnsStrategy,
+}
+
+/// Outbound that discards every request.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct DropOutCfg {
+    /// Required label for this endpoint.
+    pub tag: String,
 }
 /// DNS resolution strategy
 /// Default is `prefer-ipv4`
@@ -456,13 +626,325 @@ mod test {
 
     use super::Config;
     use super::{CipherSuitePreference, normalize_cipher_suite_preference};
+
+    fn multi_config() -> Config {
+        serde_saphyr::from_str(
+            r#"
+inbounds:
+  - {tag: one, type: socks, bind-addr: "127.0.0.1:0"}
+  - {tag: two, type: socks, bind-addr: "127.0.0.1:0"}
+outbounds:
+  - {tag: z-first, type: direct}
+  - {tag: a-second, type: direct}
+"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn main_branch_configs_are_compatible() {
+        for yaml in [
+            include_str!("../../tests/fixtures/main_config/client.yaml"),
+            include_str!("../../tests/fixtures/main_config/client_brutal.yaml"),
+            include_str!("../../tests/fixtures/main_config/client_sunnyquic.yaml"),
+            include_str!("../../tests/fixtures/main_config/server.yaml"),
+            include_str!("../../tests/fixtures/main_config/server_sunnyquic.yaml"),
+            include_str!("../../tests/fixtures/main_config/socks2socks.yaml"),
+        ] {
+            let cfg: Config = serde_saphyr::from_str(yaml).unwrap();
+            cfg.validate().unwrap();
+            assert_eq!(cfg.inbounds.len(), 1);
+            assert_eq!(cfg.outbounds.len(), 1);
+            assert_eq!(cfg.inbounds[0].tag(), "inbound");
+            assert_eq!(cfg.outbounds[0].tag(), "outbound");
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_config_builds_manager() {
+        let cfg: Config = serde_saphyr::from_str(
+            "inbound: {type: socks, bind-addr: '127.0.0.1:0'}\noutbound: {type: direct}\n",
+        )
+        .unwrap();
+        let manager = cfg.build_manager().await.unwrap();
+        assert_eq!(manager.inbounds.len(), 1);
+        assert_eq!(manager.outbounds.len(), 1);
+        assert!(manager.inbounds.contains_key("inbound"));
+        assert!(manager.outbounds.contains_key("outbound"));
+        assert_eq!(manager.default_outbound, "outbound");
+    }
+
+    #[test]
+    fn legacy_config_preserves_explicit_tags_and_settings() {
+        let cfg: Config = serde_saphyr::from_str(
+            r#"
+inbound: {type: socks, tag: local, bind-addr: '127.0.0.1:1089', users: [{username: user, password: secret}]}
+outbound: {type: direct, tag: remote, dns-strategy: ipv6-only}
+default-outbound: remote
+log-level: debug
+"#,
+        )
+        .unwrap();
+        cfg.validate().unwrap();
+        assert_eq!(cfg.inbounds[0].tag(), "local");
+        assert_eq!(cfg.outbounds[0].tag(), "remote");
+        assert_eq!(cfg.default_outbound.as_deref(), Some("remote"));
+        assert_eq!(cfg.log_level.as_tracing_level(), tracing::Level::DEBUG);
+        let super::InboundCfg::Socks(inbound) = &cfg.inbounds[0] else {
+            panic!("expected socks inbound");
+        };
+        assert_eq!(inbound.bind_addr.port(), 1089);
+        assert_eq!(inbound.users[0].username, "user");
+        assert_eq!(inbound.users[0].password, "secret");
+        let super::OutboundCfg::Direct(outbound) = &cfg.outbounds[0] else {
+            panic!("expected direct outbound");
+        };
+        assert!(matches!(
+            outbound.dns_strategy,
+            super::DnsStrategy::Ipv6Only
+        ));
+    }
+
+    #[test]
+    fn compatibility_keeps_config_errors() {
+        let yaml = "inbound: {type: socks, bind-addr: '127.0.0.1:0'}\noutbound: {type: direct}\n";
+        for extra in [
+            "inbounds: []\n",
+            "outbounds: []\n",
+            "unknown-option: true\n",
+        ] {
+            assert!(serde_saphyr::from_str::<Config>(&format!("{yaml}{extra}")).is_err());
+        }
+        for invalid in [
+            yaml.replace("type: socks", "type: socks, typo: true"),
+            yaml.replace("type: direct", "type: direct, typo: true"),
+            yaml.replace("type: direct", "type: direct, tag: a, tag: b"),
+            yaml.replace("outbound: {type: direct}", "outbounds: [{type: direct}]"),
+            yaml.replace("inbound: {", "inbounds: [{")
+                .replace("0'}", "0'}]"),
+        ] {
+            assert!(
+                serde_saphyr::from_str::<Config>(&invalid).is_err(),
+                "{invalid}"
+            );
+        }
+        for tag in ["''", "'  '"] {
+            let invalid = yaml.replace("type: direct", &format!("type: direct, tag: {tag}"));
+            let cfg: Config = serde_saphyr::from_str(&invalid).unwrap();
+            assert!(cfg.validate().is_err());
+        }
+    }
+
+    #[test]
+    fn router_accepts_inline_source_or_script_path() {
+        let inline: Config = serde_saphyr::from_str(
+            r#"
+inbounds:
+  - {tag: in, type: socks, bind-addr: "127.0.0.1:0"}
+outbounds:
+  - {tag: out, type: direct}
+router: |
+  return function(ctx) return "out" end
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            inline.router.as_deref(),
+            Some("return function(ctx) return \"out\" end\n")
+        );
+        assert!(inline.router_script.is_none());
+
+        let from_file: Config = serde_saphyr::from_str(
+            r#"
+inbounds:
+  - {tag: in, type: socks, bind-addr: "127.0.0.1:0"}
+outbounds:
+  - {tag: out, type: direct}
+router-script: router.lua
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            from_file.router_script.as_deref(),
+            Some(std::path::Path::new("router.lua"))
+        );
+        assert!(from_file.router.is_none());
+    }
+
+    #[test]
+    fn router_source_and_script_path_are_mutually_exclusive() {
+        let mut cfg = multi_config();
+        cfg.router = Some("return function(_) return 'out' end".into());
+        cfg.router_script = Some("router.lua".into());
+        assert!(
+            cfg.validate()
+                .unwrap_err()
+                .to_string()
+                .contains("configure either `router` or `router-script`, not both")
+        );
+    }
+
+    #[tokio::test]
+    async fn builds_all_endpoints_and_preserves_first_outbound() {
+        let manager = multi_config().build_manager().await.unwrap();
+        assert_eq!(manager.inbounds.len(), 2);
+        assert_eq!(manager.outbounds.len(), 2);
+        assert!(manager.inbounds.contains_key("one"));
+        assert!(manager.outbounds.contains_key("a-second"));
+        assert_eq!(manager.default_outbound, "z-first");
+    }
+
+    #[test]
+    fn rejects_invalid_endpoint_lists() {
+        let mut cfg = multi_config();
+        cfg.inbounds.push(cfg.inbounds[0].clone());
+        assert!(
+            cfg.validate()
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate inbound")
+        );
+        let mut cfg = multi_config();
+        cfg.outbounds.push(cfg.outbounds[0].clone());
+        assert!(
+            cfg.validate()
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate outbound")
+        );
+        let mut cfg = multi_config();
+        cfg.inbounds.clear();
+        assert!(
+            cfg.validate()
+                .unwrap_err()
+                .to_string()
+                .contains("at least one inbound")
+        );
+        let mut cfg = multi_config();
+        cfg.outbounds.clear();
+        assert!(
+            cfg.validate()
+                .unwrap_err()
+                .to_string()
+                .contains("at least one outbound")
+        );
+        for tag in ["", "   "] {
+            let mut cfg = multi_config();
+            let super::InboundCfg::Socks(inbound) = &mut cfg.inbounds[0] else {
+                unreachable!()
+            };
+            inbound.tag = tag.into();
+            assert!(
+                cfg.validate()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("inbound tag must not be empty")
+            );
+            let mut cfg = multi_config();
+            let super::OutboundCfg::Direct(outbound) = &mut cfg.outbounds[0] else {
+                unreachable!()
+            };
+            outbound.tag = tag.into();
+            assert!(
+                cfg.validate()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("outbound tag must not be empty")
+            );
+        }
+    }
+
+    #[test]
+    fn bundled_configs_are_valid() {
+        for yaml in [
+            include_str!("../../config_examples/client.yaml"),
+            include_str!("../../config_examples/client_brutal.yaml"),
+            include_str!("../../config_examples/client_sunnyquic.yaml"),
+            include_str!("../../config_examples/server.yaml"),
+            include_str!("../../config_examples/server_sunnyquic.yaml"),
+            include_str!("../../config_examples/socks2socks.yaml"),
+        ] {
+            serde_saphyr::from_str::<Config>(yaml)
+                .unwrap()
+                .validate()
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn endpoint_tags() {
+        let inbounds = [
+            "type: socks\nbind-addr: 127.0.0.1:1080\n",
+            #[cfg(feature = "mixed")]
+            "type: mixed\nbind-addr: 127.0.0.1:1080\n",
+            #[cfg(all(feature = "tproxy", target_os = "linux"))]
+            "type: tproxy\nbind-addr: 127.0.0.1:1080\n",
+            "type: shadowquic\nbind-addr: 127.0.0.1:443\nusers: []\njls-upstream:\n  addr: localhost:443\n",
+            "type: sunnyquic\nbind-addr: 127.0.0.1:443\nusers: []\nserver-name: localhost\ncert-path: cert.pem\nkey-path: key.pem\n",
+        ];
+        let outbounds = [
+            "type: direct\n",
+            "type: drop\n",
+            "type: socks\naddr: localhost:1080\n",
+            "type: shadowquic\naddr: localhost:443\nusername: test\npassword: test\nserver-name: localhost\n",
+            "type: sunnyquic\naddr: localhost:443\nusername: test\npassword: test\nserver-name: localhost\n",
+        ];
+        for yaml in inbounds {
+            let err = serde_saphyr::from_str::<super::InboundCfg>(yaml).unwrap_err();
+            assert!(err.to_string().contains("missing field `tag`"), "{err}");
+            let legacy = format!(
+                "inbound:\n  {}\noutbound: {{type: direct}}\n",
+                yaml.trim_end().replace('\n', "\n  ")
+            );
+            let cfg: Config = serde_saphyr::from_str(&legacy).unwrap();
+            cfg.validate().unwrap();
+            assert_eq!(cfg.inbounds[0].tag(), "inbound");
+        }
+        for yaml in outbounds {
+            let err = serde_saphyr::from_str::<super::OutboundCfg>(yaml).unwrap_err();
+            assert!(err.to_string().contains("missing field `tag`"), "{err}");
+            let legacy = format!(
+                "inbound: {{type: socks, bind-addr: '127.0.0.1:0'}}\noutbound:\n  {}\n",
+                yaml.trim_end().replace('\n', "\n  ")
+            );
+            let cfg: Config = serde_saphyr::from_str(&legacy).unwrap();
+            cfg.validate().unwrap();
+            assert_eq!(cfg.outbounds[0].tag(), "outbound");
+        }
+        for (tag_yaml, expected) in [
+            ("tag: test-endpoint\n", "test-endpoint"),
+            ("tag: \"\"\n", ""),
+        ] {
+            for yaml in inbounds {
+                let cfg: super::InboundCfg =
+                    serde_saphyr::from_str(&format!("{yaml}{tag_yaml}")).unwrap();
+                assert_eq!(cfg.tag(), expected);
+            }
+            for yaml in outbounds {
+                let cfg: super::OutboundCfg =
+                    serde_saphyr::from_str(&format!("{yaml}{tag_yaml}")).unwrap();
+                assert_eq!(cfg.tag(), expected);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn drop_outbound_config_builds() {
+        let cfg: super::OutboundCfg =
+            serde_saphyr::from_str("type: drop\ntag: blackhole\n").unwrap();
+        assert_eq!(cfg.tag(), "blackhole");
+        assert!(cfg.build_outbound().await.is_ok());
+    }
+
     #[test]
     fn test() {
         let cfgstr = r###"
-inbound:
+inbounds:
+  - tag: socks-in
     type: socks
     bind-addr: 127.0.0.1:1089
-outbound:
+outbounds:
+  - tag: direct-out
     type: direct
     dns-strategy: prefer-ipv4
 "###;
@@ -471,11 +953,13 @@ outbound:
     #[test]
     fn test_fail() {
         let cfgstr = r###"
-inbound:
+inbounds:
+  - tag: socks-in
     type: socks
     bind-addr: 127.0.0.1:1089
     dhjsj: jkj
-outbound:
+outbounds:
+  - tag: direct-out
     type: direct
     dns-strategy: prefer-ipv4
 "###;
@@ -485,6 +969,7 @@ outbound:
     #[test]
     fn test_cc() {
         let cfgstr = r###"
+        tag: proxy-out
         username: "test"
         password: "test"
         addr: "127.0.0.1:1080"
@@ -506,6 +991,7 @@ outbound:
     #[test]
     fn test_socketopt() {
         let cfgstr = r###"
+        tag: proxy-out
         username: "test"
         password: "test"
         addr: "127.0.0.1:1080"

@@ -125,15 +125,13 @@ async fn test_self_signed_cert() {
     .unwrap();
 
     let direct_client = DirectOut::default();
-    let server = Manager {
-        inbound: Box::new(sq_server),
-        outbound: Box::new(direct_client),
-    };
+    let server = Manager::single(Box::new(sq_server), std::sync::Arc::new(direct_client));
     tokio::spawn(server.run());
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Start Client
     let socks_server = SocksServer::new(SocksServerCfg {
+        tag: String::new(),
         bind_addr: socks_server_addr.parse().unwrap(),
         users: vec![],
     })
@@ -154,10 +152,7 @@ async fn test_self_signed_cert() {
         ..Default::default()
     });
 
-    let client = Manager {
-        inbound: Box::new(socks_server),
-        outbound: Box::new(sq_client),
-    };
+    let client = Manager::single(Box::new(socks_server), std::sync::Arc::new(sq_client));
     tokio::spawn(client.run());
     tokio::time::sleep(Duration::from_millis(100)).await;
 

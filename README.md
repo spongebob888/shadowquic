@@ -55,6 +55,42 @@ $ shadowquic -c server.yaml
 Example config [server.yaml](./shadowquic/config_examples/server.yaml)
 
 Configuration detail can be found in [Documentation](https://spongebob888.github.io/shadowquic/configuration/)
+
+Use `inbounds` and `outbounds` lists. Every endpoint requires a nonempty `tag`,
+unique within its list. All inbounds run concurrently and route through the
+outbound named by `default-outbound`; if omitted, the first outbound in the list
+is used. For example:
+
+```yaml
+inbounds:
+- type: socks
+  tag: local-socks
+  bind-addr: "127.0.0.1:1080"
+- type: socks
+  tag: second-socks
+  bind-addr: "127.0.0.1:1081"
+outbounds:
+- type: direct
+  tag: direct
+- type: socks
+  tag: upstream
+  addr: "127.0.0.1:1082"
+default-outbound: direct
+```
+
+Both listeners above use `direct`. Additional outbounds are available by tag;
+API commands select one with `api --outbound TAG`. Existing singular
+`inbound`/`outbound` configs continue to work unchanged. Each object becomes a
+single-entry list; omitted tags default to `inbound` and `outbound`, respectively.
+Explicit tags are preserved. List entries still require tags, and specifying both
+the singular and plural key for the same direction is an error.
+
+With the `plugin` feature, set `router-script: router.lua` to load routing rules
+from a file. Changes reload automatically for subsequent requests, including
+when an editor replaces the file. Read or script-loading errors are logged and
+the last working router stays active. A successful reload resets Lua script
+state; existing connections are unaffected. Inline `router` scripts are not watched.
+
 ## Other Clients
 - [husi](https://github.com/xchacha20-poly1305/husi)
 - nekobox: [usage](./document/clients/windows.md)
@@ -78,4 +114,3 @@ Configuration detail can be found in [Documentation](https://spongebob888.github
  * [TUIC Itsusinn fork](https://github.com/Itsusinn/tuic)
  * [leaf](https://github.com/eycorsican/leaf)
  * [clash-rs](https://github.com/Watfaq/clash-rs)
-

@@ -17,7 +17,7 @@ pub struct EchoOutbound;
 
 #[async_trait]
 impl Outbound for EchoOutbound {
-    async fn handle(&mut self, req: ProxyRequest) -> Result<(), SError> {
+    async fn handle(&self, req: ProxyRequest) -> Result<(), SError> {
         match req {
             ProxyRequest::Tcp(mut session) => {
                 tokio::spawn(async move {
@@ -53,6 +53,7 @@ async fn test_tproxy_echo() {
         .try_init();
 
     let tproxy_server = TproxyServer::new(TproxyServerCfg {
+        tag: String::new(),
         bind_addr: "0.0.0.0:1089".parse().unwrap(),
     })
     .await
@@ -60,10 +61,7 @@ async fn test_tproxy_echo() {
 
     let echo_outbound = EchoOutbound;
 
-    let manager = Manager {
-        inbound: Box::new(tproxy_server),
-        outbound: Box::new(echo_outbound),
-    };
+    let manager = Manager::single(Box::new(tproxy_server), std::sync::Arc::new(echo_outbound));
 
     tokio::spawn(manager.run());
 

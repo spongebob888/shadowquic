@@ -5,6 +5,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use tracing::Instrument;
 
 use super::brutal::BrutalConfig;
 use arc_swap::ArcSwap;
@@ -174,10 +175,13 @@ impl QuicClient for EndClient {
                     let _conn_clone = x.clone();
                     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
                     accepted_0rtt = Some(rx);
-                    tokio::spawn(async move {
-                        debug!("zero rtt accepted: {}", accepted.await);
-                        tx.send(()).unwrap_or(());
-                    });
+                    tokio::spawn(
+                        async move {
+                            debug!("zero rtt accepted: {}", accepted.await);
+                            tx.send(()).unwrap_or(());
+                        }
+                        .in_current_span(),
+                    );
                     trace!("trying 0-rtt quic connection");
                     x
                 }
@@ -192,11 +196,10 @@ impl QuicClient for EndClient {
             trace!("1-rtt quic connection established");
             x
         };
-        tokio::spawn(add_extra_path(
-            conn.clone(),
-            self.cfg.extra_paths.clone(),
-            accepted_0rtt,
-        ));
+        tokio::spawn(
+            add_extra_path(conn.clone(), self.cfg.extra_paths.clone(), accepted_0rtt)
+                .in_current_span(),
+        );
         Ok(conn)
     }
 
@@ -268,7 +271,7 @@ async fn add_extra_path(
                 }
             }
         };
-        tokio::spawn(fut);
+        tokio::spawn(fut.in_current_span());
     }
     Ok(())
 }
@@ -416,9 +419,12 @@ impl QuicServer for EndServer {
                     match conn.into_0rtt() {
                         Ok((conn, accepted)) => {
                             let _conn_clone = conn.clone();
-                            tokio::spawn(async move {
-                                debug!("zero rtt accepted:{}", accepted.await);
-                            });
+                            tokio::spawn(
+                                async move {
+                                    debug!("zero rtt accepted:{}", accepted.await);
+                                }
+                                .in_current_span(),
+                            );
                             conn
                         }
                         Err(conn) => conn.await?,
@@ -441,7 +447,8 @@ fn gen_server_crypto(cfg: &SunnyQuicServerCfg) -> SResult<RustlsServerConfig> {
     tokio::spawn(
         resolver
             .clone()
-            .watch_cert_and_update(cfg.key_path.clone(), cfg.cert_path.clone()),
+            .watch_cert_and_update(cfg.key_path.clone(), cfg.cert_path.clone())
+            .in_current_span(),
     );
     Ok(
         RustlsServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])

@@ -17,6 +17,7 @@ pub(crate) fn default_multipath_num() -> u32 {
 ///
 /// Example:
 /// ```yaml
+/// tag: proxy
 /// bind-addr: "0.0.0.0:1443"
 /// users:
 ///   - username: "zhangsan"
@@ -29,6 +30,8 @@ pub(crate) fn default_multipath_num() -> u32 {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SunnyQuicServerCfg {
+    /// Required label for this endpoint.
+    pub tag: String,
     /// Binding address. e.g. `0.0.0.0:443`, `[::1]:443`
     pub bind_addr: SocketAddr,
     /// Users for client authentication
@@ -95,6 +98,7 @@ pub struct SunnyQuicServerCfg {
 impl Default for SunnyQuicServerCfg {
     fn default() -> Self {
         Self {
+            tag: String::new(),
             bind_addr: "127.0.0.1:443".parse().unwrap(),
             users: Default::default(),
             alpn: Default::default(),
@@ -118,6 +122,7 @@ impl Default for SunnyQuicServerCfg {
 impl Default for SunnyQuicClientCfg {
     fn default() -> Self {
         Self {
+            tag: String::new(),
             password: Default::default(),
             username: Default::default(),
             addr: Default::default(),
@@ -145,6 +150,7 @@ impl Default for SunnyQuicClientCfg {
 ///
 /// example:
 /// ```yaml
+/// tag: proxy
 /// addr: "12.34.56.7:1089" # or "[12:ff::ff]:1089" for dualstack
 /// password: "12345678"
 /// username: "87654321"
@@ -158,6 +164,8 @@ impl Default for SunnyQuicClientCfg {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SunnyQuicClientCfg {
+    /// Required label for this endpoint.
+    pub tag: String,
     /// username, must be the same as the server
     pub username: String,
     /// password, must be the same as the server

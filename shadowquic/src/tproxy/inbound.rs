@@ -2,6 +2,7 @@ use std::io;
 use std::mem::MaybeUninit;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
+use tracing::Instrument;
 
 use crate::config::TproxyServerCfg;
 use crate::error::SError;
@@ -34,11 +35,14 @@ impl TproxyServer {
 
         {
             let bind_addr = cfg.bind_addr;
-            tokio::spawn(async move {
-                if let Err(e) = handle_udp_tproxy(bind_addr, udp_req_tx).await {
-                    tracing::error!("tproxy udp listener failed: {}", e);
+            tokio::spawn(
+                async move {
+                    if let Err(e) = handle_udp_tproxy(bind_addr, udp_req_tx).await {
+                        tracing::error!("tproxy udp listener failed: {}", e);
+                    }
                 }
-            });
+                .in_current_span(),
+            );
         }
 
         Ok(Self {
@@ -95,6 +99,7 @@ impl Inbound for TproxyServer {
                 // here; this only keeps every accepted socket behaving the same.
                 let _ = stream.set_nodelay(true);
                 tracing::info!("accepted tcp connection from {}", stream.peer_addr().unwrap());
+                let src_addr = stream.peer_addr().ok();
                 let orig_dst = stream.local_addr().map_err(|e| SError::SocksError(e.to_string()))?;
                 let dst = SocksAddr {
                     addr: match orig_dst.ip() {
@@ -106,7 +111,8 @@ impl Inbound for TproxyServer {
                 Ok(ProxyRequest::Tcp(TcpSession {
                     stream: Box::new(stream),
                     dst,
-                    user_context: None,
+                    src_addr,
+                    user_context: Default::default(),
                 }))
             }
             Some(req) = self.udp_req_rx.recv() => {
@@ -298,6 +304,8 @@ async fn handle_udp_tproxy(
 
                             let req: ProxyRequest<AnyTcp, AnyUdpRecv, AnyUdpSend> =
                                 ProxyRequest::Udp(UdpSession {
+                                    dst: orig_dst.into(),
+                                    src_addr: Some(client_addr),
                                     send: send as Arc<dyn UdpSend>,
                                     recv: Box::new(rx) as Box<dyn UdpRecv>,
                                     stream: None,
@@ -308,7 +316,7 @@ async fn handle_udp_tproxy(
                                         },
                                         port: 0,
                                     },
-                                    user_context: None,
+                                    user_context: Default::default(),
                                 });
 
                             if req_tx.send(req).await.is_err() {

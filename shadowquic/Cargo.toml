@@ -9,9 +9,12 @@ description = { workspace = true }
 license = { workspace = true}
 readme = { workspace = true}
 [features]
-default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", "mixed"]
+default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", "mixed", "plugin"]
 statistics = ["dep:portable-atomic"]
 mixed = ["dep:base64"]
+plugin = ["plugin-vendored"]
+plugin-vendored = ["plugin-system", "mlua/vendored"]
+plugin-system = ["dep:mlua", "mlua/send", "dep:notify"]
 ring = [
     "dep:ring",
     "quinn?/rustls-ring",
@@ -93,6 +96,14 @@ etherparse = { version = "0.14.3", optional = true }
 libc = { version = "0.2", optional = true }
 etherparse = { version = "0.14.3", optional = true }
 
+# LuaJIT has no RISC-V or LoongArch backend. Keep Lua 5.1 routing available
+# on those architectures with the portable interpreter.
+[target.'cfg(any(target_arch = "riscv64", target_arch = "loongarch64"))'.dependencies]
+mlua = { version = "0.12", default-features = false, features = ["lua52"], optional = true }
+
+[target.'cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))'.dependencies]
+mlua = { version = "0.12", default-features = false, features = ["luajit"], optional = true }
+
 # 64-bit atomics via ll/sc CAS loop on targets without native AtomicU64 (e.g. 32-bit MIPS)
 [target.'cfg(not(target_has_atomic = "64"))'.dependencies]
 portable-atomic = { version = "1", optional = true }
@@ -112,3 +123,6 @@ libc = "0.2"
 [dev-dependencies]
 fast-socks5 = "1.0.0"
 rand = "0.10.1"
+
+[build-dependencies]
+cc = "1"
