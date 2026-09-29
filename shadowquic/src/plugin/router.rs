@@ -458,7 +458,7 @@ mod tests {
                 std::time::Instant::now() < deadline,
                 "expected {expected}, got {actual}"
             );
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
     }
 
