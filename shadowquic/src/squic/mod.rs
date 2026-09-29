@@ -16,11 +16,12 @@ use std::{
 
 use bytes::{BufMut, Bytes, BytesMut};
 use tokio::{
-    io::{AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::{
         Mutex, RwLock, SetOnce,
         watch::{Receiver, Sender, channel},
     },
+    task::JoinSet,
 };
 use tracing::{Instrument, Level, debug, error, event, info, trace};
 
@@ -163,6 +164,24 @@ where
             }
         }
     }
+    /// Drop a pending id that nobody waits for and whose datagrams are already
+    /// buffered, without waiting for the store lock. Returns false when the
+    /// lock was busy, so the caller can arrange the cleanup elsewhere.
+    fn try_remove_unwatched_pending(&self, id: u16) -> bool {
+        let Ok(mut inner) = self.inner.try_write() else {
+            return false;
+        };
+        remove_unwatched_pending_locked(&mut inner, id);
+        true
+    }
+
+    /// The same cleanup, waiting for the store lock if it has to. Only used as
+    /// the fallback of [`Self::try_remove_unwatched_pending`], so a busy store
+    /// cannot leave an orphan behind for the life of the connection.
+    async fn remove_unwatched_pending(&self, id: u16) {
+        let mut inner = self.inner.write().await;
+        remove_unwatched_pending_locked(&mut inner, id);
+    }
     #[allow(dead_code)]
     async fn store_socket(&self, id: u16, val: T) -> Option<Vec<Bytes>> {
         let mut h = self.inner.write().await;
@@ -229,6 +248,17 @@ async fn deliver(socket: AnyUdpSend, packet: Bytes, addr: SocksAddr) -> SResult<
         Err(_) => Err(SError::ChannelError(
             "local udp consumer is not draining".into(),
         )),
+    }
+}
+
+/// Drop a pending entry for `id` when nothing waits for it. A registered socket
+/// and an entry that still has a subscriber are both left alone.
+fn remove_unwatched_pending_locked<T>(inner: &mut HashMap<u16, IDStoreVal<T>>, id: u16) {
+    if let Entry::Occupied(entry) = inner.entry(id)
+        && let Err(pending) = entry.get()
+        && pending.notify.receiver_count() == 0
+    {
+        let _ = entry.remove();
     }
 }
 
@@ -509,7 +539,13 @@ pub async fn handle_udp_packet_recv<C: QuicConnection>(conn: SQConn<C>) -> Resul
     let id_store = conn.recv_id_store.clone();
     wait_sunny_auth(&conn).await?;
     let mut datagram_retry_after = tokio::time::Instant::now();
+    // Every accepted unistream is served by its own task and the set owns
+    // them: leaving this loop drops the set, so tokio aborts whatever is still
+    // parked instead of letting those tasks outlive their connection.
+    let mut streams: JoinSet<()> = JoinSet::new();
     loop {
+        // Reap finished streams so the set tracks live ones only.
+        while streams.try_join_next().is_some() {}
         tokio::select! {
             b = async {
                 tokio::time::sleep_until(datagram_retry_after).await;
@@ -560,10 +596,16 @@ pub async fn handle_udp_packet_recv<C: QuicConnection>(conn: SQConn<C>) -> Resul
                 trace!("unistream accepted");
                 let id_store = id_store.clone();
                 let conn = conn.clone();
-                tokio::spawn(
+                streams.spawn(
                     async move {
-                        if let Err(e) = serve_uni_stream(uni_stream, id_store, conn).await {
-                            error!("udp over stream ended: {}", e);
+                        match serve_uni_stream(uni_stream, id_store, conn).await {
+                            // A parked stream losing its association is
+                            // ordinary teardown, not a failure.
+                            Err(SError::UDPSessionClosed(msg)) => {
+                                debug!("udp over stream ended: {}", msg)
+                            }
+                            Err(e) => error!("udp over stream ended: {}", e),
+                            Ok(()) => {}
                         }
                     }
                     .in_current_span(),
@@ -575,30 +617,83 @@ pub async fn handle_udp_packet_recv<C: QuicConnection>(conn: SQConn<C>) -> Resul
     Ok(())
 }
 
-/// Serve one udp-over-stream unistream: decode the id it carries, resolve the
-/// socket it belongs to, then relay its length-prefixed packets.
-///
-/// This runs in its own task so that selection cannot drop a stream that was
-/// already taken from the queue, and so a failure on one stream does not stop
-/// acceptance of the next.
+/// Bound how long an unmatched stream can hold resources. This fixed budget
+/// covers both the stream header and its control header; it is not the QUIC
+/// connection idle timeout. Remove the orphaned pending id when it expires.
+const UDP_SESSION_RESOLVE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Serve one udp-over-stream unistream: resolve the session id it carries to
+/// the socket that receives the payload, then relay the length-prefixed
+/// packets until the stream ends.
 async fn serve_uni_stream<C: QuicConnection>(
     mut uni_stream: C::RecvStream,
     id_store: IDStore,
     conn: SQConn<C>,
 ) -> Result<(), SError> {
-    let SQPacketDatagramHeader { id } = SQPacketDatagramHeader::decode(&mut uni_stream).await?;
+    let deadline = tokio::time::Instant::now() + UDP_SESSION_RESOLVE_TIMEOUT;
+    let SQPacketDatagramHeader { id } =
+        tokio::time::timeout_at(deadline, SQPacketDatagramHeader::decode(&mut uni_stream))
+            .await
+            .map_err(|_| SError::UDPSessionClosed("udp stream header timed out".into()))??;
     trace!(context_id = id, "resolving datagram id");
 
-    let (udp, addr) = id_store.get_socket_or_wait(id).await?;
+    let (udp, addr) = resolve_udp_session(&id_store, id, deadline).await?;
 
     info!(context_id = id, peer_addr = %conn.remote_address(), dst = %addr, "udp over stream");
 
+    relay_uni_stream(&mut uni_stream, udp.as_ref(), &addr).await
+}
+
+/// Relay the length-prefixed packets of one udp-over-stream unistream to the
+/// socket its association registered.
+///
+/// The peer decides whether a payload is ever completed, and a QUIC connection
+/// can outlive its associations by hours, so the relay also ends as soon as the
+/// association's receiver is gone.
+async fn relay_uni_stream<R: AsyncRead + Unpin + Send>(
+    uni_stream: &mut R,
+    udp: &dyn UdpSend,
+    addr: &SocksAddr,
+) -> Result<(), SError> {
     loop {
-        let l: usize = u16::decode(&mut uni_stream).await? as usize;
-        let mut b = BytesMut::with_capacity(l);
-        b.resize(l, 0);
-        uni_stream.read_exact(&mut b).await?;
-        udp.send_to(b.freeze(), addr.clone()).await?;
+        let packet = tokio::select! {
+            packet = read_packet(uni_stream) => packet?,
+            _ = udp.closed() => {
+                return Err(SError::UDPSessionClosed("udp association ended".into()));
+            }
+        };
+        udp.send_to(packet, addr.clone()).await?;
+    }
+}
+
+async fn read_packet<R: AsyncRead + Unpin + Send>(uni_stream: &mut R) -> Result<Bytes, SError> {
+    let l: usize = u16::decode(uni_stream).await? as usize;
+    let mut b = BytesMut::with_capacity(l);
+    b.resize(l, 0);
+    uni_stream.read_exact(&mut b).await?;
+    Ok(b.freeze())
+}
+
+async fn resolve_udp_session(
+    id_store: &IDStore,
+    id: u16,
+    deadline: tokio::time::Instant,
+) -> Result<(AnyUdpSend, SocksAddr), SError> {
+    match tokio::time::timeout_at(deadline, id_store.get_socket_or_wait(id)).await {
+        Ok(result) => result,
+        Err(_) => {
+            // The deadline is what bounds this task, so the cleanup does not
+            // wait for the store lock here. Every critical section in the store
+            // is synchronous, so this helper finishes promptly and cannot be
+            // held up by a peer.
+            if !id_store.try_remove_unwatched_pending(id) {
+                let id_store = id_store.clone();
+                tokio::spawn(async move { id_store.remove_unwatched_pending(id).await });
+            }
+            Err(SError::UDPSessionClosed(format!(
+                "udp session id {id} not resolved in time"
+            )))
+        }
     }
 }
 
@@ -914,5 +1009,209 @@ mod udp_receive_tests {
         })
         .await
         .expect("the association teardown must remove its registered id");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn delayed_control_header_still_resolves_stream() {
+        let store = store();
+        let lookup = resolve_udp_session(
+            &store,
+            7,
+            tokio::time::Instant::now() + UDP_SESSION_RESOLVE_TIMEOUT,
+        );
+        tokio::pin!(lookup);
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(6)) => {}
+            result = &mut lookup => panic!("lookup ended early: {:?}", result.err()),
+        }
+        let (tx, _rx) = mpsc::channel(1);
+        let addr = SocksAddr::from("127.0.0.1:9000".parse::<std::net::SocketAddr>().unwrap());
+        store
+            .store_socket_with_prelude(7, (Arc::new(tx), addr.clone()))
+            .await
+            .unwrap();
+        assert_eq!(lookup.await.unwrap().1, addr);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn expired_stream_cleans_its_pending_id() {
+        let store = store();
+        // A datagram can arrive before the control header and be buffered in
+        // the same pending entry as the stream waiter.
+        store
+            .feed_datagram(7, Bytes::from_static(b"orphan"))
+            .await
+            .unwrap();
+        assert!(matches!(
+            resolve_udp_session(
+                &store,
+                7,
+                tokio::time::Instant::now() + UDP_SESSION_RESOLVE_TIMEOUT,
+            )
+            .await,
+            Err(SError::UDPSessionClosed(_))
+        ));
+        assert!(!store.inner.read().await.contains_key(&7));
+    }
+
+    #[tokio::test]
+    async fn timeout_cleanup_does_not_remove_registered_socket() {
+        let store = store();
+        let (tx, _rx) = mpsc::channel(1);
+        let addr = SocksAddr::from("127.0.0.1:9000".parse::<std::net::SocketAddr>().unwrap());
+        store
+            .store_socket_with_prelude(7, (Arc::new(tx), addr))
+            .await
+            .unwrap();
+        assert!(store.try_remove_unwatched_pending(7));
+        assert!(matches!(store.inner.read().await.get(&7), Some(Ok(_))));
+    }
+
+    #[tokio::test]
+    async fn timed_out_waiter_does_not_remove_another_waiter() {
+        let store = store();
+        let first = match store.get_socket_or_notify(7).await {
+            Err(waiter) => waiter,
+            Ok(_) => panic!("expected pending id"),
+        };
+        let second = match store.get_socket_or_notify(7).await {
+            Err(waiter) => waiter,
+            Ok(_) => panic!("expected pending id"),
+        };
+        drop(first);
+        assert!(store.try_remove_unwatched_pending(7));
+        assert!(store.inner.read().await.contains_key(&7));
+        drop(second);
+        assert!(store.try_remove_unwatched_pending(7));
+        assert!(!store.inner.read().await.contains_key(&7));
+    }
+
+    /// A sender that is already gone, i.e. its association ended.
+    struct GoneSend(mpsc::UnboundedSender<Bytes>);
+
+    #[async_trait::async_trait]
+    impl UdpSend for GoneSend {
+        async fn send_to(&self, buf: Bytes, _addr: SocksAddr) -> Result<usize, SError> {
+            let len = buf.len();
+            let _ = self.0.send(buf);
+            Ok(len)
+        }
+        async fn closed(&self) {}
+    }
+
+    #[tokio::test]
+    async fn relay_forwards_packets_while_the_association_lives() {
+        let (mut reader, mut writer) = tokio::io::duplex(64);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let addr = test_addr();
+        let relay =
+            tokio::spawn(async move { relay_uni_stream(&mut reader, &LiveSend(tx), &addr).await });
+
+        (5u16).encode(&mut writer).await.unwrap();
+        writer.write_all(b"hello").await.unwrap();
+        assert_eq!(rx.recv().await.unwrap(), Bytes::from_static(b"hello"));
+
+        // A closed stream ends the relay.
+        drop(writer);
+        assert!(relay.await.unwrap().is_err());
+    }
+
+    #[tokio::test]
+    async fn relay_ends_when_the_association_is_gone() {
+        // The writer stays alive, so the stream is silent forever and only the
+        // association can end the relay.
+        let (mut reader, _writer) = tokio::io::duplex(64);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let addr = test_addr();
+        let relay = tokio::time::timeout(
+            Duration::from_secs(5),
+            relay_uni_stream(&mut reader, &GoneSend(tx), &addr),
+        )
+        .await
+        .expect("a parked relay must not wait for a payload that never comes");
+        assert!(matches!(relay, Err(SError::UDPSessionClosed(_))));
+    }
+
+    #[tokio::test]
+    async fn stream_tasks_do_not_outlive_the_connection() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let conn = SQConn {
+            conn: OneStreamConn {
+                stream: Arc::new(Mutex::new(Some(ParkedStream {
+                    dropped: dropped.clone(),
+                }))),
+                accepted: Arc::new(AtomicBool::new(false)),
+                datagrams: Arc::new(Mutex::new(VecDeque::new())),
+                stay_open: false,
+            },
+            authed: Arc::new(SetOnce::new_with(Some(Ok("user".to_string())))),
+            send_id_store: Default::default(),
+            recv_id_store: store(),
+            stats: Default::default(),
+        };
+
+        // A connection that is gone is what ends the receive loop.
+        assert!(handle_udp_packet_recv(conn).await.is_err());
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !dropped.load(Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("a parked stream task must not outlive the connection");
+    }
+
+    #[tokio::test]
+    async fn orphaned_pending_id_is_removed_after_a_busy_cleanup() {
+        let store = store();
+        // A datagram for an id with no control header leaves a pending entry
+        // that no association owns.
+        store
+            .feed_datagram(7, Bytes::from_static(b"orphan"))
+            .await
+            .unwrap();
+        assert!(store.inner.read().await.contains_key(&7));
+
+        let held = store.inner.write().await;
+        let ended = tokio::time::timeout(
+            Duration::from_secs(5),
+            resolve_udp_session(&store, 7, tokio::time::Instant::now()),
+        )
+        .await;
+        assert!(
+            matches!(ended, Ok(Err(SError::UDPSessionClosed(_)))),
+            "the stream task must end at its deadline"
+        );
+        drop(held);
+
+        // The deadline cleanup could not take the lock, and nothing else owns
+        // this id, so it must not be lost.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while store.inner.read().await.contains_key(&7) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("an orphaned pending id must be removed once the store is free");
+    }
+
+    #[tokio::test]
+    async fn expired_stream_cleanup_does_not_wait_for_the_store_lock() {
+        let store = store();
+        let held = store.inner.write().await;
+
+        // The deadline is what bounds the stream task, so the cleanup after it
+        // must not queue behind a held lock.
+        let ended = tokio::time::timeout(
+            Duration::from_secs(5),
+            resolve_udp_session(&store, 7, tokio::time::Instant::now()),
+        )
+        .await;
+        drop(held);
+        assert!(
+            matches!(ended, Ok(Err(SError::UDPSessionClosed(_)))),
+            "the stream task must end at its deadline"
+        );
     }
 }

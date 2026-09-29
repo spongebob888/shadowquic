@@ -341,6 +341,9 @@ impl UdpSend for TrackedUdpSend {
         self.bytes_sent.fetch_add(len as u64, Ordering::Relaxed);
         Ok(len)
     }
+    async fn closed(&self) {
+        self.inner.closed().await
+    }
 }
 
 impl Observer {
