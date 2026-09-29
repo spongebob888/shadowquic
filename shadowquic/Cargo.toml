@@ -123,6 +123,7 @@ libc = "0.2"
 [dev-dependencies]
 fast-socks5 = "1.0.0"
 rand = "0.10.1"
+tokio = { version = "1.52.3", features = ["test-util"] }
 
 [build-dependencies]
 cc = "1"
