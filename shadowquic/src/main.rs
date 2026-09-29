@@ -120,6 +120,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn api_selects_legacy_outbound_without_tag() {
+        let cfg: Config =
+            serde_saphyr::from_str(include_str!("../tests/fixtures/main_config/client.yaml"))
+                .unwrap();
+        let outbound = select_api_outbound(cfg, None).unwrap();
+        assert_eq!(outbound.tag(), "outbound");
+        assert!(matches!(outbound, OutboundCfg::ShadowQuic(_)));
+    }
+
+    #[test]
     fn api_selects_outbound_by_tag() {
         let cfg: Config = serde_saphyr::from_str(
             r#"

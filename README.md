@@ -80,7 +80,10 @@ default-outbound: direct
 
 Both listeners above use `direct`. Additional outbounds are available by tag;
 API commands select one with `api --outbound TAG`. Existing singular
-`inbound`/`outbound` configs must be converted to lists.
+`inbound`/`outbound` configs continue to work unchanged. Each object becomes a
+single-entry list; omitted tags default to `inbound` and `outbound`, respectively.
+Explicit tags are preserved. List entries still require tags, and specifying both
+the singular and plural key for the same direction is an error.
 
 ## Other Clients
 - [husi](https://github.com/xchacha20-poly1305/husi)

@@ -48,18 +48,23 @@ use crate::plugin::router::Router;
 /// router: |
 ///   return function(ctx) return "proxy-out" end
 /// # Or load the source from a file:
-/// router-script: route.luau
+/// router-script: route.lua
 /// log-level: trace # or debug, info, warn, error
 /// ```
 /// Supported inbound types are listed in [`InboundCfg`]
 ///
 /// Supported outbound types are listed in [`OutboundCfg`]
+///
+/// Legacy `inbound` and `outbound` objects are also accepted. Missing tags on
+/// these objects default to `inbound` and `outbound`, respectively.
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Config {
     /// Listeners to run concurrently. Tags must be nonempty and unique within this list.
+    #[serde(alias = "inbound", deserialize_with = "deserialize_inbounds")]
     pub inbounds: Vec<InboundCfg>,
     /// Available outbounds.
+    #[serde(alias = "outbound", deserialize_with = "deserialize_outbounds")]
     pub outbounds: Vec<OutboundCfg>,
     /// Tag of the outbound used by every inbound. Defaults to the first outbound.
     #[serde(default)]
@@ -632,6 +637,100 @@ outbounds:
     }
 
     #[test]
+    fn main_branch_configs_are_compatible() {
+        for yaml in [
+            include_str!("../../tests/fixtures/main_config/client.yaml"),
+            include_str!("../../tests/fixtures/main_config/client_brutal.yaml"),
+            include_str!("../../tests/fixtures/main_config/client_sunnyquic.yaml"),
+            include_str!("../../tests/fixtures/main_config/server.yaml"),
+            include_str!("../../tests/fixtures/main_config/server_sunnyquic.yaml"),
+            include_str!("../../tests/fixtures/main_config/socks2socks.yaml"),
+        ] {
+            let cfg: Config = serde_saphyr::from_str(yaml).unwrap();
+            cfg.validate().unwrap();
+            assert_eq!(cfg.inbounds.len(), 1);
+            assert_eq!(cfg.outbounds.len(), 1);
+            assert_eq!(cfg.inbounds[0].tag(), "inbound");
+            assert_eq!(cfg.outbounds[0].tag(), "outbound");
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_config_builds_manager() {
+        let cfg: Config = serde_saphyr::from_str(
+            "inbound: {type: socks, bind-addr: '127.0.0.1:0'}\noutbound: {type: direct}\n",
+        )
+        .unwrap();
+        let manager = cfg.build_manager().await.unwrap();
+        assert_eq!(manager.inbounds.len(), 1);
+        assert_eq!(manager.outbounds.len(), 1);
+        assert!(manager.inbounds.contains_key("inbound"));
+        assert!(manager.outbounds.contains_key("outbound"));
+        assert_eq!(manager.default_outbound, "outbound");
+    }
+
+    #[test]
+    fn legacy_config_preserves_explicit_tags_and_settings() {
+        let cfg: Config = serde_saphyr::from_str(
+            r#"
+inbound: {type: socks, tag: local, bind-addr: '127.0.0.1:1089', users: [{username: user, password: secret}]}
+outbound: {type: direct, tag: remote, dns-strategy: ipv6-only}
+default-outbound: remote
+log-level: debug
+"#,
+        )
+        .unwrap();
+        cfg.validate().unwrap();
+        assert_eq!(cfg.inbounds[0].tag(), "local");
+        assert_eq!(cfg.outbounds[0].tag(), "remote");
+        assert_eq!(cfg.default_outbound.as_deref(), Some("remote"));
+        assert_eq!(cfg.log_level.as_tracing_level(), tracing::Level::DEBUG);
+        let super::InboundCfg::Socks(inbound) = &cfg.inbounds[0] else {
+            panic!("expected socks inbound");
+        };
+        assert_eq!(inbound.bind_addr.port(), 1089);
+        assert_eq!(inbound.users[0].username, "user");
+        assert_eq!(inbound.users[0].password, "secret");
+        let super::OutboundCfg::Direct(outbound) = &cfg.outbounds[0] else {
+            panic!("expected direct outbound");
+        };
+        assert!(matches!(
+            outbound.dns_strategy,
+            super::DnsStrategy::Ipv6Only
+        ));
+    }
+
+    #[test]
+    fn compatibility_keeps_config_errors() {
+        let yaml = "inbound: {type: socks, bind-addr: '127.0.0.1:0'}\noutbound: {type: direct}\n";
+        for extra in [
+            "inbounds: []\n",
+            "outbounds: []\n",
+            "unknown-option: true\n",
+        ] {
+            assert!(serde_saphyr::from_str::<Config>(&format!("{yaml}{extra}")).is_err());
+        }
+        for invalid in [
+            yaml.replace("type: socks", "type: socks, typo: true"),
+            yaml.replace("type: direct", "type: direct, typo: true"),
+            yaml.replace("type: direct", "type: direct, tag: a, tag: b"),
+            yaml.replace("outbound: {type: direct}", "outbounds: [{type: direct}]"),
+            yaml.replace("inbound: {", "inbounds: [{")
+                .replace("0'}", "0'}]"),
+        ] {
+            assert!(
+                serde_saphyr::from_str::<Config>(&invalid).is_err(),
+                "{invalid}"
+            );
+        }
+        for tag in ["''", "'  '"] {
+            let invalid = yaml.replace("type: direct", &format!("type: direct, tag: {tag}"));
+            let cfg: Config = serde_saphyr::from_str(&invalid).unwrap();
+            assert!(cfg.validate().is_err());
+        }
+    }
+
+    #[test]
     fn router_accepts_inline_source_or_script_path() {
         let inline: Config = serde_saphyr::from_str(
             r#"
@@ -788,10 +887,24 @@ router-script: router.lua
         for yaml in inbounds {
             let err = serde_saphyr::from_str::<super::InboundCfg>(yaml).unwrap_err();
             assert!(err.to_string().contains("missing field `tag`"), "{err}");
+            let legacy = format!(
+                "inbound:\n  {}\noutbound: {{type: direct}}\n",
+                yaml.trim_end().replace('\n', "\n  ")
+            );
+            let cfg: Config = serde_saphyr::from_str(&legacy).unwrap();
+            cfg.validate().unwrap();
+            assert_eq!(cfg.inbounds[0].tag(), "inbound");
         }
         for yaml in outbounds {
             let err = serde_saphyr::from_str::<super::OutboundCfg>(yaml).unwrap_err();
             assert!(err.to_string().contains("missing field `tag`"), "{err}");
+            let legacy = format!(
+                "inbound: {{type: socks, bind-addr: '127.0.0.1:0'}}\noutbound:\n  {}\n",
+                yaml.trim_end().replace('\n', "\n  ")
+            );
+            let cfg: Config = serde_saphyr::from_str(&legacy).unwrap();
+            cfg.validate().unwrap();
+            assert_eq!(cfg.outbounds[0].tag(), "outbound");
         }
         for (tag_yaml, expected) in [
             ("tag: test-endpoint\n", "test-endpoint"),

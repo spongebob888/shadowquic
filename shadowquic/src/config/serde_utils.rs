@@ -1,9 +1,98 @@
 use std::fmt;
 
 use serde::{
-    Deserializer,
-    de::{self, Visitor},
+    Deserialize, Deserializer,
+    de::{self, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor},
 };
+
+pub(super) fn deserialize_inbounds<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<super::InboundCfg>, D::Error> {
+    deserialize_endpoints(deserializer, "inbound")
+}
+
+pub(super) fn deserialize_outbounds<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<super::OutboundCfg>, D::Error> {
+    deserialize_endpoints(deserializer, "outbound")
+}
+
+// Keep endpoint deserialization strict, adding a default tag only for a legacy
+// single endpoint object. Lists continue to require explicit tags.
+fn deserialize_endpoints<'de, D, T>(deserializer: D, tag: &'static str) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    struct Endpoints<T>(&'static str, std::marker::PhantomData<T>);
+
+    impl<'de, T: Deserialize<'de>> Visitor<'de> for Endpoints<T> {
+        type Value = Vec<T>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("an endpoint object or a list of tagged endpoints")
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            let mut endpoints = Vec::new();
+            while let Some(endpoint) = seq.next_element()? {
+                endpoints.push(endpoint);
+            }
+            Ok(endpoints)
+        }
+
+        fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+            let endpoint = T::deserialize(de::value::MapAccessDeserializer::new(DefaultTag {
+                map,
+                tag: self.0,
+                seen_tag: false,
+                injected: false,
+            }))?;
+            Ok(vec![endpoint])
+        }
+    }
+
+    deserializer.deserialize_any(Endpoints(tag, std::marker::PhantomData))
+}
+
+struct DefaultTag<A> {
+    map: A,
+    tag: &'static str,
+    seen_tag: bool,
+    injected: bool,
+}
+
+impl<'de, A: MapAccess<'de>> MapAccess<'de> for DefaultTag<A> {
+    type Error = A::Error;
+
+    fn next_key_seed<K: DeserializeSeed<'de>>(
+        &mut self,
+        seed: K,
+    ) -> Result<Option<K::Value>, Self::Error> {
+        if let Some(key) = self.map.next_key::<String>()? {
+            self.seen_tag |= key == "tag";
+            seed.deserialize(key.into_deserializer()).map(Some)
+        } else if !self.seen_tag {
+            self.seen_tag = true;
+            self.injected = true;
+            seed.deserialize("tag".into_deserializer()).map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn next_value_seed<V: DeserializeSeed<'de>>(
+        &mut self,
+        seed: V,
+    ) -> Result<V::Value, Self::Error> {
+        if self.injected {
+            self.injected = false;
+            seed.deserialize(self.tag.into_deserializer())
+        } else {
+            self.map.next_value_seed(seed)
+        }
+    }
+}
 
 pub fn parse_bps(input: &str) -> Result<u64, String> {
     let s = input.trim();
