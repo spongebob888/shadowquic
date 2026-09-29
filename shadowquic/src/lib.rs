@@ -332,7 +332,7 @@ impl Manager {
                                     error!(inbound = %tag, outbound = %outbound_tag, "router selected an unknown outbound");
                                     continue;
                                 };
-                                tracing::debug!(inbound = %tag, outbound = %outbound_tag, dst = %req.dst(), "routing request");
+                                tracing::debug!(outbound = %outbound_tag, dst = %req.dst(), "routing request");
                                 tokio::select! {
                                     biased;
                                     _ = stopped.changed() => break,
