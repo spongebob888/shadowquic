@@ -9,7 +9,8 @@
 //!   end
 //! ```
 //! Alternatively, set `router-script: router.lua` to read the source from a
-//! file. Configure only one of these fields.
+//! file. File changes reload automatically; failed reloads keep the last working
+//! script. Configure only one of these fields.
 //!
 //! The script must return a function. ShadowQUIC calls it with one context
 //! userdata containing `inbound_tag`, `network_type` (`"tcp"` or `"udp"`), `dst_domain`,
@@ -41,8 +42,11 @@
 use std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     path::Path,
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
+
+use notify::{RecursiveMode, Watcher};
+use tracing::{info, info_span, warn};
 
 use mlua::{Function, Lua, LuaOptions, StdLib, UserData, UserDataFields, chunk::ChunkMode};
 
@@ -228,31 +232,81 @@ impl RouteContext {
 /// A restricted Lua router. The script returns a function that accepts one
 /// RouteContext table and returns an outbound tag or nil plus an error message.
 pub struct Router {
-    inner: Mutex<RouterInner>,
+    // Dropping the router stops watching the directory. The callback holds only
+    // a weak reference to the runtime so it cannot keep the router alive.
+    _watcher: Option<notify::RecommendedWatcher>,
+    inner: Arc<Mutex<RouterInner>>,
 }
 
 struct RouterInner {
+    source: String,
     lua: Lua,
     route: Function,
 }
 
 impl Router {
+    /// Load a script and watch its parent directory, including atomic file replacements.
     pub fn load(path: &Path) -> Result<Self, SError> {
-        let script = std::fs::read_to_string(path).map_err(|error| {
-            SError::InvalidConfig(format!(
-                "failed to read router script {}: {error}",
-                path.display()
-            ))
+        let path = std::path::absolute(path).map_err(|error| {
+            SError::InvalidConfig(format!("invalid router script path: {error}"))
         })?;
-        Self::from_source(&script).map_err(|error| {
+        let script = read_script(&path)?;
+        let mut router = Self::from_source(&script).map_err(|error| {
             SError::InvalidConfig(format!(
                 "failed to load router script {}: {error}",
                 path.display()
             ))
-        })
+        })?;
+        let inner = Arc::downgrade(&router.inner);
+        let watched_path = path.clone();
+        let span = info_span!("router", path = %path.display());
+        let callback_span = span.clone();
+        let mut watcher =
+            notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+                callback_span.in_scope(|| match event {
+                    Ok(event)
+                        if !event.kind.is_access()
+                            && (event.need_rescan()
+                                || event.paths.iter().any(|p| p == &watched_path)) =>
+                    {
+                        if let Some(inner) = inner.upgrade() {
+                            reload_script(&inner, &watched_path);
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(error) => warn!(%error, "router script watch failed"),
+                });
+            })
+            .map_err(|error| {
+                SError::InvalidConfig(format!(
+                    "failed to watch router script {}: {error}",
+                    path.display()
+                ))
+            })?;
+        // Watching the directory survives editors saving by renaming a temporary
+        // file over the original, and deletion followed by recreation.
+        watcher
+            .watch(path.parent().unwrap(), RecursiveMode::NonRecursive)
+            .map_err(|error| {
+                SError::InvalidConfig(format!(
+                    "failed to watch router script {}: {error}",
+                    path.display()
+                ))
+            })?;
+        router._watcher = Some(watcher);
+        // Close the gap between the initial read and watcher registration.
+        span.in_scope(|| reload_script(&router.inner, &path));
+        Ok(router)
     }
 
     pub(crate) fn from_source(source: &str) -> mlua::Result<Self> {
+        Ok(Self {
+            _watcher: None,
+            inner: Arc::new(Mutex::new(Self::compile(source)?)),
+        })
+    }
+
+    fn compile(source: &str) -> mlua::Result<RouterInner> {
         let libs = StdLib::STRING | StdLib::TABLE | StdLib::MATH;
         let libs = libs | StdLib::BIT;
         let lua = Lua::new_with(libs, LuaOptions::default())?;
@@ -271,8 +325,10 @@ impl Router {
             .load(source)
             .set_mode(ChunkMode::Text)
             .eval::<Function>()?;
-        Ok(Self {
-            inner: Mutex::new(RouterInner { lua, route }),
+        Ok(RouterInner {
+            source: source.to_owned(),
+            lua,
+            route,
         })
     }
 
@@ -305,6 +361,38 @@ impl Router {
     }
 }
 
+fn read_script(path: &Path) -> Result<String, SError> {
+    std::fs::read_to_string(path).map_err(|error| {
+        SError::InvalidConfig(format!(
+            "failed to read router script {}: {error}",
+            path.display()
+        ))
+    })
+}
+
+fn reload_script(inner: &Mutex<RouterInner>, path: &Path) {
+    let result = (|| {
+        // Serialize reloads with routing so requests see a complete runtime and
+        // a late callback cannot overwrite a newer version of the file.
+        let mut inner = inner
+            .lock()
+            .map_err(|_| SError::RouterError("router runtime lock was poisoned".into()))?;
+        let source = read_script(path)?;
+        if source == inner.source {
+            return Ok(false);
+        }
+        let replacement =
+            Router::compile(&source).map_err(|error| SError::RouterError(error.to_string()))?;
+        *inner = replacement;
+        Ok::<_, SError>(true)
+    })();
+    match result {
+        Ok(true) => info!("router script reloaded"),
+        Ok(false) => {}
+        Err(error) => warn!(%error, "failed to reload router script; keeping current router"),
+    }
+}
+
 impl RouteContext {
     pub(crate) fn destination(&self) -> Result<SocksAddr, SError> {
         let port = self
@@ -331,6 +419,91 @@ impl RouteContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct ScriptDir(std::path::PathBuf);
+
+    impl ScriptDir {
+        fn new() -> Self {
+            let path =
+                std::env::temp_dir().join(format!("shadowquic-router-{:x}", rand::random::<u64>()));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+
+        fn script(&self) -> std::path::PathBuf {
+            self.0.join("router.lua")
+        }
+    }
+
+    impl Drop for ScriptDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn wait_for_route(router: &Router, expected: &str) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let actual = router.route(&mut context()).unwrap();
+            if actual == expected {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "expected {expected}, got {actual}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn file_router_reloads_edits_replacements_and_recreation() {
+        let dir = ScriptDir::new();
+        let path = dir.script();
+        std::fs::write(&path, "return function(_) return 'first' end").unwrap();
+        let router = Router::load(&path).unwrap();
+        assert_eq!(router.route(&mut context()).unwrap(), "first");
+
+        std::fs::write(&path, "return function(_) return 'edited' end").unwrap();
+        wait_for_route(&router, "edited");
+
+        let replacement = dir.0.join("replacement.lua");
+        std::fs::write(&replacement, "return function(_) return 'replaced' end").unwrap();
+        std::fs::rename(&replacement, &path).unwrap();
+        wait_for_route(&router, "replaced");
+
+        std::fs::remove_file(&path).unwrap();
+        reload_script(&router.inner, &path);
+        assert_eq!(router.route(&mut context()).unwrap(), "replaced");
+        std::fs::write(&path, "return function(_) return 'recreated' end").unwrap();
+        wait_for_route(&router, "recreated");
+    }
+
+    #[test]
+    fn failed_reload_keeps_runtime_and_unchanged_source_keeps_state() {
+        let dir = ScriptDir::new();
+        let path = dir.script();
+        let source = "local n = 0; return function(_) n = n + 1; return tostring(n) end";
+        std::fs::write(&path, source).unwrap();
+        let router = Router::load(&path).unwrap();
+        assert_eq!(router.route(&mut context()).unwrap(), "1");
+        reload_script(&router.inner, &path);
+        assert_eq!(router.route(&mut context()).unwrap(), "2");
+        for invalid in ["return function(", "return {}", "error('load failed')"] {
+            std::fs::write(&path, invalid).unwrap();
+            reload_script(&router.inner, &path);
+        }
+        assert_eq!(router.route(&mut context()).unwrap(), "3");
+        std::fs::write(&path, source).unwrap();
+        reload_script(&router.inner, &path);
+        assert_eq!(router.route(&mut context()).unwrap(), "4");
+        std::fs::write(
+            &path,
+            "return function(_) assert(io == nil); return 'fixed' end",
+        )
+        .unwrap();
+        wait_for_route(&router, "fixed");
+    }
 
     fn context() -> RouteContext {
         RouteContext {

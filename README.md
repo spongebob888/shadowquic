@@ -85,6 +85,12 @@ single-entry list; omitted tags default to `inbound` and `outbound`, respectivel
 Explicit tags are preserved. List entries still require tags, and specifying both
 the singular and plural key for the same direction is an error.
 
+With the `plugin` feature, set `router-script: router.lua` to load routing rules
+from a file. Changes reload automatically for subsequent requests, including
+when an editor replaces the file. Read or script-loading errors are logged and
+the last working router stays active. A successful reload resets Lua script
+state; existing connections are unaffected. Inline `router` scripts are not watched.
+
 ## Other Clients
 - [husi](https://github.com/xchacha20-poly1305/husi)
 - nekobox: [usage](./document/clients/windows.md)

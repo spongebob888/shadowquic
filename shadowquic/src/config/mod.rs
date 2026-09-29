@@ -73,6 +73,7 @@ pub struct Config {
     #[serde(default)]
     pub router: Option<String>,
     /// Optional path to a Luau script that selects an outbound for each request.
+    /// File changes reload automatically; failed reloads keep the current router.
     #[serde(default)]
     pub router_script: Option<std::path::PathBuf>,
     #[serde(default)]
