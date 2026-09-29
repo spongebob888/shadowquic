@@ -268,7 +268,11 @@ impl Manager {
             ));
         }
         for (tag, inbound) in &self.inbounds {
-            if let Err(error) = inbound.init().await {
+            if let Err(error) = inbound
+                .init()
+                .instrument(info_span!("inbound", tag = %tag))
+                .await
+            {
                 error!(inbound = %tag, %error, "inbound initialization failed");
                 for (tag, inbound) in &self.inbounds {
                     if let Err(error) = inbound.shutdown().await {

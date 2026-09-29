@@ -2,6 +2,7 @@ use std::io;
 use std::mem::MaybeUninit;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
+use tracing::Instrument;
 
 use crate::config::TproxyServerCfg;
 use crate::error::SError;
@@ -34,11 +35,14 @@ impl TproxyServer {
 
         {
             let bind_addr = cfg.bind_addr;
-            tokio::spawn(async move {
-                if let Err(e) = handle_udp_tproxy(bind_addr, udp_req_tx).await {
-                    tracing::error!("tproxy udp listener failed: {}", e);
+            tokio::spawn(
+                async move {
+                    if let Err(e) = handle_udp_tproxy(bind_addr, udp_req_tx).await {
+                        tracing::error!("tproxy udp listener failed: {}", e);
+                    }
                 }
-            });
+                .in_current_span(),
+            );
         }
 
         Ok(Self {

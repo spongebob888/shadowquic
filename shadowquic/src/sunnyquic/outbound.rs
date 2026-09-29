@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use std::{net::ToSocketAddrs, sync::Arc};
 use tokio::sync::{Mutex, OnceCell, SetOnce};
+use tracing::Instrument;
 
 use super::EndClient;
 use tracing::{error, info};
@@ -77,18 +78,21 @@ impl SunnyQuicClient {
         let username = self.config.username.clone();
         let password = self.config.password.clone();
         let conn_clone = conn.clone();
-        tokio::spawn(async move {
-            let _ = auth_sunny(
-                &conn_clone,
-                &username,
-                gen_sunny_user_hash(&username, &password),
-            )
-            .await
-            .map_err(|x| error!("authentication failed: {}", x));
-            let _ = handle_udp_packet_recv(conn_clone)
+        tokio::spawn(
+            async move {
+                let _ = auth_sunny(
+                    &conn_clone,
+                    &username,
+                    gen_sunny_user_hash(&username, &password),
+                )
                 .await
-                .map_err(|x| error!("handle udp packet recv error: {}", x));
-        });
+                .map_err(|x| error!("authentication failed: {}", x));
+                let _ = handle_udp_packet_recv(conn_clone)
+                    .await
+                    .map_err(|x| error!("handle udp packet recv error: {}", x));
+            }
+            .in_current_span(),
+        );
         Ok(conn)
     }
     async fn prepare_conn(&self) -> Result<SunnyQuicConn, SError> {

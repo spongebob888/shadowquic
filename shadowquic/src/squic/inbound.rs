@@ -54,9 +54,12 @@ impl<C: QuicConnection> SQServerConn<C> {
         let conn = &self.inner;
         info!(peer_address = %conn.remote_address(), "incoming connection accepted");
         let conn_clone = self.inner.clone();
-        tokio::spawn(async move {
-            let _ = handle_udp_packet_recv(conn_clone).in_current_span().await;
-        });
+        tokio::spawn(
+            async move {
+                let _ = handle_udp_packet_recv(conn_clone).await;
+            }
+            .in_current_span(),
+        );
 
         while conn.close_reason().is_none() {
             select! {
@@ -64,7 +67,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                     let (send, recv, id) = bi?;
                     let span = info_span!("bistream", id = id);
                     trace!("bistream accepted");
-                    tokio::spawn(self.clone().handle_bistream(send, recv, req_send.clone()).instrument(span).in_current_span());
+                    tokio::spawn(self.clone().handle_bistream(send, recv, req_send.clone()).instrument(span));
                 },
             }
         }

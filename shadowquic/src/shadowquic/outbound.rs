@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use std::{net::ToSocketAddrs, sync::Arc};
 use tokio::sync::{Mutex, OnceCell, SetOnce};
+use tracing::Instrument;
 
 use super::quinn_wrapper::EndClient;
 use tracing::{error, info};
@@ -74,11 +75,14 @@ impl ShadowQuicClient {
             },
         };
         let conn_clone = conn.clone();
-        tokio::spawn(async move {
-            let _ = handle_udp_packet_recv(conn_clone)
-                .await
-                .map_err(|x| error!("handle udp packet recv error: {}", x));
-        });
+        tokio::spawn(
+            async move {
+                let _ = handle_udp_packet_recv(conn_clone)
+                    .await
+                    .map_err(|x| error!("handle udp packet recv error: {}", x));
+            }
+            .in_current_span(),
+        );
         Ok(conn)
     }
     async fn prepare_conn(&self) -> Result<ShadowQuicConn, SError> {

@@ -208,13 +208,16 @@ impl ShadowQuicServer {
             return;
         }
         let user_manager = self.user_manager.clone();
-        tokio::spawn(async move {
-            let interval = std::time::Duration::from_secs(interval_secs);
-            loop {
-                tokio::time::sleep(interval).await;
-                user_manager.persist().await;
+        tokio::spawn(
+            async move {
+                let interval = std::time::Duration::from_secs(interval_secs);
+                loop {
+                    tokio::time::sleep(interval).await;
+                    user_manager.persist().await;
+                }
             }
-        });
+            .in_current_span(),
+        );
     }
 
     async fn handle_incoming<C: QuicConnection + AuthedConn>(
@@ -271,11 +274,14 @@ impl Inbound for ShadowQuicServer {
                     Ok(conn) => {
                         let request_sender = request_sender.clone();
                         let user_manager = user_manager.clone();
-                        tokio::spawn(async move {
-                            Self::handle_incoming(conn, request_sender, user_manager)
-                                .await
-                                .map_err(|x| error!("{}", x))
-                        });
+                        tokio::spawn(
+                            async move {
+                                Self::handle_incoming(conn, request_sender, user_manager)
+                                    .await
+                                    .map_err(|x| error!("{}", x))
+                            }
+                            .in_current_span(),
+                        );
                     }
                     Err(e) => {
                         error!("Error accepting quic connection: {}", e);
@@ -283,7 +289,7 @@ impl Inbound for ShadowQuicServer {
                 }
             }
         };
-        tokio::spawn(fut);
+        tokio::spawn(fut.in_current_span());
         self.spawn_store_flush().await;
         Ok(())
     }

@@ -94,9 +94,12 @@ pub async fn handle_request<C: QuicConnection>(
         }
         Ok(()) as Result<(), SError>
     };
-    tokio::spawn(async {
-        let _ = fut.instrument(_span).await.map_err(|x| error!("{}", x));
-    });
+    tokio::spawn(
+        async {
+            let _ = fut.await.map_err(|x| error!("{}", x));
+        }
+        .instrument(_span),
+    );
     Ok(())
 }
 
@@ -268,12 +271,15 @@ pub async fn associate_udp<C: QuicConnection>(
     let fut2 = handle_udp_recv_ctrl(recv, local_send, conn.clone());
     let fut1 = handle_udp_send(send, Box::new(local_recv), conn.clone(), over_stream);
 
-    tokio::spawn(async {
-        match tokio::try_join!(fut1, fut2) {
-            Err(e) => error!("udp association ended due to {}", e),
-            Ok(_) => trace!("udp association ended"),
+    tokio::spawn(
+        async {
+            match tokio::try_join!(fut1, fut2) {
+                Err(e) => error!("udp association ended due to {}", e),
+                Ok(_) => trace!("udp association ended"),
+            }
         }
-    });
+        .in_current_span(),
+    );
 
     Ok((udp_send, udp_recv))
 }

@@ -6,7 +6,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     sync::Arc,
 };
-use tracing::{Level, warn};
+use tracing::{Instrument, Level, info_span, warn};
 
 #[cfg(feature = "mixed")]
 use crate::mixed::inbound::MixedServer;
@@ -155,10 +155,14 @@ impl Config {
         let mut inbounds = HashMap::new();
         let mut outbounds = HashMap::new();
         for cfg in self.outbounds {
-            outbounds.insert(cfg.tag().to_owned(), Arc::from(cfg.build_outbound().await?));
+            let tag = cfg.tag().to_owned();
+            let span = info_span!("outbound", tag = %tag);
+            outbounds.insert(tag, Arc::from(cfg.build_outbound().instrument(span).await?));
         }
         for cfg in self.inbounds {
-            inbounds.insert(cfg.tag().to_owned(), cfg.build_inbound().await?);
+            let tag = cfg.tag().to_owned();
+            let span = info_span!("inbound", tag = %tag);
+            inbounds.insert(tag, cfg.build_inbound().instrument(span).await?);
         }
         Ok(Manager {
             inbounds,
