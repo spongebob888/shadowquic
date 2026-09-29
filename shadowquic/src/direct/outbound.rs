@@ -9,7 +9,7 @@ use tokio::{
     net::{TcpStream, lookup_host},
     sync::Mutex,
 };
-use tracing::{Instrument, error, info_span, trace};
+use tracing::{Instrument, debug, error, info_span, trace};
 
 use crate::{
     Outbound, UdpSession,
@@ -148,13 +148,27 @@ impl DirectOut {
         // If it fails, we fallback to single stack socket
         // https://github.com/spongebob888/shadowquic/issues/172
         let socket = if dst.ip().is_unspecified() {
-            let socket = DualSocket::new_bind("[::]:0".parse().unwrap(), true)?;
-            if socket.dual_stack || !ipv4 {
-                trace!("bound to dual stack socket");
-                socket
-            } else {
-                trace!("fallback to single stack socket");
-                DualSocket::new_bind(dst, false)?
+            // Creating and binding the v6 socket can fail by itself, not only
+            // set_only_v6: a host without IPv6 (kernel `ipv6.disable`, or a
+            // container that drops it) fails right here. Both cases have to
+            // fall back, or every udp association with an unspecified bind
+            // address fails and udp is silently dead on that host.
+            match DualSocket::new_bind("[::]:0".parse().unwrap(), true) {
+                Ok(socket) if socket.dual_stack || !ipv4 => {
+                    trace!("bound to dual stack socket");
+                    socket
+                }
+                Ok(_) => {
+                    trace!("fallback to single stack socket");
+                    DualSocket::new_bind(dst, false)?
+                }
+                Err(e) => {
+                    debug!(
+                        "dual stack socket unavailable ({}), fallback to single stack socket",
+                        e
+                    );
+                    DualSocket::new_bind(dst, false)?
+                }
             }
         } else {
             DualSocket::new_bind(dst, false)?
