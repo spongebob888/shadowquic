@@ -36,7 +36,6 @@
 //! Routing scripts have base language functions and string, table, and math
 //! helpers, without filesystem, process, or module loading access. Console
 //! output through `print` is allowed.
-//! LuaJIT builds also provide the bit library.
 //! See [`Router`] and [`RouteContext`] for the Rust interfaces.
 
 use std::{
@@ -61,9 +60,17 @@ pub enum NetworkType {
 /// Request information exposed to a routing script.
 #[derive(Clone)]
 pub struct RouteContext {
+    /// Destination domain. Scripts may update these to rewrite the
+    /// request destination. Setting one of these clears the others.
     pub dst_domain: Option<String>,
+    /// Destination ipv4 address. Scripts may update these to rewrite the
+    /// request destination. Setting one of these clears the others.
     pub dst_ip_v4: Option<Ipv4Addr>,
+    /// Destination ipv6 address. Scripts may update these to rewrite the
+    /// request destination. Setting one of these clears the others.
     pub dst_ip_v6: Option<Ipv6Addr>,
+    /// Destination address port. Scripts may update these to rewrite the
+    /// request destination.
     pub dst_port: Option<u16>,
     pub src_addr: Option<SocketAddr>,
     pub src_ip_v4: Option<Ipv4Addr>,
@@ -72,6 +79,7 @@ pub struct RouteContext {
     pub inbound_tag: String,
     /// Only valid for shadowquic/sunnyquic inbound requests.
     pub stats_context: Option<StatsContext>,
+    /// tcp or udp.
     pub network_type: NetworkType,
 }
 impl UserData for RouteContext {
