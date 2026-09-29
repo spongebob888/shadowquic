@@ -4,3 +4,12 @@ rustflags = ["-C", "default-linker-libraries"]
 
 [target.aarch64-linux-android]
   rustflags = ["-C", "default-linker-libraries"]
+
+[target.armv7-linux-androideabi]
+  rustflags = ["-C", "default-linker-libraries"]
+
+[target.armv7-unknown-linux-musleabi]
+  rustflags = ["-C", "default-linker-libraries"]
+
+[target.armv7-unknown-linux-musleabihf]
+  rustflags = ["-C", "default-linker-libraries"]
