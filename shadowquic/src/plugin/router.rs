@@ -253,9 +253,7 @@ struct RouterInner {
 impl Router {
     /// Load a script and watch its parent directory, including atomic file replacements.
     pub fn load(path: &Path) -> Result<Self, SError> {
-        let path = std::path::absolute(path).map_err(|error| {
-            SError::InvalidConfig(format!("invalid router script path: {error}"))
-        })?;
+        let path = watched_script_path(path)?;
         let script = read_script(&path)?;
         let mut router = Self::from_source(&script).map_err(|error| {
             SError::InvalidConfig(format!(
@@ -365,6 +363,28 @@ impl Router {
             )),
         }
     }
+}
+
+fn watched_script_path(path: &Path) -> Result<std::path::PathBuf, SError> {
+    let normalize = || -> std::io::Result<std::path::PathBuf> {
+        let absolute = std::path::absolute(path)?;
+        let filename = absolute.file_name().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "router script must name a file",
+            )
+        })?;
+        // FSEvents reports canonical paths (e.g. /private/var rather than /var
+        // on macOS). Normalize the directory for both watching and matching.
+        // Keep the filename so replacement/recreation still tracks this entry.
+        Ok(absolute.parent().unwrap().canonicalize()?.join(filename))
+    };
+    normalize().map_err(|error| {
+        SError::InvalidConfig(format!(
+            "invalid router script path {}: {error}",
+            path.display()
+        ))
+    })
 }
 
 fn read_script(path: &Path) -> Result<String, SError> {
@@ -483,6 +503,29 @@ mod tests {
         assert_eq!(router.route(&mut context()).unwrap(), "replaced");
         std::fs::write(&path, "return function(_) return 'recreated' end").unwrap();
         wait_for_route(&router, "recreated");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn file_router_normalizes_symlinked_parent_for_event_matching() {
+        let dir = ScriptDir::new();
+        let real = dir.0.join("real");
+        let alias = dir.0.join("alias");
+        std::fs::create_dir(&real).unwrap();
+        std::os::unix::fs::symlink(&real, &alias).unwrap();
+        let path = alias.join("router.lua");
+        let event_path = real.canonicalize().unwrap().join("router.lua");
+        // Match the canonical filename even while it is absent, as during an
+        // editor's delete/recreate save. Canonicalizing the whole file cannot.
+        assert_eq!(watched_script_path(&path).unwrap(), event_path);
+        std::fs::write(&path, "return function(_) return 'first' end").unwrap();
+        let router = Router::load(&path).unwrap();
+        std::fs::write(&event_path, "return function(_) return 'edited' end").unwrap();
+        wait_for_route(&router, "edited");
+        let replacement = real.join("replacement.lua");
+        std::fs::write(&replacement, "return function(_) return 'replaced' end").unwrap();
+        std::fs::rename(&replacement, &event_path).unwrap();
+        wait_for_route(&router, "replaced");
     }
 
     #[test]
