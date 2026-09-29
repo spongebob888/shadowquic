@@ -12,7 +12,9 @@ readme = { workspace = true}
 default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", "mixed", "plugin"]
 statistics = ["dep:portable-atomic"]
 mixed = ["dep:base64"]
-plugin = ["dep:mlua"]
+plugin = ["plugin-vendored"]
+plugin-vendored = ["plugin-system", "mlua/vendored"]
+plugin-system = ["dep:mlua", "mlua/send"]
 ring = [
     "dep:ring",
     "quinn?/rustls-ring",
@@ -87,13 +89,20 @@ serde-saphyr = "1.1.0"
 aws-lc-rs = { version = "1", optional = true, default-features = false }
 ring = { version = "0.17.14", optional = true }
 base64 = { version = "0.22.1", optional = true }
-mlua = { version = "0.12", features = ["luau", "send"], optional = true }
 
 etherparse = { version = "0.14.3", optional = true }
 
 [target.'cfg(target_os="linux")'.dependencies]
 libc = { version = "0.2", optional = true }
 etherparse = { version = "0.14.3", optional = true }
+
+# LuaJIT has no RISC-V or LoongArch backend. Keep Lua 5.1 routing available
+# on those architectures with the portable interpreter.
+[target.'cfg(any(target_arch = "riscv64", target_arch = "loongarch64"))'.dependencies]
+mlua = { version = "0.12", default-features = false, features = ["lua51"], optional = true }
+
+[target.'cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))'.dependencies]
+mlua = { version = "0.12", default-features = false, features = ["luajit"], optional = true }
 
 # 64-bit atomics via ll/sc CAS loop on targets without native AtomicU64 (e.g. 32-bit MIPS)
 [target.'cfg(not(target_has_atomic = "64"))'.dependencies]
@@ -114,3 +123,6 @@ libc = "0.2"
 [dev-dependencies]
 fast-socks5 = "1.0.0"
 rand = "0.10.1"
+
+[build-dependencies]
+cc = "1"

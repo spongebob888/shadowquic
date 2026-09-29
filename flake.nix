@@ -46,6 +46,7 @@
           rustup
           uv
           muslCc
+          luajit
         ];
       in
       {
@@ -55,6 +56,9 @@
           shellHook =
             ''
               export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath libraries}:$LD_LIBRARY_PATH
+              # Nix's rustup linker wrappers embed absolute toolchain paths.
+              # Cross 0.2.5 mounts the toolchain at /rust, so also keep its host path.
+              export CROSS_CONTAINER_OPTS="''${CROSS_CONTAINER_OPTS:+$CROSS_CONTAINER_OPTS }--volume=''${RUSTUP_HOME:-$HOME/.rustup}:''${RUSTUP_HOME:-$HOME/.rustup}:ro"
               export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=${muslCc}/bin/${muslTargetPrefix}gcc
               export CC_x86_64_unknown_linux_musl=${muslCc}/bin/${muslTargetPrefix}gcc
               export CXX_x86_64_unknown_linux_musl=${muslCc}/bin/${muslTargetPrefix}g++
@@ -66,6 +70,9 @@
         src = craneLib.cleanCargoSource ./.;
         pname = "shadowquic";
         doCheck = false;
+        cargoExtraArgs = "--no-default-features --features shadowquic-quinn,sunnyquic-noq,ring,statistics,tproxy,mixed,plugin-system";
+        nativeBuildInputs = [ pkgs.pkg-config ];
+        buildInputs = [ pkgs.luajit ];
         # Add extra inputs here or any other derivation settings
         # doCheck = true;
         # buildInputs = [];

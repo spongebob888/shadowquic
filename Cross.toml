@@ -1,8 +1,64 @@
+[target.x86_64-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:edge"
+
+[target.i686-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/i686-unknown-linux-gnu:edge"
+# LuaJIT's host-side build tools must match the 32-bit target pointer width.
+# Install host multilib headers/runtime without gcc-multilib, which removes
+# Cross's i686 target compiler from this image.
+pre-build = ["dpkg --add-architecture i386 && apt-get update && apt-get install --assume-yes --no-install-recommends libc6-dev-i386 lib32gcc-13-dev linux-libc-dev:i386"]
+
+[target.x86_64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-musl:edge"
+
+[target.i686-unknown-linux-musl]
+image = "ghcr.io/cross-rs/i686-unknown-linux-musl:edge"
+pre-build = ["dpkg --add-architecture i386 && apt-get update && apt-get install --assume-yes --no-install-recommends libc6-dev-i386 lib32gcc-13-dev linux-libc-dev:i386"]
+
+[target.aarch64-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:edge"
+
+[target.armv7-unknown-linux-gnueabi]
+image = "ghcr.io/cross-rs/armv7-unknown-linux-gnueabi:edge"
+pre-build = ["dpkg --add-architecture i386 && apt-get update && apt-get install --assume-yes --no-install-recommends libc6-dev-i386 lib32gcc-13-dev linux-libc-dev:i386"]
+
+[target.armv7-unknown-linux-gnueabihf]
+image = "ghcr.io/cross-rs/armv7-unknown-linux-gnueabihf:edge"
+pre-build = ["dpkg --add-architecture i386 && apt-get update && apt-get install --assume-yes --no-install-recommends libc6-dev-i386 lib32gcc-13-dev linux-libc-dev:i386"]
+
+[target.aarch64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-musl:edge"
+
+[target.armv7-unknown-linux-musleabi]
+image = "ghcr.io/cross-rs/armv7-unknown-linux-musleabi:edge"
+pre-build = ["dpkg --add-architecture i386 && apt-get update && apt-get install --assume-yes --no-install-recommends libc6-dev-i386 lib32gcc-13-dev linux-libc-dev:i386"]
+
+[target.armv7-unknown-linux-musleabihf]
+image = "ghcr.io/cross-rs/armv7-unknown-linux-musleabihf:edge"
+pre-build = ["dpkg --add-architecture i386 && apt-get update && apt-get install --assume-yes --no-install-recommends libc6-dev-i386 lib32gcc-13-dev linux-libc-dev:i386"]
+
+[target.x86_64-unknown-freebsd]
+image = "ghcr.io/cross-rs/x86_64-unknown-freebsd:edge"
+# LuaJIT otherwise infers Linux from the build host. Keep host build artifacts
+# separate because this image's glibc is older than other Cross images'.
+env.passthrough = ["TARGET_SYS=FreeBSD", "CARGO_BUILD_BUILD_DIR=/target/cross-freebsd"]
+
+[target.riscv64gc-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/riscv64gc-unknown-linux-gnu:edge"
+
+[target.i686-unknown-freebsd]
+image = "ghcr.io/cross-rs/i686-unknown-freebsd:edge"
+pre-build = ["dpkg --add-architecture i386 && apt-get update && apt-get install --assume-yes --no-install-recommends libc6-dev-i386 lib32gcc-9-dev linux-libc-dev:i386"]
+env.passthrough = ["TARGET_SYS=FreeBSD", "CARGO_BUILD_BUILD_DIR=/target/cross-i686-freebsd"]
+
 [target.mips-unknown-linux-musl]
 image = "ghcr.io/cross-rs/mips-unknown-linux-musl:edge"
+pre-build = ["dpkg --add-architecture i386 && apt-get update && apt-get install --assume-yes --no-install-recommends libc6-dev-i386 lib32gcc-9-dev linux-libc-dev:i386"]
 
 [target.mipsel-unknown-linux-musl]
 image = "ghcr.io/cross-rs/mipsel-unknown-linux-musl:edge"
+# This Ubuntu 20.04 image uses GCC 9; LuaJIT's 32-bit host tools need its libgcc.
+pre-build = ["dpkg --add-architecture i386 && apt-get update && apt-get install --assume-yes --no-install-recommends libc6-dev-i386 lib32gcc-9-dev linux-libc-dev:i386"]
 
 [target.mips64-unknown-linux-muslabi64]
 image = "ghcr.io/cross-rs/mips64-unknown-linux-muslabi64:edge"
@@ -20,9 +76,11 @@ image = "ghcr.io/cross-rs/aarch64-linux-android:edge"
 
 [target.armv7-linux-androideabi]
 image = "ghcr.io/cross-rs/armv7-linux-androideabi:edge"
+pre-build = ["dpkg --add-architecture i386 && apt-get update && apt-get install --assume-yes --no-install-recommends libc6-dev-i386 lib32gcc-13-dev linux-libc-dev:i386"]
 
 [target.i686-linux-android]
 image = "ghcr.io/cross-rs/i686-linux-android:edge"
+pre-build = ["dpkg --add-architecture i386 && apt-get update && apt-get install --assume-yes --no-install-recommends libc6-dev-i386 lib32gcc-13-dev linux-libc-dev:i386"]
 
 [target.x86_64-linux-android]
 image = "ghcr.io/cross-rs/x86_64-linux-android:edge"

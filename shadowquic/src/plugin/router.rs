@@ -243,7 +243,11 @@ impl Router {
 
     pub(crate) fn from_source(source: &str) -> mlua::Result<Self> {
         let lua = Lua::new();
-        lua.sandbox(true)?;
+        // Only support on luau
+        // lua.sandbox(true)?;
+        // luau-jit can't be compiled on aarch64-musl, so we don't use it for now.
+        // luau can't be compiled on freebsd
+        // luau cost 1mb more bin size(2mb if luau-jit) than luajit
         let route = lua.load(source).eval::<Function>()?;
         Ok(Self {
             inner: Mutex::new(RouterInner { lua, route }),
