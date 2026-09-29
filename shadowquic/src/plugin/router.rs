@@ -30,12 +30,12 @@
 //!     if ctx.dst_domain and string.match(ctx.dst_domain, "%.example$") then
 //!         return "special-proxy"
 //!     end
-//! 
+//!
 //!     if ctx.dst_ip_v4 and ctx.dst_ip_v4:sub(1, #"192.168") == "192.168" then
 //!         print("routing traffic backhome") -- for debugging
 //!         return "sq-home"
 //!     end
-//! 
+//!
 //!     return "direct"
 //! end
 //! ```
