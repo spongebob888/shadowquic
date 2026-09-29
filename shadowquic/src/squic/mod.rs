@@ -96,6 +96,10 @@ impl<T: QuicConnection> Deref for SQConn<T> {
 pub(crate) struct NotifyBuffer {
     pub(crate) notify: Sender<()>,
     pub(crate) buffer: Vec<Bytes>,
+    /// Set when the entry was created by a datagram whose control header had
+    /// not arrived yet. Once it expires and nothing waits for it, the receive
+    /// loop releases it.
+    pub(crate) expires_at: Option<tokio::time::Instant>,
 }
 
 // Use watch channel here. Notify is not suitable here
@@ -131,6 +135,7 @@ where
                     vacant_entry.insert(Err(NotifyBuffer {
                         notify: s,
                         buffer: Vec::new(),
+                        expires_at: None,
                     }));
                     Err(r)
                 }
@@ -173,6 +178,24 @@ where
         };
         remove_unwatched_pending_locked(&mut inner, id);
         true
+    }
+
+    /// Release pending entries whose control header never arrived, so a peer
+    /// that sends one datagram per id and registers none of them cannot hold
+    /// the id budget for the life of the connection. Entries a stream waits on
+    /// are left alone: that waiter has its own deadline.
+    fn remove_expired_pending(&self, now: tokio::time::Instant) {
+        let Ok(mut inner) = self.inner.try_write() else {
+            // A busy store is fine: the next sweep picks these up.
+            return;
+        };
+        inner.retain(|_, val| match val {
+            Ok(_) => true,
+            Err(pending) => {
+                !pending.expires_at.is_some_and(|deadline| now >= deadline)
+                    || pending.notify.receiver_count() > 0
+            }
+        });
     }
 
     /// The same cleanup, waiting for the store lock if it has to. Only used as
@@ -251,6 +274,27 @@ async fn deliver(socket: AnyUdpSend, packet: Bytes, addr: SocksAddr) -> SResult<
     }
 }
 
+/// How long a datagram-created pending entry waits for its control header
+/// before the receive loop releases it. The header is written just before the
+/// payload, so this only has to cover a reordering window — but it has to
+/// expire, or a peer that never sends the header would hold the id budget for
+/// the life of the connection.
+const PENDING_DATAGRAM_TTL: Duration = Duration::from_secs(10);
+
+/// How often the receive loop releases expired pending entries.
+const PENDING_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Budget checked when the datagram path would start tracking a new id. It
+/// counts every id in the store, registered ones included, so it is
+/// conservative; it is not a cap on how many ids a connection may register,
+/// because refusing a registration would break the association that owns it.
+const MAX_TRACKED_IDS: usize = 4096;
+
+/// Datagrams a single id may buffer before its control header arrives. These
+/// exist to bridge a reordering window, not to store traffic: a peer that keeps
+/// sending for an id it never registers must not grow this without bound.
+const MAX_PENDING_DATAGRAMS_PER_ID: usize = 8;
+
 /// Drop a pending entry for `id` when nothing waits for it. A registered socket
 /// and an entry that still has a subscriber are both left alone.
 fn remove_unwatched_pending_locked<T>(inner: &mut HashMap<u16, IDStoreVal<T>>, id: u16) {
@@ -269,20 +313,32 @@ impl IDStore {
         // so holding `inner` across it would stall every other id here.
         let target = {
             let mut inner = self.inner.write().await;
+            // Read the size before borrowing an entry: a new id may only be
+            // tracked while the connection is under its budget.
+            let has_room = inner.len() < MAX_TRACKED_IDS;
             match inner.entry(id) {
                 Entry::Occupied(mut entry) => match entry.get_mut() {
                     Ok((socket, addr)) => Some((socket.clone(), addr.clone())),
                     Err(notify) => {
-                        notify.buffer.push(packet.clone());
+                        if notify.buffer.len() < MAX_PENDING_DATAGRAMS_PER_ID {
+                            notify.buffer.push(packet.clone());
+                        } else {
+                            debug!("dropping udp datagram for id {}: too many buffered", id);
+                        }
                         None
                     }
                 },
                 Entry::Vacant(vacant_entry) => {
-                    let (s, _r) = channel(());
-                    vacant_entry.insert(Err(NotifyBuffer {
-                        notify: s,
-                        buffer: vec![packet.clone()],
-                    }));
+                    if has_room {
+                        let (s, _r) = channel(());
+                        vacant_entry.insert(Err(NotifyBuffer {
+                            notify: s,
+                            buffer: vec![packet.clone()],
+                            expires_at: Some(tokio::time::Instant::now() + PENDING_DATAGRAM_TTL),
+                        }));
+                    } else {
+                        debug!("dropping udp datagram for id {}: too many tracked ids", id);
+                    }
                     None
                 }
             }
@@ -546,6 +602,7 @@ pub async fn handle_udp_packet_recv<C: QuicConnection>(conn: SQConn<C>) -> Resul
     // them: leaving this loop drops the set, so tokio aborts whatever is still
     // parked instead of letting those tasks outlive their connection.
     let mut streams: JoinSet<()> = JoinSet::new();
+    let mut pending_sweep_at = tokio::time::Instant::now() + PENDING_SWEEP_INTERVAL;
     loop {
         // Reap finished streams so the set tracks live ones only.
         while streams.try_join_next().is_some() {}
@@ -613,6 +670,13 @@ pub async fn handle_udp_packet_recv<C: QuicConnection>(conn: SQConn<C>) -> Resul
                     }
                     .in_current_span(),
                 );
+            }
+
+            // Pending entries created by datagrams expire on their own; nothing
+            // else sweeps ids that never got a control header.
+            _ = tokio::time::sleep_until(pending_sweep_at) => {
+                id_store.remove_expired_pending(tokio::time::Instant::now());
+                pending_sweep_at = tokio::time::Instant::now() + PENDING_SWEEP_INTERVAL;
             }
         }
     }
@@ -759,6 +823,8 @@ mod udp_receive_tests {
     struct OneStreamConn {
         stream: Arc<Mutex<Option<ParkedStream>>>,
         accepted: Arc<AtomicBool>,
+        /// Set once the receive loop polls this connection.
+        polled: Arc<AtomicBool>,
         datagrams: Arc<Mutex<VecDeque<Bytes>>>,
         /// Report the connection as closed once the stream is taken, or just
         /// have nothing more to offer.
@@ -784,6 +850,7 @@ mod udp_receive_tests {
             Err(QuicErrorRepr::QuicConnection("unused".into()))
         }
         async fn accept_uni(&self) -> Result<(Self::RecvStream, u64), QuicErrorRepr> {
+            self.polled.store(true, Ordering::SeqCst);
             // Only hand out the stream once a queued datagram has been taken,
             // so a test can measure what the datagram branch costs acceptance.
             loop {
@@ -880,6 +947,7 @@ mod udp_receive_tests {
                     dropped: Arc::new(AtomicBool::new(false)),
                 }))),
                 accepted: accepted.clone(),
+                polled: Arc::new(AtomicBool::new(false)),
                 datagrams: Arc::new(Mutex::new(VecDeque::from([datagram_for(7).await]))),
                 stay_open: false,
             },
@@ -925,6 +993,7 @@ mod udp_receive_tests {
             conn: OneStreamConn {
                 stream: Arc::new(Mutex::new(None)),
                 accepted: Arc::new(AtomicBool::new(false)),
+                polled: Arc::new(AtomicBool::new(false)),
                 datagrams: Arc::new(Mutex::new(VecDeque::from([
                     // Truncated header: decoding this fails.
                     Bytes::from_static(&[0x00]),
@@ -1144,6 +1213,7 @@ mod udp_receive_tests {
                     dropped: dropped.clone(),
                 }))),
                 accepted: Arc::new(AtomicBool::new(false)),
+                polled: Arc::new(AtomicBool::new(false)),
                 datagrams: Arc::new(Mutex::new(VecDeque::new())),
                 stay_open: false,
             },
@@ -1216,5 +1286,132 @@ mod udp_receive_tests {
             matches!(ended, Ok(Err(SError::UDPSessionClosed(_)))),
             "the stream task must end at its deadline"
         );
+    }
+
+    #[tokio::test]
+    async fn datagrams_for_an_id_that_never_registers_are_bounded() {
+        let store = store();
+        // No control header ever arrives for this id, so nothing ever flushes
+        // what it buffers.
+        for _ in 0..(MAX_PENDING_DATAGRAMS_PER_ID * 4) {
+            store
+                .feed_datagram(7, Bytes::from_static(b"never registered"))
+                .await
+                .unwrap();
+        }
+        let buffered = match store.inner.read().await.get(&7) {
+            Some(Err(pending)) => pending.buffer.len(),
+            _ => panic!("expected a pending entry for id 7"),
+        };
+        assert_eq!(buffered, MAX_PENDING_DATAGRAMS_PER_ID);
+
+        // Ids are budgeted too, so walking the id space cannot park more.
+        for id in 0..(MAX_TRACKED_IDS as u16 + 100) {
+            store
+                .feed_datagram(id, Bytes::from_static(b"x"))
+                .await
+                .unwrap();
+        }
+        assert_eq!(store.inner.read().await.len(), MAX_TRACKED_IDS);
+    }
+
+    #[tokio::test]
+    async fn expired_pending_datagrams_release_their_id_budget() {
+        let store = store();
+        // A peer fills the budget with ids whose control header never arrives.
+        for id in 0..(MAX_TRACKED_IDS as u16) {
+            store
+                .feed_datagram(id, Bytes::from_static(b"x"))
+                .await
+                .unwrap();
+        }
+        assert_eq!(store.inner.read().await.len(), MAX_TRACKED_IDS);
+
+        // An id a stream waits on is left to that waiter's own deadline.
+        let waiting = match store.get_socket_or_notify(7).await {
+            Err(waiter) => waiter,
+            Ok(_) => panic!("expected a pending id"),
+        };
+        let after = tokio::time::Instant::now() + PENDING_DATAGRAM_TTL + Duration::from_secs(1);
+        store.remove_expired_pending(after);
+        assert!(store.inner.read().await.contains_key(&7));
+
+        // The rest expire, so the budget is not held for good...
+        assert!(!store.inner.read().await.contains_key(&6));
+        assert_eq!(store.inner.read().await.len(), 1);
+
+        // ...and a new id can buffer its datagrams again.
+        store
+            .feed_datagram(9, Bytes::from_static(b"y"))
+            .await
+            .unwrap();
+        assert!(store.inner.read().await.contains_key(&9));
+
+        // Once the waiter is gone too, the next sweep releases the last one.
+        drop(waiting);
+        store.remove_expired_pending(after);
+        assert!(!store.inner.read().await.contains_key(&7));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_receive_loop_sweeps_expired_pending_ids() {
+        let store = store();
+        store
+            .feed_datagram(7, Bytes::from_static(b"orphan"))
+            .await
+            .unwrap();
+        let polled = Arc::new(AtomicBool::new(false));
+        let conn = SQConn {
+            conn: OneStreamConn {
+                stream: Arc::new(Mutex::new(None)),
+                accepted: Arc::new(AtomicBool::new(false)),
+                polled: polled.clone(),
+                datagrams: Arc::new(Mutex::new(VecDeque::new())),
+                stay_open: true,
+            },
+            authed: Arc::new(SetOnce::new_with(Some(Ok("user".to_string())))),
+            send_id_store: Default::default(),
+            recv_id_store: store.clone(),
+            stats: Default::default(),
+        };
+        let receiving = tokio::spawn(handle_udp_packet_recv(conn));
+
+        // Wait for the loop to poll, so its sweep timer exists before the clock
+        // moves: `advance` only moves a paused clock while the runtime is idle,
+        // and a fired timer is not processed before it returns.
+        for _ in 0..10_000 {
+            if polled.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            polled.load(Ordering::SeqCst),
+            "the receive loop should be running"
+        );
+
+        // Inside the window the entry stays: the sweep is not a general reaper.
+        tokio::time::advance(PENDING_DATAGRAM_TTL - Duration::from_secs(1)).await;
+        for _ in 0..1_000 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            store.inner.read().await.contains_key(&7),
+            "a pending entry must survive its ttl"
+        );
+
+        // Past the window, the loop's next sweep releases it.
+        tokio::time::advance(PENDING_SWEEP_INTERVAL * 2).await;
+        for _ in 0..10_000 {
+            if !store.inner.read().await.contains_key(&7) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            !store.inner.read().await.contains_key(&7),
+            "the receive loop must sweep expired pending ids"
+        );
+        receiving.abort();
     }
 }
