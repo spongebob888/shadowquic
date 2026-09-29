@@ -241,6 +241,7 @@ impl SunnyQuicServer {
                 conn: incom,
                 authed: Arc::new(SetOnce::new()),
                 send_id_store: Default::default(),
+                stats: Default::default(),
                 recv_id_store: IDStore {
                     id_counter: Default::default(),
                     inner: Default::default(),
