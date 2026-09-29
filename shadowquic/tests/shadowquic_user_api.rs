@@ -27,6 +27,15 @@ const TRAFFIC_STATS_SERVER_ADDR: &str = "127.0.0.1:4478";
 const CLEAR_STATS_SERVER_ADDR: &str = "127.0.0.1:4488";
 const TCP_STATS_BYTES: usize = 4096;
 const UDP_STATS_BYTES: usize = 777;
+/// Bound for a wait on a loopback round trip or a control-path reply. The
+/// happy path is ~1ms, so this only has to keep a broken run from hanging; a
+/// tight bound turns CPU starvation on a small CI runner into a flake.
+const IO_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long to wait for a deleted user's connection attempt to give up. A
+/// deleted user's client hangs rather than erroring, and expiry here is
+/// treated as a rejection, so this bound never fails the test — kept short on
+/// purpose so the happy path does not pay for it.
+const REJECT_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[tokio::test]
 async fn shadowquic_user_api_add_remove_and_permissions() {
@@ -136,7 +145,7 @@ async fn shadowquic_user_api_get_stats_and_kill_user_conns() {
     )
     .await
     .expect("tcp request should open");
-    let accepted_req = tokio::time::timeout(Duration::from_secs(2), server.accept())
+    let accepted_req = tokio::time::timeout(IO_TIMEOUT, server.accept())
         .await
         .expect("server should observe tcp request")
         .expect("server accept should succeed");
@@ -261,14 +270,14 @@ async fn shadowquic_user_api_get_stats_tracks_tcp_and_udp_bytes() {
         .send((udp_payload.clone(), SocksAddr::from(udp_addr)))
         .await
         .expect("udp payload should send");
-    let (udp_echo, udp_echo_addr) = tokio::time::timeout(Duration::from_secs(2), udp_recv.recv())
+    let (udp_echo, udp_echo_addr) = tokio::time::timeout(IO_TIMEOUT, udp_recv.recv())
         .await
         .expect("udp echo should arrive before timeout")
         .expect("udp echo channel should stay open");
     assert_eq!(udp_echo, udp_payload);
     assert_eq!(udp_echo_addr, SocksAddr::from(udp_addr));
 
-    tokio::time::timeout(Duration::from_secs(2), async {
+    tokio::time::timeout(IO_TIMEOUT, async {
         loop {
             let stats = admin
                 .get_user_stats("bob")
@@ -358,7 +367,7 @@ async fn shadowquic_user_api_clear_stats() {
         .send((udp_payload.clone(), SocksAddr::from(udp_addr)))
         .await
         .expect("udp payload should send");
-    let (udp_echo, _) = tokio::time::timeout(Duration::from_secs(2), udp_recv.recv())
+    let (udp_echo, _) = tokio::time::timeout(IO_TIMEOUT, udp_recv.recv())
         .await
         .expect("udp echo should arrive before timeout")
         .expect("udp echo channel should stay open");
@@ -371,7 +380,7 @@ async fn shadowquic_user_api_clear_stats() {
         udp_recv: u64,
         udp_sent: u64,
     ) {
-        tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::time::timeout(IO_TIMEOUT, async {
             loop {
                 let stats = admin
                     .get_user_stats("bob")
@@ -476,7 +485,7 @@ fn client_at(addr: &str, username: &str, password: &str) -> ShadowQuicClient {
 }
 
 async fn assert_connection_closed(conn: &shadowquic::shadowquic::outbound::ShadowQuicConn) {
-    tokio::time::timeout(Duration::from_secs(2), async {
+    tokio::time::timeout(IO_TIMEOUT, async {
         while conn.close_reason().is_none() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -519,13 +528,13 @@ async fn assert_users(client: &ShadowQuicClient, expected: &[&str]) {
 
 async fn assert_rejected_or_timeout(username: &str, password: &str) {
     let client = client(username, password);
-    let conn = match tokio::time::timeout(Duration::from_secs(2), client.get_conn()).await {
+    let conn = match tokio::time::timeout(REJECT_TIMEOUT, client.get_conn()).await {
         Err(_) => return,
         Ok(Err(_)) => return,
         Ok(Ok(conn)) => conn,
     };
 
-    let rejected = tokio::time::timeout(Duration::from_millis(500), async {
+    let rejected = tokio::time::timeout(IO_TIMEOUT, async {
         while conn.close_reason().is_none() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
