@@ -1,4 +1,4 @@
-//! Optional per-request routing with a sandboxed Luau script.
+//! Optional per-request routing with a restricted Lua script.
 //!
 //! Enable the `plugin` Cargo feature and put source code directly in `router`:
 //!
@@ -33,8 +33,11 @@
 //! end
 //! ```
 //!
-//! The router script runs in mlua's Luau sandbox. See [`Router`] and
-//! [`RouteContext`] for the Rust interfaces.
+//! Routing scripts have base language functions and string, table, and math
+//! helpers, without filesystem, process, or module loading access. Console
+//! output through `print` is allowed.
+//! LuaJIT builds also provide the bit library.
+//! See [`Router`] and [`RouteContext`] for the Rust interfaces.
 
 use std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -42,7 +45,7 @@ use std::{
     sync::Mutex,
 };
 
-use mlua::{Function, Lua, UserData, UserDataFields};
+use mlua::{Function, Lua, LuaOptions, StdLib, UserData, UserDataFields, chunk::ChunkMode};
 
 use crate::{
     ProxyRequest, StatsContext, TcpSession, UdpSession,
@@ -214,7 +217,7 @@ impl RouteContext {
     }
 }
 
-/// A sandboxed Luau router. The script returns a function that accepts one
+/// A restricted Lua router. The script returns a function that accepts one
 /// RouteContext table and returns an outbound tag or nil plus an error message.
 pub struct Router {
     inner: Mutex<RouterInner>,
@@ -242,13 +245,24 @@ impl Router {
     }
 
     pub(crate) fn from_source(source: &str) -> mlua::Result<Self> {
-        let lua = Lua::new();
+        let libs = StdLib::STRING | StdLib::TABLE | StdLib::MATH;
+        let libs = libs | StdLib::BIT;
+        let lua = Lua::new_with(libs, LuaOptions::default())?;
+        // The base library is always loaded, including file and code loaders.
+        // Remove these before evaluating any user-provided source.
+        let globals = lua.globals();
+        for name in ["dofile", "loadfile", "load", "loadstring"] {
+            globals.set(name, mlua::Value::Nil)?;
+        }
         // Only support on luau
         // lua.sandbox(true)?;
         // luau-jit can't be compiled on aarch64-musl, so we don't use it for now.
         // luau can't be compiled on freebsd
         // luau cost 1mb more bin size(2mb if luau-jit) than luajit
-        let route = lua.load(source).eval::<Function>()?;
+        let route = lua
+            .load(source)
+            .set_mode(ChunkMode::Text)
+            .eval::<Function>()?;
         Ok(Self {
             inner: Mutex::new(RouterInner { lua, route }),
         })
@@ -324,6 +338,49 @@ mod tests {
             stats_context: None,
             network_type: NetworkType::Tcp,
         }
+    }
+
+    #[test]
+    fn lua_router_restricts_capabilities_during_load_and_routing() {
+        let router = Router::from_source(
+            r#"
+                local function check()
+                    assert(type(print) == "function")
+                    for _, name in ipairs({
+                        "io", "os", "package", "require", "module", "debug",
+                        "ffi", "jit", "dofile", "loadfile", "load", "loadstring"
+                    }) do
+                        assert(_G[name] == nil, name .. " must not be available")
+                    end
+                end
+                check()
+                return function(ctx)
+                    check()
+                    local tags = {string.lower("DIRECT"), tostring(math.floor(1.5))}
+                    assert(string.match(ctx.dst_domain, "%.example$"))
+                    return table.concat(tags, "-")
+                end
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(router.route(&mut context()).unwrap(), "direct-1");
+    }
+
+    #[test]
+    #[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
+    fn lua_router_supports_bit_operations() {
+        let router = Router::from_source(
+            r#"
+                return function(ctx)
+                    assert(bit.band(ctx.dst_port, 255) == 187)
+                    return "direct"
+                end
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(router.route(&mut context()).unwrap(), "direct");
     }
 
     #[test]

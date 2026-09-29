@@ -99,7 +99,7 @@ etherparse = { version = "0.14.3", optional = true }
 # LuaJIT has no RISC-V or LoongArch backend. Keep Lua 5.1 routing available
 # on those architectures with the portable interpreter.
 [target.'cfg(any(target_arch = "riscv64", target_arch = "loongarch64"))'.dependencies]
-mlua = { version = "0.12", default-features = false, features = ["lua51"], optional = true }
+mlua = { version = "0.12", default-features = false, features = ["lua52"], optional = true }
 
 [target.'cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))'.dependencies]
 mlua = { version = "0.12", default-features = false, features = ["luajit"], optional = true }
