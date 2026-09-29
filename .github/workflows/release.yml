@@ -256,6 +256,13 @@ jobs:
         with:
           arch: amd64_arm64
 
+      # cross 0.2.5 applies a seccomp profile without an archMap to 32-bit
+      # Android containers, which kills the 32-bit host tools LuaJIT builds
+      # there. Pre-create a corrected profile (cross only writes it if absent).
+      - name: Prepare cross Android seccomp profiles
+        if: matrix.tool == 'cross'
+        run: bash scripts/fix-cross-seccomp.sh
+
       - name: Cargo fmt
         uses: clechasseur/rs-cargo@v4
         with:
