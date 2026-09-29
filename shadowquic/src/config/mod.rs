@@ -656,13 +656,13 @@ inbounds:
   - {tag: in, type: socks, bind-addr: "127.0.0.1:0"}
 outbounds:
   - {tag: out, type: direct}
-router-script: router.luau
+router-script: router.lua
 "#,
         )
         .unwrap();
         assert_eq!(
             from_file.router_script.as_deref(),
-            Some(std::path::Path::new("router.luau"))
+            Some(std::path::Path::new("router.lua"))
         );
         assert!(from_file.router.is_none());
     }
@@ -671,7 +671,7 @@ router-script: router.luau
     fn router_source_and_script_path_are_mutually_exclusive() {
         let mut cfg = multi_config();
         cfg.router = Some("return function(_) return 'out' end".into());
-        cfg.router_script = Some("router.luau".into());
+        cfg.router_script = Some("router.lua".into());
         assert!(
             cfg.validate()
                 .unwrap_err()

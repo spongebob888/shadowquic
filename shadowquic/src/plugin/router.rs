@@ -8,7 +8,7 @@
 //!       return "direct"
 //!   end
 //! ```
-//! Alternatively, set `router-script: router.luau` to read the source from a
+//! Alternatively, set `router-script: router.lua` to read the source from a
 //! file. Configure only one of these fields.
 //!
 //! The script must return a function. ShadowQUIC calls it with one context
