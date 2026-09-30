@@ -52,7 +52,6 @@ impl<C: QuicConnection> SQServerConn<C> {
         req_send: Sender<ProxyRequest>,
     ) -> Result<(), SError> {
         let conn = &self.inner;
-        info!(peer_address = %conn.remote_address(), "incoming connection accepted");
         let conn_clone = self.inner.clone();
         tokio::spawn(
             async move {
@@ -67,7 +66,11 @@ impl<C: QuicConnection> SQServerConn<C> {
                     let (send, recv, id) = bi?;
                     let span = info_span!("bistream", id = id);
                     trace!("bistream accepted");
-                    tokio::spawn(self.clone().handle_bistream(send, recv, req_send.clone()).instrument(span));
+                    tokio::spawn(
+                        self.clone()
+                            .handle_bistream(send, recv, req_send.clone(), tracing::Span::current())
+                            .instrument(span),
+                    );
                 },
             }
         }
@@ -78,6 +81,7 @@ impl<C: QuicConnection> SQServerConn<C> {
         send: C::SendStream,
         mut recv: C::RecvStream,
         req_send: Sender<ProxyRequest>,
+        inbound_span: tracing::Span,
     ) -> Result<(), SError> {
         let req = SQReq::decode(&mut recv).await?;
 
@@ -152,7 +156,8 @@ impl<C: QuicConnection> SQServerConn<C> {
             }
             SQReq::SQAuthenticate(passwd_hash) => {
                 if let Some(name) = self.users.get(passwd_hash.as_ref()) {
-                    tracing::info!("user authenticated:{}", name);
+                    inbound_span.record("user", name.as_str());
+                    tracing::debug!("sunnyquic authentication succeeded");
                     self.inner
                         .authed
                         .set(Ok(name.clone()))

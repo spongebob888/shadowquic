@@ -6,7 +6,7 @@ use tokio::sync::{
     RwLock, SetOnce,
     mpsc::{Receiver, Sender, channel},
 };
-use tracing::{Instrument, error, info_span};
+use tracing::{Instrument, error};
 
 use crate::{
     Inbound, ProxyRequest,
@@ -253,7 +253,15 @@ impl SunnyQuicServer {
             users: user_hash,
             user_manager: Some(user_manager),
         };
-        let span = info_span!("quic", id = sq_conn.inner.peer_id());
+        let span = tracing::Span::current();
+        span.record(
+            "src",
+            tracing::field::display(sq_conn.inner.remote_address()),
+        );
+        span.record("id", sq_conn.inner.peer_id());
+        span.in_scope(|| {
+            tracing::info!("accepted sunnyquic connection");
+        });
         let sq_conn = Arc::new(sq_conn);
         sq_conn
             .handle_connection(req_sender)
@@ -287,6 +295,7 @@ impl Inbound for SunnyQuicServer {
         let endpoint = self.endpoint.clone();
         let users = self.users.clone();
         let user_manager = self.user_manager.clone();
+        let tag = self.user_manager.config.read().await.tag.clone();
         let fut = async move {
             loop {
                 match QuicServer::accept(&endpoint).await {
@@ -294,13 +303,19 @@ impl Inbound for SunnyQuicServer {
                         let request_sender = request_sender.clone();
                         let user_hash = users.load_full();
                         let user_manager = user_manager.clone();
+                        let span = tracing::info_span!("inbound",
+                            tag = %tag,
+                            src = tracing::field::Empty,
+                            user = tracing::field::Empty,
+                            id = tracing::field::Empty,
+                        );
                         tokio::spawn(
                             async move {
                                 Self::handle_incoming(conn, request_sender, user_hash, user_manager)
                                     .await
                                     .map_err(|x| error!("{}", x))
                             }
-                            .in_current_span(),
+                            .instrument(span),
                         );
                     }
                     Err(e) => {

@@ -60,6 +60,8 @@ impl HttpProxyServer {
         }
 
         if self.auth_enabled() && !check_proxy_basic_auth(text, &self.users) {
+            tracing::Span::current().record("user", tracing::field::display(text));
+            tracing::debug!("http proxy authentication succeeded");
             write_proxy_auth_required(&mut stream).await?;
             return Err(SError::SocksError("http proxy auth failed".into()));
         }

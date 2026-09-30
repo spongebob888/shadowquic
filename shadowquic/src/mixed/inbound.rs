@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
-use tracing::{Instrument, error, info_span};
+use tracing::{Instrument, error};
 
 use crate::{
     Inbound, ProxyRequest,
@@ -114,6 +114,7 @@ impl Inbound for MixedServer {
         let http = Arc::new(HttpProxyServer::with_users(http_users));
         let users = Arc::new(self.cfg.users.clone());
         let req_send = self.request_sender.clone();
+        let tag = self.cfg.tag.clone();
 
         let fut = async move {
             loop {
@@ -130,7 +131,15 @@ impl Inbound for MixedServer {
                 // field by field, so Nagle plus the peer's delayed ACK costs about
                 // 40ms per connection unless it is off.
                 let _ = stream.set_nodelay(true);
-                let span = info_span!("mixed", src = %addr);
+                let span = tracing::info_span!("inbound",
+                    tag = %tag,
+                    src = %addr,
+                    user = tracing::field::Empty,
+                    id = tracing::field::Empty,
+                );
+                span.in_scope(|| {
+                    tracing::info!("accepted mixed connection");
+                });
                 let http = http.clone();
                 let users = users.clone();
                 let req_send = req_send.clone();
