@@ -218,7 +218,11 @@ impl QuicServer for EndServer {
     }
 
     async fn accept(&self) -> Result<Self::C, QuicErrorRepr> {
-        let (conn, sni, path, link) = self.deref().accept().await.unwrap();
+        let (conn, sni, path, link) = self
+            .deref()
+            .accept()
+            .await
+            .map_err(|error| QuicErrorRepr::QuicBaseError(error.to_string()))?;
         tracing::info!(
             "Accepted new connection from {}, sni: {:?}",
             link.src(),

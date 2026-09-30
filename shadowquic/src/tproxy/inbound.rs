@@ -92,14 +92,24 @@ impl TproxyServer {
 impl Inbound for TproxyServer {
     async fn accept(&mut self) -> Result<ProxyRequest, SError> {
         tokio::select! {
-            res = self.tcp_listener.accept() => {
-                let (stream, _) = res?;
+            (stream, addr) = async {
+                loop {
+                    match self.tcp_listener.accept().await {
+                        Ok(connection) => return connection,
+                        Err(error) => {
+                            tracing::error!(%error, "failed to accept tproxy tcp connection");
+                            // Keep UDP requests available while TCP accepts back off.
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        }
+                    }
+                }
+            } => {
                 // Nothing is written field by field on this path, so unlike the
                 // other two inbounds there is no measured handshake delay to fix
                 // here; this only keeps every accepted socket behaving the same.
                 let _ = stream.set_nodelay(true);
-                tracing::info!("accepted tcp connection from {}", stream.peer_addr().unwrap());
-                let src_addr = stream.peer_addr().ok();
+                tracing::info!("accepted tcp connection from {}", addr);
+                let src_addr = Some(addr);
                 let orig_dst = stream.local_addr().map_err(|e| SError::SocksError(e.to_string()))?;
                 let dst = SocksAddr {
                     addr: match orig_dst.ip() {
@@ -344,7 +354,10 @@ async fn handle_udp_tproxy(
                             }
                         }
                     }
-                    Err(_) => continue,
+                    Err(error) => {
+                        tracing::error!(%error, "failed to receive tproxy udp packet");
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
                 }
             }
             _ = cleanup_interval.tick() => {
