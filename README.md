@@ -111,7 +111,7 @@ connections are unaffected. Inline `src` scripts are not watched.
 
 The script returns a function that receives the request context and returns a
 configured outbound tag, or `nil, error_message` to reject the request. See the
-[router configuration reference](https://spongebob888.github.io/shadowquic/main/configuration/shared/routercfg/)
+[router configuration reference](https://spongebob888.github.io/shadowquic/main/configuration/router/)
 for context fields and destination rewriting.
 
 ## Other Clients

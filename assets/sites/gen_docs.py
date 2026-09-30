@@ -1098,6 +1098,16 @@ def plan_pages(
             ))
             placed.add(it.name)
 
+    # Router is a top-level configuration section in newer versions. Older
+    # releases do not have RouterCfg and must not get a dangling navigation link.
+    router = next((it for it in discovered if it.name == "RouterCfg"), None)
+    if router is not None:
+        pages.append(PageSpec(
+            title="Router", nav_label="Router",
+            rel_path="configuration/router.md", item_id=int(router.id),
+        ))
+        placed.add("RouterCfg")
+
     # Everything else reachable from the roots becomes a shared type page.
     for it in discovered:
         if it.name in placed or not it.name:
@@ -1157,6 +1167,10 @@ def render_nav(
             comma = "," if i < len(outbound_pages) - 1 else ""
             lines.append(f'      {{ "{label}" = "{p.rel_path}" }}{comma}')
         lines.append('    ] },')
+
+    for p in cfg_pages:
+        if p.rel_path == "configuration/router.md":
+            lines.append(f'    {{ "Router" = "{p.rel_path}" }},')
 
     if shared_pages:
         lines.append('    { "Shared types" = [')

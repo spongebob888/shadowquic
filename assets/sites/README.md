@@ -70,7 +70,11 @@ uv --project assets/sites run python assets/sites/gen_docs.py
 3. For each top-level type a markdown page is written under
    `docs/configuration/...`; field types that resolve to another config
    type become internal links.
-4. The `nav` block of `zensical.toml` is rewritten between
+4. If `RouterCfg` is reachable from `Config`, it gets a dedicated
+   `configuration/router.md` page and a **Configuration → Router** navigation
+   entry. The overview's `router` field links to it. Older versions without
+   `RouterCfg` omit this entry.
+5. The `nav` block of `zensical.toml` is rewritten between
    `# >>> generated nav` / `# <<< generated nav` markers.
 
 If you add a new variant to `InboundCfg` / `OutboundCfg` or a new config

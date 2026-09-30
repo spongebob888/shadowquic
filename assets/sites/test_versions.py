@@ -30,6 +30,7 @@ class VersionTests(unittest.TestCase):
                     self.assertEqual('"api.md"' in nav, api)
                     self.assertEqual('"protocol/index.md"' in nav, protocol)
                     self.assertIn('"configuration/index.md"', nav)
+                    self.assertNotIn('"Router"', nav)
 
 
 if __name__ == "__main__":
