@@ -60,10 +60,10 @@ jobs:
             tool: cross
             # extra-args: "--no-default-features --features ring"
           # Linux arm
-          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             release-name: aarch64-linux
-            tool: cross
+            tool: cargo
             # extra-args: "--features jemallocator"
           - os: ubuntu-latest
             target: armv7-unknown-linux-gnueabi
