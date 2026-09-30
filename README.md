@@ -58,7 +58,7 @@ Configuration detail can be found in [Documentation](https://spongebob888.github
 
 Use `inbounds` and `outbounds` lists. Every endpoint requires a nonempty `tag`,
 unique within its list. All inbounds run concurrently and route through the
-outbound named by `default-outbound`; if omitted, the first outbound in the list
+outbound named by `router.default-outbound`; if omitted, the first outbound in the list
 is used. For example:
 
 ```yaml
@@ -75,7 +75,8 @@ outbounds:
 - type: socks
   tag: upstream
   addr: "127.0.0.1:1082"
-default-outbound: direct
+router:
+  default-outbound: direct
 ```
 
 Both listeners above use `direct`. Additional outbounds are available by tag;
@@ -85,11 +86,33 @@ single-entry list; omitted tags default to `inbound` and `outbound`, respectivel
 Explicit tags are preserved. List entries still require tags, and specifying both
 the singular and plural key for the same direction is an error.
 
-With the `plugin` feature, set `router-script: router.lua` to load routing rules
-from a file. Changes reload automatically for subsequent requests, including
-when an editor replaces the file. Read or script-loading errors are logged and
-the last working router stays active. A successful reload resets Lua script
-state; existing connections are unaffected. Inline `router` scripts are not watched.
+With the `plugin` feature, configure request routing with either inline Lua source
+or a script file:
+
+```yaml
+router:
+  src: |
+    return function(ctx) return "direct" end
+```
+
+```yaml
+router:
+  path: router.lua
+```
+
+Set only one of `src` and `path`. Without a script, requests use
+`router.default-outbound`, or the first outbound if it is omitted. Selecting a
+default outbound does not require the `plugin` feature. File paths resolve from
+the process working directory.
+Changes reload automatically for subsequent requests.
+Read or script-loading errors are logged and the last working
+router stays active. A successful reload resets Lua script state; existing
+connections are unaffected. Inline `src` scripts are not watched.
+
+The script returns a function that receives the request context and returns a
+configured outbound tag, or `nil, error_message` to reject the request. See the
+[router configuration reference](https://spongebob888.github.io/shadowquic/main/configuration/shared/routercfg/)
+for context fields and destination rewriting.
 
 ## Other Clients
 - [husi](https://github.com/xchacha20-poly1305/husi)

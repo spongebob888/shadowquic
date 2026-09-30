@@ -29,8 +29,8 @@ mod sunnyquic;
 pub use crate::config::serde_utils::*;
 pub use crate::config::shadowquic::*;
 pub use crate::config::sunnyquic::*;
-#[cfg(feature = "plugin")]
-use crate::plugin::router::Router;
+mod router;
+pub use router::RouterCfg;
 
 /// Overall configuration of shadowquic.
 ///
@@ -44,11 +44,12 @@ use crate::plugin::router::Router;
 /// - tag: proxy-out
 ///   type: xxx
 ///   xxx: xxx
-/// default-outbound: proxy-out
-/// router: |
-///   return function(ctx) return "proxy-out" end
-/// # Or load the source from a file:
-/// router-script: route.lua
+/// router:
+///   default-outbound: proxy-out
+///   src: |
+///     return function(ctx) return "proxy-out" end
+///   # Or replace src with a file path:
+///   # path: route.lua
 /// log-level: trace # or debug, info, warn, error
 /// ```
 /// Supported inbound types are listed in [`InboundCfg`]
@@ -66,16 +67,9 @@ pub struct Config {
     /// Available outbounds.
     #[serde(alias = "outbound", deserialize_with = "deserialize_outbounds")]
     pub outbounds: Vec<OutboundCfg>,
-    /// Tag of the outbound used by every inbound. Defaults to the first outbound.
+    /// Request routing. Omit this section to use the first configured outbound.
     #[serde(default)]
-    pub default_outbound: Option<String>,
-    /// Optional inline Luau source that selects an outbound for each request.
-    #[serde(default)]
-    pub router: Option<String>,
-    /// Optional path to a Luau script that selects an outbound for each request.
-    /// File changes reload automatically; failed reloads keep the current router.
-    #[serde(default)]
-    pub router_script: Option<std::path::PathBuf>,
+    pub router: RouterCfg,
     #[serde(default)]
     pub log_level: LogLevel,
 }
@@ -117,42 +111,25 @@ impl Config {
                 }
             }
         }
-        if let Some(tag) = &self.default_outbound
+        if let Some(tag) = &self.router.default_outbound
             && !self.outbounds.iter().any(|outbound| outbound.tag() == tag)
         {
             return Err(SError::InvalidConfig(format!(
                 "default outbound tag does not match a configured outbound: {tag}"
             )));
         }
-        if self.router.is_some() && self.router_script.is_some() {
-            return Err(SError::InvalidConfig(
-                "configure either `router` or `router-script`, not both".into(),
-            ));
-        }
-        #[cfg(not(feature = "plugin"))]
-        if self.router.is_some() || self.router_script.is_some() {
-            return Err(SError::InvalidConfig(
-                "router config requires building with the `plugin` feature".into(),
-            ));
-        }
+        self.router.validate()?;
         Ok(())
     }
 
     pub async fn build_manager(self) -> Result<Manager, SError> {
         self.validate()?;
+        #[cfg(feature = "plugin")]
+        let router = self.router.build()?.map(Arc::new);
         let default_outbound = self
+            .router
             .default_outbound
             .unwrap_or_else(|| self.outbounds[0].tag().to_owned());
-        #[cfg(feature = "plugin")]
-        let router = match (self.router.as_deref(), self.router_script.as_deref()) {
-            (Some(source), None) => Some(Router::from_source(source).map_err(|error| {
-                SError::InvalidConfig(format!("failed to load inline router script: {error}"))
-            })?),
-            (None, Some(path)) => Some(Router::load(path)?),
-            (None, None) => None,
-            (Some(_), Some(_)) => unreachable!("validated above"),
-        }
-        .map(Arc::new);
         let mut inbounds = HashMap::new();
         let mut outbounds = HashMap::new();
         for cfg in self.outbounds {
@@ -680,7 +657,8 @@ outbounds:
             r#"
 inbound: {type: socks, tag: local, bind-addr: '127.0.0.1:1089', users: [{username: user, password: secret}]}
 outbound: {type: direct, tag: remote, dns-strategy: ipv6-only}
-default-outbound: remote
+router:
+  default-outbound: remote
 log-level: debug
 "#,
         )
@@ -688,7 +666,7 @@ log-level: debug
         cfg.validate().unwrap();
         assert_eq!(cfg.inbounds[0].tag(), "local");
         assert_eq!(cfg.outbounds[0].tag(), "remote");
-        assert_eq!(cfg.default_outbound.as_deref(), Some("remote"));
+        assert_eq!(cfg.router.default_outbound.as_deref(), Some("remote"));
         assert_eq!(cfg.log_level.as_tracing_level(), tracing::Level::DEBUG);
         let super::InboundCfg::Socks(inbound) = &cfg.inbounds[0] else {
             panic!("expected socks inbound");
@@ -743,16 +721,17 @@ inbounds:
   - {tag: in, type: socks, bind-addr: "127.0.0.1:0"}
 outbounds:
   - {tag: out, type: direct}
-router: |
-  return function(ctx) return "out" end
+router:
+  src: |
+    return function(ctx) return "out" end
 "#,
         )
         .unwrap();
         assert_eq!(
-            inline.router.as_deref(),
+            inline.router.src.as_deref(),
             Some("return function(ctx) return \"out\" end\n")
         );
-        assert!(inline.router_script.is_none());
+        assert!(inline.router.path.is_none());
 
         let from_file: Config = serde_saphyr::from_str(
             r#"
@@ -760,27 +739,105 @@ inbounds:
   - {tag: in, type: socks, bind-addr: "127.0.0.1:0"}
 outbounds:
   - {tag: out, type: direct}
-router-script: router.lua
+router:
+  path: router.lua
 "#,
         )
         .unwrap();
         assert_eq!(
-            from_file.router_script.as_deref(),
+            from_file.router.path.as_deref(),
             Some(std::path::Path::new("router.lua"))
         );
-        assert!(from_file.router.is_none());
+        assert!(from_file.router.src.is_none());
+    }
+
+    #[test]
+    fn router_defaults_to_disabled_and_rejects_unknown_fields() {
+        let cfg = multi_config();
+        assert!(cfg.router.src.is_none());
+        assert!(cfg.router.path.is_none());
+        let empty: super::RouterCfg = serde_saphyr::from_str("{}").unwrap();
+        empty.validate().unwrap();
+        for yaml in [
+            "source: return nil",
+            "script: router.lua",
+            "src: return nil\nscr: typo",
+        ] {
+            assert!(serde_saphyr::from_str::<super::RouterCfg>(yaml).is_err());
+        }
+    }
+
+    #[cfg(feature = "plugin")]
+    #[tokio::test]
+    async fn nested_router_source_builds_and_reports_script_errors() {
+        let mut cfg = multi_config();
+        cfg.router.src = Some("return function(_) return 'z-first' end".into());
+        let manager = cfg.build_manager().await.unwrap();
+        assert!(manager.router.is_some());
+
+        let mut cfg = multi_config();
+        cfg.router.src = Some("not a valid Lua script".into());
+        let Err(error) = cfg.build_manager().await else {
+            panic!("invalid router source must fail before building listeners");
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("failed to load inline router script")
+        );
+    }
+
+    #[cfg(not(feature = "plugin"))]
+    #[test]
+    fn nested_router_requires_plugin_feature() {
+        for router in [
+            super::RouterCfg {
+                src: Some("return function(_) return 'out' end".into()),
+                ..Default::default()
+            },
+            super::RouterCfg {
+                path: Some("router.lua".into()),
+                ..Default::default()
+            },
+        ] {
+            let mut cfg = multi_config();
+            cfg.router = router;
+            assert!(cfg.validate().unwrap_err().to_string().contains("plugin"));
+        }
+    }
+
+    #[tokio::test]
+    async fn router_default_outbound_selects_a_configured_tag() {
+        let mut cfg = multi_config();
+        cfg.router = serde_saphyr::from_str("default-outbound: a-second").unwrap();
+        let manager = cfg.build_manager().await.unwrap();
+        assert_eq!(manager.default_outbound, "a-second");
+        #[cfg(feature = "plugin")]
+        assert!(manager.router.is_none());
+    }
+
+    #[test]
+    fn router_default_outbound_rejects_unknown_tags() {
+        let mut cfg = multi_config();
+        cfg.router.default_outbound = Some("missing".into());
+        assert!(
+            cfg.validate()
+                .unwrap_err()
+                .to_string()
+                .contains("default outbound tag does not match a configured outbound: missing")
+        );
     }
 
     #[test]
     fn router_source_and_script_path_are_mutually_exclusive() {
         let mut cfg = multi_config();
-        cfg.router = Some("return function(_) return 'out' end".into());
-        cfg.router_script = Some("router.lua".into());
+        cfg.router.src = Some("return function(_) return 'out' end".into());
+        cfg.router.path = Some("router.lua".into());
         assert!(
             cfg.validate()
                 .unwrap_err()
                 .to_string()
-                .contains("configure either `router` or `router-script`, not both")
+                .contains("configure either `router.src` or `router.path`, not both")
         );
     }
 

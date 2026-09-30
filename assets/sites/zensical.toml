@@ -29,6 +29,7 @@ nav = [
       { "Drop outbound" = "configuration/outbound/drop.md" }
     ] },
     { "Shared types" = [
+      { "Router" = "configuration/shared/routercfg.md" },
       { "Log level" = "configuration/shared/loglevel.md" },
       { "Auth user" = "configuration/shared/authuser.md" },
       { "JLS upstream" = "configuration/shared/jlsupstream.md" },

@@ -16,8 +16,10 @@ outbounds:
     gso: true # Enable Quinn Generic Segmentation Offload (GSO)
     over-stream: false  # true for udp over stream, false for udp over datagram
 # Build with --features plugin to enable request routing. Use either inline
-# source in router or a path in router-script.
-# router: |
-#   return function(ctx) return "shadowquic-outbound" end
-# router-script: router.lua
+# source or a file path, not both.
+# router:
+#   src: |
+#     return function(ctx) return "shadowquic-outbound" end
+#   # Or replace src with:
+#   # path: router.lua
 log-level: "trace"
