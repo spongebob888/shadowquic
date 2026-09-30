@@ -273,7 +273,15 @@ impl Inbound for SocksServer {
 
         let fut = async move {
             loop {
-                let (stream, addr) = listener.accept().await?;
+                let (stream, addr) = match listener.accept().await {
+                    Ok(connection) => connection,
+                    Err(error) => {
+                        error!(%error, "failed to accept socks connection");
+                        // Avoid spinning when resource exhaustion prevents accepting.
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        continue;
+                    }
+                };
                 // The SOCKS5 replies are written field by field (src/msgs/socks5.rs),
                 // so with Nagle enabled every field after the first waits for the peer
                 // to acknowledge the previous one. A peer that delays that
@@ -293,8 +301,6 @@ impl Inbound for SocksServer {
                     .instrument(span),
                 );
             }
-            #[allow(unreachable_code)]
-            SResult::<()>::Ok(())
         };
         tokio::spawn(fut.in_current_span());
 

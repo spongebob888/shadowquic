@@ -117,7 +117,15 @@ impl Inbound for MixedServer {
 
         let fut = async move {
             loop {
-                let (stream, addr) = listener.accept().await?;
+                let (stream, addr) = match listener.accept().await {
+                    Ok(connection) => connection,
+                    Err(error) => {
+                        error!(%error, "failed to accept mixed connection");
+                        // Avoid spinning when resource exhaustion prevents accepting.
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        continue;
+                    }
+                };
                 // Same reason as socks/inbound.rs: the handshake replies are written
                 // field by field, so Nagle plus the peer's delayed ACK costs about
                 // 40ms per connection unless it is off.
@@ -135,8 +143,6 @@ impl Inbound for MixedServer {
                     .instrument(span),
                 );
             }
-            #[allow(unreachable_code)]
-            SResult::<()>::Ok(())
         };
         tokio::spawn(fut.in_current_span());
 

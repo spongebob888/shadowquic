@@ -347,7 +347,11 @@ impl Manager {
                             }
                             Err(error) => {
                                 error!(inbound = %tag, %error, "error accepting request");
-                                tokio::task::yield_now().await;
+                                tokio::select! {
+                                    biased;
+                                    _ = stopped.changed() => break,
+                                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
+                                }
                             }
                         }
                     }
