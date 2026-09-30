@@ -54,7 +54,7 @@ $ shadowquic -c server.yaml
 
 Example config [server.yaml](./shadowquic/config_examples/server.yaml)
 
-Configuration detail can be found in [Documentation](https://spongebob888.github.io/shadowquic/configuration/)
+Configuration detail can be found in [Documentation](https://spongebob888.github.io/shadowquic/main/configuration/)
 
 Use `inbounds` and `outbounds` lists. Every endpoint requires a nonempty `tag`,
 unique within its list. All inbounds run concurrently and route through the
