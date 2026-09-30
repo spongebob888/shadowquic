@@ -410,14 +410,13 @@ pub async fn handle_udp_send<C: QuicConnection>(
             session.unistream_map.insert(dst.clone(), uni);
         }
 
-        let fut1 = async {
-            if is_new {
-                ctl_header.encode(&mut send).await?;
-            }
-            //trace!("udp control header sent");
-            Ok(()) as Result<(), SError>
-        };
-        let fut2 = async {
+        if is_new {
+            // Need to be sent first to make it cancel safe
+            // A lonely datagram without sending the control header will causing
+            // memoryleak in the peer.
+            ctl_header.encode(&mut send).await?;
+        }
+        {
             let mut content = BytesMut::with_capacity(2000);
             let mut head = Vec::<u8>::new();
             dg_header.clone().encode(&mut head).await?;
@@ -438,9 +437,7 @@ pub async fn handle_udp_send<C: QuicConnection>(
                 let content = content.freeze();
                 quic_conn.send_datagram(content).await?;
             }
-            Ok(())
         };
-        tokio::try_join!(fut1, fut2)?;
     }
     #[allow(unreachable_code)]
     Ok(())
