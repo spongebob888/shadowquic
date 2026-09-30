@@ -235,6 +235,8 @@
       
         
       
+        
+      
     
     
     
@@ -367,6 +369,8 @@
       
         
           
+        
+      
         
       
         
@@ -882,6 +886,33 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="./router/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Router
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -921,10 +952,10 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_4" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_5" >
         
           
-          <label class="md-nav__link" for="__nav_2_4" id="__nav_2_4_label" tabindex="">
+          <label class="md-nav__link" for="__nav_2_5" id="__nav_2_5_label" tabindex="">
             
   
   
@@ -941,8 +972,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_2_4">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1336,32 +1367,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#default-outbound" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>default-outbound</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#router" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         <code>router</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#router-script" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>router-script</code>
       </span>
     </span>
   </a>
@@ -1414,12 +1423,13 @@
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">tag</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">proxy-out</span>
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">xxx</span>
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span><span class="nt">xxx</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">xxx</span>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="nt">default-outbound</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">proxy-out</span>
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="nt">router</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">  </span><span class="no">return function(ctx) return &quot;proxy-out&quot; end</span>
-<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="c1"># Or load the source from a file:</span>
-<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="nt">router-script</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">route.lua</span>
-<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="nt">log-level</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">trace</span><span class="w"> </span><span class="c1"># or debug, info, warn, error</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="nt">router</span><span class="p">:</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">  </span><span class="nt">default-outbound</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">proxy-out</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">  </span><span class="nt">src</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">    </span><span class="no">return function(ctx) return &quot;proxy-out&quot; end</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">  </span><span class="c1"># Or replace src with a file path:</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">  </span><span class="c1"># path: route.lua</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="nt">log-level</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">trace</span><span class="w"> </span><span class="c1"># or debug, info, warn, error</span>
 </code></pre></div>
 Supported inbound types are listed in <a href="inbound/"><code>InboundCfg</code></a></p>
 <p>Supported outbound types are listed in <a href="outbound/"><code>OutboundCfg</code></a></p>
@@ -1438,25 +1448,13 @@ these objects default to <code>inbound</code> and <code>outbound</code>, respect
 <li><strong>Required:</strong> <strong>yes</strong></li>
 </ul>
 <p>Available outbounds.</p>
-<h3 id="default-outbound"><code>default-outbound</code><a class="headerlink" href="#default-outbound" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Type:</strong> <code>string</code> <em>(optional)</em></li>
-<li><strong>Required:</strong> no</li>
-</ul>
-<p>Tag of the outbound used by every inbound. Defaults to the first outbound.</p>
 <h3 id="router"><code>router</code><a class="headerlink" href="#router" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Type:</strong> <code>string</code> <em>(optional)</em></li>
+<li><strong>Type:</strong> <a href="router/"><code>RouterCfg</code></a></li>
 <li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <em>(type default)</em></li>
 </ul>
-<p>Optional inline Luau source that selects an outbound for each request.</p>
-<h3 id="router-script"><code>router-script</code><a class="headerlink" href="#router-script" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Type:</strong> <code>path</code> <em>(optional)</em></li>
-<li><strong>Required:</strong> no</li>
-</ul>
-<p>Optional path to a Luau script that selects an outbound for each request.
-File changes reload automatically; failed reloads keep the current router.</p>
+<p>Request routing. Omit this section to use the first configured outbound.</p>
 <h3 id="log-level"><code>log-level</code><a class="headerlink" href="#log-level" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Type:</strong> <a href="shared/loglevel/"><code>LogLevel</code></a></li>

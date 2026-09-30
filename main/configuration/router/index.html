@@ -10,36 +10,36 @@
       
       
       
-        <link rel="canonical" href="https://spongebob888.github.io/shadowquic/main/configuration/shared/socketopt/">
+        <link rel="canonical" href="https://spongebob888.github.io/shadowquic/main/configuration/router/">
       
       
-        <link rel="prev" href="../brutalparams/">
+        <link rel="prev" href="../outbound/drop/">
       
       
-        <link rel="next" href="../ciphersuitepreference/">
+        <link rel="next" href="../shared/loglevel/">
       
       
         
       
       
-      <link rel="icon" href="../../../assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="zensical-0.0.43">
     
     
       
-        <title>Socket opt - shadowquic</title>
+        <title>Router - shadowquic</title>
       
     
     
       
         
       
-      <link rel="stylesheet" href="../../../assets/stylesheets/modern/main.fba56155.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.fba56155.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
       
       
 
@@ -58,7 +58,7 @@
       
     
     
-    <script>__md_scope=new URL("../../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
     
       
 
@@ -83,7 +83,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#socket-opt" class="md-skip">
+        <a href="#router" class="md-skip">
           Skip to content
         </a>
       
@@ -101,7 +101,7 @@
 
 <header class="md-header" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../../.." title="shadowquic" class="md-header__button md-logo" aria-label="shadowquic" data-md-component="logo">
+    <a href="../.." title="shadowquic" class="md-header__button md-logo" aria-label="shadowquic" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
@@ -121,7 +121,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Socket opt
+              Router
             
           </span>
         </div>
@@ -205,7 +205,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../../.." class="md-tabs__link">
+      <a href="../.." class="md-tabs__link">
         
   
   Home
@@ -242,7 +242,7 @@
     
     
       <li class="md-tabs__item md-tabs__item--active">
-        <a href="../../" class="md-tabs__link">
+        <a href="../" class="md-tabs__link">
           
   
   Configuration
@@ -259,7 +259,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../../../api/" class="md-tabs__link">
+      <a href="../../api/" class="md-tabs__link">
         
   
   API
@@ -275,7 +275,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../../../protocol/" class="md-tabs__link">
+      <a href="../../protocol/" class="md-tabs__link">
         
   
   Protocol
@@ -307,7 +307,7 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../../.." title="shadowquic" class="md-nav__button md-logo" aria-label="shadowquic" data-md-component="logo">
+    <a href="../.." title="shadowquic" class="md-nav__button md-logo" aria-label="shadowquic" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
@@ -337,7 +337,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../.." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -399,7 +399,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   
@@ -479,7 +479,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../inbound/" class="md-nav__link ">
+            <a href="../inbound/" class="md-nav__link ">
               
   
   
@@ -521,7 +521,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../inbound/socks/" class="md-nav__link">
+      <a href="../inbound/socks/" class="md-nav__link">
         
   
   
@@ -548,7 +548,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../inbound/mixed/" class="md-nav__link">
+      <a href="../inbound/mixed/" class="md-nav__link">
         
   
   
@@ -575,7 +575,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../inbound/shadowquic/" class="md-nav__link">
+      <a href="../inbound/shadowquic/" class="md-nav__link">
         
   
   
@@ -602,7 +602,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../inbound/sunnyquic/" class="md-nav__link">
+      <a href="../inbound/sunnyquic/" class="md-nav__link">
         
   
   
@@ -629,7 +629,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../inbound/tproxy/" class="md-nav__link">
+      <a href="../inbound/tproxy/" class="md-nav__link">
         
   
   
@@ -702,7 +702,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../outbound/" class="md-nav__link ">
+            <a href="../outbound/" class="md-nav__link ">
               
   
   
@@ -744,7 +744,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../outbound/socks/" class="md-nav__link">
+      <a href="../outbound/socks/" class="md-nav__link">
         
   
   
@@ -771,7 +771,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../outbound/shadowquic/" class="md-nav__link">
+      <a href="../outbound/shadowquic/" class="md-nav__link">
         
   
   
@@ -798,7 +798,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../outbound/sunnyquic/" class="md-nav__link">
+      <a href="../outbound/sunnyquic/" class="md-nav__link">
         
   
   
@@ -825,7 +825,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../outbound/direct/" class="md-nav__link">
+      <a href="../outbound/direct/" class="md-nav__link">
         
   
   
@@ -852,7 +852,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../outbound/drop/" class="md-nav__link">
+      <a href="../outbound/drop/" class="md-nav__link">
         
   
   
@@ -884,243 +884,6 @@
                 
   
   
-  
-  
-    <li class="md-nav__item">
-      <a href="../../router/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Router
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-    
-  
-  
-  
-    
-    
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-    
-    
-    
-      
-      
-        
-          
-          
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_5" checked>
-        
-          
-          <label class="md-nav__link" for="__nav_2_5" id="__nav_2_5_label" tabindex="">
-            
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Shared types
-
-    
-  </span>
-  
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_5_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_2_5">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-  Shared types
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../loglevel/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Log level
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../authuser/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Auth user
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../jlsupstream/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  JLS upstream
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../congestioncontrol/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Congestion control
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../brutalparams/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Brutal params
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
     
   
   
@@ -1140,7 +903,7 @@
   <span class="md-ellipsis">
     
   
-  Socket opt
+  Router
 
     
   </span>
@@ -1157,7 +920,7 @@
   <span class="md-ellipsis">
     
   
-  Socket opt
+  Router
 
     
   </span>
@@ -1195,10 +958,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#fw-mark" class="md-nav__link">
+  <a href="#default-outbound" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        <code>fw-mark</code>
+        <code>default-outbound</code>
       </span>
     </span>
   </a>
@@ -1206,10 +969,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#bind-interface" class="md-nav__link">
+  <a href="#src" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        <code>bind-interface</code>
+        <code>src</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#path" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>path</code>
       </span>
     </span>
   </a>
@@ -1236,8 +1010,245 @@
   
   
   
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_5" id="__nav_2_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Shared types
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Shared types
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
     <li class="md-nav__item">
-      <a href="../ciphersuitepreference/" class="md-nav__link">
+      <a href="../shared/loglevel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Log level
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shared/authuser/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Auth user
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shared/jlsupstream/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  JLS upstream
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shared/congestioncontrol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Congestion control
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shared/brutalparams/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Brutal params
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shared/socketopt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Socket opt
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shared/ciphersuitepreference/" class="md-nav__link">
         
   
   
@@ -1264,7 +1275,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../dnsstrategy/" class="md-nav__link">
+      <a href="../shared/dnsstrategy/" class="md-nav__link">
         
   
   
@@ -1291,7 +1302,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../interface/" class="md-nav__link">
+      <a href="../shared/interface/" class="md-nav__link">
         
   
   
@@ -1333,7 +1344,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../api/" class="md-nav__link">
+      <a href="../../api/" class="md-nav__link">
         
   
   
@@ -1359,7 +1370,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../protocol/" class="md-nav__link">
+      <a href="../../protocol/" class="md-nav__link">
         
   
   
@@ -1431,10 +1442,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#fw-mark" class="md-nav__link">
+  <a href="#default-outbound" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        <code>fw-mark</code>
+        <code>default-outbound</code>
       </span>
     </span>
   </a>
@@ -1442,10 +1453,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#bind-interface" class="md-nav__link">
+  <a href="#src" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        <code>bind-interface</code>
+        <code>src</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#path" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>path</code>
       </span>
     </span>
   </a>
@@ -1475,29 +1497,106 @@
   
 
 
-<h1 id="socket-opt">Socket opt<a class="headerlink" href="#socket-opt" title="Permanent link">&para;</a></h1>
-<p>Socket options</p>
-<h2 id="fields">Fields<a class="headerlink" href="#fields" title="Permanent link">&para;</a></h2>
-<h3 id="fw-mark"><code>fw-mark</code><a class="headerlink" href="#fw-mark" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Type:</strong> <code>u32</code> <em>(optional)</em></li>
-<li><strong>Required:</strong> no</li>
-</ul>
-<p>fw_mark on linux</p>
-<h3 id="bind-interface"><code>bind-interface</code><a class="headerlink" href="#bind-interface" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Type:</strong> <a href="../interface/"><code>Interface</code></a> <em>(optional)</em></li>
-<li><strong>Required:</strong> no</li>
-</ul>
-<p>binding interface of this outgoing packet.</p>
-<p>If <code>bind_interface</code> is set, the outgoing packet will be sent from the
-specified interface. Recommend to use to cooporate with other tun based proxy like sing-box/mihomo</p>
-<p>Example:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># by ip address</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">bind-interface</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;127.0.0.1&quot;</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="c1"># by interface name</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nt">bind-interface</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;eth0&quot;</span>
+<h1 id="router">Router<a class="headerlink" href="#router" title="Permanent link">&para;</a></h1>
+<p>Request routing through a default outbound or a restricted Lua script.</p>
+<p>Without a script, requests use <code>router.default-outbound</code>, or the first
+configured outbound if omitted. This works without the <code>plugin</code> feature.
+Omit <code>router</code> or use <code>router: {}</code> to use the first outbound directly.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">router</span><span class="p">:</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">default-outbound</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">direct</span>
 </code></pre></div>
+<p>Script routing requires the <code>plugin</code> Cargo feature. Configure either inline
+source in <code>src</code> or a script file in <code>path</code>, never both. A configured script
+selects the outbound instead of <code>default-outbound</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">router</span><span class="p">:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">src</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="no">return function(ctx)</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">      </span><span class="no">if ctx.dst_domain and ctx.dst_domain:match(&quot;%.example$&quot;) then</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">        </span><span class="no">return &quot;special-proxy&quot;</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">      </span><span class="no">end</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">      </span><span class="no">if ctx.dst_ip_v4 and ctx.dst_ip_v4:sub(1, #&quot;192.168&quot;) == &quot;192.168&quot; then</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">        </span><span class="no">return &quot;sq-home&quot;</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">      </span><span class="no">end</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">      </span><span class="no">return &quot;direct&quot;</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">    </span><span class="no">end</span>
+</code></pre></div>
+<p>Alternatively, load a file (relative paths resolve from the working directory):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">router</span><span class="p">:</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">router.lua</span>
+</code></pre></div>
+<p>File changes reload automatically for subsequent requests, including when an
+editor replaces the file. Failed reloads keep the last working script. A
+successful reload resets Lua state; existing connections are unaffected.
+Inline scripts are not watched.</p>
+<p>The script must return a function. Each request passes one context userdata:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>inbound_tag</code></td>
+<td>Tag of the inbound listener</td>
+</tr>
+<tr>
+<td><code>network_type</code></td>
+<td><code>"tcp"</code> or <code>"udp"</code></td>
+</tr>
+<tr>
+<td><code>dst_domain</code>, <code>dst_ip_v4</code>, <code>dst_ip_v6</code></td>
+<td>Destination name or IP string; unused fields are nil</td>
+</tr>
+<tr>
+<td><code>dst_port</code></td>
+<td>Destination port number</td>
+</tr>
+<tr>
+<td><code>src_addr</code>, <code>src_ip_v4</code>, <code>src_ip_v6</code></td>
+<td>Source address strings, or nil when unavailable</td>
+</tr>
+<tr>
+<td><code>src_port</code></td>
+<td>Source port number, or nil when unavailable</td>
+</tr>
+<tr>
+<td><code>stats_context</code></td>
+<td>Table with <code>username</code> and <code>conn_id</code> for authenticated QUIC requests, otherwise nil</td>
+</tr>
+</tbody>
+</table>
+<p>Scripts may update <code>dst_domain</code>, <code>dst_ip_v4</code>, <code>dst_ip_v6</code>, and <code>dst_port</code>.
+Setting a destination name or IP clears the other destination address fields.
+Return a configured outbound tag to route the request, or <code>nil, error_message</code>
+to reject it. Routing errors do not fall back to <code>router.default-outbound</code>.</p>
+<p>Scripts have base language functions and string, table, math, and bit helpers.
+Filesystem, process, module loading, and dynamic code loading are unavailable.
+Console output through <code>print</code> is allowed.</p>
+<p>The exposed router context to script can be seen in [<code>crate::plugin::router::RouteContext</code>]</p>
+<h2 id="fields">Fields<a class="headerlink" href="#fields" title="Permanent link">&para;</a></h2>
+<h3 id="default-outbound"><code>default-outbound</code><a class="headerlink" href="#default-outbound" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>string</code> <em>(optional)</em></li>
+<li><strong>Required:</strong> no</li>
+</ul>
+<p>Outbound tag used when no routing script is configured. Defaults to the
+first configured outbound. Does not require the <code>plugin</code> feature.</p>
+<h3 id="src"><code>src</code><a class="headerlink" href="#src" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>string</code> <em>(optional)</em></li>
+<li><strong>Required:</strong> no</li>
+</ul>
+<p>Inline Lua source returning a routing function. Mutually exclusive with <code>path</code>.</p>
+<h3 id="path"><code>path</code><a class="headerlink" href="#path" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>path</code> <em>(optional)</em></li>
+<li><strong>Required:</strong> no</li>
+</ul>
+<p>Path to a Lua script, watched for changes. Mutually exclusive with <code>src</code>.</p>
 
 
 
@@ -1555,10 +1654,10 @@ specified interface. Recommend to use to cooporate with other tun based proxy li
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"../../..","features":["navigation.tabs","navigation.sections","navigation.expand","navigation.top","navigation.indexes","content.code.copy","content.code.annotate","search.suggest","search.highlight","toc.follow"],"search":"../../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["navigation.tabs","navigation.sections","navigation.expand","navigation.top","navigation.indexes","content.code.copy","content.code.annotate","search.suggest","search.highlight","toc.follow"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"provider":"mike"}}</script>
     
     
-      <script src="../../../assets/javascripts/bundle.6e5f0216.min.js"></script>
+      <script src="../../assets/javascripts/bundle.6e5f0216.min.js"></script>
       
     
   </body>
