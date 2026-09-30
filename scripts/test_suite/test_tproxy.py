@@ -55,5 +55,6 @@ print(result.stdout)
 if result.stderr:
     print(result.stderr, file=sys.stderr)
 
+assert result.returncode == 0, f"TPROXY tests failed (exit {result.returncode})!"
 assert "All tests PASSED!" in result.stdout, "TPROXY tests failed!"
 print("\n[+] TPROXY integration test PASSED")
