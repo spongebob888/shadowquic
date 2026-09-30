@@ -19,5 +19,5 @@ outbounds:
 # source in router or a path in router-script.
 # router: |
 #   return function(ctx) return "shadowquic-outbound" end
-# router-script: router.luau
+# router-script: router.lua
 log-level: "trace"
