@@ -1,39 +1,47 @@
-name: Zensical
+name: Documentation
 on:
   push:
     branches: [main]
-    paths:
-      - "shadowquic/src/config/**"
-      - "document/api.md"
-      - "assets/sites/**"
-      - ".github/workflows/mkdocs.yaml"
+    tags: ["v*"]
+  # Bootstrap or rebuild the complete version history without a new release.
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
-# A separate concurrency group from doc.yml so both can coexist while
-# you decide which one drives the default Pages site. When you're ready to
-# make this the canonical deploy, disable .github/workflows/doc.yml.
+# Both modes update the same archive and Pages deployment. Never overlap them.
 concurrency:
   group: deploy-zensical
   cancel-in-progress: false
 
 jobs:
   build:
-    name: Build
+    name: Build documentation
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout documentation tooling from main
         uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Restore published versions
+        run: |
+          if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
+            git branch gh-pages origin/gh-pages
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 
       - name: Setup Rust (nightly for rustdoc JSON)
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Configure cache
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-directories: target/docs-versions
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -47,20 +55,24 @@ jobs:
       - name: Setup pages
         uses: actions/configure-pages@v6
 
-      - name: Generate configuration reference
-        # gen_docs.py drives `cargo +nightly rustdoc ... --output-format json`
-        # internally, then writes assets/sites/docs/configuration/**.
-        working-directory: assets/sites
-        run: uv run python gen_docs.py --clean
+      - name: Test documentation versioning
+        run: uv run --locked --project assets/sites python -m unittest discover -s assets/sites -p 'test_*.py'
 
-      - name: Build Zensical site
-        working-directory: assets/sites
-        run: uv run zensical build
+      - name: Build released versions and main
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+        run: uv run --locked --project assets/sites python assets/sites/build_versions.py --mode releases --output _site
+
+      - name: Update main documentation only
+        if: github.ref_type != 'tag' && github.event_name != 'workflow_dispatch'
+        run: uv run --locked --project assets/sites python assets/sites/build_versions.py --mode main --output _site
+
+      - name: Save version archive
+        run: git push origin gh-pages
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5
         with:
-          path: assets/sites/site
+          path: _site
 
   deploy:
     name: Deploy
