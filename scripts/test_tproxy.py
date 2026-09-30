@@ -15,7 +15,7 @@ Flow:
 Tests:
   - IPv4 and IPv6 TCP connectivity via socat (echo)
   - IPv4 and IPv6 UDP connectivity via socat (echo)
-  - Log verification: "accepted tcp connection" and "accepted udp connection"
+  - Log verification: "accepted tproxy tcp connection" and "accepted tproxy udp request"
 """
 
 import subprocess
@@ -226,19 +226,19 @@ def check_logs():
             print(f"  {line.strip()}")
     print("  --- end log ---")
 
-    tcp_accepted = "accepted tcp connection" in log_content
-    udp_accepted = "accepted udp connection" in log_content
+    tcp_accepted = "accepted tproxy tcp connection" in log_content
+    udp_accepted = "accepted tproxy udp request" in log_content
 
     ok = True
     if tcp_accepted:
         print("  [PASS] Log shows TCP connection accepted by TPROXY")
     else:
-        print("  [FAIL] Log missing 'accepted tcp connection'")
+        print("  [FAIL] Log missing 'accepted tproxy tcp connection'")
         ok = False
     if udp_accepted:
-        print("  [PASS] Log shows UDP connection accepted by TPROXY")
+        print("  [PASS] Log shows UDP request accepted by TPROXY")
     else:
-        print("  [FAIL] Log missing 'accepted udp connection'")
+        print("  [FAIL] Log missing 'accepted tproxy udp request'")
         ok = False
 
     return ok
