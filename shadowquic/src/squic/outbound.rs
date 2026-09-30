@@ -18,15 +18,89 @@ use crate::{
     msgs::{SDecode, SEncode, socks5::SocksAddr, squic::SQReq},
     quic::QuicConnection,
     squic::{handle_udp_recv_ctrl, handle_udp_send},
+    utils::activity_stream::{Activity, ActivityGuard, half_close_watchdog},
 };
 
 use super::{SQConn, SQConnStats, inbound::Unsplit};
+
+/// Upper bound on how long opening a bi-stream for a request may take before the
+/// connection is treated as wedged. Wide enough for a legitimate stream-credit
+/// wait under healthy load and narrow enough to bound how long the accept loop
+/// can be blocked.
+///
+/// Waiting on the QUIC idle timeout instead does not help: with
+/// `keep_alive_interval` set the connection never goes idle, so a peer that
+/// stopped granting stream credit keeps the connection alive indefinitely and
+/// only this bound can break the stall.
+const HANDLE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// What [`dispatch`] did with the request, and with the connection.
+pub enum Dispatch {
+    /// Handed to a relay task; the bi-stream is open.
+    Sent,
+    /// The bi-stream open timed out and the connection was closed, so the caller
+    /// must drop it from its cache.
+    Wedged,
+    /// The bi-stream open timed out but the connection was left in place, because
+    /// it is still moving application data.
+    StillActive,
+}
+
+/// Dispatches `req` under [`HANDLE_TIMEOUT`] and starts its relay.
+///
+/// [`handle_request`] spawns the relay and returns before it runs, so this bound
+/// covers only opening the bi-stream. quinn's `open_bi` waits for the peer to
+/// raise `MAX_STREAMS` instead of failing, and every caller awaits the dispatch
+/// inline, so without the bound one stuck open stops its caller from accepting
+/// anything else — which is how a single wedged peer turns into an instance that
+/// silently stops serving.
+///
+/// On timeout the connection is closed only when no application data moved
+/// either. [`data_progress`](QuicConnection::data_progress) counts STREAM and
+/// DATAGRAM frames, which keep-alive PINGs and pure ACKs do not touch, so a
+/// connection still carrying them is under ordinary stream-credit backpressure
+/// from live sessions, and closing it would abort all of them. A transport that
+/// cannot report the counter at all is never found silent, so its connection is
+/// left in place.
+pub async fn dispatch<C: QuicConnection>(
+    req: ProxyRequest,
+    conn: SQConn<C>,
+    over_stream: bool,
+    half_close_timeout: Option<Duration>,
+) -> Result<Dispatch, SError> {
+    let progress_before = conn.data_progress();
+    match tokio::time::timeout(
+        HANDLE_TIMEOUT,
+        handle_request(req, conn.clone(), over_stream, half_close_timeout),
+    )
+    .await
+    {
+        Ok(result) => result.map(|()| Dispatch::Sent),
+        Err(_) => {
+            if progress_before.is_some() && progress_before == conn.data_progress() {
+                error!(
+                    "bi-stream open timed out after {}s with no application data moving, dropping the connection",
+                    HANDLE_TIMEOUT.as_secs()
+                );
+                QuicConnection::close(&conn.conn, 0, &[]);
+                Ok(Dispatch::Wedged)
+            } else {
+                error!(
+                    "bi-stream open timed out after {}s, connection is still carrying application data",
+                    HANDLE_TIMEOUT.as_secs()
+                );
+                Ok(Dispatch::StillActive)
+            }
+        }
+    }
+}
 
 /// Handling a proxy request and starting proxy task with given squic connection
 pub async fn handle_request<C: QuicConnection>(
     req: ProxyRequest,
     conn: SQConn<C>,
     over_stream: bool,
+    half_close_timeout: Option<Duration>,
 ) -> Result<(), SError> {
     let (mut send, recv, id) = QuicConnection::open_bi(&conn.conn).await?;
     let _span = span!(Level::INFO, "bistream", id = id);
@@ -45,11 +119,35 @@ pub async fn handle_request<C: QuicConnection>(
                 req.encode(&mut send).await?;
                 trace!(dst = %tcp_session.dst, "tcp connect req header sent");
 
-                let u = tokio::io::copy_bidirectional(
-                    &mut Unsplit { s: send, r: recv },
-                    &mut tcp_session.stream,
-                )
-                .await?;
+                let activity = Activity::new();
+                let mut quic_side =
+                    ActivityGuard::new(Unsplit { s: send, r: recv }, activity.clone());
+                let mut local_side = ActivityGuard::new(&mut tcp_session.stream, activity.clone());
+                let copy = tokio::io::copy_bidirectional(&mut quic_side, &mut local_side);
+                tokio::pin!(copy);
+
+                // Only the half-closed case is bounded: a session that is merely
+                // idle with both directions still open is a healthy one, and
+                // ending it would drop interactive logins that are simply
+                // sitting unused. The watchdog measures silence across both ends
+                // together and cannot fire before a half-close, so a peer that is
+                // merely slow to answer is never cut off; once one direction has
+                // finished, only the surviving direction can still carry bytes,
+                // and any byte it moves restarts the countdown.
+                let u = match half_close_timeout {
+                    Some(grace) => tokio::select! {
+                        res = &mut copy => res?,
+                        _ = half_close_watchdog(&activity, grace) => {
+                            error!(
+                                dst = %tcp_session.dst,
+                                "relay half-closed and silent for {}s, closing the session",
+                                grace.as_secs()
+                            );
+                            return Ok(());
+                        }
+                    },
+                    None => copy.await?,
+                };
 
                 info!(
                     "request:{} finished, upload:{}bytes,download:{}bytes",

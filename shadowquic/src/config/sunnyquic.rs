@@ -4,9 +4,9 @@ use serde::Deserialize;
 
 use crate::config::{
     AuthUser, BrutalParams, CipherSuitePreference, CongestionControl, HasCipherSuitePreference,
-    SocketOpt, default_alpn, default_congestion_control, default_gso, default_initial_mtu,
-    default_keep_alive_interval, default_min_mtu, default_mtu_discovery, default_over_stream,
-    default_store_flush_interval, default_zero_rtt,
+    SocketOpt, default_alpn, default_congestion_control, default_gso, default_half_close_timeout,
+    default_initial_mtu, default_keep_alive_interval, default_min_mtu, default_mtu_discovery,
+    default_over_stream, default_store_flush_interval, default_zero_rtt,
 };
 
 pub(crate) fn default_multipath_num() -> u32 {
@@ -134,6 +134,7 @@ impl Default for SunnyQuicClientCfg {
             over_stream: Default::default(),
             min_mtu: default_min_mtu(),
             keep_alive_interval: default_keep_alive_interval(),
+            half_close_timeout: default_half_close_timeout(),
             max_path_num: default_multipath_num(),
             extra_paths: Default::default(),
             cert_path: Default::default(),
@@ -219,6 +220,19 @@ pub struct SunnyQuicClientCfg {
     /// Disabled by default.
     #[serde(default = "default_keep_alive_interval")]
     pub keep_alive_interval: u32,
+    /// Relay half-close timeout in seconds.
+    ///
+    /// `copy_bidirectional` returns only once both directions reach EOF, so a
+    /// session whose peer never closes its half would hold its QUIC bi-stream
+    /// forever and keep it counted against the peer's stream limit. Once one
+    /// direction has finished, the relay gives the session up if the surviving
+    /// direction then stays silent this long. Only the surviving direction can
+    /// still carry bytes at that point, and any byte it moves restarts the
+    /// count. A session merely idle with both directions still open never
+    /// reaches this state and is never touched. 0 disables the watchdog.
+    /// Default 600.
+    #[serde(default = "default_half_close_timeout")]
+    pub half_close_timeout: u64,
     /// Enable QUIC Generic Segmentation Offload (GSO).
     /// Controls [`quinn::TransportConfig::enable_segmentation_offload`]. When supported, GSO reduces
     /// CPU usage for bulk sends; unsupported environments may see transient startup packet loss.
