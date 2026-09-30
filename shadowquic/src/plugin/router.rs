@@ -337,31 +337,40 @@ impl Router {
     }
 
     pub fn route(&self, context: &mut RouteContext) -> Result<String, SError> {
-        let inner = self
-            .inner
-            .lock()
-            .map_err(|_| SError::RouterError("router runtime lock was poisoned".into()))?;
-        let userdata = inner
-            .lua
-            .create_userdata(context.clone())
-            .map_err(|error| SError::RouterError(error.to_string()))?;
-        let (tag, error): (Option<String>, Option<String>) = inner
-            .route
-            .call(userdata.clone())
-            .map_err(|error| SError::RouterError(error.to_string()))?;
-        match (tag, error) {
-            (Some(tag), _) if !tag.trim().is_empty() => {
-                *context = userdata
-                    .borrow::<RouteContext>()
-                    .map_err(|error| SError::RouterError(error.to_string()))?
-                    .clone();
-                Ok(tag)
+        let started = std::time::Instant::now();
+        let result = (|| {
+            let inner = self
+                .inner
+                .lock()
+                .map_err(|_| SError::RouterError("router runtime lock was poisoned".into()))?;
+            let userdata = inner
+                .lua
+                .create_userdata(context.clone())
+                .map_err(|error| SError::RouterError(error.to_string()))?;
+            let (tag, error): (Option<String>, Option<String>) = inner
+                .route
+                .call(userdata.clone())
+                .map_err(|error| SError::RouterError(error.to_string()))?;
+            match (tag, error) {
+                (Some(tag), _) if !tag.trim().is_empty() => {
+                    *context = userdata
+                        .borrow::<RouteContext>()
+                        .map_err(|error| SError::RouterError(error.to_string()))?
+                        .clone();
+                    Ok(tag)
+                }
+                (_, Some(error)) if !error.trim().is_empty() => Err(SError::RouterError(error)),
+                _ => Err(SError::RouterError(
+                    "router must return an outbound tag or nil and an error message".into(),
+                )),
             }
-            (_, Some(error)) if !error.trim().is_empty() => Err(SError::RouterError(error)),
-            _ => Err(SError::RouterError(
-                "router must return an outbound tag or nil and an error message".into(),
-            )),
-        }
+        })();
+        tracing::trace!(
+            elapsed = ?started.elapsed(),
+            success = result.is_ok(),
+            "routing completed",
+        );
+        result
     }
 }
 
