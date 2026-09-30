@@ -21,6 +21,7 @@ pub fn default_rate_limit() -> u64 {
 /// Example:
 /// ```yaml
 /// tag: proxy
+/// type: shadowquic
 /// bind-addr: "0.0.0.0:1443"
 /// users:
 ///   - username: "zhangsan"
@@ -199,6 +200,7 @@ impl Default for BrutalParams {
 /// example:
 /// ```yaml
 /// tag: proxy
+/// type: shadowquic
 /// addr: "12.34.56.7:1089" # or "[12:ff::ff]:1089" for dualstack
 /// password: "12345678"
 /// username: "87654321"

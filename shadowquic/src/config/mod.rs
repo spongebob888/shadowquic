@@ -256,6 +256,7 @@ impl OutboundCfg {
 /// Example:
 /// ```yaml
 /// tag: proxy
+/// type: socks
 /// bind-addr: "0.0.0.0:1089" # or "[::]:1089" for dualstack
 /// users:
 ///  - username: "username"
@@ -303,6 +304,7 @@ pub struct MixedServerCfg {
 /// Example:
 /// ```yaml
 /// tag: proxy
+/// type: tproxy
 /// bind-addr: "0.0.0.0:1089" # or "[::]:1089" for dualstack
 /// ```
 #[cfg(all(feature = "tproxy", target_os = "linux"))]
@@ -327,6 +329,7 @@ pub struct AuthUser {
 /// Example:
 /// ```yaml
 /// tag: proxy
+/// type: socks
 /// addr: "12.34.56.7:1089" # or "[12:ff::ff]:1089" for dualstack
 /// ```
 #[derive(Deserialize, Clone, Debug)]

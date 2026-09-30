@@ -18,6 +18,7 @@ pub(crate) fn default_multipath_num() -> u32 {
 /// Example:
 /// ```yaml
 /// tag: proxy
+/// type: sunnyquic
 /// bind-addr: "0.0.0.0:1443"
 /// users:
 ///   - username: "zhangsan"
@@ -151,6 +152,7 @@ impl Default for SunnyQuicClientCfg {
 /// example:
 /// ```yaml
 /// tag: proxy
+/// type: sunnyquic
 /// addr: "12.34.56.7:1089" # or "[12:ff::ff]:1089" for dualstack
 /// password: "12345678"
 /// username: "87654321"
