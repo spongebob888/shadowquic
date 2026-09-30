@@ -268,11 +268,7 @@ impl Manager {
             ));
         }
         for (tag, inbound) in &self.inbounds {
-            if let Err(error) = inbound
-                .init()
-                .instrument(info_span!("inbound", tag = %tag))
-                .await
-            {
+            if let Err(error) = inbound.init().await {
                 error!(inbound = %tag, %error, "inbound initialization failed");
                 for (tag, inbound) in &self.inbounds {
                     if let Err(error) = inbound.shutdown().await {
@@ -289,7 +285,12 @@ impl Manager {
         let (stop, stopped) = tokio::sync::watch::channel(false);
         let mut tasks = tokio::task::JoinSet::new();
         for (tag, mut inbound) in self.inbounds {
-            let inbound_span = info_span!("inbound", tag = %tag);
+            let inbound_span = info_span!("inbound",
+             tag = %tag,
+             src = tracing::field::Empty,
+             user = tracing::field::Empty,
+             id = tracing::field::Empty, // mainly for quic id
+            );
             let outbounds = outbounds.clone();
             #[cfg(feature = "plugin")]
             let router = router.clone();

@@ -19,7 +19,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, UdpSocket};
 
 use tokio::sync::mpsc::{Receiver, Sender, channel};
-use tracing::{Instrument, error, info, info_span};
+use tracing::{Instrument, error, info};
 
 use super::UdpSocksWrap;
 
@@ -108,14 +108,17 @@ where
         return Ok(stream);
     }
     let auth = PasswordAuthReq::decode(&mut stream).await?;
-    if !users.contains(&AuthUser {
+    let user = AuthUser {
         username: String::from_utf8(auth.username.contents)
             .map_err(|_| SError::SocksError("invalid UTF-8 in username".to_string()))?,
         password: String::from_utf8(auth.password.contents)
             .map_err(|_| SError::SocksError("invalid UTF-8 in password".to_string()))?,
-    }) {
+    };
+    if !users.contains(&user) {
         return Err(SError::SocksError("authentication failed".to_string()));
     }
+    tracing::Span::current().record("user", tracing::field::display(user.username));
+    tracing::debug!("socks authentication succeeded");
     let reply = PasswordAuthReply {
         version: 0x01,
         status: SOCKS5_REPLY_SUCCEEDED,
@@ -270,7 +273,7 @@ impl Inbound for SocksServer {
 
         let req_send = self.request_sender.clone();
         let users = Arc::new(self.cfg.users.clone());
-
+        let tag = self.cfg.tag.clone();
         let fut = async move {
             loop {
                 let (stream, addr) = match listener.accept().await {
@@ -282,6 +285,12 @@ impl Inbound for SocksServer {
                         continue;
                     }
                 };
+                let span = tracing::info_span!("inbound",
+                    tag = %tag,
+                    src = %addr,
+                    user = tracing::field::Empty,
+                    id = tracing::field::Empty,
+                );
                 // The SOCKS5 replies are written field by field (src/msgs/socks5.rs),
                 // so with Nagle enabled every field after the first waits for the peer
                 // to acknowledge the previous one. A peer that delays that
@@ -289,7 +298,10 @@ impl Inbound for SocksServer {
                 // cost that much. Measured on loopback: ~41ms without this line,
                 // ~0.4ms with it.
                 let _ = stream.set_nodelay(true);
-                let span = info_span!("socks", src = %addr);
+                span.in_scope(|| {
+                    tracing::info!("accepted socks connection");
+                });
+
                 let users = users.clone();
                 let req_send = req_send.clone();
                 tokio::spawn(

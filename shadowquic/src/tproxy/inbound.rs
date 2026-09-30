@@ -23,6 +23,7 @@ use socket2::{
 
 pub struct TproxyServer {
     _bind_addr: SocketAddr,
+    cfg: TproxyServerCfg,
     tcp_listener: TcpListener,
     udp_req_rx: Receiver<ProxyRequest>,
 }
@@ -49,6 +50,7 @@ impl TproxyServer {
             _bind_addr: cfg.bind_addr,
             tcp_listener,
             udp_req_rx,
+            cfg,
         })
     }
 
@@ -91,6 +93,7 @@ impl TproxyServer {
 #[async_trait]
 impl Inbound for TproxyServer {
     async fn accept(&mut self) -> Result<ProxyRequest, SError> {
+        let tag = self.cfg.tag.clone();
         tokio::select! {
             (stream, addr) = async {
                 loop {
@@ -108,7 +111,15 @@ impl Inbound for TproxyServer {
                 // other two inbounds there is no measured handshake delay to fix
                 // here; this only keeps every accepted socket behaving the same.
                 let _ = stream.set_nodelay(true);
-                tracing::info!("accepted tcp connection from {}", addr);
+                let span = tracing::info_span!("inbound",
+                    tag = %tag,
+                    src = %addr,
+                    user = tracing::field::Empty,
+                    id = tracing::field::Empty,
+                );
+                span.in_scope(|| {
+                    tracing::info!("accepted tproxy tcp connection");
+                });
                 let src_addr = Some(addr);
                 let orig_dst = stream.local_addr().map_err(|e| SError::SocksError(e.to_string()))?;
                 let dst = SocksAddr {
@@ -126,6 +137,19 @@ impl Inbound for TproxyServer {
                 }))
             }
             Some(req) = self.udp_req_rx.recv() => {
+                let span = tracing::info_span!("inbound",
+                    tag = %tag,
+                    src = tracing::field::Empty,
+                    user = tracing::field::Empty,
+                    id = tracing::field::Empty,
+                );
+                if let ProxyRequest::Udp(session) = &req
+                    && let Some(addr) = session.src_addr {
+                        span.record("src", tracing::field::display(addr));
+                    }
+                span.in_scope(|| {
+                    tracing::info!("accepted tproxy udp request");
+                });
                 Ok(req)
             }
         }
@@ -304,7 +328,8 @@ async fn handle_udp_tproxy(
                             *last_active = now;
                             tx.clone()
                         } else {
-                            tracing::info!("accepted udp connection from {}", client_addr);
+                            tracing::trace!("accepted udp connection from {}", client_addr);
+
                             let (tx, rx) = channel(1024);
                             let send = Arc::new(TproxyUdpSend {
                                 client_addr,
