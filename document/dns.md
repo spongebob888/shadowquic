@@ -70,6 +70,13 @@ These functions only inspect unexpired cached answers; they never perform
 network I/O. Reverse lookup follows cached question/CNAME answers, rather than
 issuing a PTR query. Multiple names may share an address.
 
+Rust callers can use `DnsService::reverse_lookup(ip).await` to issue a PTR query
+through the selected service. It supports IPv4 (`in-addr.arpa`) and IPv6
+(`ip6.arpa`), follows CNAME aliases, and returns distinct hostnames as
+`Vec<String>`. Responses use the normal DNS cache and routing path; failed or
+empty lookups return an error. System and fake-IP services do not provide PTR
+records, so use a UDP/TCP/TLS service for this method.
+
 Only one `dns-fakeip` inbound is allowed per configuration. It allocates from
 `198.18.0.0/15` and `fd00::/96`, with at most 131,070 domain mappings. Mappings
 are stable and are never recycled while the manager runs; exhaustion fails

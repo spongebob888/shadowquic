@@ -755,3 +755,156 @@ fn dns_tls_connector_disables_jls() {
     let connector = tls_connector().unwrap();
     assert!(!connector.config().jls_config.enable);
 }
+
+#[tokio::test]
+async fn reverse_lookup_routes_ipv4_and_ipv6_ptr_queries_and_caches_answers() {
+    use simple_dns::rdata::{CNAME, PTR};
+    for (ip, expected_name) in [
+        ("192.0.2.7", "7.2.0.192.in-addr.arpa"),
+        (
+            "2001:db8::1",
+            "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa",
+        ),
+    ] {
+        let upstream = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let server = udp_cfg(upstream.local_addr().unwrap())
+            .build()
+            .await
+            .unwrap();
+        let resolver = server.resolver.clone();
+        let (stop, task) = run(server);
+        let mock = tokio::spawn(async move {
+            let mut buffer = [0; 2000];
+            let (size, peer) = upstream.recv_from(&mut buffer).await.unwrap();
+            let query = Packet::parse(&buffer[..size]).unwrap();
+            assert!(query.has_flags(PacketFlag::RECURSION_DESIRED));
+            assert_eq!(query.questions[0].qname.to_string(), expected_name);
+            assert_eq!(query.questions[0].qtype, TYPE::PTR.into());
+            assert_eq!(query.questions[0].qclass, CLASS::IN.into());
+            let mut reply = reply_for(query);
+            let alias = Name::new("delegated.reverse.test").unwrap();
+            reply.answers.push(ResourceRecord::new(
+                reply.questions[0].qname.clone(),
+                CLASS::IN,
+                60,
+                RData::CNAME(CNAME(alias.clone())),
+            ));
+            for hostname in ["host.test", "HOST.TEST", "other.test"] {
+                reply.answers.push(ResourceRecord::new(
+                    alias.clone(),
+                    CLASS::IN,
+                    60,
+                    RData::PTR(PTR(Name::new(hostname).unwrap())),
+                ));
+            }
+            reply.answers.push(ResourceRecord::new(
+                Name::new("unrelated.reverse.test").unwrap(),
+                CLASS::IN,
+                60,
+                RData::PTR(PTR(Name::new("unrelated.test").unwrap())),
+            ));
+            upstream
+                .send_to(&reply.build_bytes_vec().unwrap(), peer)
+                .await
+                .unwrap();
+            upstream
+        });
+        for _ in 0..2 {
+            let names = resolver.reverse_lookup(ip.parse().unwrap()).await.unwrap();
+            assert_eq!(names, ["host.test", "other.test"]);
+        }
+        let upstream = mock.await.unwrap();
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(30),
+                upstream.recv_from(&mut [0; 2000])
+            )
+            .await
+            .is_err()
+        );
+        stop.send(()).unwrap();
+        task.await.unwrap().unwrap();
+    }
+}
+
+struct StaticDnsReply(Vec<u8>);
+#[async_trait]
+impl DnsService for StaticDnsReply {
+    async fn exchange(&self, _: &[u8]) -> Result<Vec<u8>> {
+        Ok(self.0.clone())
+    }
+}
+
+#[tokio::test]
+async fn reverse_lookup_rejects_failed_empty_malformed_and_unrelated_answers() {
+    use simple_dns::rdata::PTR;
+    let query = query("7.2.0.192.in-addr.arpa", TYPE::PTR, 0);
+    for mode in [
+        "nxdomain",
+        "servfail",
+        "truncated",
+        "empty",
+        "unrelated",
+        "wrong-id",
+        "wrong-class",
+    ] {
+        let mut reply = reply_for(Packet::parse(&query).unwrap());
+        match mode {
+            "nxdomain" => *reply.rcode_mut() = RCODE::NameError,
+            "servfail" => *reply.rcode_mut() = RCODE::ServerFailure,
+            "truncated" => reply.set_flags(PacketFlag::TRUNCATION),
+            "wrong-id" => reply.set_id(1),
+            _ => {}
+        }
+        if mode != "empty" {
+            reply.answers.push(ResourceRecord::new(
+                if mode == "unrelated" {
+                    Name::new("unrelated.test").unwrap()
+                } else {
+                    reply.questions[0].qname.clone()
+                },
+                if mode == "wrong-class" {
+                    CLASS::CH
+                } else {
+                    CLASS::IN
+                },
+                60,
+                RData::PTR(PTR(Name::new("host.test").unwrap())),
+            ));
+        }
+        let service = StaticDnsReply(reply.build_bytes_vec().unwrap());
+        assert!(
+            service
+                .reverse_lookup("192.0.2.7".parse().unwrap())
+                .await
+                .is_err(),
+            "{mode}"
+        );
+    }
+    assert!(
+        StaticDnsReply(vec![0, 1, 2])
+            .reverse_lookup("192.0.2.7".parse().unwrap())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn reverse_lookup_rejects_cname_loops() {
+    use simple_dns::rdata::CNAME;
+    let query = query("7.2.0.192.in-addr.arpa", TYPE::PTR, 0);
+    let mut reply = reply_for(Packet::parse(&query).unwrap());
+    let name = reply.questions[0].qname.clone();
+    reply.answers.push(ResourceRecord::new(
+        name.clone(),
+        CLASS::IN,
+        60,
+        RData::CNAME(CNAME(name)),
+    ));
+    let service = StaticDnsReply(reply.build_bytes_vec().unwrap());
+    let error = service
+        .reverse_lookup("192.0.2.7".parse().unwrap())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("CNAME loop"));
+}

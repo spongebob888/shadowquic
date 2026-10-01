@@ -49,6 +49,92 @@ fn dns_error(error: impl std::fmt::Display) -> SError {
 pub trait DnsService: Send + Sync {
     async fn exchange(&self, query: &[u8]) -> Result<Vec<u8>>;
 
+    /// Resolve an IP address to hostnames using an IN/PTR query through this
+    /// service. Unlike `DnsCache::reverse_lookup_cache`, this can perform I/O.
+    /// Returns an error if the exchange fails or there are no matching names.
+    async fn reverse_lookup(&self, ip: IpAddr) -> Result<Vec<String>> {
+        let reverse_name = match ip {
+            IpAddr::V4(ip) => {
+                let [a, b, c, d] = ip.octets();
+                format!("{d}.{c}.{b}.{a}.in-addr.arpa")
+            }
+            IpAddr::V6(ip) => {
+                let mut name = String::with_capacity(73);
+                for digit in format!("{:032x}", u128::from(ip)).chars().rev() {
+                    name.push(digit);
+                    name.push('.');
+                }
+                name.push_str("ip6.arpa");
+                name
+            }
+        };
+        let mut query = Packet::new_query(0);
+        query.set_flags(PacketFlag::RECURSION_DESIRED);
+        query.questions.push(Question::new(
+            Name::new(&reverse_name).map_err(dns_error)?,
+            TYPE::PTR.into(),
+            CLASS::IN.into(),
+            false,
+        ));
+        let query = query.build_bytes_vec().map_err(dns_error)?;
+        let bytes = self.exchange(&query).await?;
+        let reply = validate_response(&query, &bytes)?;
+        if reply.has_flags(PacketFlag::TRUNCATION) {
+            return Err(dns_error(format!(
+                "truncated reverse lookup response for {ip}"
+            )));
+        }
+        if reply.rcode() != RCODE::NoError {
+            return Err(dns_error(format!(
+                "reverse lookup failed for {ip}: {:?}",
+                reply.rcode()
+            )));
+        }
+
+        // Reverse zones may delegate individual addresses through CNAMEs.
+        let mut name = reply.questions[0].qname.clone();
+        let mut visited = std::collections::HashSet::new();
+        loop {
+            if !visited.insert(name.clone()) {
+                return Err(dns_error(format!("CNAME loop in reverse lookup for {ip}")));
+            }
+            let next = reply.answers.iter().find_map(|record| {
+                if record.class == CLASS::IN
+                    && record.name == name
+                    && let RData::CNAME(alias) = &record.rdata
+                {
+                    Some(alias.0.clone())
+                } else {
+                    None
+                }
+            });
+            match next {
+                Some(next) => name = next,
+                None => break,
+            }
+        }
+        let mut names: Vec<String> = Vec::new();
+        for record in &reply.answers {
+            if record.class == CLASS::IN
+                && record.name == name
+                && let RData::PTR(ptr) = &record.rdata
+            {
+                let hostname = ptr.0.to_string();
+                if !hostname.is_empty()
+                    && !names
+                        .iter()
+                        .any(|name| name.eq_ignore_ascii_case(&hostname))
+                {
+                    names.push(hostname);
+                }
+            }
+        }
+        if names.is_empty() {
+            return Err(SError::DomainResolveFailed(ip.to_string()));
+        }
+        Ok(names)
+    }
+
     async fn resolve(&self, domain: &str) -> Result<Vec<IpAddr>> {
         let mut result = Vec::new();
         let mut last_error = None;
