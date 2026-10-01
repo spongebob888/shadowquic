@@ -67,8 +67,11 @@ local domain = reverse_lookup_cache("203.0.113.1")  -- most recently cached name
 ```
 
 These functions only inspect unexpired cached answers; they never perform
-network I/O. Reverse lookup follows cached question/CNAME answers, rather than
-issuing a PTR query. Multiple names may share an address.
+network I/O. Reverse lookup searches both cached A/AAAA answers and cached PTR
+queries for the IP address, following CNAME aliases in either case. It returns a
+name from the most recently cached matching response; for multiple PTR targets,
+it returns the first. It does not issue a new PTR query. Multiple names may
+share an address.
 
 Rust callers can use `DnsService::reverse_lookup(ip).await` to issue a PTR query
 through the selected service. It supports IPv4 (`in-addr.arpa`) and IPv6

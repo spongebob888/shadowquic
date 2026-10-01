@@ -45,6 +45,71 @@ fn dns_error(error: impl std::fmt::Display) -> SError {
     SError::DnsError(error.to_string())
 }
 
+fn reverse_name(ip: IpAddr) -> String {
+    match ip {
+        IpAddr::V4(ip) => {
+            let [a, b, c, d] = ip.octets();
+            format!("{d}.{c}.{b}.{a}.in-addr.arpa")
+        }
+        IpAddr::V6(ip) => {
+            let mut name = String::with_capacity(73);
+            for digit in format!("{:032x}", u128::from(ip)).chars().rev() {
+                name.push(digit);
+                name.push('.');
+            }
+            name.push_str("ip6.arpa");
+            name
+        }
+    }
+}
+
+fn ptr_names(packet: &Packet<'_>) -> Result<Vec<String>> {
+    // Reverse zones may delegate individual addresses through CNAMEs.
+    let mut name = packet
+        .questions
+        .first()
+        .ok_or_else(|| dns_error("missing PTR question"))?
+        .qname
+        .clone();
+    let mut visited = std::collections::HashSet::new();
+    loop {
+        if !visited.insert(name.clone()) {
+            return Err(dns_error("CNAME loop in reverse lookup"));
+        }
+        let next = packet.answers.iter().find_map(|record| {
+            if record.class == CLASS::IN
+                && record.name == name
+                && let RData::CNAME(alias) = &record.rdata
+            {
+                Some(alias.0.clone())
+            } else {
+                None
+            }
+        });
+        match next {
+            Some(next) => name = next,
+            None => break,
+        }
+    }
+    let mut names: Vec<String> = Vec::new();
+    for record in &packet.answers {
+        if record.class == CLASS::IN
+            && record.name == name
+            && let RData::PTR(ptr) = &record.rdata
+        {
+            let hostname = ptr.0.to_string();
+            if !hostname.is_empty()
+                && !names
+                    .iter()
+                    .any(|name| name.eq_ignore_ascii_case(&hostname))
+            {
+                names.push(hostname);
+            }
+        }
+    }
+    Ok(names)
+}
+
 #[async_trait]
 pub trait DnsService: Send + Sync {
     async fn exchange(&self, query: &[u8]) -> Result<Vec<u8>>;
@@ -53,21 +118,7 @@ pub trait DnsService: Send + Sync {
     /// service. Unlike `DnsCache::reverse_lookup_cache`, this can perform I/O.
     /// Returns an error if the exchange fails or there are no matching names.
     async fn reverse_lookup(&self, ip: IpAddr) -> Result<Vec<String>> {
-        let reverse_name = match ip {
-            IpAddr::V4(ip) => {
-                let [a, b, c, d] = ip.octets();
-                format!("{d}.{c}.{b}.{a}.in-addr.arpa")
-            }
-            IpAddr::V6(ip) => {
-                let mut name = String::with_capacity(73);
-                for digit in format!("{:032x}", u128::from(ip)).chars().rev() {
-                    name.push(digit);
-                    name.push('.');
-                }
-                name.push_str("ip6.arpa");
-                name
-            }
-        };
+        let reverse_name = reverse_name(ip);
         let mut query = Packet::new_query(0);
         query.set_flags(PacketFlag::RECURSION_DESIRED);
         query.questions.push(Question::new(
@@ -91,44 +142,7 @@ pub trait DnsService: Send + Sync {
             )));
         }
 
-        // Reverse zones may delegate individual addresses through CNAMEs.
-        let mut name = reply.questions[0].qname.clone();
-        let mut visited = std::collections::HashSet::new();
-        loop {
-            if !visited.insert(name.clone()) {
-                return Err(dns_error(format!("CNAME loop in reverse lookup for {ip}")));
-            }
-            let next = reply.answers.iter().find_map(|record| {
-                if record.class == CLASS::IN
-                    && record.name == name
-                    && let RData::CNAME(alias) = &record.rdata
-                {
-                    Some(alias.0.clone())
-                } else {
-                    None
-                }
-            });
-            match next {
-                Some(next) => name = next,
-                None => break,
-            }
-        }
-        let mut names: Vec<String> = Vec::new();
-        for record in &reply.answers {
-            if record.class == CLASS::IN
-                && record.name == name
-                && let RData::PTR(ptr) = &record.rdata
-            {
-                let hostname = ptr.0.to_string();
-                if !hostname.is_empty()
-                    && !names
-                        .iter()
-                        .any(|name| name.eq_ignore_ascii_case(&hostname))
-                {
-                    names.push(hostname);
-                }
-            }
-        }
+        let names = ptr_names(&reply)?;
         if names.is_empty() {
             return Err(SError::DomainResolveFailed(ip.to_string()));
         }

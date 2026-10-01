@@ -812,6 +812,12 @@ async fn reverse_lookup_routes_ipv4_and_ipv6_ptr_queries_and_caches_answers() {
         for _ in 0..2 {
             let names = resolver.reverse_lookup(ip.parse().unwrap()).await.unwrap();
             assert_eq!(names, ["host.test", "other.test"]);
+            assert_eq!(
+                global_cache()
+                    .reverse_lookup_cache(ip.parse().unwrap())
+                    .as_deref(),
+                Some("host.test")
+            );
         }
         let upstream = mock.await.unwrap();
         assert!(
@@ -907,4 +913,104 @@ async fn reverse_lookup_rejects_cname_loops() {
         .await
         .unwrap_err();
     assert!(error.to_string().contains("CNAME loop"));
+}
+
+#[test]
+fn reverse_lookup_cache_searches_ptr_answers_and_preserves_forward_fallback() {
+    use simple_dns::rdata::PTR;
+    let cache = DnsCache::default();
+    let ip = Ipv4Addr::LOCALHOST.into();
+    let forward_query = query("forward.test", TYPE::A, 1);
+    let forward_reply = response(&forward_query, 60);
+    cache.insert(1, &forward_query, Packet::parse(&forward_reply).unwrap());
+    cache.age_for_test(Duration::from_secs(1));
+
+    let ptr_query = query("1.0.0.127.IN-ADDR.ARPA", TYPE::PTR, 2);
+    let mut ptr_reply = reply_for(Packet::parse(&ptr_query).unwrap());
+    for hostname in ["reverse.test", "other.test"] {
+        ptr_reply.answers.push(ResourceRecord::new(
+            ptr_reply.questions[0].qname.clone(),
+            CLASS::IN,
+            2,
+            RData::PTR(PTR(Name::new(hostname).unwrap())),
+        ));
+    }
+    cache.insert(2, &ptr_query, ptr_reply.clone());
+    assert_eq!(
+        cache.reverse_lookup_cache(ip).as_deref(),
+        Some("reverse.test")
+    );
+    assert!(
+        cache
+            .reverse_lookup_cache("127.0.0.2".parse().unwrap())
+            .is_none()
+    );
+
+    cache.age_for_test(Duration::from_secs(3));
+    assert_eq!(
+        cache.reverse_lookup_cache(ip).as_deref(),
+        Some("forward.test")
+    );
+    cache.insert(2, &ptr_query, ptr_reply);
+    cache.age_for_test(Duration::from_secs(1));
+    cache.insert(1, &forward_query, Packet::parse(&forward_reply).unwrap());
+    assert_eq!(
+        cache.reverse_lookup_cache(ip).as_deref(),
+        Some("forward.test")
+    );
+    cache.age_for_test(Duration::from_secs(61));
+    assert!(cache.reverse_lookup_cache(ip).is_none());
+}
+
+#[test]
+fn reverse_lookup_cache_ignores_unrelated_ptr_records_and_cname_loops() {
+    use simple_dns::rdata::{CNAME, PTR};
+    for mode in [
+        "unrelated",
+        "wrong-class",
+        "wrong-question-type",
+        "cname-loop",
+    ] {
+        let cache = DnsCache::default();
+        let query = query(
+            "7.2.0.192.in-addr.arpa",
+            if mode == "wrong-question-type" {
+                TYPE::TXT
+            } else {
+                TYPE::PTR
+            },
+            0,
+        );
+        let mut reply = reply_for(Packet::parse(&query).unwrap());
+        let owner = reply.questions[0].qname.clone();
+        if mode == "cname-loop" {
+            reply.answers.push(ResourceRecord::new(
+                owner.clone(),
+                CLASS::IN,
+                60,
+                RData::CNAME(CNAME(owner.clone())),
+            ));
+        }
+        reply.answers.push(ResourceRecord::new(
+            if mode == "unrelated" {
+                Name::new("unrelated.test").unwrap()
+            } else {
+                owner
+            },
+            if mode == "wrong-class" {
+                CLASS::CH
+            } else {
+                CLASS::IN
+            },
+            60,
+            RData::PTR(PTR(Name::new("host.test").unwrap())),
+        ));
+        cache.insert(1, &query, reply);
+        assert!(
+            cache
+                .reverse_lookup_cache("192.0.2.7".parse().unwrap())
+                .is_none(),
+            "{mode}"
+        );
+    }
 }

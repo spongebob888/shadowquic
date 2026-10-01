@@ -5,9 +5,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use simple_dns::{Packet, PacketFlag, RCODE, rdata::RData};
+use simple_dns::{CLASS, Packet, PacketFlag, QTYPE, RCODE, TYPE, rdata::RData};
 
-use super::{Result, dns_error};
+use super::{Result, dns_error, ptr_names, reverse_name};
 
 const CAPACITY: usize = 4096;
 
@@ -157,9 +157,11 @@ impl DnsCache {
         result
     }
 
-    /// Returns the most recently cached name associated with this address.
+    /// Returns the most recently cached name from matching A/AAAA or PTR answers.
+    /// Follows CNAME chains, ignores expired entries, and never performs I/O.
     pub fn reverse_lookup_cache(&self, ip: IpAddr) -> Option<String> {
         let now = Instant::now();
+        let reverse_name = reverse_name(ip);
         self.entries
             .lock()
             .unwrap()
@@ -167,9 +169,25 @@ impl DnsCache {
             .filter(|e| e.expires > now)
             .filter_map(|e| {
                 let packet = Packet::parse(&e.packet).ok()?;
-                addresses(&packet)
-                    .contains(&ip)
-                    .then(|| (e.inserted, packet.questions[0].qname.to_string()))
+                let question = packet.questions.first()?;
+                if question.qclass != CLASS::IN.into() {
+                    return None;
+                }
+                let name = match question.qtype {
+                    QTYPE::TYPE(TYPE::PTR)
+                        if question
+                            .qname
+                            .to_string()
+                            .eq_ignore_ascii_case(&reverse_name) =>
+                    {
+                        ptr_names(&packet).ok()?.into_iter().next()?
+                    }
+                    QTYPE::TYPE(TYPE::A | TYPE::AAAA) if addresses(&packet).contains(&ip) => {
+                        question.qname.to_string()
+                    }
+                    _ => return None,
+                };
+                Some((e.inserted, name))
             })
             .max_by_key(|(inserted, _)| *inserted)
             .map(|(_, name)| name)
