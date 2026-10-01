@@ -148,12 +148,11 @@ async fn truncated_udp_retries_over_tcp_and_local_tcp_is_framed() {
 }
 
 #[test]
-fn cache_expires_ages_ttls_and_partitions_resolvers() {
+fn cache_expires_and_ages_ttls() {
     let cache = DnsCache::default();
     let query = query("cache.test", TYPE::A, 1);
     let reply = response(&query, 60);
-    cache.insert(1, &query, Packet::parse(&reply).unwrap());
-    assert!(cache.get(2, &query).unwrap().is_none());
+    cache.insert(&query, Packet::parse(&reply).unwrap());
     assert_eq!(
         cache.lookup_cache("CACHE.TEST."),
         vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]
@@ -165,7 +164,7 @@ fn cache_expires_ages_ttls_and_partitions_resolvers() {
         Some("cache.test")
     );
     cache.age_for_test(Duration::from_secs(10));
-    let bytes = cache.get(1, &query).unwrap().unwrap();
+    let bytes = cache.get(&query).unwrap().unwrap();
     assert_eq!(Packet::parse(&bytes).unwrap().answers[0].ttl, 50);
     cache.age_for_test(Duration::from_secs(51));
     assert!(cache.lookup_cache("cache.test").is_empty());
@@ -174,9 +173,9 @@ fn cache_expires_ages_ttls_and_partitions_resolvers() {
             .reverse_lookup_cache(Ipv4Addr::LOCALHOST.into())
             .is_none()
     );
-    assert!(cache.get(1, &query).unwrap().is_none());
-    cache.insert(1, &query, Packet::parse(&response(&query, 0)).unwrap());
-    assert!(cache.get(1, &query).unwrap().is_none());
+    assert!(cache.get(&query).unwrap().is_none());
+    cache.insert(&query, Packet::parse(&response(&query, 0)).unwrap());
+    assert!(cache.get(&query).unwrap().is_none());
 }
 
 #[tokio::test]
@@ -380,7 +379,6 @@ async fn tls_exchange(trusted: bool, server_name: &str) -> Result<Vec<u8>> {
             connector: tokio_rustls_jls::TlsConnector::from(Arc::new(client)),
         },
         requests,
-        identity: u64::MAX,
         fake_ip: None,
     };
     let upstream = tokio::spawn(async move {
@@ -515,7 +513,7 @@ async fn routing_scripts_can_query_shared_cache() {
         60,
         RData::A(ip.into()),
     ));
-    global_cache().insert(u64::MAX - 1, &query, reply);
+    global_cache().insert(&query, reply);
     let router = Router::from_source(&format!(
         r#"
         return function(ctx)
@@ -922,7 +920,7 @@ fn reverse_lookup_cache_searches_ptr_answers_and_preserves_forward_fallback() {
     let ip = Ipv4Addr::LOCALHOST.into();
     let forward_query = query("forward.test", TYPE::A, 1);
     let forward_reply = response(&forward_query, 60);
-    cache.insert(1, &forward_query, Packet::parse(&forward_reply).unwrap());
+    cache.insert(&forward_query, Packet::parse(&forward_reply).unwrap());
     cache.age_for_test(Duration::from_secs(1));
 
     let ptr_query = query("1.0.0.127.IN-ADDR.ARPA", TYPE::PTR, 2);
@@ -935,7 +933,7 @@ fn reverse_lookup_cache_searches_ptr_answers_and_preserves_forward_fallback() {
             RData::PTR(PTR(Name::new(hostname).unwrap())),
         ));
     }
-    cache.insert(2, &ptr_query, ptr_reply.clone());
+    cache.insert(&ptr_query, ptr_reply.clone());
     assert_eq!(
         cache.reverse_lookup_cache(ip).as_deref(),
         Some("reverse.test")
@@ -951,9 +949,9 @@ fn reverse_lookup_cache_searches_ptr_answers_and_preserves_forward_fallback() {
         cache.reverse_lookup_cache(ip).as_deref(),
         Some("forward.test")
     );
-    cache.insert(2, &ptr_query, ptr_reply);
+    cache.insert(&ptr_query, ptr_reply);
     cache.age_for_test(Duration::from_secs(1));
-    cache.insert(1, &forward_query, Packet::parse(&forward_reply).unwrap());
+    cache.insert(&forward_query, Packet::parse(&forward_reply).unwrap());
     assert_eq!(
         cache.reverse_lookup_cache(ip).as_deref(),
         Some("forward.test")
@@ -1005,7 +1003,7 @@ fn reverse_lookup_cache_ignores_unrelated_ptr_records_and_cname_loops() {
             60,
             RData::PTR(PTR(Name::new("host.test").unwrap())),
         ));
-        cache.insert(1, &query, reply);
+        cache.insert(&query, reply);
         assert!(
             cache
                 .reverse_lookup_cache("192.0.2.7".parse().unwrap())
@@ -1013,4 +1011,57 @@ fn reverse_lookup_cache_ignores_unrelated_ptr_records_and_cname_loops() {
             "{mode}"
         );
     }
+}
+
+#[tokio::test]
+async fn different_resolvers_share_cached_responses_and_restore_transaction_ids() {
+    let upstream = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let first = udp_cfg(upstream.local_addr().unwrap())
+        .build()
+        .await
+        .unwrap();
+    let resolver = first.resolver.clone();
+    let (stop, task) = run(first);
+    let mock = tokio::spawn(async move {
+        let mut buffer = [0; 2000];
+        let (size, peer) = upstream.recv_from(&mut buffer).await.unwrap();
+        upstream
+            .send_to(&response(&buffer[..size], 60), peer)
+            .await
+            .unwrap();
+    });
+    let first_query = query("shared-resolver-cache.test", TYPE::A, 123);
+    let bytes = resolver.exchange(&first_query).await.unwrap();
+    assert_eq!(Packet::parse(&bytes).unwrap().id(), 123);
+    mock.await.unwrap();
+    stop.send(()).unwrap();
+    task.await.unwrap().unwrap();
+
+    let unused_upstream = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let second = super::config::DnsTcpServerCfg {
+        tag: "second-resolver".into(),
+        bind_addr: "127.0.0.1:0".parse().unwrap(),
+        upstream: unused_upstream.local_addr().unwrap(),
+    }
+    .build()
+    .await
+    .unwrap();
+    // No manager services this resolver's upstream queue: only a shared cache
+    // hit can complete. The different transport must not affect cache lookup.
+    let second_query = query("shared-resolver-cache.test", TYPE::A, 456);
+    let bytes = tokio::time::timeout(Duration::from_secs(1), second.exchange(&second_query))
+        .await
+        .unwrap()
+        .unwrap();
+    let reply = Packet::parse(&bytes).unwrap();
+    assert_eq!(reply.id(), 456);
+    assert_eq!(
+        cache::addresses(&reply),
+        vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(30), unused_upstream.accept())
+            .await
+            .is_err()
+    );
 }

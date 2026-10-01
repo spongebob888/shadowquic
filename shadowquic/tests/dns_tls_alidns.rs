@@ -29,7 +29,7 @@ async fn resolves_through_alidns_over_tls() -> Result<(), Box<dyn Error>> {
         Box::new(server),
         Arc::new(DirectOut::new(DirectOutCfg::default())),
     );
-    assert_alidns_query(manager, local_addr).await
+    assert_alidns_query(manager, local_addr, "www.aliyun.com").await
 }
 
 /// Verify that the UDP resolver's upstream traffic is intercepted by the
@@ -90,7 +90,8 @@ router:
     assert!(manager.outbounds.contains_key("dns-tls"));
     assert_eq!(manager.default_outbound, "unused-default");
 
-    assert_alidns_query(manager, local_addr).await?;
+    // A distinct domain ensures the other test cannot satisfy this query from cache.
+    assert_alidns_query(manager, local_addr, "dns.alidns.com").await?;
     let error = unused_upstream
         .try_recv(&mut [0; 2000])
         .expect_err("DNS UDP upstream received a packet instead of being hijacked");
@@ -101,13 +102,14 @@ router:
 async fn assert_alidns_query(
     manager: Manager,
     local_addr: SocketAddr,
+    hostname: &str,
 ) -> Result<(), Box<dyn Error>> {
     let (stop, stopped) = oneshot::channel();
     let manager_task = tokio::spawn(manager.run_until(async {
         let _ = stopped.await;
     }));
 
-    let domain = Name::new("www.aliyun.com")?;
+    let domain = Name::new(hostname)?;
     let mut query = Packet::new_query(0xa11d);
     query.set_flags(PacketFlag::RECURSION_DESIRED);
     query.questions.push(Question::new(
@@ -152,7 +154,7 @@ async fn assert_alidns_query(
             .answers
             .iter()
             .any(|record| matches!(record.rdata, RData::A(_))),
-        "AliDNS returned no IPv4 answers for www.aliyun.com: {reply:?}"
+        "AliDNS returned no IPv4 answers for {hostname}: {reply:?}"
     );
     Ok(())
 }

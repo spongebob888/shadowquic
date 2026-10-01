@@ -17,11 +17,10 @@ struct Entry {
     expires: Instant,
 }
 
-/// Shared by all DNS services. Resolver identities partition wire responses so
-/// split DNS and synthetic answers never contaminate another resolver's cache.
+/// Shared by all DNS services, keyed only by the query with its transaction ID cleared.
 #[derive(Default)]
 pub struct DnsCache {
-    entries: Mutex<HashMap<(u64, Vec<u8>), Entry>>,
+    entries: Mutex<HashMap<Vec<u8>, Entry>>,
 }
 
 pub fn global_cache() -> &'static DnsCache {
@@ -68,11 +67,11 @@ pub(super) fn addresses(packet: &Packet<'_>) -> Vec<IpAddr> {
 }
 
 impl DnsCache {
-    pub(super) fn get(&self, resolver: u64, query: &[u8]) -> Result<Option<Vec<u8>>> {
+    pub(super) fn get(&self, query: &[u8]) -> Result<Option<Vec<u8>>> {
         let now = Instant::now();
         let mut entries = self.entries.lock().unwrap();
         entries.retain(|_, e| e.expires > now);
-        let Some(entry) = entries.get(&(resolver, key(query))) else {
+        let Some(entry) = entries.get(&key(query)) else {
             return Ok(None);
         };
         let mut packet = Packet::parse(&entry.packet).map_err(dns_error)?;
@@ -89,7 +88,7 @@ impl DnsCache {
         packet.build_bytes_vec().map(Some).map_err(dns_error)
     }
 
-    pub(super) fn insert(&self, resolver: u64, query: &[u8], packet: Packet<'_>) {
+    pub(super) fn insert(&self, query: &[u8], packet: Packet<'_>) {
         if packet.rcode() != RCODE::NoError
             || packet.has_flags(PacketFlag::TRUNCATION)
             || packet.answers.is_empty()
@@ -122,7 +121,7 @@ impl DnsCache {
             return;
         };
         entries.insert(
-            (resolver, key(query)),
+            key(query),
             Entry {
                 packet,
                 inserted: now,

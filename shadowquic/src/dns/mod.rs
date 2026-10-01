@@ -18,14 +18,7 @@ use simple_dns::{
     CLASS, Name, OPCODE, Packet, PacketFlag, QCLASS, QTYPE, Question, RCODE, ResourceRecord, TYPE,
     rdata::RData,
 };
-use std::{
-    net::IpAddr,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::Duration,
-};
+use std::{net::IpAddr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, UdpSocket},
@@ -205,7 +198,6 @@ pub struct Resolver {
     tag: String,
     backend: Backend,
     requests: mpsc::Sender<ProxyRequest>,
-    identity: u64,
     pub fake_ip: Option<Arc<FakeIp>>,
 }
 
@@ -263,13 +255,11 @@ impl DnsServer {
         let local_addr = tcp.local_addr()?;
         let udp = Arc::new(UdpSocket::bind(local_addr).await?);
         let (tx, rx) = mpsc::channel(256);
-        static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
         let resolver = Arc::new(Resolver {
             tag,
             fake_ip: matches!(backend, Backend::FakeIp).then(|| Arc::new(FakeIp::default())),
             backend,
             requests: tx,
-            identity: NEXT_ID.fetch_add(1, Ordering::Relaxed) as u64,
         });
         let service = resolver.clone();
         let udp_task = tokio::spawn(async move {
@@ -500,7 +490,7 @@ impl Resolver {
 impl DnsService for Resolver {
     async fn exchange(&self, query: &[u8]) -> Result<Vec<u8>> {
         let packet = parse_query(query)?;
-        if let Some(cached) = global_cache().get(self.identity, query)? {
+        if let Some(cached) = global_cache().get(query)? {
             return Ok(cached);
         }
         let reply = tokio::time::timeout(TIMEOUT, async {
@@ -523,7 +513,7 @@ impl DnsService for Resolver {
         .await
         .map_err(|_| dns_error("query timed out"))??;
         let packet = validate_response(query, &reply)?;
-        global_cache().insert(self.identity, query, packet);
+        global_cache().insert(query, packet);
         Ok(reply)
     }
 }

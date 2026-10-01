@@ -56,8 +56,10 @@ outbounds). This option does not change bootstrap resolution of a proxy
 server's own `addr`. Fake-IP services cannot be selected for outbound
 destination resolution.
 
-The process-wide positive DNS cache holds up to 4,096 responses, partitions
-responses by resolver instance, adjusts TTLs on hits, and expires entries at the
+The process-wide positive DNS cache holds up to 4,096 responses shared by all
+resolvers. Entries are keyed by the query without its transaction ID, so any
+resolver can reuse a matching response populated by another resolver. The cache
+adjusts TTLs on hits and expires entries at the
 shortest record TTL. Zero-TTL, failed, empty, and truncated answers are not
 cached. Lua routing scripts can call:
 
