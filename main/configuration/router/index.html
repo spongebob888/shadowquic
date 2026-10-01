@@ -1569,7 +1569,9 @@ Inline scripts are not watched.</p>
 </tr>
 </tbody>
 </table>
-<p>Scripts may update <code>dst_domain</code>, <code>dst_ip_v4</code>, <code>dst_ip_v6</code>, and <code>dst_port</code>.
+<p>Scripts may update <code>dst_domain</code>, <code>dst_ip_v4</code>, <code>dst_ip_v6</code>, and <code>dst_port</code> only
+for TCP requests. Writing these fields for UDP requests raises an error,
+including assigning nil.
 Setting a destination name or IP clears the other destination address fields.
 Return a configured outbound tag to route the request, or <code>nil, error_message</code>
 to reject it. Routing errors do not fall back to <code>router.default-outbound</code>.</p>
