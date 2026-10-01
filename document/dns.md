@@ -80,3 +80,14 @@ when using this mode. Fake addresses must not be used as real outbound targets.
 
 See [`config_examples/dns.yaml`](../shadowquic/config_examples/dns.yaml) for a
 complete configuration with TLS resolution and DNS hijacking.
+
+The live AliDNS integration test sends a query through the local DNS listener
+and routes it over certificate-verified TLS to `223.5.5.5:853`, using
+`dns.alidns.com` as the server name. It is ignored by default because it requires
+Internet access. With `plugin` enabled, the same test target also checks two DNS
+inbounds with Lua routing: `dns-udp → dns-tls → direct`. It verifies that the UDP
+inbound's original upstream receives no packets. Run both tests explicitly with:
+
+```sh
+cargo test --release -p shadowquic --features dns-server --test dns_tls_alidns -- --ignored --nocapture
+```
