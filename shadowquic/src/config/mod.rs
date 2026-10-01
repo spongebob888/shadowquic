@@ -412,13 +412,13 @@ impl OutboundCfg {
         }
     }
 
-    async fn build_outbound(self) -> Result<Box<dyn Outbound>, SError> {
-        let r: Box<dyn Outbound> = match self {
-            OutboundCfg::Socks(cfg) => Box::new(SocksClient::new(cfg)),
-            OutboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicClient::new(cfg)),
-            OutboundCfg::SunnyQuic(cfg) => Box::new(SunnyQuicClient::new(cfg)),
-            OutboundCfg::Direct(cfg) => Box::new(DirectOut::new(cfg)),
-            OutboundCfg::Drop(_) => Box::new(DropOutbound),
+    async fn build_outbound(self) -> Result<Arc<dyn Outbound>, SError> {
+        let r: Arc<dyn Outbound> = match self {
+            OutboundCfg::Socks(cfg) => Arc::new(SocksClient::new(cfg)),
+            OutboundCfg::ShadowQuic(cfg) => Arc::new(ShadowQuicClient::new(cfg)),
+            OutboundCfg::SunnyQuic(cfg) => Arc::new(SunnyQuicClient::new(cfg)),
+            OutboundCfg::Direct(cfg) => Arc::new(DirectOut::new(cfg)),
+            OutboundCfg::Drop(_) => Arc::new(DropOutbound),
         };
         Ok(r)
     }
