@@ -21,6 +21,10 @@ use crate::{
 };
 
 mod serde_utils;
+#[cfg(feature = "dns-server")]
+pub use crate::dns::config::{
+    DnsFakeIpServerCfg, DnsSystemServerCfg, DnsTcpServerCfg, DnsTlsServerCfg, DnsUdpServerCfg,
+};
 #[cfg(all(feature = "tproxy", target_os = "linux"))]
 use crate::tproxy::inbound::TproxyServer;
 
@@ -64,8 +68,12 @@ pub struct Config {
     /// Listeners to run concurrently. Tags must be nonempty and unique within this list.
     #[serde(alias = "inbound", deserialize_with = "deserialize_inbounds")]
     pub inbounds: Vec<InboundCfg>,
-    /// Available outbounds.
-    #[serde(alias = "outbound", deserialize_with = "deserialize_outbounds")]
+    /// Explicit outbounds. DNS inbounds are also registered under their own tags.
+    #[serde(
+        default,
+        alias = "outbound",
+        deserialize_with = "deserialize_outbounds"
+    )]
     pub outbounds: Vec<OutboundCfg>,
     /// Request routing. Omit this section to use the first configured outbound.
     #[serde(default)]
@@ -74,6 +82,19 @@ pub struct Config {
     pub log_level: LogLevel,
 }
 impl Config {
+    /// Explicit outbounds come first, followed by automatically registered DNS services.
+    fn outbound_tags(&self) -> impl Iterator<Item = &str> {
+        let tags = self.outbounds.iter().map(OutboundCfg::tag);
+        #[cfg(feature = "dns-server")]
+        let tags = tags.chain(
+            self.inbounds
+                .iter()
+                .filter(|inbound| inbound.is_dns())
+                .map(InboundCfg::tag),
+        );
+        tags
+    }
+
     /// Validate endpoint identities before opening any listeners.
     pub fn validate(&self) -> Result<(), SError> {
         for (kind, tags) in [
@@ -84,13 +105,7 @@ impl Config {
                     .map(InboundCfg::tag)
                     .collect::<Vec<_>>(),
             ),
-            (
-                "outbound",
-                self.outbounds
-                    .iter()
-                    .map(OutboundCfg::tag)
-                    .collect::<Vec<_>>(),
-            ),
+            ("outbound", self.outbound_tags().collect::<Vec<_>>()),
         ] {
             if tags.is_empty() {
                 return Err(SError::InvalidConfig(format!(
@@ -112,11 +127,43 @@ impl Config {
             }
         }
         if let Some(tag) = &self.router.default_outbound
-            && !self.outbounds.iter().any(|outbound| outbound.tag() == tag)
+            && !self.outbound_tags().any(|outbound| outbound == tag)
         {
             return Err(SError::InvalidConfig(format!(
                 "default outbound tag does not match a configured outbound: {tag}"
             )));
+        }
+        #[cfg(feature = "dns-server")]
+        {
+            let mut fake_count = 0;
+            for inbound in &self.inbounds {
+                if let InboundCfg::DnsTls(cfg) = inbound {
+                    cfg.validate()?;
+                }
+                fake_count += usize::from(matches!(inbound, InboundCfg::DnsFakeIp(_)));
+            }
+            if fake_count > 1 {
+                return Err(SError::InvalidConfig(
+                    "at most one fakeip DNS inbound is allowed".into(),
+                ));
+            }
+            for outbound in &self.outbounds {
+                if let Some(tag) = outbound.dns() {
+                    let inbound = self
+                        .inbounds
+                        .iter()
+                        .find(|inbound| inbound.tag() == tag)
+                        .filter(|inbound| inbound.is_dns())
+                        .ok_or_else(|| {
+                            SError::InvalidConfig(format!("unknown DNS inbound: {tag}"))
+                        })?;
+                    if matches!(inbound, InboundCfg::DnsFakeIp(_)) {
+                        return Err(SError::InvalidConfig(
+                            "fakeip cannot resolve outbound destinations".into(),
+                        ));
+                    }
+                }
+            }
         }
         self.router.validate()?;
         Ok(())
@@ -129,18 +176,72 @@ impl Config {
         let default_outbound = self
             .router
             .default_outbound
-            .unwrap_or_else(|| self.outbounds[0].tag().to_owned());
+            .clone()
+            .unwrap_or_else(|| self.outbound_tags().next().unwrap().to_owned());
         let mut inbounds = HashMap::new();
         let mut outbounds = HashMap::new();
+        #[cfg(feature = "dns-server")]
+        let mut resolvers = HashMap::new();
+        #[cfg(all(feature = "dns-server", feature = "tproxy", target_os = "linux"))]
+        let mut fake_ip = None;
+        #[cfg(feature = "dns-server")]
+        for cfg in &self.inbounds {
+            if let Some(server) = cfg.build_dns().await? {
+                let tag = cfg.tag().to_owned();
+                #[cfg(all(feature = "tproxy", target_os = "linux"))]
+                if server.resolver.fake_ip.is_some() {
+                    fake_ip = server.resolver.fake_ip.clone();
+                }
+                outbounds.insert(tag.clone(), server.resolver.clone() as Arc<dyn Outbound>);
+                resolvers.insert(tag.clone(), server.resolver.clone());
+                inbounds.insert(tag.clone(), Box::new(server) as Box<dyn Inbound>);
+            }
+        }
         for cfg in self.outbounds {
             let tag = cfg.tag().to_owned();
             let span = info_span!("outbound", tag = %tag);
+            #[cfg(feature = "dns-server")]
+            {
+                let resolver = cfg.dns().map(|tag| resolvers[tag].clone());
+                let strategy = match &cfg {
+                    OutboundCfg::Direct(cfg) => cfg.dns_strategy.clone(),
+                    _ => DnsStrategy::default(),
+                };
+                let inner: Arc<dyn Outbound> =
+                    Arc::from(cfg.build_outbound().instrument(span).await?);
+                let outbound: Arc<dyn Outbound> = match resolver {
+                    Some(resolver) => Arc::new(crate::dns::ResolvingOutbound {
+                        inner,
+                        resolver,
+                        strategy,
+                    }),
+                    None => inner,
+                };
+                outbounds.insert(tag, outbound);
+            }
+            #[cfg(not(feature = "dns-server"))]
             outbounds.insert(tag, Arc::from(cfg.build_outbound().instrument(span).await?));
         }
         for cfg in self.inbounds {
             let tag = cfg.tag().to_owned();
             let span = info_span!("inbound", tag = %tag);
-            inbounds.insert(tag, cfg.build_inbound().instrument(span).await?);
+            #[cfg(feature = "dns-server")]
+            if cfg.is_dns() {
+                continue;
+            }
+            #[cfg(all(feature = "dns-server", feature = "tproxy", target_os = "linux"))]
+            let restore_fake = matches!(&cfg, InboundCfg::Tproxy(_));
+            let inbound = cfg.build_inbound().instrument(span).await?;
+            #[cfg(all(feature = "dns-server", feature = "tproxy", target_os = "linux"))]
+            let inbound = if restore_fake && let Some(fake) = fake_ip.clone() {
+                Box::new(crate::dns::RestoringInbound {
+                    inner: inbound,
+                    fake,
+                }) as Box<dyn Inbound>
+            } else {
+                inbound
+            };
+            inbounds.insert(tag, inbound);
         }
         Ok(Manager {
             inbounds,
@@ -165,6 +266,22 @@ impl Config {
 #[serde(rename_all = "kebab-case")]
 #[serde(tag = "type")]
 pub enum InboundCfg {
+    #[cfg(feature = "dns-server")]
+    #[serde(rename = "dns-udp")]
+    DnsUdp(DnsUdpServerCfg),
+    #[cfg(feature = "dns-server")]
+    #[serde(rename = "dns-tcp")]
+    DnsTcp(DnsTcpServerCfg),
+    #[cfg(feature = "dns-server")]
+    #[serde(rename = "dns-tls")]
+    DnsTls(DnsTlsServerCfg),
+    #[cfg(feature = "dns-server")]
+    #[serde(rename = "dns-fakeip")]
+    DnsFakeIp(DnsFakeIpServerCfg),
+    #[cfg(feature = "dns-server")]
+    #[serde(rename = "dns-system")]
+    DnsSystem(DnsSystemServerCfg),
+
     Socks(SocksServerCfg),
     #[cfg(feature = "mixed")]
     Mixed(MixedServerCfg),
@@ -177,9 +294,44 @@ pub enum InboundCfg {
     Tproxy(TproxyServerCfg),
 }
 impl InboundCfg {
+    #[cfg(feature = "dns-server")]
+    pub fn is_dns(&self) -> bool {
+        matches!(
+            self,
+            Self::DnsUdp(_)
+                | Self::DnsTcp(_)
+                | Self::DnsTls(_)
+                | Self::DnsFakeIp(_)
+                | Self::DnsSystem(_)
+        )
+    }
+
+    #[cfg(feature = "dns-server")]
+    async fn build_dns(&self) -> Result<Option<crate::dns::DnsServer>, SError> {
+        let server = match self {
+            Self::DnsUdp(cfg) => cfg.clone().build().await?,
+            Self::DnsTcp(cfg) => cfg.clone().build().await?,
+            Self::DnsTls(cfg) => cfg.clone().build().await?,
+            Self::DnsFakeIp(cfg) => cfg.clone().build().await?,
+            Self::DnsSystem(cfg) => cfg.clone().build().await?,
+            _ => return Ok(None),
+        };
+        Ok(Some(server))
+    }
+
     /// Returns the endpoint label.
     pub fn tag(&self) -> &str {
         match self {
+            #[cfg(feature = "dns-server")]
+            Self::DnsUdp(cfg) => &cfg.tag,
+            #[cfg(feature = "dns-server")]
+            Self::DnsTcp(cfg) => &cfg.tag,
+            #[cfg(feature = "dns-server")]
+            Self::DnsTls(cfg) => &cfg.tag,
+            #[cfg(feature = "dns-server")]
+            Self::DnsFakeIp(cfg) => &cfg.tag,
+            #[cfg(feature = "dns-server")]
+            Self::DnsSystem(cfg) => &cfg.tag,
             Self::Socks(cfg) => &cfg.tag,
             #[cfg(feature = "mixed")]
             Self::Mixed(cfg) => &cfg.tag,
@@ -192,6 +344,16 @@ impl InboundCfg {
 
     async fn build_inbound(self) -> Result<Box<dyn Inbound>, SError> {
         let r: Box<dyn Inbound> = match self {
+            #[cfg(feature = "dns-server")]
+            Self::DnsUdp(cfg) => Box::new(cfg.build().await?),
+            #[cfg(feature = "dns-server")]
+            Self::DnsTcp(cfg) => Box::new(cfg.build().await?),
+            #[cfg(feature = "dns-server")]
+            Self::DnsTls(cfg) => Box::new(cfg.build().await?),
+            #[cfg(feature = "dns-server")]
+            Self::DnsFakeIp(cfg) => Box::new(cfg.build().await?),
+            #[cfg(feature = "dns-server")]
+            Self::DnsSystem(cfg) => Box::new(cfg.build().await?),
             InboundCfg::Socks(cfg) => Box::new(SocksServer::new(cfg).await?),
             #[cfg(feature = "mixed")]
             InboundCfg::Mixed(cfg) => Box::new(MixedServer::new(cfg).await?),
@@ -228,6 +390,17 @@ pub enum OutboundCfg {
 }
 
 impl OutboundCfg {
+    #[cfg(feature = "dns-server")]
+    fn dns(&self) -> Option<&str> {
+        match self {
+            Self::Direct(cfg) => cfg.dns.as_deref(),
+            Self::Socks(cfg) => cfg.dns.as_deref(),
+            Self::ShadowQuic(cfg) => cfg.dns.as_deref(),
+            Self::SunnyQuic(cfg) => cfg.dns.as_deref(),
+            Self::Drop(_) => None,
+        }
+    }
+
     /// Returns the endpoint label.
     pub fn tag(&self) -> &str {
         match self {
@@ -335,6 +508,9 @@ pub struct AuthUser {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SocksClientCfg {
+    /// DNS inbound used to resolve destination domains after routing.
+    #[cfg(feature = "dns-server")]
+    pub dns: Option<String>,
     /// Required label for this endpoint.
     pub tag: String,
     pub addr: String,
@@ -496,6 +672,9 @@ impl PartialEq for CongestionControl {
 #[derive(Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct DirectOutCfg {
+    /// DNS inbound used to resolve destination domains after routing.
+    #[cfg(feature = "dns-server")]
+    pub dns: Option<String>,
     /// Required label for this endpoint.
     pub tag: String,
     #[serde(default)]

@@ -2988,10 +2988,12 @@ dependencies = [
  "serde",
  "serde-saphyr",
  "shadowquic-macros",
+ "simple-dns",
  "socket2 0.6.5",
  "thiserror 2.0.20",
  "time",
  "tokio",
+ "tokio-rustls",
  "tracing",
  "tracing-subscriber",
  "webpki-roots",
@@ -3038,6 +3040,15 @@ name = "simd-adler32"
 version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
+
+[[package]]
+name = "simple-dns"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b6f884fa9a8d48101774bfbd3aeb81e968dd22cffd19a372da69f183db22c1a"
+dependencies = [
+ "bitflags",
+]
 
 [[package]]
 name = "slab"
@@ -3271,6 +3282,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.3",
+]
+
+[[package]]
+name = "tokio-rustls"
+version = "0.26.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9cc2678c2cdd569ef8215e2afd7954ada2ae20b4fdd2c5fe6139a3b02d105db"
+dependencies = [
+ "rustls 0.23.43",
+ "tokio",
 ]
 
 [[package]]

@@ -8,6 +8,8 @@ The DNS Server implements inbound trait. It listens on an address and acception 
 the underlying traffic to make dns request. The proxyrequest can be routed and  handled by an outbound 
 to perform the real traffic.
 
+It conatains a resolver, the resolver implements DnsService trait and outbound trait
+
 It should also implement DnsService trait which provide async resolve method for resolving a domain name and exchange method to return rwa bytes.
 
 It should also implement outbound trait which accepts a hijacked udp dns traffic

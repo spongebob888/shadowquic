@@ -182,6 +182,8 @@ async fn spawn_mixed_proxy_chain(entry_port: u16, upstream_port: u16) {
     .unwrap();
 
     let socks_client = SocksClient::new(SocksClientCfg {
+        #[cfg(feature = "dns-server")]
+        dns: None,
         tag: String::new(),
         addr: format!("[::1]:{}", upstream_port).into(),
         username: Some("test".into()),

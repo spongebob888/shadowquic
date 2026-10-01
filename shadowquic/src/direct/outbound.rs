@@ -15,7 +15,7 @@ use crate::{
     Outbound, UdpSession,
     config::{DirectOutCfg, DnsStrategy},
     error::SError,
-    msgs::socks5::{AddrOrDomain, SocksAddr, VarVec},
+    msgs::socks5::{AddrOrDomain, SocksAddr},
     utils::dual_socket::DualSocket,
 };
 use async_trait::async_trait;
@@ -71,19 +71,19 @@ impl Outbound for DirectOut {
 }
 
 #[derive(Default, Clone)]
-struct DnsResolve(Arc<Mutex<HashMap<Vec<u8>, SocketAddr>>>);
+struct DnsResolve(Arc<Mutex<HashMap<SocksAddr, SocketAddr>>>);
 impl DnsResolve {
     async fn resolve(
         &self,
         socks: SocksAddr,
         strategy: &DnsStrategy,
     ) -> Result<SocketAddr, SError> {
-        if let AddrOrDomain::Domain(x) = &socks.addr {
-            if let Some(v) = self.0.lock().await.get(&x.contents) {
+        if let AddrOrDomain::Domain(_) = &socks.addr {
+            if let Some(v) = self.0.lock().await.get(&socks) {
                 Ok(*v)
             } else {
                 let s = resolve(&socks, strategy).await?;
-                self.0.lock().await.insert(x.contents.clone(), s);
+                self.0.lock().await.insert(socks, s);
                 Ok(s)
             }
         } else {
@@ -92,13 +92,7 @@ impl DnsResolve {
     }
     async fn inv_resolve(&self, addr: &SocketAddr) -> SocksAddr {
         if let Some(add) = self.0.lock().await.iter().find(|x| x.1 == addr) {
-            SocksAddr {
-                addr: AddrOrDomain::Domain(VarVec {
-                    len: add.0.len() as u8,
-                    contents: add.0.clone(),
-                }),
-                port: addr.port(),
-            }
+            add.0.clone()
         } else {
             (*addr).into()
         }
@@ -183,7 +177,7 @@ impl DirectOut {
         let fut1 = async move {
             loop {
                 let mut buf_send = BytesMut::new();
-                buf_send.resize(2000, 0);
+                buf_send.resize(65535, 0);
                 //trace!("recv upstream");
                 let (len, dst) = upstream.recv_from(&mut buf_send).await?;
                 //trace!("udp request reply from:{}", dst);
@@ -215,7 +209,7 @@ impl DirectOut {
         Ok(())
     }
 }
-fn apply_dns_strategy<It>(mut ip_list: It, strategy: &DnsStrategy) -> Option<SocketAddr>
+pub(crate) fn apply_dns_strategy<It>(mut ip_list: It, strategy: &DnsStrategy) -> Option<SocketAddr>
 where
     It: Iterator<Item = SocketAddr>,
 {
@@ -252,6 +246,20 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[tokio::test]
+    async fn udp_domain_cache_preserves_each_destination_port() {
+        let cache = DnsResolve::default();
+        for port in [1234, 5678, 1234] {
+            let domain = SocksAddr::from_domain("localhost".into(), port);
+            let resolved = cache
+                .resolve(domain.clone(), &DnsStrategy::Ipv4Only)
+                .await
+                .unwrap();
+            assert_eq!(resolved.port(), port);
+            assert_eq!(cache.inv_resolve(&resolved).await, domain);
+        }
+    }
 
     fn make_addrs() -> Vec<SocketAddr> {
         vec![

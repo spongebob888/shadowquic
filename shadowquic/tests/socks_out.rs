@@ -116,6 +116,8 @@ async fn spawn_socks() {
     .await
     .unwrap();
     let sq_client = SocksClient::new(SocksClientCfg {
+        #[cfg(feature = "dns-server")]
+        dns: None,
         tag: String::new(),
         addr: "[::1]:1094".into(),
         username: Some("test".into()),

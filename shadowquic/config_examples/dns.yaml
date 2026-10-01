@@ -1,0 +1,27 @@
+# cargo run --features dns-server -- -c shadowquic/config_examples/dns.yaml
+inbounds:
+  - tag: socks-in
+    type: socks
+    bind-addr: 127.0.0.1:1080
+  - tag: resolver
+    type: dns-tls
+    bind-addr: 127.0.0.1:1053
+    upstream: 1.1.1.1:853
+    server-name: cloudflare-dns.com
+  - tag: fake
+    type: dns-fakeip
+    bind-addr: 127.0.0.1:1054
+outbounds:
+  - tag: direct
+    type: direct
+    dns: resolver
+router:
+  src: |
+    return function(ctx)
+      -- Resolver upstream traffic must use a transport outbound.
+      if ctx.inbound_tag == "resolver" then return "direct" end
+      if ctx.network_type == "udp" and ctx.dst_port == 53 then
+        return "fake"
+      end
+      return "direct"
+    end

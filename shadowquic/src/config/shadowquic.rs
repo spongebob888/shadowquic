@@ -148,6 +148,8 @@ impl Default for ShadowQuicServerCfg {
 impl Default for ShadowQuicClientCfg {
     fn default() -> Self {
         Self {
+            #[cfg(feature = "dns-server")]
+            dns: None,
             tag: String::new(),
             password: Default::default(),
             username: Default::default(),
@@ -214,6 +216,9 @@ impl Default for BrutalParams {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ShadowQuicClientCfg {
+    /// DNS inbound used to resolve destination domains after routing.
+    #[cfg(feature = "dns-server")]
+    pub dns: Option<String>,
     /// Required label for this endpoint.
     pub tag: String,
     /// username, must be the same as the server

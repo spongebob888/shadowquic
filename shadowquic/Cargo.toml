@@ -9,7 +9,8 @@ description = { workspace = true }
 license = { workspace = true}
 readme = { workspace = true}
 [features]
-default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", "mixed", "plugin"]
+default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", "mixed", "plugin", "dns-server"]
+dns-server = ["dep:simple-dns", "dep:tokio-rustls", "dep:rustls"]
 statistics = ["dep:portable-atomic"]
 mixed = ["dep:base64"]
 plugin = ["plugin-vendored"]
@@ -42,6 +43,8 @@ sunnyquic-noq = ["dep:noq", "dep:rustls", "dep:rustls-native-certs","dep:notify"
 tproxy = ["dep:etherparse", "dep:libc"]
 
 [dependencies]
+simple-dns = { version = "0.12", optional = true }
+tokio-rustls = { version = "0.26", default-features = false, optional = true }
 thiserror = "2.0.18"
 tokio = {version = "1.52.3", features = ["io-util", "net","rt","macros","rt-multi-thread","signal","time"]}
 tracing = "0.1.44"

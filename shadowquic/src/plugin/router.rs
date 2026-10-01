@@ -281,6 +281,26 @@ impl Router {
         let libs = StdLib::STRING | StdLib::TABLE | StdLib::MATH;
         let libs = libs | StdLib::BIT;
         let lua = Lua::new_with(libs, LuaOptions::default())?;
+        #[cfg(feature = "dns-server")]
+        {
+            lua.globals().set(
+                "lookup_cache",
+                lua.create_function(|_, domain: String| {
+                    Ok(crate::dns::global_cache()
+                        .lookup_cache(&domain)
+                        .into_iter()
+                        .map(|ip| ip.to_string())
+                        .collect::<Vec<_>>())
+                })?,
+            )?;
+            lua.globals().set(
+                "reverse_lookup",
+                lua.create_function(|_, ip: String| {
+                    let ip = ip.parse().map_err(mlua::Error::external)?;
+                    Ok(crate::dns::global_cache().reverse_lookup(ip))
+                })?,
+            )?;
+        }
         // The base library is always loaded, including file and code loaders.
         // Remove these before evaluating any user-provided source.
         let globals = lua.globals();

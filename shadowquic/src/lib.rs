@@ -17,6 +17,8 @@ use tracing::{Instrument, error, info, info_span};
 
 pub mod config;
 pub mod direct;
+#[cfg(feature = "dns-server")]
+pub mod dns;
 mod drop_outbound;
 pub mod error;
 #[cfg(feature = "mixed")]
