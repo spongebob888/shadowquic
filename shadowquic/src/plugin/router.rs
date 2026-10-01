@@ -294,10 +294,10 @@ impl Router {
                 })?,
             )?;
             lua.globals().set(
-                "reverse_lookup",
+                "reverse_lookup_cache",
                 lua.create_function(|_, ip: String| {
                     let ip = ip.parse().map_err(mlua::Error::external)?;
-                    Ok(crate::dns::global_cache().reverse_lookup(ip))
+                    Ok(crate::dns::global_cache().reverse_lookup_cache(ip))
                 })?,
             )?;
         }

@@ -158,7 +158,7 @@ impl DnsCache {
     }
 
     /// Returns the most recently cached name associated with this address.
-    pub fn reverse_lookup(&self, ip: IpAddr) -> Option<String> {
+    pub fn reverse_lookup_cache(&self, ip: IpAddr) -> Option<String> {
         let now = Instant::now();
         self.entries
             .lock()

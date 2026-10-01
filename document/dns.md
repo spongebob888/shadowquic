@@ -63,7 +63,7 @@ cached. Lua routing scripts can call:
 
 ```lua
 local addresses = lookup_cache("example.com") -- array of IP strings; empty on miss
-local domain = reverse_lookup("203.0.113.1")  -- most recently cached name, or nil
+local domain = reverse_lookup_cache("203.0.113.1")  -- most recently cached name, or nil
 ```
 
 These functions only inspect unexpired cached answers; they never perform

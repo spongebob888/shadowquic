@@ -27,6 +27,6 @@ Each type corresponding to an inbound type.
 ## Tips
 - Use simple dns lib to pack/unpack a dns request
 - A global dns cache should be implemented. It also should support reverse lookup
-- expose a reverse lookup method to route script
+- expose a reverse_lookup_cache method to route script
 - expose a lookup_cache method to route script
 - each outbound can choose a dns inbound to resolve the outbound destination domain name. 

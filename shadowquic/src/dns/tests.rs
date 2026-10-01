@@ -159,7 +159,9 @@ fn cache_expires_ages_ttls_and_partitions_resolvers() {
         vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]
     );
     assert_eq!(
-        cache.reverse_lookup(Ipv4Addr::LOCALHOST.into()).as_deref(),
+        cache
+            .reverse_lookup_cache(Ipv4Addr::LOCALHOST.into())
+            .as_deref(),
         Some("cache.test")
     );
     cache.age_for_test(Duration::from_secs(10));
@@ -167,7 +169,11 @@ fn cache_expires_ages_ttls_and_partitions_resolvers() {
     assert_eq!(Packet::parse(&bytes).unwrap().answers[0].ttl, 50);
     cache.age_for_test(Duration::from_secs(51));
     assert!(cache.lookup_cache("cache.test").is_empty());
-    assert!(cache.reverse_lookup(Ipv4Addr::LOCALHOST.into()).is_none());
+    assert!(
+        cache
+            .reverse_lookup_cache(Ipv4Addr::LOCALHOST.into())
+            .is_none()
+    );
     assert!(cache.get(1, &query).unwrap().is_none());
     cache.insert(1, &query, Packet::parse(&response(&query, 0)).unwrap());
     assert!(cache.get(1, &query).unwrap().is_none());
@@ -515,9 +521,9 @@ async fn routing_scripts_can_query_shared_cache() {
         return function(ctx)
             local ips = lookup_cache("lua-cache.test")
             assert(#ips == 1)
-            assert(reverse_lookup("{ip}") == "lua-cache.test")
+            assert(reverse_lookup_cache("{ip}") == "lua-cache.test")
             assert(#lookup_cache("absent.test") == 0)
-            assert(reverse_lookup("192.0.2.234") == nil)
+            assert(reverse_lookup_cache("192.0.2.234") == nil)
             return "direct"
         end
     "#
