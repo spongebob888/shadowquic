@@ -2993,7 +2993,7 @@ dependencies = [
  "thiserror 2.0.20",
  "time",
  "tokio",
- "tokio-rustls",
+ "tokio-rustls-jls",
  "tracing",
  "tracing-subscriber",
  "webpki-roots",
@@ -3285,13 +3285,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-rustls"
-version = "0.26.6"
+name = "tokio-rustls-jls"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9cc2678c2cdd569ef8215e2afd7954ada2ae20b4fdd2c5fe6139a3b02d105db"
+checksum = "48ecadb6eccd7be9c54152ee09392ce7046596cfa94211ba01d64af58a265df8"
 dependencies = [
- "rustls 0.23.43",
+ "rustls-jls",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

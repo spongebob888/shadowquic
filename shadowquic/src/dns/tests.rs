@@ -333,40 +333,45 @@ async fn fakeip_udp_is_restored_before_routing_and_replies_use_fake_source() {
 async fn tls_exchange(trusted: bool, server_name: &str) -> Result<Vec<u8>> {
     let cert = rcgen::generate_simple_self_signed(vec!["dns.test".into()]).unwrap();
     let cert_der = cert.cert.der().clone();
-    let key = rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
+    let key = rustls_jls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
     let provider = {
         #[cfg(feature = "ring")]
         {
-            Arc::new(rustls::crypto::ring::default_provider())
+            Arc::new(rustls_jls::crypto::ring::default_provider())
         }
         #[cfg(all(not(feature = "ring"), feature = "aws-lc-rs"))]
         {
-            Arc::new(rustls::crypto::aws_lc_rs::default_provider())
+            Arc::new(rustls_jls::crypto::aws_lc_rs::default_provider())
         }
     };
-    let config = rustls::ServerConfig::builder_with_provider(provider.clone())
+    let mut config = rustls_jls::ServerConfig::builder_with_provider(provider.clone())
         .with_safe_default_protocol_versions()
         .unwrap()
         .with_no_client_auth()
         .with_single_cert(vec![cert_der.clone()], key.into())
         .unwrap();
-    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
-    let mut roots = rustls::RootCertStore::empty();
+    config.jls_config = rustls_jls::jls::JlsServerConfig::default()
+        .enable(false)
+        .into();
+    let acceptor = tokio_rustls_jls::TlsAcceptor::from(Arc::new(config));
+    let mut roots = rustls_jls::RootCertStore::empty();
     if trusted {
         roots.add(cert_der).unwrap();
     }
-    let client = rustls::ClientConfig::builder_with_provider(provider)
+    let mut client = rustls_jls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .unwrap()
         .with_root_certificates(roots)
         .with_no_client_auth();
+    client.jls_config.enable = false;
     let (requests, mut received) = mpsc::channel(1);
     let resolver = Resolver {
         tag: "dns".into(),
         backend: Backend::Tls {
             upstream: "192.0.2.1:853".parse().unwrap(),
-            server_name: rustls::pki_types::ServerName::try_from(server_name.to_owned()).unwrap(),
-            connector: tokio_rustls::TlsConnector::from(Arc::new(client)),
+            server_name: rustls_jls::pki_types::ServerName::try_from(server_name.to_owned())
+                .unwrap(),
+            connector: tokio_rustls_jls::TlsConnector::from(Arc::new(client)),
         },
         requests,
         identity: u64::MAX,
@@ -737,4 +742,10 @@ async fn tls_configuration_rejects_invalid_server_name_before_binding() {
     };
     assert!(config.validate().is_err());
     assert!(config.build().await.is_err());
+}
+
+#[test]
+fn dns_tls_connector_disables_jls() {
+    let connector = tls_connector().unwrap();
+    assert!(!connector.config().jls_config.enable);
 }

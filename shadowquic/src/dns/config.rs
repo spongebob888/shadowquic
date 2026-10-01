@@ -49,13 +49,13 @@ pub struct DnsTlsServerCfg {
 
 impl DnsTlsServerCfg {
     pub fn validate(&self) -> Result<(), SError> {
-        rustls::pki_types::ServerName::try_from(self.server_name.as_str())
+        rustls_jls::pki_types::ServerName::try_from(self.server_name.as_str())
             .map_err(|error| SError::InvalidConfig(error.to_string()))?;
         Ok(())
     }
 
     pub async fn build(self) -> Result<DnsServer, SError> {
-        let server_name = rustls::pki_types::ServerName::try_from(self.server_name)
+        let server_name = rustls_jls::pki_types::ServerName::try_from(self.server_name)
             .map_err(|error| SError::InvalidConfig(error.to_string()))?;
         let backend = Backend::Tls {
             upstream: self.upstream,

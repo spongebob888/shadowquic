@@ -92,8 +92,8 @@ enum Backend {
     Tcp(std::net::SocketAddr),
     Tls {
         upstream: std::net::SocketAddr,
-        server_name: rustls::pki_types::ServerName<'static>,
-        connector: tokio_rustls::TlsConnector,
+        server_name: rustls_jls::pki_types::ServerName<'static>,
+        connector: tokio_rustls_jls::TlsConnector,
     },
     FakeIp,
     System,
@@ -125,18 +125,19 @@ impl Drop for DnsServer {
     }
 }
 
-fn tls_connector() -> Result<tokio_rustls::TlsConnector> {
-    let roots = rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let provider = rustls::crypto::CryptoProvider::get_default()
+fn tls_connector() -> Result<tokio_rustls_jls::TlsConnector> {
+    let roots =
+        rustls_jls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let provider = rustls_jls::crypto::CryptoProvider::get_default()
         .cloned()
         .or_else(|| {
             #[cfg(feature = "ring")]
             {
-                return Some(Arc::new(rustls::crypto::ring::default_provider()));
+                return Some(Arc::new(rustls_jls::crypto::ring::default_provider()));
             }
             #[cfg(all(not(feature = "ring"), feature = "aws-lc-rs"))]
             {
-                return Some(Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
+                return Some(Arc::new(rustls_jls::crypto::aws_lc_rs::default_provider()));
             }
             #[allow(unreachable_code)]
             None
@@ -146,12 +147,14 @@ fn tls_connector() -> Result<tokio_rustls::TlsConnector> {
                 "DNS TLS requires a rustls crypto provider (ring or aws-lc-rs)".into(),
             )
         })?;
-    let config = rustls::ClientConfig::builder_with_provider(provider)
+    let mut config = rustls_jls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .map_err(dns_error)?
         .with_root_certificates(roots)
         .with_no_client_auth();
-    Ok(tokio_rustls::TlsConnector::from(Arc::new(config)))
+    // DNS uses ordinary TLS with certificate verification, not JLS authentication.
+    config.jls_config.enable = false;
+    Ok(tokio_rustls_jls::TlsConnector::from(Arc::new(config)))
 }
 
 impl DnsServer {
@@ -426,7 +429,7 @@ impl DnsService for Resolver {
 }
 
 impl TcpTrait for tokio::io::DuplexStream {}
-impl TcpTrait for tokio_rustls::client::TlsStream<tokio::io::DuplexStream> {}
+impl TcpTrait for tokio_rustls_jls::client::TlsStream<tokio::io::DuplexStream> {}
 
 fn parse_query(bytes: &[u8]) -> Result<Packet<'_>> {
     let packet = Packet::parse(bytes).map_err(dns_error)?;

@@ -10,7 +10,7 @@ Each DNS inbound listens for ordinary DNS over **both UDP and TCP** on
 | --- | --- | --- |
 | `dns-udp` | `upstream` | UDP, with TCP retry for truncated replies |
 | `dns-tcp` | `upstream` | Length-prefixed DNS over TCP |
-| `dns-tls` | `upstream`, `server-name` | DNS over TLS with rustls certificate and hostname verification |
+| `dns-tls` | `upstream`, `server-name` | DNS over TLS with rustls-jls certificate and hostname verification |
 | `dns-system` | None | Tokio system lookup for A/AAAA |
 | `dns-fakeip` | None | Stable synthetic A/AAAA answers |
 
@@ -21,7 +21,9 @@ to other DNS types. UDP/TCP/TLS require `upstream`; TLS also requires
 
 `upstream` is a literal socket address, such as `1.1.1.1:853` or
 `[2606:4700:4700::1111]:853`, so bootstrap resolution cannot recurse into DNS.
-`server-name` is the TLS identity; public WebPKI roots are used. Local listeners
+`server-name` is the TLS identity; public WebPKI roots are used. DNS uses
+`rustls-jls` and `tokio-rustls-jls` with JLS explicitly disabled, so upstream
+connections use standard TLS and verify certificates. Local listeners
 use plain DNS even for `dns-tls`; that type encrypts the upstream connection.
 
 UDP, TCP, and TLS upstream traffic becomes a `ProxyRequest` tagged with the DNS
