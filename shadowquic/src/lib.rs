@@ -96,7 +96,8 @@ pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
     /// Control stream, should be kept alive during session.
     stream: Option<AnyTcp>,
     bind_addr: SocksAddr,
-    /// Destination of the first received datagram. Later packets may target other addresses.
+    /// Destination of the first received datagram.
+    /// Only used for routing. The true sending destination is determined per-datagram by UdpRecv.
     dst: SocksAddr,
     /// Address of the client that opened this session, when available.
     /// It is the address of the TCP control stream and
