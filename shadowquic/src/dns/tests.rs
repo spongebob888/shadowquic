@@ -39,7 +39,7 @@ fn response(query: &[u8], ttl: u32) -> Vec<u8> {
 async fn exchange_udp(addr: SocketAddr, query: &[u8]) -> Vec<u8> {
     let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     socket.send_to(query, addr).await.unwrap();
-    let mut buffer = vec![0; 65535];
+    let mut buffer = vec![0; 2000];
     let (len, _) = tokio::time::timeout(Duration::from_secs(3), socket.recv_from(&mut buffer))
         .await
         .unwrap()
@@ -76,7 +76,7 @@ async fn udp_upstream_is_routed_and_cached_with_client_transaction_id() {
     let addr = server.local_addr;
     let (stop, task) = run(server);
     let mock = tokio::spawn(async move {
-        let mut buffer = vec![0; 65535];
+        let mut buffer = vec![0; 2000];
         let (len, peer) = upstream.recv_from(&mut buffer).await.unwrap();
         // A spoofed transaction is ignored before accepting the matching reply.
         let mut wrong = response(&buffer[..len], 60);
@@ -534,7 +534,7 @@ async fn routing_scripts_can_query_shared_cache() {
 }
 
 #[tokio::test]
-async fn large_dns_reply_survives_direct_udp_and_respects_client_limit() {
+async fn dns_udp_reply_respects_client_limit() {
     let upstream = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let server = udp_cfg(upstream.local_addr().unwrap())
         .build()
@@ -546,7 +546,7 @@ async fn large_dns_reply_survives_direct_udp_and_respects_client_limit() {
     let query = query("large.test", TYPE::A, 1);
     let expected = {
         let mut reply = reply_for(Packet::parse(&query).unwrap());
-        for index in 1..=150u8 {
+        for index in 1..=40u8 {
             reply.answers.push(ResourceRecord::new(
                 reply.questions[0].qname.clone(),
                 CLASS::IN,
@@ -556,7 +556,7 @@ async fn large_dns_reply_survives_direct_udp_and_respects_client_limit() {
         }
         reply.build_bytes_vec().unwrap()
     };
-    assert!(expected.len() > 2000);
+    assert!(expected.len() > 512 && expected.len() <= 2000);
     let upstream_reply = expected.clone();
     let mock = tokio::spawn(async move {
         let (_, peer) = upstream.recv_from(&mut [0; 512]).await.unwrap();

@@ -177,7 +177,7 @@ impl DirectOut {
         let fut1 = async move {
             loop {
                 let mut buf_send = BytesMut::new();
-                buf_send.resize(65535, 0);
+                buf_send.resize(2000, 0);
                 //trace!("recv upstream");
                 let (len, dst) = upstream.recv_from(&mut buf_send).await?;
                 //trace!("udp request reply from:{}", dst);

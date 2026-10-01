@@ -302,7 +302,7 @@ async fn handle_udp_tproxy(
 
     let mut sessions: HashMap<SocketAddr, (Sender<(Bytes, SocksAddr)>, std::time::Instant)> =
         HashMap::new();
-    const MAX_UDP_PAYLOAD_SIZE: usize = 65536;
+    const MAX_UDP_PAYLOAD_SIZE: usize = 1500;
     const UDP_GRO_MAX_SEGMENTS: usize = 64;
 
     let mut buf = vec![MaybeUninit::uninit(); MAX_UDP_PAYLOAD_SIZE * UDP_GRO_MAX_SEGMENTS];

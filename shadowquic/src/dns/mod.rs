@@ -171,7 +171,7 @@ impl DnsServer {
         let service = resolver.clone();
         let udp_task = tokio::spawn(async move {
             let mut tasks = tokio::task::JoinSet::new();
-            let mut buffer = vec![0; 65535];
+            let mut buffer = vec![0; 2000];
             loop {
                 tokio::select! {
                     Some(_) = tasks.join_next(), if !tasks.is_empty() => {}
@@ -329,7 +329,7 @@ impl Resolver {
             drop(send_query);
             Ok(reply.to_vec())
         } else {
-            let (stream, peer) = tokio::io::duplex(65536);
+            let (stream, peer) = tokio::io::duplex(5000);
             self.requests
                 .send(ProxyRequest::Tcp(TcpSession {
                     stream: Box::new(peer),
