@@ -313,16 +313,6 @@ impl Manager {
     /// Run listeners and dispatch accepted requests concurrently until shutdown.
     /// Pending dispatch tasks are cancelled before shutting down their inbound.
     pub async fn run_until(self, shutdown: impl Future<Output = ()>) -> Result<(), SError> {
-        if self.inbounds.is_empty() || self.outbounds.is_empty() {
-            return Err(SError::InvalidConfig(
-                "inbounds and outbounds must not be empty".into(),
-            ));
-        }
-        if !self.outbounds.contains_key(&self.default_outbound) {
-            return Err(SError::InvalidConfig(
-                "default outbound does not exist".into(),
-            ));
-        }
         for (tag, inbound) in &self.inbounds {
             if let Err(error) = inbound.init().await {
                 error!(inbound = %tag, %error, "inbound initialization failed");

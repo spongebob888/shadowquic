@@ -29,4 +29,5 @@ Each type corresponding to an inbound type.
 - A global dns cache should be implemented. It also should support reverse lookup
 - expose a reverse_lookup_cache method to route script
 - expose a lookup_cache method to route script
-- each outbound can choose a dns inbound to resolve the outbound destination domain name. 
+- each outbound can choose a addr resolver to resolve its own addr. 
+- Create a threadsafe ResolverManager to manage all resolvers and dns cache. Each router should has a copy for lookup dns
