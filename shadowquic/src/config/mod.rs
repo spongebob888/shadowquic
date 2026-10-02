@@ -151,6 +151,15 @@ impl Config {
         }
         #[cfg(feature = "dns-server")]
         {
+            let reserved = crate::dns::DEFAULT_SYSTEM_DNS_TAG;
+            if self.inbounds.iter().any(|c| c.tag() == reserved)
+                || self.outbounds.iter().any(|c| c.tag() == reserved)
+                || self.dns.iter().any(|c| c.tag() == reserved)
+            {
+                return Err(SError::InvalidConfig(format!(
+                    "tag {reserved} is reserved for the default system DNS"
+                )));
+            }
             let mut fake_count = 0;
             for dns in &self.dns {
                 dns.validate()?;
@@ -1081,6 +1090,37 @@ router:
                 .unwrap_err()
                 .to_string()
                 .contains("inbound tag collides with an outbound or DNS tag: one")
+        );
+    }
+
+    #[test]
+    fn rejects_reserved_default_system_dns_tag() {
+        // DNS services may not claim the reserved default system resolver tag.
+        let mut cfg = multi_config();
+        cfg.dns.push(crate::dns::config::DnsCfg::System(
+            crate::dns::config::DnsSystemServerCfg {
+                tag: crate::dns::DEFAULT_SYSTEM_DNS_TAG.to_string(),
+                bind_addr: "127.0.0.1:0".parse().unwrap(),
+            },
+        ));
+        assert!(
+            cfg.validate()
+                .unwrap_err()
+                .to_string()
+                .contains("reserved for the default system DNS")
+        );
+
+        // Outbound tags share the endpoint namespace and must avoid it too.
+        let mut cfg = multi_config();
+        let super::OutboundCfg::Direct(outbound) = &mut cfg.outbounds[0] else {
+            unreachable!()
+        };
+        outbound.tag = crate::dns::DEFAULT_SYSTEM_DNS_TAG.into();
+        assert!(
+            cfg.validate()
+                .unwrap_err()
+                .to_string()
+                .contains("reserved for the default system DNS")
         );
     }
 

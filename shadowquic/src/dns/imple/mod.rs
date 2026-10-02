@@ -605,9 +605,21 @@ pub struct ResolverManager {
 
 impl ResolverManager {
     pub fn new() -> Self {
+        let cache = Arc::new(DnsCache::default());
+        let mut resolvers = HashMap::new();
+        resolvers.insert(
+            DEFAULT_SYSTEM_DNS_TAG.to_string(),
+            Arc::new(Resolver {
+                tag: DEFAULT_SYSTEM_DNS_TAG.to_string(),
+                backend: Backend::System,
+                requests: mpsc::channel(1).0,
+                fake_ip: None,
+                cache: cache.clone(),
+            }),
+        );
         Self {
-            resolvers: Arc::new(HashMap::new()),
-            cache: Arc::new(DnsCache::default()),
+            resolvers: Arc::new(resolvers),
+            cache,
         }
     }
 
