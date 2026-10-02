@@ -236,7 +236,7 @@ async fn system_resolves_localhost_and_rejects_unsupported_records() {
 
 #[test]
 fn rejects_invalid_resolver_configuration() {
-    let base = "inbounds:\n  - {tag: dns, type: dns-system, bind-addr: '127.0.0.1:0'}\noutbounds:\n  - {tag: direct, type: direct, dns: dns}\n";
+    let base = "inbounds:\n  - {tag: socks, type: socks, bind-addr: '127.0.0.1:0'}\ndns:\n  - {tag: dns, type: dns-system, bind-addr: '127.0.0.1:0'}\noutbounds:\n  - {tag: direct, type: direct, dns: dns}\n";
     serde_saphyr::from_str::<Config>(base)
         .unwrap()
         .validate()
@@ -253,7 +253,7 @@ fn rejects_invalid_resolver_configuration() {
 #[tokio::test]
 async fn hijacked_dns_keeps_original_reply_source() {
     let config: Config = serde_saphyr::from_str(
-        "inbounds: [{tag: fake, type: dns-fakeip, bind-addr: '127.0.0.1:0'}]",
+        "inbounds: [{tag: socks, type: socks, bind-addr: '127.0.0.1:0'}]\ndns: [{tag: fake, type: dns-fakeip, bind-addr: '127.0.0.1:0'}]",
     )
     .unwrap();
     let manager = config.build_manager().await.unwrap();
@@ -480,6 +480,8 @@ async fn selected_resolver_handles_tcp_and_udp_destinations_and_preserves_ports(
 async fn manager_builds_all_dns_transports_and_resolver_references() {
     let config: Config = serde_saphyr::from_str(r#"
 inbounds:
+  - {tag: socks-in, type: socks, bind-addr: '127.0.0.1:0'}
+dns:
   - {tag: system, type: dns-system, bind-addr: '127.0.0.1:0'}
   - {tag: fake, type: dns-fakeip, bind-addr: '127.0.0.1:0'}
   - {tag: udp, type: dns-udp, bind-addr: '127.0.0.1:0', upstream: '127.0.0.1:53'}
@@ -492,7 +494,7 @@ outbounds:
   - {tag: sunny, type: sunnyquic, addr: '127.0.0.1:443', username: test, password: test, server-name: localhost, dns: system}
 "#).unwrap();
     let manager = config.build_manager().await.unwrap();
-    assert_eq!(manager.inbounds.len(), 5);
+    assert_eq!(manager.inbounds.len(), 6);
     assert_eq!(manager.outbounds.len(), 9);
     assert_eq!(manager.default_outbound, "direct");
     for tag in ["system", "fake", "udp", "tcp", "tls"] {
@@ -631,6 +633,8 @@ async fn automatic_dns_outbound_can_be_selected_as_default() {
     let config: Config = serde_saphyr::from_str(
         r#"
 inbounds:
+  - {tag: socks, type: socks, bind-addr: '127.0.0.1:0'}
+dns:
   - {tag: resolver, type: dns-system, bind-addr: '127.0.0.1:0'}
 outbounds:
   - {tag: direct, type: direct}
@@ -649,6 +653,8 @@ fn automatic_dns_outbound_rejects_explicit_tag_collisions() {
     let config: Config = serde_saphyr::from_str(
         r#"
 inbounds:
+  - {tag: socks, type: socks, bind-addr: '127.0.0.1:0'}
+dns:
   - {tag: resolver, type: dns-system, bind-addr: '127.0.0.1:0'}
 outbounds:
   - {tag: resolver, type: direct}
@@ -665,6 +671,28 @@ outbounds:
 }
 
 #[test]
+fn automatic_dns_outbound_rejects_inbound_tag_collisions() {
+    let config: Config = serde_saphyr::from_str(
+        r#"
+inbounds:
+  - {tag: resolver, type: socks, bind-addr: '127.0.0.1:0'}
+dns:
+  - {tag: resolver, type: dns-system, bind-addr: '127.0.0.1:0'}
+outbounds:
+  - {tag: direct, type: direct}
+"#,
+    )
+    .unwrap();
+    assert!(
+        config
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("inbound tag collides with an outbound or DNS tag: resolver")
+    );
+}
+
+#[test]
 fn explicit_dns_outbound_is_not_a_config_type() {
     assert!(
         serde_saphyr::from_str::<crate::config::OutboundCfg>(
@@ -676,7 +704,7 @@ fn explicit_dns_outbound_is_not_a_config_type() {
 
 #[test]
 fn dns_configurations_require_only_their_own_fields() {
-    use crate::config::InboundCfg;
+    use crate::config::DnsCfg;
 
     for (kind, fields, forbidden) in [
         (
@@ -699,20 +727,19 @@ fn dns_configurations_require_only_their_own_fields() {
     ] {
         let base = format!("tag: dns, type: {kind}, bind-addr: '127.0.0.1:0'");
         let valid = format!("{{{base}{fields}}}");
-        assert!(
-            serde_saphyr::from_str::<InboundCfg>(&valid)
-                .unwrap()
-                .is_dns()
+        assert_eq!(
+            serde_saphyr::from_str::<DnsCfg>(&valid).unwrap().tag(),
+            "dns"
         );
         let invalid = format!("{{{base}{fields}{forbidden}}}");
         assert!(
-            serde_saphyr::from_str::<InboundCfg>(&invalid).is_err(),
+            serde_saphyr::from_str::<DnsCfg>(&invalid).is_err(),
             "{invalid}"
         );
         if !fields.is_empty() {
-            assert!(serde_saphyr::from_str::<InboundCfg>(&format!("{{{base}}}")).is_err());
+            assert!(serde_saphyr::from_str::<DnsCfg>(&format!("{{{base}}}")).is_err());
             assert!(
-                serde_saphyr::from_str::<InboundCfg>(
+                serde_saphyr::from_str::<DnsCfg>(
                     &valid
                         .replace("upstream: '127.0.0.1:53'", "upstream: null")
                         .replace("upstream: '127.0.0.1:853'", "upstream: null")
@@ -723,14 +750,14 @@ fn dns_configurations_require_only_their_own_fields() {
     }
     for kind in ["dns-fakeip", "dns-system"] {
         assert!(
-            serde_saphyr::from_str::<InboundCfg>(&format!(
+            serde_saphyr::from_str::<DnsCfg>(&format!(
                 "{{tag: dns, type: {kind}, bind-addr: '127.0.0.1:0', server-name: dns.test}}"
             ))
             .is_err()
         );
     }
     for name in ["", ", server-name: null"] {
-        assert!(serde_saphyr::from_str::<InboundCfg>(&format!(
+        assert!(serde_saphyr::from_str::<DnsCfg>(&format!(
             "{{tag: dns, type: dns-tls, bind-addr: '127.0.0.1:0', upstream: '127.0.0.1:853'{name}}}"
         )).is_err());
     }

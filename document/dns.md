@@ -3,7 +3,18 @@
 Build with `cargo build --features dns-server`. DNS is controlled by the `dns-server` feature. Lua helpers require the `plugin` feature (enabled in default builds).
 DNS over TLS needs `ring` (default) or `aws-lc-rs`.
 
-Each DNS inbound listens for ordinary DNS over **both UDP and TCP** on
+DNS services are configured in the top-level `dns` list:
+
+```yaml
+dns:
+  - tag: resolver
+    type: dns-tls
+    bind-addr: 127.0.0.1:1053
+    upstream: 1.1.1.1:853
+    server-name: cloudflare-dns.com
+```
+
+Each DNS service listens for ordinary DNS over **both UDP and TCP** on
 `bind-addr`. Its type selects the resolution method:
 
 | Type | Required fields beyond `tag`, `bind-addr` | Resolution |
@@ -14,7 +25,7 @@ Each DNS inbound listens for ordinary DNS over **both UDP and TCP** on
 | `dns-system` | None | Tokio system lookup for A/AAAA |
 | `dns-fakeip` | None | Stable synthetic A/AAAA answers |
 
-Each inbound type has its own configuration struct and rejects fields belonging
+Each service type has its own configuration struct and rejects fields belonging
 to other DNS types. UDP/TCP/TLS require `upstream`; TLS also requires
 `server-name`. System and fake-IP configurations contain only `tag` and
 `bind-addr`.
@@ -27,7 +38,7 @@ connections use standard TLS and verify certificates. Local listeners
 use plain DNS even for `dns-tls`; that type encrypts the upstream connection.
 
 UDP, TCP, and TLS upstream traffic becomes a `ProxyRequest` tagged with the DNS
-inbound's tag. The usual router and outbounds carry it, including through a
+service's tag. The usual router and outbounds carry it, including through a
 SOCKS or QUIC proxy. System and fake-IP services answer locally. Queries have a
 five-second timeout; listener concurrency and queues are bounded. Failed valid
 queries receive SERVFAIL. System lookup cannot distinguish NXDOMAIN from other
@@ -35,19 +46,19 @@ OS errors, so those also produce SERVFAIL. System DNS returns NOTIMP for record
 types other than A/AAAA; fake-IP DNS returns an empty successful answer for them.
 Both local services use a 60-second answer TTL.
 
-Each DNS inbound automatically registers an outbound under the same tag. Route
+Each DNS service automatically registers an outbound under the same tag. Route
 intercepted UDP DNS sessions directly to that tag (for example, `return "fake"`).
-No explicit DNS outbound configuration is needed. DNS inbound tags must not
+No explicit DNS outbound configuration is needed. DNS service tags must not
 collide with explicit outbound tags. `router.default-outbound` can also select a
-DNS inbound tag. Without an explicit default, the first configured outbound is
-used; if there are no explicit outbounds, the first DNS inbound is used. Local
+DNS service tag. Without an explicit default, the first configured outbound is
+used; if there are no explicit outbounds, the first DNS service is used. Local
 system/fake-IP services can therefore run without an `outbounds` section.
 Replies retain the original DNS destination as their source address.
-Route the DNS inbound's own upstream traffic to a transport outbound, before
+Route the DNS service's own upstream traffic to a transport outbound, before
 any UDP-port-53 hijacking rule, to avoid recursive DNS interception.
 
 `direct`, `socks`, `shadowquic`, and `sunnyquic` outbounds accept an optional
-`dns: <inbound-tag>`. This resolves **requested destination domains after
+`dns: <service-tag>`. This resolves **requested destination domains after
 routing**, including each UDP datagram, using that DNS service. It preserves
 ports and original UDP reply addresses. Direct outbounds retain their
 `dns-strategy`; proxy outbounds prefer IPv4. Omit `dns` to retain existing
@@ -82,7 +93,7 @@ through the selected service. It supports IPv4 (`in-addr.arpa`) and IPv6
 empty lookups return an error. System and fake-IP services do not provide PTR
 records, so use a UDP/TCP/TLS service for this method.
 
-Only one `dns-fakeip` inbound is allowed per configuration. It allocates from
+Only one `dns-fakeip` service is allowed per configuration. It allocates from
 `198.18.0.0/15` and `fd00::/96`, with at most 131,070 domain mappings. Mappings
 are stable and are never recycled while the manager runs; exhaustion fails
 instead of reassigning an active IP. They are not persisted across restarts.
@@ -99,8 +110,8 @@ The live AliDNS integration test sends a query through the local DNS listener
 and routes it over certificate-verified TLS to `223.5.5.5:853`, using
 `dns.alidns.com` as the server name. It is ignored by default because it requires
 Internet access. With `plugin` enabled, the same test target also checks two DNS
-inbounds with Lua routing: `dns-udp → dns-tls → direct`. It verifies that the UDP
-inbound's original upstream receives no packets. Run both tests explicitly with:
+services with Lua routing: `dns-udp → dns-tls → direct`. It verifies that the UDP
+service's original upstream receives no packets. Run both tests explicitly with:
 
 ```sh
 cargo test --release -p shadowquic --features dns-server --test dns_tls_alidns -- --ignored --nocapture

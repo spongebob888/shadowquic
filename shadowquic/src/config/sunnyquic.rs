@@ -168,7 +168,7 @@ impl Default for SunnyQuicClientCfg {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SunnyQuicClientCfg {
-    /// DNS inbound used to resolve destination domains after routing.
+    /// DNS service used to resolve destination domains after routing.
     #[cfg(feature = "dns-server")]
     pub dns: Option<String>,
     /// Required label for this endpoint.

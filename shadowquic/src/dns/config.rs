@@ -93,3 +93,53 @@ impl DnsSystemServerCfg {
         DnsServer::new(self.tag, self.bind_addr, Backend::System).await
     }
 }
+
+/// Standalone DNS service configuration, listed under the top-level `dns` key.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[serde(tag = "type")]
+pub enum DnsCfg {
+    #[serde(rename = "dns-udp")]
+    Udp(DnsUdpServerCfg),
+    #[serde(rename = "dns-tcp")]
+    Tcp(DnsTcpServerCfg),
+    #[serde(rename = "dns-tls")]
+    Tls(DnsTlsServerCfg),
+    #[serde(rename = "dns-fakeip")]
+    FakeIp(DnsFakeIpServerCfg),
+    #[serde(rename = "dns-system")]
+    System(DnsSystemServerCfg),
+}
+
+impl DnsCfg {
+    pub fn tag(&self) -> &str {
+        match self {
+            Self::Udp(cfg) => &cfg.tag,
+            Self::Tcp(cfg) => &cfg.tag,
+            Self::Tls(cfg) => &cfg.tag,
+            Self::FakeIp(cfg) => &cfg.tag,
+            Self::System(cfg) => &cfg.tag,
+        }
+    }
+
+    pub fn is_fake_ip(&self) -> bool {
+        matches!(self, Self::FakeIp(_))
+    }
+
+    pub fn validate(&self) -> Result<(), SError> {
+        if let Self::Tls(cfg) = self {
+            cfg.validate()?;
+        }
+        Ok(())
+    }
+
+    pub async fn build(self) -> Result<DnsServer, SError> {
+        match self {
+            Self::Udp(cfg) => cfg.build().await,
+            Self::Tcp(cfg) => cfg.build().await,
+            Self::Tls(cfg) => cfg.build().await,
+            Self::FakeIp(cfg) => cfg.build().await,
+            Self::System(cfg) => cfg.build().await,
+        }
+    }
+}

@@ -49,6 +49,8 @@ async fn router_hijacks_dns_udp_to_dns_tls_then_direct() -> Result<(), Box<dyn E
     let config: shadowquic::config::Config = serde_saphyr::from_str(&format!(
         r#"
 inbounds:
+  - {{tag: socks, type: socks, bind-addr: '127.0.0.1:0'}}
+dns:
   - tag: dns-udp
     type: dns-udp
     bind-addr: "{local_addr}"
