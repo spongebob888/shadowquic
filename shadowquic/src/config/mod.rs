@@ -21,7 +21,6 @@ use crate::{
 };
 
 mod serde_utils;
-#[cfg(feature = "dns-server")]
 use crate::dns::ResolverManager;
 #[cfg(feature = "dns-server")]
 pub use crate::dns::config::{
@@ -194,6 +193,8 @@ impl Config {
         let mut outbounds = HashMap::new();
         #[cfg(feature = "dns-server")]
         let mut resolver_manager = Arc::new(ResolverManager::new());
+        #[cfg(not(feature = "dns-server"))]
+        let resolver_manager = Arc::new(ResolverManager::new());
         #[cfg(all(feature = "dns-server", feature = "tproxy", target_os = "linux"))]
         let mut fake_ip = None;
         #[cfg(feature = "dns-server")]
@@ -228,8 +229,10 @@ impl Config {
                     OutboundCfg::Direct(cfg) => cfg.dns_strategy.clone(),
                     _ => DnsStrategy::default(),
                 };
-                let inner: Arc<dyn Outbound> =
-                    cfg.build_outbound().instrument(span).await?;
+                let inner: Arc<dyn Outbound> = cfg
+                    .build_outbound(resolver_manager.clone())
+                    .instrument(span)
+                    .await?;
                 let outbound: Arc<dyn Outbound> = match resolver {
                     Some(resolver) => Arc::new(crate::dns::ResolvingOutbound {
                         inner,
@@ -241,7 +244,14 @@ impl Config {
                 outbounds.insert(tag, outbound);
             }
             #[cfg(not(feature = "dns-server"))]
-            outbounds.insert(tag, Arc::from(cfg.build_outbound().instrument(span).await?));
+            outbounds.insert(
+                tag,
+                Arc::from(
+                    cfg.build_outbound(resolver_manager.clone())
+                        .instrument(span)
+                        .await?,
+                ),
+            );
         }
         for cfg in self.inbounds {
             let tag = cfg.tag().to_owned();
@@ -370,11 +380,16 @@ impl OutboundCfg {
         }
     }
 
-    async fn build_outbound(self) -> Result<Arc<dyn Outbound>, SError> {
+    async fn build_outbound(
+        self,
+        resolver_manager: Arc<ResolverManager>,
+    ) -> Result<Arc<dyn Outbound>, SError> {
         let r: Arc<dyn Outbound> = match self {
-            OutboundCfg::Socks(cfg) => Arc::new(SocksClient::new(cfg)),
-            OutboundCfg::ShadowQuic(cfg) => Arc::new(ShadowQuicClient::new(cfg)),
-            OutboundCfg::SunnyQuic(cfg) => Arc::new(SunnyQuicClient::new(cfg)),
+            OutboundCfg::Socks(cfg) => Arc::new(SocksClient::new(cfg, resolver_manager.clone())),
+            OutboundCfg::ShadowQuic(cfg) => {
+                Arc::new(ShadowQuicClient::new(cfg, resolver_manager.clone()))
+            }
+            OutboundCfg::SunnyQuic(cfg) => Arc::new(SunnyQuicClient::new(cfg, resolver_manager)),
             OutboundCfg::Direct(cfg) => Arc::new(DirectOut::new(cfg)),
             OutboundCfg::Drop(_) => Arc::new(DropOutbound),
         };
@@ -469,6 +484,9 @@ pub struct SocksClientCfg {
     /// DNS service used to resolve destination domains after routing.
     #[cfg(feature = "dns-server")]
     pub dns: Option<String>,
+    /// DNS resolver used to resolve the server address.
+    #[cfg(feature = "dns-server")]
+    pub addr_resolver: Option<String>,
     /// Required label for this endpoint.
     pub tag: String,
     pub addr: String,
@@ -1145,7 +1163,11 @@ router:
         let cfg: super::OutboundCfg =
             serde_saphyr::from_str("type: drop\ntag: blackhole\n").unwrap();
         assert_eq!(cfg.tag(), "blackhole");
-        assert!(cfg.build_outbound().await.is_ok());
+        assert!(
+            cfg.build_outbound(std::sync::Arc::new(crate::dns::ResolverManager::new()))
+                .await
+                .is_ok()
+        );
     }
 
     #[test]

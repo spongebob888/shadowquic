@@ -34,6 +34,9 @@ use crate::{
 type Result<T> = std::result::Result<T, SError>;
 const TIMEOUT: Duration = Duration::from_secs(5);
 const LOCAL_TTL: u32 = 60;
+/// This is the default tag used for the system DNS resolver, which is used when no other resolver is specified.
+/// It is always enabled.
+pub const DEFAULT_SYSTEM_DNS_TAG: &str = "default-system";
 fn dns_error(error: impl std::fmt::Display) -> SError {
     SError::DnsError(error.to_string())
 }
@@ -180,7 +183,7 @@ pub trait DnsService: Send + Sync {
 }
 
 #[derive(Clone)]
-enum Backend {
+pub(crate) enum Backend {
     Udp(std::net::SocketAddr),
     Tcp(std::net::SocketAddr),
     Tls {
@@ -195,11 +198,11 @@ enum Backend {
 /// Shared resolver handle, also usable as a UDP DNS hijacking outbound.
 #[derive(Clone)]
 pub struct Resolver {
-    tag: String,
-    backend: Backend,
-    requests: mpsc::Sender<ProxyRequest>,
+    pub(crate) tag: String,
+    pub(crate) backend: Backend,
+    pub(crate) requests: mpsc::Sender<ProxyRequest>,
     pub fake_ip: Option<Arc<FakeIp>>,
-    cache: Arc<DnsCache>,
+    pub(crate) cache: Arc<DnsCache>,
 }
 
 /// Local UDP and TCP listeners plus a queue of routable upstream sessions.
@@ -601,7 +604,7 @@ pub struct ResolverManager {
 }
 
 impl ResolverManager {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             resolvers: Arc::new(HashMap::new()),
             cache: Arc::new(DnsCache::default()),

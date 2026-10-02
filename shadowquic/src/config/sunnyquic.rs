@@ -125,6 +125,8 @@ impl Default for SunnyQuicClientCfg {
         Self {
             #[cfg(feature = "dns-server")]
             dns: None,
+            #[cfg(feature = "dns-server")]
+            addr_resolver: None,
             tag: String::new(),
             password: Default::default(),
             username: Default::default(),
@@ -171,6 +173,9 @@ pub struct SunnyQuicClientCfg {
     /// DNS service used to resolve destination domains after routing.
     #[cfg(feature = "dns-server")]
     pub dns: Option<String>,
+    /// DNS resolver used to resolve the server address.
+    #[cfg(feature = "dns-server")]
+    pub addr_resolver: Option<String>,
     /// Required label for this endpoint.
     pub tag: String,
     /// username, must be the same as the server

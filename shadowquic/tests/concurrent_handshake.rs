@@ -144,17 +144,20 @@ async fn bad_password_client_does_not_block_valid_client_handshake() {
 }
 
 fn client(server_addr: SocketAddr, password: &str) -> ShadowQuicClient {
-    ShadowQuicClient::new(ShadowQuicClientCfg {
-        addr: server_addr.to_string(),
-        username: "user".into(),
-        password: password.into(),
-        server_name: "localhost".into(),
-        alpn: vec!["h3".into()],
-        zero_rtt: false,
-        initial_mtu: 1200,
-        congestion_control: CongestionControl::Bbr,
-        ..Default::default()
-    })
+    ShadowQuicClient::new(
+        ShadowQuicClientCfg {
+            addr: server_addr.to_string(),
+            username: "user".into(),
+            password: password.into(),
+            server_name: "localhost".into(),
+            alpn: vec!["h3".into()],
+            zero_rtt: false,
+            initial_mtu: 1200,
+            congestion_control: CongestionControl::Bbr,
+            ..Default::default()
+        },
+        std::sync::Arc::new(shadowquic::dns::ResolverManager::new()),
+    )
 }
 
 fn unused_udp_addr() -> SocketAddr {

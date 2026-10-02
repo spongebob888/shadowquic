@@ -1,12 +1,8 @@
-use std::{
-    io,
-    net::{SocketAddr, ToSocketAddrs},
-    path::PathBuf,
-};
+use std::{io, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use socket2::{Domain, Protocol, Socket, Type};
 
-use crate::config::Interface;
+use crate::{config::Interface, msgs::socks5::SocksAddr};
 
 #[async_trait::async_trait]
 pub trait SocketFactory: Send + Sync {
@@ -18,16 +14,41 @@ pub struct UdpSocketFactory {
     pub fw_mark: Option<u32>,
     pub protect_path: Option<PathBuf>,
     pub try_dual_stack: bool,
+    pub resolver: Arc<dyn crate::dns::DnsService>,
 }
 #[async_trait::async_trait]
 impl SocketFactory for UdpSocketFactory {
     async fn create_socket(&self) -> std::io::Result<socket2::Socket> {
-        let addr = self
+        let socks_addr = self
             .addr
-            .to_socket_addrs()
-            .unwrap_or_else(|_| panic!("resolve quic addr faile: {}", self.addr))
-            .next()
-            .unwrap_or_else(|| panic!("resolve quic addr faile: {}", self.addr));
+            .parse::<SocksAddr>()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let addr = match socks_addr.addr {
+            crate::msgs::socks5::AddrOrDomain::Domain(domain) => {
+                let domain_str = std::str::from_utf8(&domain.contents)
+                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Invalid domain"))?;
+                let ips = self
+                    .resolver
+                    .resolve(domain_str)
+                    .await
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                if ips.is_empty() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "No IPs found for domain",
+                    ));
+                }
+                SocketAddr::new(ips[0], socks_addr.port)
+            }
+            crate::msgs::socks5::AddrOrDomain::V4(ipv4) => SocketAddr::new(
+                std::net::IpAddr::V4(std::net::Ipv4Addr::from(ipv4)),
+                socks_addr.port,
+            ),
+            crate::msgs::socks5::AddrOrDomain::V6(ipv6) => SocketAddr::new(
+                std::net::IpAddr::V6(std::net::Ipv6Addr::from(ipv6)),
+                socks_addr.port,
+            ),
+        };
         let socket = if let Some(Interface::Address(ip)) = self.interface {
             let domain = if ip.is_ipv4() {
                 Domain::IPV4
@@ -112,16 +133,41 @@ pub struct TcpSocketFactory {
     pub interface: Option<Interface>,
     pub fw_mark: Option<u32>,
     pub protect_path: Option<PathBuf>,
+    pub resolver: Arc<dyn crate::dns::DnsService>,
 }
 #[async_trait::async_trait]
 impl SocketFactory for TcpSocketFactory {
     async fn create_socket(&self) -> std::io::Result<socket2::Socket> {
-        let addr = self
+        let socks_addr = self
             .addr
-            .to_socket_addrs()
-            .unwrap_or_else(|_| panic!("resolve tcp addr faile: {}", self.addr))
-            .next()
-            .unwrap_or_else(|| panic!("resolve tcp addr faile: {}", self.addr));
+            .parse::<SocksAddr>()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let addr = match socks_addr.addr {
+            crate::msgs::socks5::AddrOrDomain::Domain(domain) => {
+                let domain_str = std::str::from_utf8(&domain.contents)
+                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Invalid domain"))?;
+                let ips = self
+                    .resolver
+                    .resolve(domain_str)
+                    .await
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                if ips.is_empty() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "No IPs found for domain",
+                    ));
+                }
+                SocketAddr::new(ips[0], socks_addr.port)
+            }
+            crate::msgs::socks5::AddrOrDomain::V4(ipv4) => SocketAddr::new(
+                std::net::IpAddr::V4(std::net::Ipv4Addr::from(ipv4)),
+                socks_addr.port,
+            ),
+            crate::msgs::socks5::AddrOrDomain::V6(ipv6) => SocketAddr::new(
+                std::net::IpAddr::V6(std::net::Ipv6Addr::from(ipv6)),
+                socks_addr.port,
+            ),
+        };
         let socket = if let Some(Interface::Address(ip)) = self.interface {
             let domain = if ip.is_ipv4() {
                 Domain::IPV4
@@ -194,6 +240,20 @@ impl SocketFactory for TcpSocketFactory {
 mod tests {
     use super::*;
     use std::net::IpAddr;
+
+    fn test_resolver() -> Arc<dyn crate::dns::DnsService> {
+        #[cfg(feature = "dns-server")]
+        let resolver = Arc::new(crate::dns::Resolver {
+            tag: String::new(),
+            backend: crate::dns::Backend::System,
+            requests: tokio::sync::mpsc::channel(1).0,
+            fake_ip: None,
+            cache: Arc::new(crate::dns::DnsCache::default()),
+        });
+        #[cfg(not(feature = "dns-server"))]
+        let resolver = Arc::new(crate::dns::Resolver {});
+        resolver
+    }
 
     /// Returns the local IP address that would be used when connecting to 1.1.1.1,
     /// by using the OS routing table via a non-blocking UDP connect (no packets sent).
@@ -328,6 +388,7 @@ mod tests {
             fw_mark: None,
             protect_path: None,
             try_dual_stack: true,
+            resolver: test_resolver(),
         };
         let socket = factory.create_socket().await.unwrap();
         assert!(socket.local_addr().is_ok());
@@ -339,6 +400,7 @@ mod tests {
             fw_mark: None,
             protect_path: None,
             try_dual_stack: true,
+            resolver: test_resolver(),
         };
         let socket_ip = factory_ip.create_socket().await.unwrap();
         assert_eq!(
@@ -353,6 +415,7 @@ mod tests {
             fw_mark: Some(123),
             protect_path: None,
             try_dual_stack: true,
+            resolver: test_resolver(),
         };
 
         let res = factory_mark.create_socket().await;
@@ -381,6 +444,7 @@ mod tests {
             interface: None,
             fw_mark: None,
             protect_path: None,
+            resolver: test_resolver(),
         };
         let socket = factory.create_socket().await.unwrap();
         assert!(socket.local_addr().is_ok());
@@ -391,6 +455,7 @@ mod tests {
             interface: Some(Interface::Address("127.0.0.1".parse().unwrap())),
             fw_mark: None,
             protect_path: None,
+            resolver: test_resolver(),
         };
         let socket_ip = factory_ip.create_socket().await.unwrap();
         assert_eq!(
@@ -404,6 +469,7 @@ mod tests {
             interface: None,
             fw_mark: Some(123),
             protect_path: None,
+            resolver: test_resolver(),
         };
 
         let res = factory_mark.create_socket().await;
@@ -455,6 +521,7 @@ mod tests {
             fw_mark: None,
             protect_path: None,
             try_dual_stack: false,
+            resolver: test_resolver(),
         };
         let socket = factory
             .create_socket()
@@ -500,6 +567,7 @@ mod tests {
             interface: Some(Interface::Device(iface.clone())),
             fw_mark: None,
             protect_path: None,
+            resolver: test_resolver(),
         };
         let socket = factory
             .create_socket()
@@ -532,6 +600,7 @@ mod tests {
             fw_mark: None,
             protect_path: None,
             try_dual_stack: false,
+            resolver: test_resolver(),
         };
         let socket = factory.create_socket().await.unwrap();
         assert!(socket.local_addr().is_ok());
@@ -545,6 +614,7 @@ mod tests {
             interface: Some(Interface::Device("nonexistent_device_name_123".to_string())),
             fw_mark: None,
             protect_path: None,
+            resolver: test_resolver(),
         };
         let socket = factory.create_socket().await.unwrap();
         assert!(socket.local_addr().is_ok());
@@ -566,6 +636,7 @@ mod tests {
             fw_mark: None,
             protect_path: None,
             try_dual_stack: false,
+            resolver: test_resolver(),
         };
 
         let socket = factory
@@ -617,6 +688,7 @@ mod tests {
             interface: Some(Interface::Address(local_ip)),
             fw_mark: None,
             protect_path: None,
+            resolver: test_resolver(),
         };
 
         let socket = factory
@@ -663,6 +735,7 @@ mod tests {
             fw_mark: None,
             protect_path: None,
             try_dual_stack: false,
+            resolver: test_resolver(),
         };
 
         let socket = match factory.create_socket().await {
@@ -705,6 +778,7 @@ mod tests {
             interface: Some(Interface::Device(iface.clone())),
             fw_mark: None,
             protect_path: None,
+            resolver: test_resolver(),
         };
 
         let socket = match factory.create_socket().await {
@@ -745,6 +819,7 @@ mod tests {
             fw_mark: None,
             protect_path: None,
             try_dual_stack: false,
+            resolver: test_resolver(),
         };
 
         let socket = match factory.create_socket().await {
@@ -785,6 +860,7 @@ mod tests {
             interface: Some(Interface::Device(iface.clone())),
             fw_mark: None,
             protect_path: None,
+            resolver: test_resolver(),
         };
 
         let socket = match factory.create_socket().await {
@@ -825,6 +901,7 @@ mod tests {
             fw_mark: None,
             protect_path: None,
             try_dual_stack: false,
+            resolver: test_resolver(),
         };
 
         let socket = match factory.create_socket().await {
@@ -865,6 +942,7 @@ mod tests {
             interface: Some(Interface::Device(iface.clone())),
             fw_mark: None,
             protect_path: None,
+            resolver: test_resolver(),
         };
 
         let socket = match factory.create_socket().await {

@@ -1,8 +1,9 @@
-use std::{io::IsTerminal, path::PathBuf};
+use std::{io::IsTerminal, path::PathBuf, sync::Arc};
 
 use clap::{Parser, Subcommand};
 use shadowquic::{
     config::{AuthUser, Config, LogLevel, OutboundCfg},
+    dns::ResolverManager,
     shadowquic::outbound::ShadowQuicClient,
     squic::inbound::UserManager,
     sunnyquic::outbound::SunnyQuicClient,
@@ -172,11 +173,11 @@ outbounds:
 async fn call_api(outbound: OutboundCfg, command: ApiCommand) -> Result<(), String> {
     match outbound {
         OutboundCfg::ShadowQuic(cfg) => {
-            let client = ShadowQuicClient::new(cfg);
+            let client = ShadowQuicClient::new(cfg, Arc::new(ResolverManager::new()));
             call_user_manager_api(&client, command).await
         }
         OutboundCfg::SunnyQuic(cfg) => {
-            let client = SunnyQuicClient::new(cfg);
+            let client = SunnyQuicClient::new(cfg, Arc::new(ResolverManager::new()));
             call_user_manager_api(&client, command).await
         }
         OutboundCfg::Socks(_) | OutboundCfg::Direct(_) | OutboundCfg::Drop(_) => {

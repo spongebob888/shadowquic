@@ -60,19 +60,22 @@ fn server_cfg(addr: &str, store: PathBuf, flush_interval: u64) -> ShadowQuicServ
 }
 
 fn client_at(addr: &str, username: &str, password: &str) -> ShadowQuicClient {
-    ShadowQuicClient::new(ShadowQuicClientCfg {
-        username: username.into(),
-        password: password.into(),
-        addr: addr.into(),
-        server_name: "localhost".into(),
-        alpn: vec!["h3".into()],
-        initial_mtu: 1200,
-        congestion_control: CongestionControl::Bbr,
-        zero_rtt: false,
-        gso: false,
-        over_stream: true,
-        ..Default::default()
-    })
+    ShadowQuicClient::new(
+        ShadowQuicClientCfg {
+            username: username.into(),
+            password: password.into(),
+            addr: addr.into(),
+            server_name: "localhost".into(),
+            alpn: vec!["h3".into()],
+            initial_mtu: 1200,
+            congestion_control: CongestionControl::Bbr,
+            zero_rtt: false,
+            gso: false,
+            over_stream: true,
+            ..Default::default()
+        },
+        std::sync::Arc::new(shadowquic::dns::ResolverManager::new()),
+    )
 }
 
 #[tokio::test]

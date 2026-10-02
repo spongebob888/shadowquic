@@ -116,19 +116,22 @@ async fn test_shadowquic() {
     })
     .await
     .unwrap();
-    let sq_client = SunnyQuicClient::new(SunnyQuicClientCfg {
-        password: "123".into(),
-        username: "123".into(),
-        addr: "127.0.0.1:4444".parse().unwrap(),
-        server_name: "localhost".into(),
-        alpn: vec!["h3".into()],
-        initial_mtu: 1200,
-        congestion_control: CongestionControl::Bbr,
-        zero_rtt: true,
-        over_stream: false,
-        cert_path: Some("../assets/certs/MyCA.pem".into()),
-        ..Default::default()
-    });
+    let sq_client = SunnyQuicClient::new(
+        SunnyQuicClientCfg {
+            password: "123".into(),
+            username: "123".into(),
+            addr: "127.0.0.1:4444".parse().unwrap(),
+            server_name: "localhost".into(),
+            alpn: vec!["h3".into()],
+            initial_mtu: 1200,
+            congestion_control: CongestionControl::Bbr,
+            zero_rtt: true,
+            over_stream: false,
+            cert_path: Some("../assets/certs/MyCA.pem".into()),
+            ..Default::default()
+        },
+        std::sync::Arc::new(shadowquic::dns::ResolverManager::new()),
+    );
     let client = Manager::single(Box::new(socks_server), std::sync::Arc::new(sq_client));
 
     let sq_server = SunnyQuicServer::new(SunnyQuicServerCfg {

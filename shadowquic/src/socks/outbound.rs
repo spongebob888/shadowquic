@@ -22,6 +22,7 @@ use tracing::{Instrument, error, info_span};
 use crate::{
     Outbound, ProxyRequest,
     config::SocksClientCfg,
+    dns::ResolverManager,
     error::SError,
     msgs::socks5::{AuthReply, AuthReq, CmdReq, SOCKS5_AUTH_METHOD_NONE, VarVec},
     msgs::{SDecode, SEncode},
@@ -31,6 +32,7 @@ use crate::{
 pub struct SocksClient {
     pub cfg: SocksClientCfg,
     pub(crate) tcp_socket_factory: Arc<dyn SocketFactory>,
+    pub(crate) addr_resolver: Arc<dyn crate::dns::DnsService>,
 }
 
 impl std::fmt::Debug for SocksClient {
@@ -65,16 +67,28 @@ impl Outbound for SocksClient {
 }
 
 impl SocksClient {
-    pub fn new(cfg: SocksClientCfg) -> Self {
+    pub fn new(cfg: SocksClientCfg, resolver_manager: Arc<ResolverManager>) -> Self {
+        #[cfg(feature = "dns-server")]
+        let tag = cfg
+            .addr_resolver
+            .clone()
+            .unwrap_or(crate::dns::DEFAULT_SYSTEM_DNS_TAG.to_string());
+        #[cfg(not(feature = "dns-server"))]
+        let tag = String::new();
+        let addr_resolver = resolver_manager
+            .resolver(&tag)
+            .unwrap_or_else(|| panic!("dns resolver not found: {}", tag));
         let tcp_socket_factory = Arc::new(TcpSocketFactory {
             addr: cfg.addr.clone(),
             interface: cfg.socket_opt.bind_interface.clone(),
             fw_mark: cfg.socket_opt.fw_mark,
             protect_path: None,
+            resolver: addr_resolver.clone(),
         });
         Self {
             cfg,
             tcp_socket_factory,
+            addr_resolver,
         }
     }
     async fn authenticate(&self, mut tcp: TcpStream) -> Result<TcpStream, SError> {
@@ -194,6 +208,7 @@ impl SocksClient {
             fw_mark: self.cfg.socket_opt.fw_mark,
             protect_path: None,
             try_dual_stack: false,
+            resolver: self.addr_resolver.clone(),
         };
         let socket = udp_socket_factory.create_socket().await?;
         socket.set_nonblocking(true)?;

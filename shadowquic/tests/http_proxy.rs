@@ -181,15 +181,20 @@ async fn spawn_mixed_proxy_chain(entry_port: u16, upstream_port: u16) {
     .await
     .unwrap();
 
-    let socks_client = SocksClient::new(SocksClientCfg {
-        #[cfg(feature = "dns-server")]
-        dns: None,
-        tag: String::new(),
-        addr: format!("[::1]:{}", upstream_port).into(),
-        username: Some("test".into()),
-        password: Some("test".into()),
-        socket_opt: SocketOpt::default(),
-    });
+    let socks_client = SocksClient::new(
+        SocksClientCfg {
+            #[cfg(feature = "dns-server")]
+            dns: None,
+            #[cfg(feature = "dns-server")]
+            addr_resolver: None,
+            tag: String::new(),
+            addr: format!("[::1]:{}", upstream_port).into(),
+            username: Some("test".into()),
+            password: Some("test".into()),
+            socket_opt: SocketOpt::default(),
+        },
+        std::sync::Arc::new(shadowquic::dns::ResolverManager::new()),
+    );
 
     let client = Manager::single(Box::new(mixed_server), std::sync::Arc::new(socks_client));
 

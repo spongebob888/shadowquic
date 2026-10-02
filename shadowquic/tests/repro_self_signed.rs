@@ -138,19 +138,22 @@ async fn test_self_signed_cert() {
     .await
     .unwrap();
 
-    let sq_client = SunnyQuicClient::new(SunnyQuicClientCfg {
-        password: "password".into(),
-        username: "user".into(),
-        addr: quic_addr.parse().unwrap(),
-        server_name: "localhost".into(),
-        alpn: vec!["h3".into()],
-        initial_mtu: 1200,
-        congestion_control: CongestionControl::Bbr,
-        zero_rtt: true,
-        over_stream: false,
-        cert_path: Some(cert_path.clone()), // Use the self-signed cert
-        ..Default::default()
-    });
+    let sq_client = SunnyQuicClient::new(
+        SunnyQuicClientCfg {
+            password: "password".into(),
+            username: "user".into(),
+            addr: quic_addr.parse().unwrap(),
+            server_name: "localhost".into(),
+            alpn: vec!["h3".into()],
+            initial_mtu: 1200,
+            congestion_control: CongestionControl::Bbr,
+            zero_rtt: true,
+            over_stream: false,
+            cert_path: Some(cert_path.clone()), // Use the self-signed cert
+            ..Default::default()
+        },
+        std::sync::Arc::new(shadowquic::dns::ResolverManager::new()),
+    );
 
     let client = Manager::single(Box::new(socks_server), std::sync::Arc::new(sq_client));
     tokio::spawn(client.run());
