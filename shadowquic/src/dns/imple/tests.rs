@@ -595,7 +595,7 @@ async fn dns_udp_reply_respects_client_limit() {
 #[cfg(feature = "plugin")]
 #[test]
 fn dns_example_is_valid() {
-    serde_saphyr::from_str::<Config>(include_str!("../../config_examples/dns.yaml"))
+    serde_saphyr::from_str::<Config>(include_str!("../../../config_examples/dns.yaml"))
         .unwrap()
         .validate()
         .unwrap();

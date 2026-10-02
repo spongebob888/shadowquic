@@ -11,7 +11,6 @@ use tracing::{info, info_span, warn};
 
 use mlua::{Function, Lua, LuaOptions, StdLib, UserData, UserDataFields, chunk::ChunkMode};
 
-#[cfg(feature = "dns-server")]
 use crate::dns::ResolverManager;
 use crate::{
     ProxyRequest, StatsContext, TcpSession, UdpSession,
@@ -222,14 +221,9 @@ struct RouterInner {
 impl Router {
     /// Load a script and watch its parent directory, including atomic file replacements.
     pub fn load(path: &Path) -> Result<Self, SError> {
-        Self::load_inner(
-            path,
-            #[cfg(feature = "dns-server")]
-            Arc::new(ResolverManager::new()),
-        )
+        Self::load_inner(path, Arc::new(ResolverManager::new()))
     }
 
-    #[cfg(feature = "dns-server")]
     pub(crate) fn load_with_manager(
         path: &Path,
         resolver_manager: Arc<ResolverManager>,
@@ -237,28 +231,21 @@ impl Router {
         Self::load_inner(path, resolver_manager)
     }
 
-    fn load_inner(
-        path: &Path,
-        #[cfg(feature = "dns-server")] resolver_manager: Arc<ResolverManager>,
-    ) -> Result<Self, SError> {
+    fn load_inner(path: &Path, resolver_manager: Arc<ResolverManager>) -> Result<Self, SError> {
         let path = watched_script_path(path)?;
         let script = read_script(&path)?;
-        let mut router = Self::from_source_inner(
-            &script,
-            #[cfg(feature = "dns-server")]
-            resolver_manager.clone(),
-        )
-        .map_err(|error| {
-            SError::InvalidConfig(format!(
-                "failed to load router script {}: {error}",
-                path.display()
-            ))
-        })?;
+        let mut router =
+            Self::from_source_inner(&script, resolver_manager.clone()).map_err(|error| {
+                SError::InvalidConfig(format!(
+                    "failed to load router script {}: {error}",
+                    path.display()
+                ))
+            })?;
         let inner = Arc::downgrade(&router.inner);
         let watched_path = path.clone();
         let span = info_span!("router", path = %path.display());
         let callback_span = span.clone();
-        #[cfg(feature = "dns-server")]
+
         let reload_manager = resolver_manager.clone();
         let mut watcher =
             notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
@@ -269,12 +256,7 @@ impl Router {
                                 || event.paths.iter().any(|p| p == &watched_path)) =>
                     {
                         if let Some(inner) = inner.upgrade() {
-                            reload_script(
-                                &inner,
-                                &watched_path,
-                                #[cfg(feature = "dns-server")]
-                                reload_manager.clone(),
-                            );
+                            reload_script(&inner, &watched_path, reload_manager.clone());
                         }
                     }
                     Ok(_) => {}
@@ -299,24 +281,13 @@ impl Router {
             })?;
         router._watcher = Some(watcher);
         // Close the gap between the initial read and watcher registration.
-        span.in_scope(|| {
-            reload_script(
-                &router.inner,
-                &path,
-                #[cfg(feature = "dns-server")]
-                resolver_manager,
-            )
-        });
+        span.in_scope(|| reload_script(&router.inner, &path, resolver_manager));
         Ok(router)
     }
 
     #[cfg(any(test, not(feature = "dns-server")))]
     pub(crate) fn from_source(source: &str) -> mlua::Result<Self> {
-        Self::from_source_inner(
-            source,
-            #[cfg(feature = "dns-server")]
-            Arc::new(ResolverManager::new()),
-        )
+        Self::from_source_inner(source, Arc::new(ResolverManager::new()))
     }
 
     #[cfg(feature = "dns-server")]
@@ -329,21 +300,17 @@ impl Router {
 
     fn from_source_inner(
         source: &str,
-        #[cfg(feature = "dns-server")] resolver_manager: Arc<ResolverManager>,
+        resolver_manager: Arc<ResolverManager>,
     ) -> mlua::Result<Self> {
         Ok(Self {
             _watcher: None,
-            inner: Arc::new(Mutex::new(Self::compile_inner(
-                source,
-                #[cfg(feature = "dns-server")]
-                resolver_manager,
-            )?)),
+            inner: Arc::new(Mutex::new(Self::compile_inner(source, resolver_manager)?)),
         })
     }
 
     fn compile_inner(
         source: &str,
-        #[cfg(feature = "dns-server")] resolver_manager: Arc<ResolverManager>,
+        resolver_manager: Arc<ResolverManager>,
     ) -> mlua::Result<RouterInner> {
         let libs = StdLib::STRING | StdLib::TABLE | StdLib::MATH;
         let libs = libs | StdLib::BIT;
@@ -465,11 +432,7 @@ fn read_script(path: &Path) -> Result<String, SError> {
     })
 }
 
-fn reload_script(
-    inner: &Mutex<RouterInner>,
-    path: &Path,
-    #[cfg(feature = "dns-server")] resolver_manager: Arc<ResolverManager>,
-) {
+fn reload_script(inner: &Mutex<RouterInner>, path: &Path, resolver_manager: Arc<ResolverManager>) {
     let result = (|| {
         // Serialize reloads with routing so requests see a complete runtime and
         // a late callback cannot overwrite a newer version of the file.
@@ -480,12 +443,8 @@ fn reload_script(
         if source == inner.source {
             return Ok(false);
         }
-        let replacement = Router::compile_inner(
-            &source,
-            #[cfg(feature = "dns-server")]
-            resolver_manager,
-        )
-        .map_err(|error| SError::RouterError(error.to_string()))?;
+        let replacement = Router::compile_inner(&source, resolver_manager)
+            .map_err(|error| SError::RouterError(error.to_string()))?;
         *inner = replacement;
         Ok::<_, SError>(true)
     })();

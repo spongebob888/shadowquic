@@ -229,7 +229,7 @@ impl Config {
                     _ => DnsStrategy::default(),
                 };
                 let inner: Arc<dyn Outbound> =
-                    Arc::from(cfg.build_outbound().instrument(span).await?);
+                    cfg.build_outbound().instrument(span).await?;
                 let outbound: Arc<dyn Outbound> = match resolver {
                     Some(resolver) => Arc::new(crate::dns::ResolvingOutbound {
                         inner,
