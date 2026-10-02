@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     net::IpAddr,
-    sync::{Mutex, OnceLock},
+    sync::Mutex,
     time::{Duration, Instant},
 };
 
@@ -21,11 +21,6 @@ struct Entry {
 #[derive(Default)]
 pub struct DnsCache {
     entries: Mutex<HashMap<Vec<u8>, Entry>>,
-}
-
-pub fn global_cache() -> &'static DnsCache {
-    static CACHE: OnceLock<DnsCache> = OnceLock::new();
-    CACHE.get_or_init(DnsCache::default)
 }
 
 fn key(query: &[u8]) -> Vec<u8> {

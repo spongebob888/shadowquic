@@ -6,7 +6,7 @@ mod integration;
 #[cfg(test)]
 mod tests;
 
-pub use cache::{DnsCache, global_cache};
+pub use cache::DnsCache;
 pub use fakeip::FakeIp;
 pub(crate) use integration::ResolvingOutbound;
 #[cfg(any(test, all(feature = "tproxy", target_os = "linux")))]
@@ -18,7 +18,7 @@ use simple_dns::{
     CLASS, Name, OPCODE, Packet, PacketFlag, QCLASS, QTYPE, Question, RCODE, ResourceRecord, TYPE,
     rdata::RData,
 };
-use std::{net::IpAddr, sync::Arc, time::Duration};
+use std::{collections::HashMap, net::IpAddr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, UdpSocket},
@@ -199,6 +199,7 @@ pub struct Resolver {
     backend: Backend,
     requests: mpsc::Sender<ProxyRequest>,
     pub fake_ip: Option<Arc<FakeIp>>,
+    cache: Arc<DnsCache>,
 }
 
 /// Local UDP and TCP listeners plus a queue of routable upstream sessions.
@@ -250,7 +251,12 @@ fn tls_connector() -> Result<tokio_rustls_jls::TlsConnector> {
 }
 
 impl DnsServer {
-    async fn new(tag: String, bind_addr: std::net::SocketAddr, backend: Backend) -> Result<Self> {
+    async fn new(
+        tag: String,
+        bind_addr: std::net::SocketAddr,
+        backend: Backend,
+        cache: Arc<DnsCache>,
+    ) -> Result<Self> {
         let tcp = TcpListener::bind(bind_addr).await?;
         let local_addr = tcp.local_addr()?;
         let udp = Arc::new(UdpSocket::bind(local_addr).await?);
@@ -260,6 +266,7 @@ impl DnsServer {
             fake_ip: matches!(backend, Backend::FakeIp).then(|| Arc::new(FakeIp::default())),
             backend,
             requests: tx,
+            cache,
         });
         let service = resolver.clone();
         let udp_task = tokio::spawn(async move {
@@ -490,7 +497,7 @@ impl Resolver {
 impl DnsService for Resolver {
     async fn exchange(&self, query: &[u8]) -> Result<Vec<u8>> {
         let packet = parse_query(query)?;
-        if let Some(cached) = global_cache().get(query)? {
+        if let Some(cached) = self.cache.get(query)? {
             return Ok(cached);
         }
         let reply = tokio::time::timeout(TIMEOUT, async {
@@ -513,7 +520,7 @@ impl DnsService for Resolver {
         .await
         .map_err(|_| dns_error("query timed out"))??;
         let packet = validate_response(query, &reply)?;
-        global_cache().insert(query, packet);
+        self.cache.insert(query, packet);
         Ok(reply)
     }
 }
@@ -584,4 +591,32 @@ async fn write_frame(stream: &mut (impl AsyncWrite + Unpin), bytes: &[u8]) -> Re
     stream.write_all(bytes).await?;
     stream.flush().await?;
     Ok(())
+}
+
+/// Owns the resolver tag map and the shared DNS cache used by every resolver.
+#[derive(Clone)]
+pub struct ResolverManager {
+    pub(crate) resolvers: Arc<HashMap<String, Arc<Resolver>>>,
+    pub(crate) cache: Arc<DnsCache>,
+}
+
+impl ResolverManager {
+    pub(crate) fn new() -> Self {
+        Self {
+            resolvers: Arc::new(HashMap::new()),
+            cache: Arc::new(DnsCache::default()),
+        }
+    }
+
+    pub(crate) fn cache(&self) -> Arc<DnsCache> {
+        self.cache.clone()
+    }
+
+    pub(crate) fn resolver(&self, tag: &str) -> Option<Arc<Resolver>> {
+        self.resolvers.get(tag).cloned()
+    }
+
+    pub(crate) fn insert(&mut self, tag: String, resolver: Arc<Resolver>) {
+        Arc::make_mut(&mut self.resolvers).insert(tag, resolver);
+    }
 }

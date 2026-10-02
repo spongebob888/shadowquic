@@ -380,6 +380,7 @@ async fn tls_exchange(trusted: bool, server_name: &str) -> Result<Vec<u8>> {
         },
         requests,
         fake_ip: None,
+        cache: Arc::new(DnsCache::default()),
     };
     let upstream = tokio::spawn(async move {
         let Some(ProxyRequest::Tcp(session)) = received.recv().await else {
@@ -515,9 +516,11 @@ async fn routing_scripts_can_query_shared_cache() {
         60,
         RData::A(ip.into()),
     ));
-    global_cache().insert(&query, reply);
-    let router = Router::from_source(&format!(
-        r#"
+    let resolver_manager = Arc::new(ResolverManager::new());
+    resolver_manager.cache().insert(&query, reply);
+    let router = Router::from_source_with_manager(
+        &format!(
+            r#"
         return function(ctx)
             local ips = lookup_cache("lua-cache.test")
             assert(#ips == 1)
@@ -527,7 +530,9 @@ async fn routing_scripts_can_query_shared_cache() {
             return "direct"
         end
     "#
-    ))
+        ),
+        resolver_manager,
+    )
     .unwrap();
     let (stream, _peer) = tokio::io::duplex(64);
     let request: ProxyRequest = ProxyRequest::Tcp(TcpSession {
@@ -792,8 +797,9 @@ async fn reverse_lookup_routes_ipv4_and_ipv6_ptr_queries_and_caches_answers() {
         ),
     ] {
         let upstream = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let cache = Arc::new(DnsCache::default());
         let server = udp_cfg(upstream.local_addr().unwrap())
-            .build()
+            .build_with_cache(cache.clone())
             .await
             .unwrap();
         let resolver = server.resolver.clone();
@@ -838,9 +844,7 @@ async fn reverse_lookup_routes_ipv4_and_ipv6_ptr_queries_and_caches_answers() {
             let names = resolver.reverse_lookup(ip.parse().unwrap()).await.unwrap();
             assert_eq!(names, ["host.test", "other.test"]);
             assert_eq!(
-                global_cache()
-                    .reverse_lookup_cache(ip.parse().unwrap())
-                    .as_deref(),
+                cache.reverse_lookup_cache(ip.parse().unwrap()).as_deref(),
                 Some("host.test")
             );
         }
@@ -1043,8 +1047,9 @@ fn reverse_lookup_cache_ignores_unrelated_ptr_records_and_cname_loops() {
 #[tokio::test]
 async fn different_resolvers_share_cached_responses_and_restore_transaction_ids() {
     let upstream = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let cache = Arc::new(DnsCache::default());
     let first = udp_cfg(upstream.local_addr().unwrap())
-        .build()
+        .build_with_cache(cache.clone())
         .await
         .unwrap();
     let resolver = first.resolver.clone();
@@ -1070,7 +1075,7 @@ async fn different_resolvers_share_cached_responses_and_restore_transaction_ids(
         bind_addr: "127.0.0.1:0".parse().unwrap(),
         upstream: unused_upstream.local_addr().unwrap(),
     }
-    .build()
+    .build_with_cache(cache.clone())
     .await
     .unwrap();
     // No manager services this resolver's upstream queue: only a shared cache

@@ -1,8 +1,8 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
 use serde::Deserialize;
 
-use super::{Backend, DnsServer, tls_connector};
+use super::{Backend, DnsCache, DnsServer, tls_connector};
 use crate::error::SError;
 
 /// Local UDP/TCP DNS listener using a UDP upstream, with TCP fallback.
@@ -17,7 +17,11 @@ pub struct DnsUdpServerCfg {
 
 impl DnsUdpServerCfg {
     pub async fn build(self) -> Result<DnsServer, SError> {
-        DnsServer::new(self.tag, self.bind_addr, Backend::Udp(self.upstream)).await
+        self.build_with_cache(Arc::new(DnsCache::default())).await
+    }
+
+    pub(crate) async fn build_with_cache(self, cache: Arc<DnsCache>) -> Result<DnsServer, SError> {
+        DnsServer::new(self.tag, self.bind_addr, Backend::Udp(self.upstream), cache).await
     }
 }
 
@@ -32,7 +36,11 @@ pub struct DnsTcpServerCfg {
 
 impl DnsTcpServerCfg {
     pub async fn build(self) -> Result<DnsServer, SError> {
-        DnsServer::new(self.tag, self.bind_addr, Backend::Tcp(self.upstream)).await
+        self.build_with_cache(Arc::new(DnsCache::default())).await
+    }
+
+    pub(crate) async fn build_with_cache(self, cache: Arc<DnsCache>) -> Result<DnsServer, SError> {
+        DnsServer::new(self.tag, self.bind_addr, Backend::Tcp(self.upstream), cache).await
     }
 }
 
@@ -55,6 +63,10 @@ impl DnsTlsServerCfg {
     }
 
     pub async fn build(self) -> Result<DnsServer, SError> {
+        self.build_with_cache(Arc::new(DnsCache::default())).await
+    }
+
+    pub(crate) async fn build_with_cache(self, cache: Arc<DnsCache>) -> Result<DnsServer, SError> {
         let server_name = rustls_jls::pki_types::ServerName::try_from(self.server_name)
             .map_err(|error| SError::InvalidConfig(error.to_string()))?;
         let backend = Backend::Tls {
@@ -62,7 +74,7 @@ impl DnsTlsServerCfg {
             server_name,
             connector: tls_connector()?,
         };
-        DnsServer::new(self.tag, self.bind_addr, backend).await
+        DnsServer::new(self.tag, self.bind_addr, backend, cache).await
     }
 }
 
@@ -76,7 +88,11 @@ pub struct DnsFakeIpServerCfg {
 
 impl DnsFakeIpServerCfg {
     pub async fn build(self) -> Result<DnsServer, SError> {
-        DnsServer::new(self.tag, self.bind_addr, Backend::FakeIp).await
+        self.build_with_cache(Arc::new(DnsCache::default())).await
+    }
+
+    pub(crate) async fn build_with_cache(self, cache: Arc<DnsCache>) -> Result<DnsServer, SError> {
+        DnsServer::new(self.tag, self.bind_addr, Backend::FakeIp, cache).await
     }
 }
 
@@ -90,7 +106,11 @@ pub struct DnsSystemServerCfg {
 
 impl DnsSystemServerCfg {
     pub async fn build(self) -> Result<DnsServer, SError> {
-        DnsServer::new(self.tag, self.bind_addr, Backend::System).await
+        self.build_with_cache(Arc::new(DnsCache::default())).await
+    }
+
+    pub(crate) async fn build_with_cache(self, cache: Arc<DnsCache>) -> Result<DnsServer, SError> {
+        DnsServer::new(self.tag, self.bind_addr, Backend::System, cache).await
     }
 }
 
@@ -134,12 +154,16 @@ impl DnsCfg {
     }
 
     pub async fn build(self) -> Result<DnsServer, SError> {
+        self.build_with_cache(Arc::new(DnsCache::default())).await
+    }
+
+    pub(crate) async fn build_with_cache(self, cache: Arc<DnsCache>) -> Result<DnsServer, SError> {
         match self {
-            Self::Udp(cfg) => cfg.build().await,
-            Self::Tcp(cfg) => cfg.build().await,
-            Self::Tls(cfg) => cfg.build().await,
-            Self::FakeIp(cfg) => cfg.build().await,
-            Self::System(cfg) => cfg.build().await,
+            Self::Udp(cfg) => cfg.build_with_cache(cache).await,
+            Self::Tcp(cfg) => cfg.build_with_cache(cache).await,
+            Self::Tls(cfg) => cfg.build_with_cache(cache).await,
+            Self::FakeIp(cfg) => cfg.build_with_cache(cache).await,
+            Self::System(cfg) => cfg.build_with_cache(cache).await,
         }
     }
 }

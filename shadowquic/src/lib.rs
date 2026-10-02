@@ -222,6 +222,9 @@ pub struct Manager {
     pub default_outbound: String,
     #[cfg(feature = "plugin")]
     pub router: Option<Arc<plugin::router::Router>>,
+
+    #[cfg(feature = "dns-server")]
+    pub resolver_manager: Option<Arc<dns::ResolverManager>>,
 }
 
 /// Shared routing state for independently scheduled requests.
@@ -303,6 +306,8 @@ impl Manager {
             default_outbound: "outbound".into(),
             #[cfg(feature = "plugin")]
             router: None,
+            #[cfg(feature = "dns-server")]
+            resolver_manager: None,
         }
     }
 

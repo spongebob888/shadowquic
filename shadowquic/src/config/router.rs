@@ -1,8 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+#[cfg(all(feature = "plugin", feature = "dns-server"))]
+use crate::dns::ResolverManager;
 use crate::error::SError;
 #[cfg(feature = "plugin")]
 use crate::plugin::router::Router;
+#[cfg(all(feature = "plugin", feature = "dns-server"))]
+use std::sync::Arc;
 
 /// Request routing through a default outbound or a restricted Lua script.
 ///
@@ -102,7 +106,25 @@ impl RouterCfg {
         Ok(())
     }
 
-    #[cfg(feature = "plugin")]
+    #[cfg(all(feature = "plugin", feature = "dns-server"))]
+    pub(super) fn build(
+        &self,
+        resolver_manager: Arc<ResolverManager>,
+    ) -> Result<Option<Router>, SError> {
+        self.validate()?;
+        match (self.src.as_deref(), self.path.as_deref()) {
+            (Some(source), None) => Router::from_source_with_manager(source, resolver_manager)
+                .map(Some)
+                .map_err(|error| {
+                    SError::InvalidConfig(format!("failed to load inline router script: {error}"))
+                }),
+            (None, Some(path)) => Router::load_with_manager(path, resolver_manager).map(Some),
+            (None, None) => Ok(None),
+            (Some(_), Some(_)) => unreachable!("validated above"),
+        }
+    }
+
+    #[cfg(all(feature = "plugin", not(feature = "dns-server")))]
     pub(super) fn build(&self) -> Result<Option<Router>, SError> {
         self.validate()?;
         match (self.src.as_deref(), self.path.as_deref()) {

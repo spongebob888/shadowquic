@@ -22,7 +22,7 @@ It supports following dns type:
 - fakeip dns. At most one instance and if it exists, perform fake ip mapping in tproxy. The fakeip should not exist in router stage.
 - system dns, which use tokio lookup function to perform dns.
 
-Each type corresponding to an inbound type.
+Each type corresponding to an dns type.
 
 ## Tips
 - Use simple dns lib to pack/unpack a dns request

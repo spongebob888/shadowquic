@@ -11,6 +11,8 @@ use tracing::{info, info_span, warn};
 
 use mlua::{Function, Lua, LuaOptions, StdLib, UserData, UserDataFields, chunk::ChunkMode};
 
+#[cfg(feature = "dns-server")]
+use crate::dns::ResolverManager;
 use crate::{
     ProxyRequest, StatsContext, TcpSession, UdpSession,
     error::SError,
@@ -220,9 +222,33 @@ struct RouterInner {
 impl Router {
     /// Load a script and watch its parent directory, including atomic file replacements.
     pub fn load(path: &Path) -> Result<Self, SError> {
+        Self::load_inner(
+            path,
+            #[cfg(feature = "dns-server")]
+            Arc::new(ResolverManager::new()),
+        )
+    }
+
+    #[cfg(feature = "dns-server")]
+    pub(crate) fn load_with_manager(
+        path: &Path,
+        resolver_manager: Arc<ResolverManager>,
+    ) -> Result<Self, SError> {
+        Self::load_inner(path, resolver_manager)
+    }
+
+    fn load_inner(
+        path: &Path,
+        #[cfg(feature = "dns-server")] resolver_manager: Arc<ResolverManager>,
+    ) -> Result<Self, SError> {
         let path = watched_script_path(path)?;
         let script = read_script(&path)?;
-        let mut router = Self::from_source(&script).map_err(|error| {
+        let mut router = Self::from_source_inner(
+            &script,
+            #[cfg(feature = "dns-server")]
+            resolver_manager.clone(),
+        )
+        .map_err(|error| {
             SError::InvalidConfig(format!(
                 "failed to load router script {}: {error}",
                 path.display()
@@ -232,6 +258,8 @@ impl Router {
         let watched_path = path.clone();
         let span = info_span!("router", path = %path.display());
         let callback_span = span.clone();
+        #[cfg(feature = "dns-server")]
+        let reload_manager = resolver_manager.clone();
         let mut watcher =
             notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
                 callback_span.in_scope(|| match event {
@@ -241,7 +269,12 @@ impl Router {
                                 || event.paths.iter().any(|p| p == &watched_path)) =>
                     {
                         if let Some(inner) = inner.upgrade() {
-                            reload_script(&inner, &watched_path);
+                            reload_script(
+                                &inner,
+                                &watched_path,
+                                #[cfg(feature = "dns-server")]
+                                reload_manager.clone(),
+                            );
                         }
                     }
                     Ok(_) => {}
@@ -266,27 +299,63 @@ impl Router {
             })?;
         router._watcher = Some(watcher);
         // Close the gap between the initial read and watcher registration.
-        span.in_scope(|| reload_script(&router.inner, &path));
+        span.in_scope(|| {
+            reload_script(
+                &router.inner,
+                &path,
+                #[cfg(feature = "dns-server")]
+                resolver_manager,
+            )
+        });
         Ok(router)
     }
 
+    #[cfg(any(test, not(feature = "dns-server")))]
     pub(crate) fn from_source(source: &str) -> mlua::Result<Self> {
+        Self::from_source_inner(
+            source,
+            #[cfg(feature = "dns-server")]
+            Arc::new(ResolverManager::new()),
+        )
+    }
+
+    #[cfg(feature = "dns-server")]
+    pub(crate) fn from_source_with_manager(
+        source: &str,
+        resolver_manager: Arc<ResolverManager>,
+    ) -> mlua::Result<Self> {
+        Self::from_source_inner(source, resolver_manager)
+    }
+
+    fn from_source_inner(
+        source: &str,
+        #[cfg(feature = "dns-server")] resolver_manager: Arc<ResolverManager>,
+    ) -> mlua::Result<Self> {
         Ok(Self {
             _watcher: None,
-            inner: Arc::new(Mutex::new(Self::compile(source)?)),
+            inner: Arc::new(Mutex::new(Self::compile_inner(
+                source,
+                #[cfg(feature = "dns-server")]
+                resolver_manager,
+            )?)),
         })
     }
 
-    fn compile(source: &str) -> mlua::Result<RouterInner> {
+    fn compile_inner(
+        source: &str,
+        #[cfg(feature = "dns-server")] resolver_manager: Arc<ResolverManager>,
+    ) -> mlua::Result<RouterInner> {
         let libs = StdLib::STRING | StdLib::TABLE | StdLib::MATH;
         let libs = libs | StdLib::BIT;
         let lua = Lua::new_with(libs, LuaOptions::default())?;
         #[cfg(feature = "dns-server")]
         {
+            let lookup_manager = resolver_manager.clone();
             lua.globals().set(
                 "lookup_cache",
-                lua.create_function(|_, domain: String| {
-                    Ok(crate::dns::global_cache()
+                lua.create_function(move |_, domain: String| {
+                    Ok(lookup_manager
+                        .cache()
                         .lookup_cache(&domain)
                         .into_iter()
                         .map(|ip| ip.to_string())
@@ -295,12 +364,16 @@ impl Router {
             )?;
             lua.globals().set(
                 "reverse_lookup_cache",
-                lua.create_function(|_, ip: String| {
+                lua.create_function(move |_, ip: String| {
                     let ip = ip.parse().map_err(mlua::Error::external)?;
-                    Ok(crate::dns::global_cache().reverse_lookup_cache(ip))
+                    Ok(resolver_manager.cache().reverse_lookup_cache(ip))
                 })?,
             )?;
         }
+        Self::compile_common(source, lua)
+    }
+
+    fn compile_common(source: &str, lua: Lua) -> mlua::Result<RouterInner> {
         // The base library is always loaded, including file and code loaders.
         // Remove these before evaluating any user-provided source.
         let globals = lua.globals();
@@ -392,7 +465,11 @@ fn read_script(path: &Path) -> Result<String, SError> {
     })
 }
 
-fn reload_script(inner: &Mutex<RouterInner>, path: &Path) {
+fn reload_script(
+    inner: &Mutex<RouterInner>,
+    path: &Path,
+    #[cfg(feature = "dns-server")] resolver_manager: Arc<ResolverManager>,
+) {
     let result = (|| {
         // Serialize reloads with routing so requests see a complete runtime and
         // a late callback cannot overwrite a newer version of the file.
@@ -403,8 +480,12 @@ fn reload_script(inner: &Mutex<RouterInner>, path: &Path) {
         if source == inner.source {
             return Ok(false);
         }
-        let replacement =
-            Router::compile(&source).map_err(|error| SError::RouterError(error.to_string()))?;
+        let replacement = Router::compile_inner(
+            &source,
+            #[cfg(feature = "dns-server")]
+            resolver_manager,
+        )
+        .map_err(|error| SError::RouterError(error.to_string()))?;
         *inner = replacement;
         Ok::<_, SError>(true)
     })();
@@ -495,7 +576,12 @@ mod tests {
         wait_for_route(&router, "replaced");
 
         std::fs::remove_file(&path).unwrap();
-        reload_script(&router.inner, &path);
+        reload_script(
+            &router.inner,
+            &path,
+            #[cfg(feature = "dns-server")]
+            std::sync::Arc::new(crate::dns::ResolverManager::new()),
+        );
         assert_eq!(router.route(&mut context()).unwrap(), "replaced");
         std::fs::write(&path, "return function(_) return 'recreated' end").unwrap();
         wait_for_route(&router, "recreated");
@@ -532,15 +618,30 @@ mod tests {
         std::fs::write(&path, source).unwrap();
         let router = Router::load(&path).unwrap();
         assert_eq!(router.route(&mut context()).unwrap(), "1");
-        reload_script(&router.inner, &path);
+        reload_script(
+            &router.inner,
+            &path,
+            #[cfg(feature = "dns-server")]
+            std::sync::Arc::new(crate::dns::ResolverManager::new()),
+        );
         assert_eq!(router.route(&mut context()).unwrap(), "2");
         for invalid in ["return function(", "return {}", "error('load failed')"] {
             std::fs::write(&path, invalid).unwrap();
-            reload_script(&router.inner, &path);
+            reload_script(
+                &router.inner,
+                &path,
+                #[cfg(feature = "dns-server")]
+                std::sync::Arc::new(crate::dns::ResolverManager::new()),
+            );
         }
         assert_eq!(router.route(&mut context()).unwrap(), "3");
         std::fs::write(&path, source).unwrap();
-        reload_script(&router.inner, &path);
+        reload_script(
+            &router.inner,
+            &path,
+            #[cfg(feature = "dns-server")]
+            std::sync::Arc::new(crate::dns::ResolverManager::new()),
+        );
         assert_eq!(router.route(&mut context()).unwrap(), "4");
         std::fs::write(
             &path,

@@ -22,6 +22,8 @@ use crate::{
 
 mod serde_utils;
 #[cfg(feature = "dns-server")]
+use crate::dns::ResolverManager;
+#[cfg(feature = "dns-server")]
 pub use crate::dns::config::{
     DnsCfg, DnsFakeIpServerCfg, DnsSystemServerCfg, DnsTcpServerCfg, DnsTlsServerCfg,
     DnsUdpServerCfg,
@@ -183,8 +185,6 @@ impl Config {
 
     pub async fn build_manager(self) -> Result<Manager, SError> {
         self.validate()?;
-        #[cfg(feature = "plugin")]
-        let router = self.router.build()?.map(Arc::new);
         let default_outbound = self
             .router
             .default_outbound
@@ -193,27 +193,37 @@ impl Config {
         let mut inbounds = HashMap::new();
         let mut outbounds = HashMap::new();
         #[cfg(feature = "dns-server")]
-        let mut resolvers = HashMap::new();
+        let mut resolver_manager = Arc::new(ResolverManager::new());
         #[cfg(all(feature = "dns-server", feature = "tproxy", target_os = "linux"))]
         let mut fake_ip = None;
         #[cfg(feature = "dns-server")]
         for cfg in self.dns {
             let tag = cfg.tag().to_owned();
-            let server = cfg.build().await?;
+            let server = cfg.build_with_cache(resolver_manager.cache()).await?;
             #[cfg(all(feature = "tproxy", target_os = "linux"))]
             if server.resolver.fake_ip.is_some() {
                 fake_ip = server.resolver.fake_ip.clone();
             }
             outbounds.insert(tag.clone(), server.resolver.clone() as Arc<dyn Outbound>);
-            resolvers.insert(tag.clone(), server.resolver.clone());
+            Arc::make_mut(&mut resolver_manager).insert(tag.clone(), server.resolver.clone());
             inbounds.insert(tag.clone(), Box::new(server) as Box<dyn Inbound>);
         }
+        #[cfg(feature = "plugin")]
+        let router = self
+            .router
+            .build(
+                #[cfg(feature = "dns-server")]
+                resolver_manager.clone(),
+            )?
+            .map(Arc::new);
         for cfg in self.outbounds {
             let tag = cfg.tag().to_owned();
             let span = info_span!("outbound", tag = %tag);
             #[cfg(feature = "dns-server")]
             {
-                let resolver = cfg.dns().map(|tag| resolvers[tag].clone());
+                let resolver = cfg
+                    .dns()
+                    .map(|tag| resolver_manager.resolver(tag).expect("validated DNS tag"));
                 let strategy = match &cfg {
                     OutboundCfg::Direct(cfg) => cfg.dns_strategy.clone(),
                     _ => DnsStrategy::default(),
@@ -256,6 +266,8 @@ impl Config {
             default_outbound,
             #[cfg(feature = "plugin")]
             router,
+            #[cfg(feature = "dns-server")]
+            resolver_manager: Some(resolver_manager),
         })
     }
 }
