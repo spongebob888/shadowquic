@@ -603,6 +603,12 @@ pub struct ResolverManager {
     pub(crate) cache: Arc<DnsCache>,
 }
 
+impl Default for ResolverManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ResolverManager {
     pub fn new() -> Self {
         let cache = Arc::new(DnsCache::default());

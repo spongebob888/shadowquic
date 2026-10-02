@@ -19,10 +19,7 @@ pub struct UdpSocketFactory {
 #[async_trait::async_trait]
 impl SocketFactory for UdpSocketFactory {
     async fn create_socket(&self) -> std::io::Result<socket2::Socket> {
-        let socks_addr = self
-            .addr
-            .parse::<SocksAddr>()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let socks_addr = self.addr.parse::<SocksAddr>().map_err(io::Error::other)?;
         let addr = match socks_addr.addr {
             crate::msgs::socks5::AddrOrDomain::Domain(domain) => {
                 let domain_str = std::str::from_utf8(&domain.contents)
@@ -31,7 +28,7 @@ impl SocketFactory for UdpSocketFactory {
                     .resolver
                     .resolve(domain_str)
                     .await
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                    .map_err(io::Error::other)?;
                 if ips.is_empty() {
                     return Err(io::Error::new(
                         io::ErrorKind::NotFound,
@@ -138,10 +135,7 @@ pub struct TcpSocketFactory {
 #[async_trait::async_trait]
 impl SocketFactory for TcpSocketFactory {
     async fn create_socket(&self) -> std::io::Result<socket2::Socket> {
-        let socks_addr = self
-            .addr
-            .parse::<SocksAddr>()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let socks_addr = self.addr.parse::<SocksAddr>().map_err(io::Error::other)?;
         let addr = match socks_addr.addr {
             crate::msgs::socks5::AddrOrDomain::Domain(domain) => {
                 let domain_str = std::str::from_utf8(&domain.contents)
@@ -150,7 +144,7 @@ impl SocketFactory for TcpSocketFactory {
                     .resolver
                     .resolve(domain_str)
                     .await
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                    .map_err(io::Error::other)?;
                 if ips.is_empty() {
                     return Err(io::Error::new(
                         io::ErrorKind::NotFound,

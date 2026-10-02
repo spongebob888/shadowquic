@@ -180,7 +180,7 @@ impl QuicClient for EndClient {
                 fw_mark: cfg.socket_opt.fw_mark,
                 protect_path: cfg.protect_path.clone(),
                 try_dual_stack: true,
-                resolver: resolver,
+                resolver,
             }),
         )
         .await
