@@ -50,6 +50,11 @@ pub use router::RouterCfg;
 /// - tag: proxy-out
 ///   type: xxx
 ///   xxx: xxx
+/// dns:
+///  - tag: dns-in
+///    type: dns-udp
+///    xxx: xxx
+///
 /// router:
 ///   default-outbound: proxy-out
 ///   src: |
@@ -73,6 +78,9 @@ pub struct Config {
     pub inbounds: Vec<InboundCfg>,
     /// Standalone DNS services. Tags must be nonempty and must not collide
     /// with inbound or outbound tags.
+    /// DNS services are automatically registered as outbounds and traffic can be routed to it for hijacking.
+    /// You can also route a dns traffic back to another DNS server.
+    /// DNS requests will be exposed to router context for routing.
     #[cfg(feature = "dns-server")]
     #[serde(default)]
     pub dns: Vec<DnsCfg>,

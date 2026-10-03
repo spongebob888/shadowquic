@@ -24,6 +24,10 @@ use std::sync::Arc;
 /// selects the outbound instead of `default-outbound`.
 ///
 /// ```yaml
+/// dns:
+///   - tag: dns-in
+///     type: dns-udp
+///     bind-addr: 0.0.0.0:5553
 /// router:
 ///   src: |
 ///     return function(ctx)
@@ -33,6 +37,10 @@ use std::sync::Arc;
 ///
 ///       if ctx.dst_ip_v4 and ctx.dst_ip_v4:sub(1, #"192.168") == "192.168" then
 ///         return "sq-home"
+///       end
+///
+///       if ctx.dst_port == 53 and ctx.network_type == "udp" then
+///         return "dns-in" -- dns hijacking
 ///       end
 ///
 ///       return "direct"
@@ -76,15 +84,20 @@ use std::sync::Arc;
 ///
 /// Scripts have base language functions and string, table, math, and bit helpers.
 /// Filesystem, process, module loading, and dynamic code loading are unavailable.
-/// Console output through `print` is allowed.
-/// `info(message)` accepts a string and emits a `tracing::info!` log, using the
-/// application's logging filters. It is available during loading and routing.
-/// With `dns-server`, `lookup(dns_tag, domain)` returns an array of IP strings
-/// and `reverse_lookup(dns_tag, ip)` returns an array of PTR hostname strings.
-/// These calls suspend the routing function and raise Lua errors on failure.
-/// Call them inside the returned function, and route DNS upstream requests
-/// (`#ctx.dns_query > 0`) before calling them to avoid recursive lookups.
-/// Concurrent routing functions share Lua state and can interleave at awaits.
+///
+/// | API | Behavior | Availability |
+/// | --- | --- | --- |
+/// | `print(...)` | Writes console output | Script loading and routing |
+/// | `info(message)` | Accepts a string and emits a `tracing::info!` log using the application's logging filters | Script loading and routing |
+/// | `lookup(dns_tag, domain)` | Returns an array of IP strings and may block router. | Inside the returned routing function; requires `dns-server` |
+/// | `reverse_lookup(dns_tag, ip)` | Returns an array of PTR hostname strings and may block router| Inside the returned routing function; requires `dns-server` |
+/// | `lookup_cache(domain)` | Returns an array of cached IP strings, or an empty array on a miss; domain names are case insensitive | Script loading and routing; requires `dns-server` |
+/// | `reverse_lookup_cache(ip)` | Returns the most recently cached hostname from matching A/AAAA or PTR answers, or nil on a miss; invalid IP strings raise a Lua error | Script loading and routing; requires `dns-server` |
+///
+/// Cache lookups use the shared DNS cache, ignore expired entries, and perform
+/// no network I/O or asynchronous suspension. They do not take a DNS service tag.
+/// `lookup` and `reverse_lookup` suspend the routing function and raise Lua errors
+/// on failure. Route DNS upstream requests
 ///
 /// The exposed router context to script can be seen in [`crate::plugin::router::RouteContext`]
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
