@@ -43,6 +43,24 @@
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/outbound/drop/</loc>
       </url>
       <url>
+        <loc>https://spongebob888.github.io/shadowquic/main/configuration/dns/</loc>
+      </url>
+      <url>
+        <loc>https://spongebob888.github.io/shadowquic/main/configuration/dns/dns-udp/</loc>
+      </url>
+      <url>
+        <loc>https://spongebob888.github.io/shadowquic/main/configuration/dns/dns-tcp/</loc>
+      </url>
+      <url>
+        <loc>https://spongebob888.github.io/shadowquic/main/configuration/dns/dns-tls/</loc>
+      </url>
+      <url>
+        <loc>https://spongebob888.github.io/shadowquic/main/configuration/dns/dns-fakeip/</loc>
+      </url>
+      <url>
+        <loc>https://spongebob888.github.io/shadowquic/main/configuration/dns/dns-system/</loc>
+      </url>
+      <url>
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/router/</loc>
       </url>
       <url>

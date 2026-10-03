@@ -13,7 +13,7 @@
         <link rel="canonical" href="https://spongebob888.github.io/shadowquic/main/configuration/router/">
       
       
-        <link rel="prev" href="../outbound/drop/">
+        <link rel="prev" href="../dns/dns-system/">
       
       
         <link rel="next" href="../shared/loglevel/">
@@ -237,6 +237,8 @@
       
         
       
+        
+      
     
     
     
@@ -369,6 +371,8 @@
       
         
           
+        
+      
         
       
         
@@ -884,6 +888,229 @@
                 
   
   
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../dns/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  DNS
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2_4" id="__nav_2_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  DNS
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dns/dns-udp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  DNS UDP server
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dns/dns-tcp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  DNS TCP server
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dns/dns-tls/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  DNS TLS server
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dns/dns-fakeip/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  DNS fake IP server
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dns/dns-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  DNS system server
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
     
   
   
@@ -1049,10 +1276,10 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_5" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_6" >
         
           
-          <label class="md-nav__link" for="__nav_2_5" id="__nav_2_5_label" tabindex="">
+          <label class="md-nav__link" for="__nav_2_6" id="__nav_2_6_label" tabindex="">
             
   
   
@@ -1069,8 +1296,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_2_5">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1508,19 +1735,27 @@ Omit <code>router</code> or use <code>router: {}</code> to use the first outboun
 <p>Script routing requires the <code>plugin</code> Cargo feature. Configure either inline
 source in <code>src</code> or a script file in <code>path</code>, never both. A configured script
 selects the outbound instead of <code>default-outbound</code>.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">router</span><span class="p">:</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">src</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="no">return function(ctx)</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">      </span><span class="no">if ctx.dst_domain and ctx.dst_domain:match(&quot;%.example$&quot;) then</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">        </span><span class="no">return &quot;special-proxy&quot;</span>
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">      </span><span class="no">end</span>
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">      </span><span class="no">if ctx.dst_ip_v4 and ctx.dst_ip_v4:sub(1, #&quot;192.168&quot;) == &quot;192.168&quot; then</span>
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">        </span><span class="no">return &quot;sq-home&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">dns</span><span class="p">:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">tag</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">dns-in</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">dns-udp</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="nt">bind-addr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.0.0.0:5553</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="nt">router</span><span class="p">:</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span><span class="nt">src</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">    </span><span class="no">return function(ctx)</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">      </span><span class="no">if ctx.dst_domain and ctx.dst_domain:match(&quot;%.example$&quot;) then</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">        </span><span class="no">return &quot;special-proxy&quot;</span>
 <a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">      </span><span class="no">end</span>
 <a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>
-<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">      </span><span class="no">return &quot;direct&quot;</span>
-<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">    </span><span class="no">end</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">      </span><span class="no">if ctx.dst_ip_v4 and ctx.dst_ip_v4:sub(1, #&quot;192.168&quot;) == &quot;192.168&quot; then</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">        </span><span class="no">return &quot;sq-home&quot;</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">      </span><span class="no">end</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">      </span><span class="no">if ctx.dst_port == 53 and ctx.network_type == &quot;udp&quot; then</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">        </span><span class="no">return &quot;dns-in&quot; -- dns hijacking</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">      </span><span class="no">end</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="w">      </span><span class="no">return &quot;direct&quot;</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="w">    </span><span class="no">end</span>
 </code></pre></div>
 <p>Alternatively, load a file (relative paths resolve from the working directory):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">router</span><span class="p">:</span>
@@ -1583,16 +1818,52 @@ Setting a destination name or IP clears the other destination address fields.
 Return a configured outbound tag to route the request, or <code>nil, error_message</code>
 to reject it. Routing errors do not fall back to <code>router.default-outbound</code>.</p>
 <p>Scripts have base language functions and string, table, math, and bit helpers.
-Filesystem, process, module loading, and dynamic code loading are unavailable.
-Console output through <code>print</code> is allowed.
-<code>info(message)</code> accepts a string and emits a <code>tracing::info!</code> log, using the
-application's logging filters. It is available during loading and routing.
-With <code>dns-server</code>, <code>lookup(dns_tag, domain)</code> returns an array of IP strings
-and <code>reverse_lookup(dns_tag, ip)</code> returns an array of PTR hostname strings.
-These calls suspend the routing function and raise Lua errors on failure.
-Call them inside the returned function, and route DNS upstream requests
-(<code>#ctx.dns_query &gt; 0</code>) before calling them to avoid recursive lookups.
-Concurrent routing functions share Lua state and can interleave at awaits.</p>
+Filesystem, process, module loading, and dynamic code loading are unavailable.</p>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>Behavior</th>
+<th>Availability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>print(...)</code></td>
+<td>Writes console output</td>
+<td>Script loading and routing</td>
+</tr>
+<tr>
+<td><code>info(message)</code></td>
+<td>Accepts a string and emits a <code>tracing::info!</code> log using the application's logging filters</td>
+<td>Script loading and routing</td>
+</tr>
+<tr>
+<td><code>lookup(dns_tag, domain)</code></td>
+<td>Returns an array of IP strings and may block router.</td>
+<td>Inside the returned routing function; requires <code>dns-server</code></td>
+</tr>
+<tr>
+<td><code>reverse_lookup(dns_tag, ip)</code></td>
+<td>Returns an array of PTR hostname strings and may block router</td>
+<td>Inside the returned routing function; requires <code>dns-server</code></td>
+</tr>
+<tr>
+<td><code>lookup_cache(domain)</code></td>
+<td>Returns an array of cached IP strings, or an empty array on a miss; domain names are case insensitive</td>
+<td>Script loading and routing; requires <code>dns-server</code></td>
+</tr>
+<tr>
+<td><code>reverse_lookup_cache(ip)</code></td>
+<td>Returns the most recently cached hostname from matching A/AAAA or PTR answers, or nil on a miss; invalid IP strings raise a Lua error</td>
+<td>Script loading and routing; requires <code>dns-server</code></td>
+</tr>
+</tbody>
+</table>
+<p>Cache lookups use the shared DNS cache, ignore expired entries, and perform
+no network I/O or asynchronous suspension. They do not take a DNS service tag.
+<code>lookup</code> and <code>reverse_lookup</code> suspend the routing function and raise Lua errors
+on failure. Route DNS upstream requests</p>
 <p>The exposed router context to script can be seen in [<code>crate::plugin::router::RouteContext</code>]</p>
 <h2 id="fields">Fields<a class="headerlink" href="#fields" title="Permanent link">&para;</a></h2>
 <h3 id="default-outbound"><code>default-outbound</code><a class="headerlink" href="#default-outbound" title="Permanent link">&para;</a></h3>

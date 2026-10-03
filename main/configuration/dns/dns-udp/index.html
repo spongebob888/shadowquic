@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://spongebob888.github.io/shadowquic/main/configuration/outbound/shadowquic/">
+        <link rel="canonical" href="https://spongebob888.github.io/shadowquic/main/configuration/dns/dns-udp/">
       
       
-        <link rel="prev" href="../socks/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../sunnyquic/">
+        <link rel="next" href="../dns-tcp/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>ShadowQuic outbound - shadowquic</title>
+        <title>DNS UDP server - shadowquic</title>
       
     
     
@@ -83,7 +83,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#shadowquic-outbound" class="md-skip">
+        <a href="#dns-udp-server" class="md-skip">
           Skip to content
         </a>
       
@@ -121,7 +121,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ShadowQuic outbound
+              DNS UDP server
             
           </span>
         </div>
@@ -665,535 +665,6 @@
                 
   
   
-    
-  
-  
-  
-    
-    
-      
-        
-          
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-    
-    
-    
-      
-      
-        
-          
-          
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_3" checked>
-        
-          
-          <div class="md-nav__link md-nav__container">
-            <a href="../" class="md-nav__link ">
-              
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Outbound
-
-    
-  </span>
-  
-  
-
-            </a>
-            
-              
-              <label class="md-nav__link " for="__nav_2_3" id="__nav_2_3_label" tabindex="">
-                <span class="md-nav__icon md-icon"></span>
-              </label>
-            
-          </div>
-        
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_2_3">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-  Outbound
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../socks/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Socks outbound
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-    
-  
-  
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  ShadowQuic outbound
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  ShadowQuic outbound
-
-    
-  </span>
-  
-  
-
-      </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#fields" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Fields
-      </span>
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Fields">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#dns" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>dns</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#addr-resolver" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>addr-resolver</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tag" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>tag</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#username" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>username</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#password" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>password</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#addr" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>addr</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#server-name" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>server-name</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#alpn" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>alpn</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#initial-mtu" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>initial-mtu</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#congestion-control" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>congestion-control</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#zero-rtt" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>zero-rtt</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#over-stream" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>over-stream</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#proxy-http3" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Proxy HTTP3
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#min-mtu" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>min-mtu</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#keep-alive-interval" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>keep-alive-interval</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#gso" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>gso</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#mtu-discovery" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>mtu-discovery</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#blackhole-detection" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>blackhole-detection</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cipher-suite-preference" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>cipher-suite-preference</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#protect-path" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>protect-path</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#fw-mark" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>fw-mark</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#bind-interface" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>bind-interface</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../sunnyquic/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  SunnyQuic outbound
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../direct/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Direct outbound
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../drop/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Drop outbound
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
   
   
     
@@ -1231,11 +702,234 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_4" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_3" >
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../dns/" class="md-nav__link ">
+            <a href="../../outbound/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Outbound
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2_3" id="__nav_2_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Outbound
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../outbound/socks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Socks outbound
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../outbound/shadowquic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ShadowQuic outbound
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../outbound/sunnyquic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  SunnyQuic outbound
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../outbound/direct/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Direct outbound
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../outbound/drop/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Drop outbound
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_4" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
               
   
   
@@ -1258,7 +952,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1274,10 +968,36 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../dns/dns-udp/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  DNS UDP server
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1292,6 +1012,77 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Fields
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Fields">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tag" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>tag</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bind-addr" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>bind-addr</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#upstream" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>upstream</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1304,7 +1095,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../dns/dns-tcp/" class="md-nav__link">
+      <a href="../dns-tcp/" class="md-nav__link">
         
   
   
@@ -1331,7 +1122,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../dns/dns-tls/" class="md-nav__link">
+      <a href="../dns-tls/" class="md-nav__link">
         
   
   
@@ -1358,7 +1149,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../dns/dns-fakeip/" class="md-nav__link">
+      <a href="../dns-fakeip/" class="md-nav__link">
         
   
   
@@ -1385,7 +1176,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../dns/dns-system/" class="md-nav__link">
+      <a href="../dns-system/" class="md-nav__link">
         
   
   
@@ -1878,28 +1669,6 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#dns" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>dns</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#addr-resolver" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>addr-resolver</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#tag" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1911,10 +1680,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#username" class="md-nav__link">
+  <a href="#bind-addr" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        <code>username</code>
+        <code>bind-addr</code>
       </span>
     </span>
   </a>
@@ -1922,197 +1691,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#password" class="md-nav__link">
+  <a href="#upstream" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        <code>password</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#addr" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>addr</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#server-name" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>server-name</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#alpn" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>alpn</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#initial-mtu" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>initial-mtu</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#congestion-control" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>congestion-control</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#zero-rtt" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>zero-rtt</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#over-stream" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>over-stream</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#proxy-http3" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Proxy HTTP3
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#min-mtu" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>min-mtu</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#keep-alive-interval" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>keep-alive-interval</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#gso" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>gso</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#mtu-discovery" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>mtu-discovery</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#blackhole-detection" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>blackhole-detection</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cipher-suite-preference" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>cipher-suite-preference</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#protect-path" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>protect-path</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#fw-mark" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>fw-mark</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#bind-interface" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>bind-interface</code>
+        <code>upstream</code>
       </span>
     </span>
   </a>
@@ -2142,187 +1724,25 @@
   
 
 
-<h1 id="shadowquic-outbound">ShadowQuic outbound<a class="headerlink" href="#shadowquic-outbound" title="Permanent link">&para;</a></h1>
-<p>Shadowquic outbound configuration</p>
-<p>example:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">tag</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">proxy</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">shadowquic</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nt">addr</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;12.34.56.7:1089&quot;</span><span class="w"> </span><span class="c1"># or &quot;[12:ff::ff]:1089&quot; for dualstack</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;12345678&quot;</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;87654321&quot;</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="nt">server-name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;echo.free.beeceptor.com&quot;</span><span class="w"> </span><span class="c1"># must be the same as jls_upstream in server</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="nt">alpn</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;h3&quot;</span><span class="p p-Indicator">]</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="nt">initial-mtu</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1400</span>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="nt">congestion-control</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bbr</span>
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="nt">zero-rtt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="nt">over-stream</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span><span class="w">  </span><span class="c1"># true for udp over stream, false for udp over datagram</span>
-</code></pre></div>
+<h1 id="dns-udp-server">DNS UDP server<a class="headerlink" href="#dns-udp-server" title="Permanent link">&para;</a></h1>
+<p>Local UDP/TCP DNS listener using a UDP upstream, with TCP fallback.</p>
 <h2 id="fields">Fields<a class="headerlink" href="#fields" title="Permanent link">&para;</a></h2>
-<h3 id="dns"><code>dns</code><a class="headerlink" href="#dns" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Type:</strong> <code>string</code> <em>(optional)</em></li>
-<li><strong>Required:</strong> no</li>
-</ul>
-<p>DNS service used to resolve destination domains after routing.</p>
-<h3 id="addr-resolver"><code>addr-resolver</code><a class="headerlink" href="#addr-resolver" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Type:</strong> <code>string</code> <em>(optional)</em></li>
-<li><strong>Required:</strong> no</li>
-</ul>
 <h3 id="tag"><code>tag</code><a class="headerlink" href="#tag" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Type:</strong> <code>string</code></li>
 <li><strong>Required:</strong> <strong>yes</strong></li>
 </ul>
-<p>Required label for this endpoint.</p>
-<h3 id="username"><code>username</code><a class="headerlink" href="#username" title="Permanent link">&para;</a></h3>
+<h3 id="bind-addr"><code>bind-addr</code><a class="headerlink" href="#bind-addr" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Type:</strong> <code>string</code></li>
+<li><strong>Type:</strong> <code>SocketAddr</code></li>
 <li><strong>Required:</strong> <strong>yes</strong></li>
 </ul>
-<p>username, must be the same as the server</p>
-<h3 id="password"><code>password</code><a class="headerlink" href="#password" title="Permanent link">&para;</a></h3>
+<h3 id="upstream"><code>upstream</code><a class="headerlink" href="#upstream" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Type:</strong> <code>string</code></li>
+<li><strong>Type:</strong> <code>SocketAddr</code></li>
 <li><strong>Required:</strong> <strong>yes</strong></li>
 </ul>
-<p>password, must be the same as the server</p>
-<h3 id="addr"><code>addr</code><a class="headerlink" href="#addr" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Type:</strong> <code>string</code></li>
-<li><strong>Required:</strong> <strong>yes</strong></li>
-</ul>
-<p>Shadowquic server address. example: <code>127.0.0.0.1:443</code>, <code>www.server.com:443</code>, <code>[ff::f1]:4443</code></p>
-<h3 id="server-name"><code>server-name</code><a class="headerlink" href="#server-name" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Type:</strong> <code>string</code></li>
-<li><strong>Required:</strong> <strong>yes</strong></li>
-</ul>
-<p>Server name, must be the same as the server jls_upstream
-domain name</p>
-<h3 id="alpn"><code>alpn</code><a class="headerlink" href="#alpn" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Type:</strong> list of <code>string</code></li>
-<li><strong>Required:</strong> no</li>
-<li><strong>Default:</strong> <code>vec!["h3".into()]</code></li>
-</ul>
-<p>Alpn of tls, default is ["h3"], must have common element with server</p>
-<h3 id="initial-mtu"><code>initial-mtu</code><a class="headerlink" href="#initial-mtu" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Type:</strong> <code>u16</code></li>
-<li><strong>Required:</strong> no</li>
-<li><strong>Default:</strong> <code>1300</code></li>
-</ul>
-<p>Initial mtu, must be larger than min mtu, at least to be 1200.
-1400 is recommended for high packet loss network. default to be 1300</p>
-<h3 id="congestion-control"><code>congestion-control</code><a class="headerlink" href="#congestion-control" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Type:</strong> <a href="../../shared/congestioncontrol/"><code>CongestionControl</code></a></li>
-<li><strong>Required:</strong> no</li>
-<li><strong>Default:</strong> <code>bbr</code></li>
-</ul>
-<p>Congestion control, default to "bbr", supported: "bbr", "new-reno", "cubic"</p>
-<h3 id="zero-rtt"><code>zero-rtt</code><a class="headerlink" href="#zero-rtt" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Type:</strong> <code>bool</code></li>
-<li><strong>Required:</strong> no</li>
-<li><strong>Default:</strong> <code>true</code></li>
-</ul>
-<p>Set to true to enable zero rtt, default to true</p>
-<h3 id="over-stream"><code>over-stream</code><a class="headerlink" href="#over-stream" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Type:</strong> <code>bool</code></li>
-<li><strong>Required:</strong> no</li>
-<li><strong>Default:</strong> <code>false</code></li>
-</ul>
-<p>Transfer udp over stream or over datagram.
-If true, use quic stream to send UDP, otherwise use quic datagram
-extension, similar to native UDP in TUIC</p>
-<h3 id="proxy-http3">Proxy HTTP3<a class="headerlink" href="#proxy-http3" title="Permanent link">&para;</a></h3>
-<p>To proxy HTTP3 traffic, recommend to disable over-stream and blackhole-detection.</p>
-<p>Over-stream will retransmit lost packets conflicting shadowquic's inner congestion controller. This is famous <a href="https://web.archive.org/web/20230228035749/http://sites.inka.de/%7EW1011/devel/tcp-tcp.html"><em>TCP in TCP</em>(TCP meltdown)
-</a> problem.</p>
-<p>Over-stream also breaks HTTP3's mtu discovery leading to probe wrong MTU.</p>
-<h3 id="min-mtu"><code>min-mtu</code><a class="headerlink" href="#min-mtu" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Type:</strong> <code>u16</code></li>
-<li><strong>Required:</strong> no</li>
-<li><strong>Default:</strong> <code>1290</code></li>
-</ul>
-<p>Minimum mtu, must be smaller than initial mtu, at least to be 1200.
-1400 is recommended for high packet loss network. default to be 1290</p>
-<h3 id="keep-alive-interval"><code>keep-alive-interval</code><a class="headerlink" href="#keep-alive-interval" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Type:</strong> <code>u32</code></li>
-<li><strong>Required:</strong> no</li>
-<li><strong>Default:</strong> <code>0</code></li>
-</ul>
-<p>Keep alive interval in milliseconds
-0 means disable keep alive, should be smaller than 30_000(idle time).
-Disabled by default.</p>
-<h3 id="gso"><code>gso</code><a class="headerlink" href="#gso" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Type:</strong> <code>bool</code></li>
-<li><strong>Required:</strong> no</li>
-<li><strong>Default:</strong> <code>true</code></li>
-</ul>
-<p>Enable QUIC Generic Segmentation Offload (GSO).
-Controls [<code>quinn::TransportConfig::enable_segmentation_offload</code>]. When supported, GSO reduces
-CPU usage for bulk sends; unsupported environments may see transient startup packet loss.
-Enabled by default</p>
-<h3 id="mtu-discovery"><code>mtu-discovery</code><a class="headerlink" href="#mtu-discovery" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Type:</strong> <code>bool</code></li>
-<li><strong>Required:</strong> no</li>
-<li><strong>Default:</strong> <code>true</code></li>
-</ul>
-<p>Enable auto MTU discovery, default to true
-For stable udp network, it's better to disable it and set a proper initial mtu</p>
-<h3 id="blackhole-detection"><code>blackhole-detection</code><a class="headerlink" href="#blackhole-detection" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Type:</strong> <code>bool</code></li>
-<li><strong>Required:</strong> no</li>
-<li><strong>Default:</strong> <code>false</code></li>
-</ul>
-<p>Enable MTU black-hole detection. When enabled, the current MTU is reset to <code>min_mtu</code> once
-a black hole is detected (standard PLPMTUD behavior). When disabled (default), the
-previously discovered MTU is kept after a black hole is detected.
-Controls quinn-jls <code>MtuDiscoveryConfig::blackhole_reset_mtu</code>.
-Only takes effect when <code>mtu_discovery</code> is enabled.</p>
-<p>In high packet loss network, it's better to disable black hole detection to avoid unnecessary mtu reset.</p>
-<h3 id="cipher-suite-preference"><code>cipher-suite-preference</code><a class="headerlink" href="#cipher-suite-preference" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Type:</strong> list of <a href="../../shared/ciphersuitepreference/"><code>CipherSuitePreference</code></a> <em>(optional)</em></li>
-<li><strong>Required:</strong> no</li>
-</ul>
-<p>Optional TLS 1.3 cipher suite preference.
-If unset, use rustls/ring default preference order.</p>
-<h3 id="protect-path"><code>protect-path</code><a class="headerlink" href="#protect-path" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Type:</strong> <code>path</code> <em>(optional)</em></li>
-<li><strong>Required:</strong> no</li>
-</ul>
-<p>Android Only. the unix socket path for protecting android socket</p>
-<h3 id="fw-mark"><code>fw-mark</code><a class="headerlink" href="#fw-mark" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Type:</strong> <code>u32</code> <em>(optional)</em></li>
-<li><strong>Required:</strong> no</li>
-</ul>
-<p>fw_mark on linux</p>
-<h3 id="bind-interface"><code>bind-interface</code><a class="headerlink" href="#bind-interface" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Type:</strong> <a href="../../shared/interface/"><code>Interface</code></a> <em>(optional)</em></li>
-<li><strong>Required:</strong> no</li>
-</ul>
-<p>binding interface of this outgoing packet.</p>
-<p>If <code>bind_interface</code> is set, the outgoing packet will be sent from the
-specified interface. Recommend to use to cooporate with other tun based proxy like sing-box/mihomo</p>
-<p>Example:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># by ip address</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nt">bind-interface</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;127.0.0.1&quot;</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="c1"># by interface name</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="nt">bind-interface</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;eth0&quot;</span>
-</code></pre></div>
+<p>Literal upstream address avoids recursive bootstrap resolution.</p>
 
 
 
