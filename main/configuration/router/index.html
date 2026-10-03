@@ -1529,7 +1529,9 @@ selects the outbound instead of <code>default-outbound</code>.</p>
 <p>File changes reload automatically for subsequent requests, including when an
 editor replaces the file. Failed reloads keep the last working script. A
 successful reload resets Lua state; existing connections are unaffected.
-Inline scripts are not watched.</p>
+Inline scripts are not watched.
+Routing is asynchronous: suspended calls keep their original script runtime
+when a reload occurs, while new calls use the replacement.</p>
 <p>The script must return a function. Each request passes one context userdata:</p>
 <table>
 <thead>
@@ -1542,6 +1544,10 @@ Inline scripts are not watched.</p>
 <tr>
 <td><code>inbound_tag</code></td>
 <td>Tag of the inbound listener</td>
+</tr>
+<tr>
+<td><code>dns_query</code></td>
+<td>Array of tables with <code>name</code> and numeric <code>record_type</code>; empty when no DNS metadata is attached</td>
 </tr>
 <tr>
 <td><code>network_type</code></td>
@@ -1573,11 +1579,20 @@ Inline scripts are not watched.</p>
 for TCP requests. Writing these fields for UDP requests raises an error,
 including assigning nil.
 Setting a destination name or IP clears the other destination address fields.
+<code>dns_query</code> is a snapshot: changing its tables does not modify the request.
 Return a configured outbound tag to route the request, or <code>nil, error_message</code>
 to reject it. Routing errors do not fall back to <code>router.default-outbound</code>.</p>
 <p>Scripts have base language functions and string, table, math, and bit helpers.
 Filesystem, process, module loading, and dynamic code loading are unavailable.
-Console output through <code>print</code> is allowed.</p>
+Console output through <code>print</code> is allowed.
+<code>info(message)</code> accepts a string and emits a <code>tracing::info!</code> log, using the
+application's logging filters. It is available during loading and routing.
+With <code>dns-server</code>, <code>lookup(dns_tag, domain)</code> returns an array of IP strings
+and <code>reverse_lookup(dns_tag, ip)</code> returns an array of PTR hostname strings.
+These calls suspend the routing function and raise Lua errors on failure.
+Call them inside the returned function, and route DNS upstream requests
+(<code>#ctx.dns_query &gt; 0</code>) before calling them to avoid recursive lookups.
+Concurrent routing functions share Lua state and can interleave at awaits.</p>
 <p>The exposed router context to script can be seen in [<code>crate::plugin::router::RouteContext</code>]</p>
 <h2 id="fields">Fields<a class="headerlink" href="#fields" title="Permanent link">&para;</a></h2>
 <h3 id="default-outbound"><code>default-outbound</code><a class="headerlink" href="#default-outbound" title="Permanent link">&para;</a></h3>

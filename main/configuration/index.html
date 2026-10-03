@@ -1356,6 +1356,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#dns" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>dns</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#outbounds" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1441,13 +1452,23 @@ these objects default to <code>inbound</code> and <code>outbound</code>, respect
 <li><strong>Type:</strong> list of <a href="inbound/"><code>InboundCfg</code></a></li>
 <li><strong>Required:</strong> <strong>yes</strong></li>
 </ul>
-<p>Listeners to run concurrently. Tags must be nonempty and unique within this list.</p>
+<p>Listeners to run concurrently. Tags must be nonempty and must not
+collide with DNS or outbound tags.</p>
+<h3 id="dns"><code>dns</code><a class="headerlink" href="#dns" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> list of <code>DnsCfg</code></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <em>(type default)</em></li>
+</ul>
+<p>Standalone DNS services. Tags must be nonempty and must not collide
+with inbound or outbound tags.</p>
 <h3 id="outbounds"><code>outbounds</code><a class="headerlink" href="#outbounds" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Type:</strong> list of <a href="outbound/"><code>OutboundCfg</code></a></li>
-<li><strong>Required:</strong> <strong>yes</strong></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <em>(type default)</em></li>
 </ul>
-<p>Available outbounds.</p>
+<p>Explicit outbounds. DNS services are also registered under their own tags.</p>
 <h3 id="router"><code>router</code><a class="headerlink" href="#router" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Type:</strong> <a href="router/"><code>RouterCfg</code></a></li>
