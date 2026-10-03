@@ -140,19 +140,22 @@ async fn test_auto_reload_cert() {
     .await
     .unwrap();
 
-    let sq_client_1 = SunnyQuicClient::new(SunnyQuicClientCfg {
-        password: "password".into(),
-        username: "user".into(),
-        addr: quic_addr.parse().unwrap(),
-        server_name: "localhost".into(),
-        alpn: vec!["h3".into()],
-        initial_mtu: 1200,
-        congestion_control: CongestionControl::Bbr,
-        zero_rtt: true,
-        over_stream: false,
-        cert_path: Some(cert_path.clone()),
-        ..Default::default()
-    });
+    let sq_client_1 = SunnyQuicClient::new(
+        SunnyQuicClientCfg {
+            password: "password".into(),
+            username: "user".into(),
+            addr: quic_addr.parse().unwrap(),
+            server_name: "localhost".into(),
+            alpn: vec!["h3".into()],
+            initial_mtu: 1200,
+            congestion_control: CongestionControl::Bbr,
+            zero_rtt: true,
+            over_stream: false,
+            cert_path: Some(cert_path.clone()),
+            ..Default::default()
+        },
+        std::sync::Arc::new(shadowquic::dns::ResolverManager::new()),
+    );
 
     let client_1 = Manager::single(Box::new(socks_server_1), std::sync::Arc::new(sq_client_1));
     tokio::spawn(client_1.run());
@@ -223,19 +226,22 @@ async fn test_auto_reload_cert() {
     .await
     .unwrap();
 
-    let sq_client_2 = SunnyQuicClient::new(SunnyQuicClientCfg {
-        password: "password".into(),
-        username: "user".into(),
-        addr: quic_addr.parse().unwrap(),
-        server_name: "localhost".into(),
-        alpn: vec!["h3".into()],
-        initial_mtu: 1200,
-        congestion_control: CongestionControl::Bbr,
-        zero_rtt: true,
-        over_stream: false,
-        cert_path: Some(cert_path_2.clone()), // TRUST ONLY CERT 2
-        ..Default::default()
-    });
+    let sq_client_2 = SunnyQuicClient::new(
+        SunnyQuicClientCfg {
+            password: "password".into(),
+            username: "user".into(),
+            addr: quic_addr.parse().unwrap(),
+            server_name: "localhost".into(),
+            alpn: vec!["h3".into()],
+            initial_mtu: 1200,
+            congestion_control: CongestionControl::Bbr,
+            zero_rtt: true,
+            over_stream: false,
+            cert_path: Some(cert_path_2.clone()), // TRUST ONLY CERT 2
+            ..Default::default()
+        },
+        std::sync::Arc::new(shadowquic::dns::ResolverManager::new()),
+    );
     let client_2 = Manager::single(Box::new(socks_server_2), std::sync::Arc::new(sq_client_2));
     tokio::spawn(client_2.run());
     tokio::time::sleep(Duration::from_millis(100)).await;

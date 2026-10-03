@@ -9,6 +9,7 @@ use tracing::{error, info};
 use crate::{
     Outbound,
     config::{AuthUser, ShadowQuicClientCfg},
+    dns::ResolverManager,
     error::SError,
     msgs::squic::{SQExtError, UserStats},
     quic::QuicClient,
@@ -24,10 +25,21 @@ pub struct ShadowQuicClient {
     pub quic_conn: Mutex<Option<ShadowQuicConn>>,
     pub config: ShadowQuicClientCfg,
     pub quic_end: OnceCell<EndClient>,
+    pub addr_resolver: Arc<dyn crate::dns::DnsService>,
     pub socket_factory: Arc<dyn SocketFactory>,
 }
 impl ShadowQuicClient {
-    pub fn new(cfg: ShadowQuicClientCfg) -> Self {
+    pub fn new(cfg: ShadowQuicClientCfg, resolver_manager: Arc<ResolverManager>) -> Self {
+        #[cfg(feature = "dns-server")]
+        let tag = cfg
+            .addr_resolver
+            .clone()
+            .unwrap_or(crate::dns::DEFAULT_SYSTEM_DNS_TAG.to_string());
+        #[cfg(not(feature = "dns-server"))]
+        let tag = String::new();
+        let addr_resolver = resolver_manager
+            .resolver(&tag)
+            .unwrap_or_else(|| panic!("dns resolver not found: {}", tag));
         Self {
             quic_conn: Mutex::new(None),
             quic_end: OnceCell::new(),
@@ -37,12 +49,14 @@ impl ShadowQuicClient {
                 fw_mark: cfg.socket_opt.fw_mark,
                 protect_path: cfg.protect_path.clone(),
                 try_dual_stack: true,
+                resolver: addr_resolver.clone(),
             }),
+            addr_resolver,
             config: cfg,
         }
     }
     pub async fn init_endpoint(&self) -> Result<EndClient, SError> {
-        EndClient::new(&self.config).await
+        EndClient::new_with_socket_factory(&self.config, self.socket_factory.clone()).await
     }
 
     pub async fn get_conn(&self) -> Result<ShadowQuicConn, SError> {

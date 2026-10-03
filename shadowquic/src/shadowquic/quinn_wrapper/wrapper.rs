@@ -162,6 +162,16 @@ impl AuthedConn for Connection {
 impl QuicClient for EndClient {
     type SC = ShadowQuicClientCfg;
     async fn new(cfg: &Self::SC) -> SResult<Self> {
+        #[cfg(not(feature = "dns-server"))]
+        let resolver = Arc::new(crate::dns::Resolver {});
+        #[cfg(feature = "dns-server")]
+        let resolver = Arc::new(crate::dns::Resolver {
+            tag: "".to_string(),
+            backend: crate::dns::Backend::System,
+            requests: tokio::sync::mpsc::channel(1).0,
+            fake_ip: None,
+            cache: Arc::new(crate::dns::DnsCache::default()),
+        });
         Self::new_with_socket_factory(
             cfg,
             Arc::new(UdpSocketFactory {
@@ -170,6 +180,7 @@ impl QuicClient for EndClient {
                 fw_mark: cfg.socket_opt.fw_mark,
                 protect_path: cfg.protect_path.clone(),
                 try_dual_stack: true,
+                resolver,
             }),
         )
         .await

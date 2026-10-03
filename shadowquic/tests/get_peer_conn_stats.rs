@@ -43,18 +43,21 @@ async fn main() {
     sq_server.init().await.expect("Failed to initialize server");
 
     // 2. Initialize client
-    let sq_client = ShadowQuicClient::new(ShadowQuicClientCfg {
-        password: "123".into(),
-        username: "123".into(),
-        addr: "127.0.0.1:4449".parse().unwrap(),
-        server_name: "localhost".into(),
-        alpn: vec!["h3".into()],
-        initial_mtu: 1200,
-        congestion_control: CongestionControl::Bbr,
-        zero_rtt: true,
-        over_stream: true,
-        ..Default::default()
-    });
+    let sq_client = ShadowQuicClient::new(
+        ShadowQuicClientCfg {
+            password: "123".into(),
+            username: "123".into(),
+            addr: "127.0.0.1:4449".parse().unwrap(),
+            server_name: "localhost".into(),
+            alpn: vec!["h3".into()],
+            initial_mtu: 1200,
+            congestion_control: CongestionControl::Bbr,
+            zero_rtt: true,
+            over_stream: true,
+            ..Default::default()
+        },
+        std::sync::Arc::new(shadowquic::dns::ResolverManager::new()),
+    );
 
     // Wait a brief moment for the server to bind
     tokio::time::sleep(Duration::from_millis(100)).await;

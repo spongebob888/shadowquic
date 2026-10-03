@@ -115,13 +115,20 @@ async fn spawn_socks() {
     })
     .await
     .unwrap();
-    let sq_client = SocksClient::new(SocksClientCfg {
-        tag: String::new(),
-        addr: "[::1]:1094".into(),
-        username: Some("test".into()),
-        password: Some("test".into()),
-        socket_opt: Default::default(),
-    });
+    let sq_client = SocksClient::new(
+        SocksClientCfg {
+            #[cfg(feature = "dns-server")]
+            dns: None,
+            #[cfg(feature = "dns-server")]
+            addr_resolver: None,
+            tag: String::new(),
+            addr: "[::1]:1094".into(),
+            username: Some("test".into()),
+            password: Some("test".into()),
+            socket_opt: Default::default(),
+        },
+        std::sync::Arc::new(shadowquic::dns::ResolverManager::new()),
+    );
 
     let client = Manager::single(Box::new(socks_server), std::sync::Arc::new(sq_client));
 

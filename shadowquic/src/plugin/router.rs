@@ -11,8 +11,9 @@ use tracing::{info, info_span, warn};
 
 use mlua::{Function, Lua, LuaOptions, StdLib, UserData, UserDataFields, chunk::ChunkMode};
 
+use crate::dns::ResolverManager;
 use crate::{
-    ProxyRequest, StatsContext, TcpSession, UdpSession,
+    DnsQuery, ProxyRequest, StatsContext, TcpSession, UdpSession,
     error::SError,
     msgs::socks5::{AddrOrDomain, SocksAddr},
 };
@@ -41,6 +42,8 @@ pub struct RouteContext {
     pub src_ip_v6: Option<Ipv6Addr>,
     pub src_port: Option<u16>,
     pub inbound_tag: String,
+    /// DNS questions attached to the request; empty for requests without DNS metadata.
+    pub dns_query: Vec<DnsQuery>,
     /// Only valid for shadowquic/sunnyquic inbound requests.
     pub stats_context: Option<StatsContext>,
     /// tcp or udp.
@@ -49,6 +52,16 @@ pub struct RouteContext {
 impl UserData for RouteContext {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         fields.add_field_method_get("inbound_tag", |_, this| Ok(this.inbound_tag.clone()));
+        fields.add_field_method_get("dns_query", |lua, this| {
+            let queries = lua.create_table()?;
+            for (index, query) in this.dns_query.iter().enumerate() {
+                let entry = lua.create_table()?;
+                entry.set("name", query.name.as_str())?;
+                entry.set("record_type", query.record_type)?;
+                queries.raw_set(index + 1, entry)?;
+            }
+            Ok(queries)
+        });
         fields.add_field_method_get("network_type", |_, this| {
             Ok(match this.network_type {
                 NetworkType::Tcp => "tcp",
@@ -146,6 +159,7 @@ impl RouteContext {
                 &user_context.inbound_tag,
                 NetworkType::Tcp,
                 user_context.stats.clone(),
+                &user_context.dns_query,
             ),
             ProxyRequest::Udp(UdpSession {
                 dst,
@@ -158,6 +172,7 @@ impl RouteContext {
                 &user_context.inbound_tag,
                 NetworkType::Udp,
                 user_context.stats.clone(),
+                &user_context.dns_query,
             ),
         }
     }
@@ -168,6 +183,7 @@ impl RouteContext {
         inbound_tag: &str,
         network_type: NetworkType,
         stats_context: Option<StatsContext>,
+        dns_query: &[DnsQuery],
     ) -> Self {
         let (dst_domain, dst_ip_v4, dst_ip_v6) = match &dst.addr {
             AddrOrDomain::Domain(domain) => (
@@ -196,6 +212,7 @@ impl RouteContext {
             src_port: src_addr.map(|addr| addr.port()),
             src_addr,
             inbound_tag: inbound_tag.to_owned(),
+            dns_query: dns_query.to_vec(),
             stats_context,
             network_type,
         }
@@ -220,18 +237,32 @@ struct RouterInner {
 impl Router {
     /// Load a script and watch its parent directory, including atomic file replacements.
     pub fn load(path: &Path) -> Result<Self, SError> {
+        Self::load_inner(path, Arc::new(ResolverManager::new()))
+    }
+
+    pub(crate) fn load_with_manager(
+        path: &Path,
+        resolver_manager: Arc<ResolverManager>,
+    ) -> Result<Self, SError> {
+        Self::load_inner(path, resolver_manager)
+    }
+
+    fn load_inner(path: &Path, resolver_manager: Arc<ResolverManager>) -> Result<Self, SError> {
         let path = watched_script_path(path)?;
         let script = read_script(&path)?;
-        let mut router = Self::from_source(&script).map_err(|error| {
-            SError::InvalidConfig(format!(
-                "failed to load router script {}: {error}",
-                path.display()
-            ))
-        })?;
+        let mut router =
+            Self::from_source_inner(&script, resolver_manager.clone()).map_err(|error| {
+                SError::InvalidConfig(format!(
+                    "failed to load router script {}: {error}",
+                    path.display()
+                ))
+            })?;
         let inner = Arc::downgrade(&router.inner);
         let watched_path = path.clone();
         let span = info_span!("router", path = %path.display());
         let callback_span = span.clone();
+
+        let reload_manager = resolver_manager.clone();
         let mut watcher =
             notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
                 callback_span.in_scope(|| match event {
@@ -241,7 +272,7 @@ impl Router {
                                 || event.paths.iter().any(|p| p == &watched_path)) =>
                     {
                         if let Some(inner) = inner.upgrade() {
-                            reload_script(&inner, &watched_path);
+                            reload_script(&inner, &watched_path, reload_manager.clone());
                         }
                     }
                     Ok(_) => {}
@@ -266,24 +297,114 @@ impl Router {
             })?;
         router._watcher = Some(watcher);
         // Close the gap between the initial read and watcher registration.
-        span.in_scope(|| reload_script(&router.inner, &path));
+        span.in_scope(|| reload_script(&router.inner, &path, resolver_manager));
         Ok(router)
     }
 
+    #[cfg(any(test, not(feature = "dns-server")))]
     pub(crate) fn from_source(source: &str) -> mlua::Result<Self> {
+        Self::from_source_inner(source, Arc::new(ResolverManager::new()))
+    }
+
+    #[cfg(feature = "dns-server")]
+    pub(crate) fn from_source_with_manager(
+        source: &str,
+        resolver_manager: Arc<ResolverManager>,
+    ) -> mlua::Result<Self> {
+        Self::from_source_inner(source, resolver_manager)
+    }
+
+    fn from_source_inner(
+        source: &str,
+        resolver_manager: Arc<ResolverManager>,
+    ) -> mlua::Result<Self> {
         Ok(Self {
             _watcher: None,
-            inner: Arc::new(Mutex::new(Self::compile(source)?)),
+            inner: Arc::new(Mutex::new(Self::compile_inner(source, resolver_manager)?)),
         })
     }
 
-    fn compile(source: &str) -> mlua::Result<RouterInner> {
+    fn compile_inner(
+        source: &str,
+        resolver_manager: Arc<ResolverManager>,
+    ) -> mlua::Result<RouterInner> {
         let libs = StdLib::STRING | StdLib::TABLE | StdLib::MATH;
         let libs = libs | StdLib::BIT;
         let lua = Lua::new_with(libs, LuaOptions::default())?;
+        #[cfg(feature = "dns-server")]
+        {
+            use crate::dns::DnsService;
+
+            let lookup_manager = resolver_manager.clone();
+            lua.globals().set(
+                "lookup",
+                lua.create_async_function(move |_, (tag, domain): (String, String)| {
+                    let manager = lookup_manager.clone();
+                    async move {
+                        let resolver = manager.resolver(&tag).ok_or_else(|| {
+                            mlua::Error::runtime(format!("unknown DNS resolver: {tag}"))
+                        })?;
+                        Ok(resolver
+                            .resolve(&domain)
+                            .await
+                            .map_err(mlua::Error::external)?
+                            .into_iter()
+                            .map(|ip| ip.to_string())
+                            .collect::<Vec<_>>())
+                    }
+                })?,
+            )?;
+            let reverse_manager = resolver_manager.clone();
+            lua.globals().set(
+                "reverse_lookup",
+                lua.create_async_function(move |_, (tag, ip): (String, String)| {
+                    let manager = reverse_manager.clone();
+                    async move {
+                        let resolver = manager.resolver(&tag).ok_or_else(|| {
+                            mlua::Error::runtime(format!("unknown DNS resolver: {tag}"))
+                        })?;
+                        let ip = ip.parse().map_err(mlua::Error::external)?;
+                        resolver
+                            .reverse_lookup(ip)
+                            .await
+                            .map_err(mlua::Error::external)
+                    }
+                })?,
+            )?;
+            let lookup_manager = resolver_manager.clone();
+            lua.globals().set(
+                "lookup_cache",
+                lua.create_function(move |_, domain: String| {
+                    Ok(lookup_manager
+                        .cache()
+                        .lookup_cache(&domain)
+                        .into_iter()
+                        .map(|ip| ip.to_string())
+                        .collect::<Vec<_>>())
+                })?,
+            )?;
+            lua.globals().set(
+                "reverse_lookup_cache",
+                lua.create_function(move |_, ip: String| {
+                    let ip = ip.parse().map_err(mlua::Error::external)?;
+                    Ok(resolver_manager.cache().reverse_lookup_cache(ip))
+                })?,
+            )?;
+        }
+        Self::compile_common(source, lua)
+    }
+
+    fn compile_common(source: &str, lua: Lua) -> mlua::Result<RouterInner> {
         // The base library is always loaded, including file and code loaders.
         // Remove these before evaluating any user-provided source.
         let globals = lua.globals();
+        globals.set(
+            "info",
+            lua.create_function(|_, message: String| {
+                info!("{message}");
+                Ok(())
+            })?,
+        )?;
         for name in ["dofile", "loadfile", "load", "loadstring"] {
             globals.set(name, mlua::Value::Nil)?;
         }
@@ -303,20 +424,24 @@ impl Router {
         })
     }
 
-    pub fn route(&self, context: &mut RouteContext) -> Result<String, SError> {
+    pub async fn route(&self, context: &mut RouteContext) -> Result<String, SError> {
         let started = std::time::Instant::now();
-        let result = (|| {
-            let inner = self
-                .inner
-                .lock()
-                .map_err(|_| SError::RouterError("router runtime lock was poisoned".into()))?;
-            let userdata = inner
-                .lua
+        let result = async {
+            // Keep this runtime alive across yields, without blocking other routes
+            // or reloads. DNS upstream requests must be able to route concurrently.
+            let (lua, route) = {
+                let inner = self
+                    .inner
+                    .lock()
+                    .map_err(|_| SError::RouterError("router runtime lock was poisoned".into()))?;
+                (inner.lua.clone(), inner.route.clone())
+            };
+            let userdata = lua
                 .create_userdata(context.clone())
                 .map_err(|error| SError::RouterError(error.to_string()))?;
-            let (tag, error): (Option<String>, Option<String>) = inner
-                .route
-                .call(userdata.clone())
+            let (tag, error): (Option<String>, Option<String>) = route
+                .call_async(userdata.clone())
+                .await
                 .map_err(|error| SError::RouterError(error.to_string()))?;
             match (tag, error) {
                 (Some(tag), _) if !tag.trim().is_empty() => {
@@ -331,7 +456,8 @@ impl Router {
                     "router must return an outbound tag or nil and an error message".into(),
                 )),
             }
-        })();
+        }
+        .await;
         tracing::trace!(
             elapsed = ?started.elapsed(),
             success = result.is_ok(),
@@ -372,10 +498,10 @@ fn read_script(path: &Path) -> Result<String, SError> {
     })
 }
 
-fn reload_script(inner: &Mutex<RouterInner>, path: &Path) {
+fn reload_script(inner: &Mutex<RouterInner>, path: &Path, resolver_manager: Arc<ResolverManager>) {
     let result = (|| {
-        // Serialize reloads with routing so requests see a complete runtime and
-        // a late callback cannot overwrite a newer version of the file.
+        // Serialize reloads and runtime snapshots so a late callback cannot
+        // overwrite a newer version. In-flight routes retain their old runtime.
         let mut inner = inner
             .lock()
             .map_err(|_| SError::RouterError("router runtime lock was poisoned".into()))?;
@@ -383,8 +509,8 @@ fn reload_script(inner: &Mutex<RouterInner>, path: &Path) {
         if source == inner.source {
             return Ok(false);
         }
-        let replacement =
-            Router::compile(&source).map_err(|error| SError::RouterError(error.to_string()))?;
+        let replacement = Router::compile_inner(&source, resolver_manager)
+            .map_err(|error| SError::RouterError(error.to_string()))?;
         *inner = replacement;
         Ok::<_, SError>(true)
     })();
@@ -443,10 +569,10 @@ mod tests {
         }
     }
 
-    fn wait_for_route(router: &Router, expected: &str) {
+    async fn wait_for_route(router: &Router, expected: &str) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
-            let actual = router.route(&mut context()).unwrap();
+            let actual = router.route(&mut context()).await.unwrap();
             if actual == expected {
                 return;
             }
@@ -454,36 +580,40 @@ mod tests {
                 std::time::Instant::now() < deadline,
                 "expected {expected}, got {actual}"
             );
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
     }
 
-    #[test]
-    fn file_router_reloads_edits_replacements_and_recreation() {
+    #[tokio::test]
+    async fn file_router_reloads_edits_replacements_and_recreation() {
         let dir = ScriptDir::new();
         let path = dir.script();
         std::fs::write(&path, "return function(_) return 'first' end").unwrap();
         let router = Router::load(&path).unwrap();
-        assert_eq!(router.route(&mut context()).unwrap(), "first");
+        assert_eq!(router.route(&mut context()).await.unwrap(), "first");
 
         std::fs::write(&path, "return function(_) return 'edited' end").unwrap();
-        wait_for_route(&router, "edited");
+        wait_for_route(&router, "edited").await;
 
         let replacement = dir.0.join("replacement.lua");
         std::fs::write(&replacement, "return function(_) return 'replaced' end").unwrap();
         std::fs::rename(&replacement, &path).unwrap();
-        wait_for_route(&router, "replaced");
+        wait_for_route(&router, "replaced").await;
 
         std::fs::remove_file(&path).unwrap();
-        reload_script(&router.inner, &path);
-        assert_eq!(router.route(&mut context()).unwrap(), "replaced");
+        reload_script(
+            &router.inner,
+            &path,
+            std::sync::Arc::new(crate::dns::ResolverManager::new()),
+        );
+        assert_eq!(router.route(&mut context()).await.unwrap(), "replaced");
         std::fs::write(&path, "return function(_) return 'recreated' end").unwrap();
-        wait_for_route(&router, "recreated");
+        wait_for_route(&router, "recreated").await;
     }
 
-    #[test]
+    #[tokio::test]
     #[cfg(unix)]
-    fn file_router_normalizes_symlinked_parent_for_event_matching() {
+    async fn file_router_normalizes_symlinked_parent_for_event_matching() {
         let dir = ScriptDir::new();
         let real = dir.0.join("real");
         let alias = dir.0.join("alias");
@@ -497,37 +627,49 @@ mod tests {
         std::fs::write(&path, "return function(_) return 'first' end").unwrap();
         let router = Router::load(&path).unwrap();
         std::fs::write(&event_path, "return function(_) return 'edited' end").unwrap();
-        wait_for_route(&router, "edited");
+        wait_for_route(&router, "edited").await;
         let replacement = real.join("replacement.lua");
         std::fs::write(&replacement, "return function(_) return 'replaced' end").unwrap();
         std::fs::rename(&replacement, &event_path).unwrap();
-        wait_for_route(&router, "replaced");
+        wait_for_route(&router, "replaced").await;
     }
 
-    #[test]
-    fn failed_reload_keeps_runtime_and_unchanged_source_keeps_state() {
+    #[tokio::test]
+    async fn failed_reload_keeps_runtime_and_unchanged_source_keeps_state() {
         let dir = ScriptDir::new();
         let path = dir.script();
         let source = "local n = 0; return function(_) n = n + 1; return tostring(n) end";
         std::fs::write(&path, source).unwrap();
         let router = Router::load(&path).unwrap();
-        assert_eq!(router.route(&mut context()).unwrap(), "1");
-        reload_script(&router.inner, &path);
-        assert_eq!(router.route(&mut context()).unwrap(), "2");
+        assert_eq!(router.route(&mut context()).await.unwrap(), "1");
+        reload_script(
+            &router.inner,
+            &path,
+            std::sync::Arc::new(crate::dns::ResolverManager::new()),
+        );
+        assert_eq!(router.route(&mut context()).await.unwrap(), "2");
         for invalid in ["return function(", "return {}", "error('load failed')"] {
             std::fs::write(&path, invalid).unwrap();
-            reload_script(&router.inner, &path);
+            reload_script(
+                &router.inner,
+                &path,
+                std::sync::Arc::new(crate::dns::ResolverManager::new()),
+            );
         }
-        assert_eq!(router.route(&mut context()).unwrap(), "3");
+        assert_eq!(router.route(&mut context()).await.unwrap(), "3");
         std::fs::write(&path, source).unwrap();
-        reload_script(&router.inner, &path);
-        assert_eq!(router.route(&mut context()).unwrap(), "4");
+        reload_script(
+            &router.inner,
+            &path,
+            std::sync::Arc::new(crate::dns::ResolverManager::new()),
+        );
+        assert_eq!(router.route(&mut context()).await.unwrap(), "4");
         std::fs::write(
             &path,
             "return function(_) assert(io == nil); return 'fixed' end",
         )
         .unwrap();
-        wait_for_route(&router, "fixed");
+        wait_for_route(&router, "fixed").await;
     }
 
     fn context() -> RouteContext {
@@ -541,13 +683,61 @@ mod tests {
             src_ip_v6: None,
             src_port: Some(54321),
             inbound_tag: "socks-in".into(),
+            dns_query: Vec::new(),
             stats_context: None,
             network_type: NetworkType::Tcp,
         }
     }
 
-    #[test]
-    fn lua_router_restricts_capabilities_during_load_and_routing() {
+    #[tokio::test]
+    async fn lua_info_logs_during_initialization_and_routing() {
+        use std::io::Write;
+        use tracing::instrument::WithSubscriber;
+
+        #[derive(Clone)]
+        struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+        impl Write for LogBuffer {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().write(bytes)
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let writer = LogBuffer(output.clone());
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(move || writer.clone())
+            .finish();
+        async {
+            let router = Router::from_source(
+                r#"
+                info("script loaded")
+                return function(ctx)
+                    info("routing " .. ctx.dst_domain)
+                    assert(not pcall(info, {}))
+                    assert(not pcall(info))
+                    return "direct"
+                end
+            "#,
+            )
+            .unwrap();
+            assert_eq!(router.route(&mut context()).await.unwrap(), "direct");
+        }
+        .with_subscriber(subscriber)
+        .await;
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        assert!(output.contains("INFO"), "{output}");
+        assert!(output.contains("script loaded"), "{output}");
+        assert!(output.contains("routing api.example"), "{output}");
+    }
+
+    #[tokio::test]
+    async fn lua_router_restricts_capabilities_during_load_and_routing() {
         let router = Router::from_source(
             r#"
                 local function check()
@@ -570,12 +760,12 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(router.route(&mut context()).unwrap(), "direct-1");
+        assert_eq!(router.route(&mut context()).await.unwrap(), "direct-1");
     }
 
-    #[test]
+    #[tokio::test]
     #[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
-    fn lua_router_supports_bit_operations() {
+    async fn lua_router_supports_bit_operations() {
         let router = Router::from_source(
             r#"
                 return function(ctx)
@@ -586,11 +776,78 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(router.route(&mut context()).unwrap(), "direct");
+        assert_eq!(router.route(&mut context()).await.unwrap(), "direct");
     }
 
-    #[test]
-    fn lua_router_receives_context_and_returns_outbound_tag() {
+    #[tokio::test]
+    async fn lua_router_receives_dns_questions_from_tcp_and_udp_requests() {
+        let router = Router::from_source(
+            r#"
+                return function(ctx)
+                    local questions = ctx.dns_query
+                    if #questions == 0 then return "empty" end
+                    assert(#questions == 2)
+                    for i, question in ipairs(questions) do
+                        assert(question.name == "query.example")
+                        assert(question.record_type == (i == 1 and 1 or 28))
+                    end
+                    questions[1].name = "changed.example"
+                    assert(ctx.dns_query[1].name == "query.example")
+                    return ctx.network_type
+                end
+            "#,
+        )
+        .unwrap();
+        for populated in [false, true] {
+            let user_context = crate::UserContext {
+                dns_query: if populated {
+                    [1, 28]
+                        .into_iter()
+                        .map(|record_type| DnsQuery {
+                            name: "query.example".into(),
+                            record_type,
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                },
+                ..Default::default()
+            };
+            let (stream, _peer) = tokio::io::duplex(64);
+            let (send, recv) = tokio::sync::mpsc::channel(1);
+            let dst: SocksAddr = "192.0.2.53:53".parse::<SocketAddr>().unwrap().into();
+            let requests: [ProxyRequest; 2] = [
+                ProxyRequest::Tcp(TcpSession {
+                    stream: Box::new(stream) as crate::AnyTcp,
+                    dst: dst.clone(),
+                    src_addr: None,
+                    user_context: user_context.clone(),
+                }),
+                ProxyRequest::Udp(UdpSession {
+                    recv: Box::new(recv),
+                    send: Arc::new(send),
+                    stream: None,
+                    bind_addr: dst.clone(),
+                    dst,
+                    src_addr: None,
+                    user_context,
+                }),
+            ];
+            for (request, network) in requests.iter().zip(["tcp", "udp"]) {
+                let mut context = RouteContext::from_request(request);
+                assert_eq!(
+                    router.route(&mut context).await.unwrap(),
+                    if populated { network } else { "empty" }
+                );
+                if populated {
+                    assert_eq!(context.dns_query[0].name, "query.example");
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn lua_router_receives_context_and_returns_outbound_tag() {
         let router = Router::from_source(
             r#"
                 return function(ctx)
@@ -619,13 +876,13 @@ mod tests {
         .unwrap();
 
         let mut context = context();
-        assert_eq!(router.route(&mut context).unwrap(), "secure");
+        assert_eq!(router.route(&mut context).await.unwrap(), "secure");
         let rewritten = context.destination().unwrap();
         assert_eq!(rewritten.to_string(), "192.0.2.44:8443");
     }
 
-    #[test]
-    fn lua_router_rejects_udp_destination_writes() {
+    #[tokio::test]
+    async fn lua_router_rejects_udp_destination_writes() {
         for (field, value) in [
             ("dst_domain", "'rewritten.example'"),
             ("dst_ip_v4", "'192.0.2.44'"),
@@ -663,21 +920,97 @@ mod tests {
         }
     }
 
-    #[test]
-    fn lua_router_can_return_a_routing_error() {
+    #[tokio::test]
+    #[cfg(feature = "dns-server")]
+    async fn lua_dns_helpers_report_invalid_inputs_and_resolution_errors() {
+        for (call, message) in [
+            (
+                "lookup('missing', 'example.test')",
+                "unknown DNS resolver: missing",
+            ),
+            (
+                "reverse_lookup('missing', '192.0.2.7')",
+                "unknown DNS resolver: missing",
+            ),
+            (
+                "reverse_lookup('default-system', 'invalid')",
+                "invalid IP address",
+            ),
+            ("lookup('default-system', string.rep('a', 64))", ""),
+            (
+                "reverse_lookup('default-system', '192.0.2.7')",
+                "reverse lookup failed",
+            ),
+        ] {
+            let router =
+                Router::from_source(&format!("return function(_) {call}; return 'direct' end"))
+                    .unwrap();
+            let error = router.route(&mut context()).await.unwrap_err();
+            assert!(matches!(error, SError::RouterError(_)));
+            assert!(error.to_string().contains(message), "{error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn reload_preserves_suspended_routes_and_new_routes_use_new_script() {
+        let dir = ScriptDir::new();
+        let path = dir.script();
+        let router =
+            Arc::new(Router::from_source("return function(_) pause(); return 'old' end").unwrap());
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let resume = Arc::new(tokio::sync::Notify::new());
+        {
+            let inner = router.inner.lock().unwrap();
+            let entered = entered.clone();
+            let resume = resume.clone();
+            let pause = inner
+                .lua
+                .create_async_function(move |_, ()| {
+                    let entered = entered.clone();
+                    let resume = resume.clone();
+                    async move {
+                        entered.notify_one();
+                        resume.notified().await;
+                        Ok(())
+                    }
+                })
+                .unwrap();
+            inner.lua.globals().set("pause", pause).unwrap();
+        }
+        let pending_router = router.clone();
+        let pending = tokio::spawn(async move { pending_router.route(&mut context()).await });
+        tokio::time::timeout(std::time::Duration::from_secs(2), entered.notified())
+            .await
+            .unwrap();
+        std::fs::write(&path, "return function(_) return 'new' end").unwrap();
+        reload_script(&router.inner, &path, Arc::new(ResolverManager::new()));
+        assert_eq!(router.route(&mut context()).await.unwrap(), "new");
+        resume.notify_one();
+        assert_eq!(
+            tokio::time::timeout(std::time::Duration::from_secs(2), pending)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap(),
+            "old"
+        );
+    }
+
+    #[tokio::test]
+    async fn lua_router_can_return_a_routing_error() {
         let router =
             Router::from_source(r#"return function(_) return nil, "blocked by policy" end"#)
                 .unwrap();
 
-        let error = router.route(&mut context()).unwrap_err();
+        let error = router.route(&mut context()).await.unwrap_err();
         assert!(error.to_string().contains("blocked by policy"));
     }
 
-    #[test]
-    fn lua_router_rejects_invalid_return_values() {
+    #[tokio::test]
+    async fn lua_router_rejects_invalid_return_values() {
         let router = Router::from_source(r#"return function(_) return nil end"#).unwrap();
 
-        let error = router.route(&mut context()).unwrap_err();
+        let error = router.route(&mut context()).await.unwrap_err();
         assert!(
             error
                 .to_string()

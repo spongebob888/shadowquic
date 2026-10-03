@@ -179,20 +179,23 @@ fn client(username: &str, password: &str) -> SunnyQuicClient {
 }
 
 fn client_at(addr: &str, username: &str, password: &str) -> SunnyQuicClient {
-    SunnyQuicClient::new(SunnyQuicClientCfg {
-        username: username.into(),
-        password: password.into(),
-        addr: addr.into(),
-        server_name: "localhost".into(),
-        alpn: vec!["h3".into()],
-        cert_path: Some("../assets/certs/MyCA.pem".into()),
-        initial_mtu: 1200,
-        congestion_control: CongestionControl::Bbr,
-        zero_rtt: false,
-        gso: false,
-        over_stream: true,
-        ..Default::default()
-    })
+    SunnyQuicClient::new(
+        SunnyQuicClientCfg {
+            username: username.into(),
+            password: password.into(),
+            addr: addr.into(),
+            server_name: "localhost".into(),
+            alpn: vec!["h3".into()],
+            cert_path: Some("../assets/certs/MyCA.pem".into()),
+            initial_mtu: 1200,
+            congestion_control: CongestionControl::Bbr,
+            zero_rtt: false,
+            gso: false,
+            over_stream: true,
+            ..Default::default()
+        },
+        std::sync::Arc::new(shadowquic::dns::ResolverManager::new()),
+    )
 }
 
 async fn assert_connection_closed(conn: &shadowquic::sunnyquic::outbound::SunnyQuicConn) {

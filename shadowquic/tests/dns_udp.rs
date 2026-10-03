@@ -245,18 +245,21 @@ async fn shadowquic_client_server(over_stream: bool, port: u16) {
     })
     .await
     .unwrap();
-    let sq_client = ShadowQuicClient::new(ShadowQuicClientCfg {
-        password: "123".into(),
-        username: "123".into(),
-        addr: format!("127.0.0.1:{}", port + 10),
-        server_name: "localhost".into(),
-        alpn: vec!["h3".into()],
-        initial_mtu: 1200,
-        congestion_control: CongestionControl::Bbr,
-        zero_rtt: true,
-        over_stream,
-        ..Default::default()
-    });
+    let sq_client = ShadowQuicClient::new(
+        ShadowQuicClientCfg {
+            password: "123".into(),
+            username: "123".into(),
+            addr: format!("127.0.0.1:{}", port + 10),
+            server_name: "localhost".into(),
+            alpn: vec!["h3".into()],
+            initial_mtu: 1200,
+            congestion_control: CongestionControl::Bbr,
+            zero_rtt: true,
+            over_stream,
+            ..Default::default()
+        },
+        std::sync::Arc::new(shadowquic::dns::ResolverManager::new()),
+    );
 
     let client = Manager::single(Box::new(socks_server), std::sync::Arc::new(sq_client));
 

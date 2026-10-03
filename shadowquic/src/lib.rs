@@ -17,6 +17,7 @@ use tracing::{Instrument, error, info, info_span};
 
 pub mod config;
 pub mod direct;
+pub mod dns;
 mod drop_outbound;
 pub mod error;
 #[cfg(feature = "mixed")]
@@ -150,13 +151,21 @@ impl UdpRecv for FirstPacketUdpRecv {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct DnsQuery {
+    pub name: String,
+    pub record_type: u16,
+}
+
 /// Per-session context, present even when statistics are not tracked.
 #[derive(Clone, Default)]
 pub struct UserContext {
     pub src_addr: Option<SocketAddr>,
     pub inbound_tag: String,
+    pub dns_query: Vec<DnsQuery>,
     pub stats: Option<StatsContext>,
 }
+
 /// Authenticated connection metadata used for statistics and connection control.
 #[derive(Clone)]
 pub struct StatsContext {
@@ -220,6 +229,65 @@ pub struct Manager {
     pub default_outbound: String,
     #[cfg(feature = "plugin")]
     pub router: Option<Arc<plugin::router::Router>>,
+
+    #[cfg(feature = "dns-server")]
+    pub resolver_manager: Option<Arc<dns::ResolverManager>>,
+}
+
+/// Shared routing state for independently scheduled requests.
+struct RequestDispatcher {
+    outbounds: HashMap<String, Arc<dyn Outbound>>,
+    default_outbound: String,
+    #[cfg(feature = "plugin")]
+    router: Option<Arc<plugin::router::Router>>,
+}
+
+impl RequestDispatcher {
+    async fn dispatch(&self, req: ProxyRequest) {
+        #[cfg(feature = "plugin")]
+        let mut req = req;
+        #[cfg(feature = "plugin")]
+        let outbound_tag = match self.router.as_ref() {
+            Some(router) => {
+                let mut context = plugin::router::RouteContext::from_request(&req);
+                match router
+                    .route(&mut context)
+                    .instrument(info_span!("route"))
+                    .await
+                {
+                    Ok(outbound_tag) => match context.destination() {
+                        Ok(dst) => {
+                            req.set_dst(dst);
+                            outbound_tag
+                        }
+                        Err(error) => {
+                            error!(%error, "invalid rewritten destination");
+                            return;
+                        }
+                    },
+                    Err(error) => {
+                        error!(%error, "routing request failed");
+                        return;
+                    }
+                }
+            }
+            None => self.default_outbound.clone(),
+        };
+        #[cfg(not(feature = "plugin"))]
+        let outbound_tag = self.default_outbound.clone();
+        let Some(outbound) = self.outbounds.get(&outbound_tag).cloned() else {
+            error!(outbound = %outbound_tag, "router selected an unknown outbound");
+            return;
+        };
+        tracing::debug!(outbound = %outbound_tag, dst = %req.dst(), "routing request");
+        if let Err(error) = outbound
+            .handle(req)
+            .instrument(info_span!("outbound", tag = %outbound_tag))
+            .await
+        {
+            error!(outbound = %outbound_tag, %error, "error handling request");
+        }
+    }
 }
 
 /// Resolves when a shutdown signal is received (Ctrl-C, plus SIGTERM on unix).
@@ -249,6 +317,8 @@ impl Manager {
             default_outbound: "outbound".into(),
             #[cfg(feature = "plugin")]
             router: None,
+            #[cfg(feature = "dns-server")]
+            resolver_manager: None,
         }
     }
 
@@ -256,18 +326,9 @@ impl Manager {
         self.run_until(shutdown_signal()).await
     }
 
-    /// Run all listeners until the supplied shutdown future completes.
+    /// Run listeners and dispatch accepted requests concurrently until shutdown.
+    /// Pending dispatch tasks are cancelled before shutting down their inbound.
     pub async fn run_until(self, shutdown: impl Future<Output = ()>) -> Result<(), SError> {
-        if self.inbounds.is_empty() || self.outbounds.is_empty() {
-            return Err(SError::InvalidConfig(
-                "inbounds and outbounds must not be empty".into(),
-            ));
-        }
-        if !self.outbounds.contains_key(&self.default_outbound) {
-            return Err(SError::InvalidConfig(
-                "default outbound does not exist".into(),
-            ));
-        }
         for (tag, inbound) in &self.inbounds {
             if let Err(error) = inbound.init().await {
                 error!(inbound = %tag, %error, "inbound initialization failed");
@@ -279,10 +340,12 @@ impl Manager {
                 return Err(error);
             }
         }
-        let outbounds = Arc::new(self.outbounds);
-        #[cfg(feature = "plugin")]
-        let router = self.router;
-        let default_outbound = self.default_outbound;
+        let dispatcher = Arc::new(RequestDispatcher {
+            outbounds: self.outbounds,
+            default_outbound: self.default_outbound,
+            #[cfg(feature = "plugin")]
+            router: self.router,
+        });
         let (stop, stopped) = tokio::sync::watch::channel(false);
         let mut tasks = tokio::task::JoinSet::new();
         for (tag, mut inbound) in self.inbounds {
@@ -292,72 +355,47 @@ impl Manager {
              user = tracing::field::Empty,
              id = tracing::field::Empty, // mainly for quic id
             );
-            let outbounds = outbounds.clone();
-            #[cfg(feature = "plugin")]
-            let router = router.clone();
-            let default_outbound = default_outbound.clone();
+            let dispatcher = dispatcher.clone();
             let mut stopped = stopped.clone();
             tasks.spawn(async move {
-                loop {
-                    tokio::select! {
-                        biased;
-                        _ = stopped.changed() => break,
-                        req = inbound.accept() => match req {
-                            Ok(mut req) => {
-                                req.set_inbound_tag(tag.clone());
-                                #[cfg(feature = "plugin")]
-                                let outbound_tag = match router.as_ref() {
-                                    Some(router) => {
-                                        let mut context = plugin::router::RouteContext::from_request(&req);
-                                        match router.route(&mut context) {
-                                            Ok(outbound_tag) => match context.destination() {
-                                                Ok(dst) => {
-                                                    req.set_dst(dst);
-                                                    outbound_tag
-                                                }
-                                                Err(error) => {
-                                                    error!(inbound = %tag, %error, "invalid rewritten destination");
-                                                    continue;
-                                                }
-                                            },
-                                            Err(error) => {
-                                                error!(inbound = %tag, %error, "routing request failed");
-                                                continue;
-                                            }
-                                        }
-                                    }
-                                    None => default_outbound.clone(),
-                                };
-                                #[cfg(not(feature = "plugin"))]
-                                let outbound_tag = default_outbound.clone();
-                                let Some(outbound) = outbounds.get(&outbound_tag).cloned() else {
-                                    error!(inbound = %tag, outbound = %outbound_tag, "router selected an unknown outbound");
-                                    continue;
-                                };
-                                tracing::debug!(outbound = %outbound_tag, dst = %req.dst(), "routing request");
-                                tokio::select! {
-                                    biased;
-                                    _ = stopped.changed() => break,
-                                    result = outbound.handle(req).instrument(
-                                        info_span!("outbound", tag = %outbound_tag)
-                                    ) => {
-                                        if let Err(error) = result {
-                                            error!(inbound = %tag, outbound = %outbound_tag, %error, "error handling request");
-                                        }
+                let mut requests = tokio::task::JoinSet::new();
+                'accepting: loop {
+                    // Completing a dispatch must not cancel a partially accepted request.
+                    let req = {
+                        let accept = inbound.accept();
+                        tokio::pin!(accept);
+                        loop {
+                            tokio::select! {
+                                biased;
+                                _ = stopped.changed() => break 'accepting,
+                                Some(result) = requests.join_next(), if !requests.is_empty() => {
+                                    if let Err(error) = result {
+                                        error!(inbound = %tag, %error, "request task failed");
                                     }
                                 }
+                                req = &mut accept => break req,
                             }
-                            Err(error) => {
-                                error!(inbound = %tag, %error, "error accepting request");
-                                tokio::select! {
-                                    biased;
-                                    _ = stopped.changed() => break,
-                                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
-                                }
+                        }
+                    };
+                    match req {
+                        Ok(mut req) => {
+                            req.set_inbound_tag(tag.clone());
+                            let dispatcher = dispatcher.clone();
+                            requests.spawn(async move {
+                                dispatcher.dispatch(req).await;
+                            }.in_current_span());
+                        }
+                        Err(error) => {
+                            error!(inbound = %tag, %error, "error accepting request");
+                            tokio::select! {
+                                biased;
+                                _ = stopped.changed() => break,
+                                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
                             }
                         }
                     }
                 }
+                requests.shutdown().await;
                 inbound.shutdown().await
             }.instrument(inbound_span));
         }

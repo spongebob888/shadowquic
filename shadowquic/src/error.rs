@@ -5,6 +5,9 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum SError {
+    #[cfg(feature = "dns-server")]
+    #[error("DNS error: {0}")]
+    DnsError(String),
     #[error("invalid configuration: {0}")]
     InvalidConfig(String),
     #[error("router error: {0}")]

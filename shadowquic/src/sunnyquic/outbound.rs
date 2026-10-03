@@ -9,6 +9,7 @@ use tracing::{error, info};
 use crate::{
     Outbound,
     config::{AuthUser, SunnyQuicClientCfg},
+    dns::ResolverManager,
     error::SError,
     msgs::squic::{SQExtError, UserStats},
     quic::{QuicClient, QuicConnection},
@@ -25,10 +26,21 @@ pub struct SunnyQuicClient {
     pub quic_conn: Mutex<Option<SunnyQuicConn>>,
     pub config: SunnyQuicClientCfg,
     pub quic_end: OnceCell<EndClient>,
+    pub addr_resolver: Arc<dyn crate::dns::DnsService>,
     pub socket_factory: Arc<dyn SocketFactory>,
 }
 impl SunnyQuicClient {
-    pub fn new(cfg: SunnyQuicClientCfg) -> Self {
+    pub fn new(cfg: SunnyQuicClientCfg, resolver_manager: Arc<ResolverManager>) -> Self {
+        #[cfg(feature = "dns-server")]
+        let tag = cfg
+            .addr_resolver
+            .clone()
+            .unwrap_or(crate::dns::DEFAULT_SYSTEM_DNS_TAG.to_string());
+        #[cfg(not(feature = "dns-server"))]
+        let tag = String::new();
+        let addr_resolver = resolver_manager
+            .resolver(&tag)
+            .unwrap_or_else(|| panic!("dns resolver not found: {}", tag));
         Self {
             quic_conn: Mutex::new(None),
             quic_end: OnceCell::new(),
@@ -38,12 +50,14 @@ impl SunnyQuicClient {
                 fw_mark: cfg.socket_opt.fw_mark,
                 protect_path: cfg.protect_path.clone(),
                 try_dual_stack: true,
+                resolver: addr_resolver.clone(),
             }),
+            addr_resolver,
             config: cfg,
         }
     }
     pub async fn init_endpoint(&self) -> Result<EndClient, SError> {
-        EndClient::new(&self.config).await
+        EndClient::new_with_socket_factory(&self.config, self.socket_factory.clone()).await
     }
 
     pub async fn get_conn(&self) -> Result<SunnyQuicConn, SError> {

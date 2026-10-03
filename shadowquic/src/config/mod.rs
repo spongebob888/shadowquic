@@ -21,6 +21,12 @@ use crate::{
 };
 
 mod serde_utils;
+use crate::dns::ResolverManager;
+#[cfg(feature = "dns-server")]
+pub use crate::dns::config::{
+    DnsCfg, DnsFakeIpServerCfg, DnsSystemServerCfg, DnsTcpServerCfg, DnsTlsServerCfg,
+    DnsUdpServerCfg,
+};
 #[cfg(all(feature = "tproxy", target_os = "linux"))]
 use crate::tproxy::inbound::TproxyServer;
 
@@ -61,11 +67,21 @@ pub use router::RouterCfg;
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Config {
-    /// Listeners to run concurrently. Tags must be nonempty and unique within this list.
+    /// Listeners to run concurrently. Tags must be nonempty and must not
+    /// collide with DNS or outbound tags.
     #[serde(alias = "inbound", deserialize_with = "deserialize_inbounds")]
     pub inbounds: Vec<InboundCfg>,
-    /// Available outbounds.
-    #[serde(alias = "outbound", deserialize_with = "deserialize_outbounds")]
+    /// Standalone DNS services. Tags must be nonempty and must not collide
+    /// with inbound or outbound tags.
+    #[cfg(feature = "dns-server")]
+    #[serde(default)]
+    pub dns: Vec<DnsCfg>,
+    /// Explicit outbounds. DNS services are also registered under their own tags.
+    #[serde(
+        default,
+        alias = "outbound",
+        deserialize_with = "deserialize_outbounds"
+    )]
     pub outbounds: Vec<OutboundCfg>,
     /// Request routing. Omit this section to use the first configured outbound.
     #[serde(default)]
@@ -74,6 +90,14 @@ pub struct Config {
     pub log_level: LogLevel,
 }
 impl Config {
+    /// Explicit outbounds come first, followed by automatically registered DNS services.
+    fn outbound_tags(&self) -> impl Iterator<Item = &str> {
+        let tags = self.outbounds.iter().map(OutboundCfg::tag);
+        #[cfg(feature = "dns-server")]
+        let tags = tags.chain(self.dns.iter().map(DnsCfg::tag));
+        tags
+    }
+
     /// Validate endpoint identities before opening any listeners.
     pub fn validate(&self) -> Result<(), SError> {
         for (kind, tags) in [
@@ -84,13 +108,7 @@ impl Config {
                     .map(InboundCfg::tag)
                     .collect::<Vec<_>>(),
             ),
-            (
-                "outbound",
-                self.outbounds
-                    .iter()
-                    .map(OutboundCfg::tag)
-                    .collect::<Vec<_>>(),
-            ),
+            ("outbound", self.outbound_tags().collect::<Vec<_>>()),
         ] {
             if tags.is_empty() {
                 return Err(SError::InvalidConfig(format!(
@@ -111,12 +129,63 @@ impl Config {
                 }
             }
         }
+        // Tags are unique across all endpoint kinds: inbound, DNS, and outbound.
+        let mut seen = self
+            .inbounds
+            .iter()
+            .map(InboundCfg::tag)
+            .collect::<HashSet<_>>();
+        for tag in self.outbound_tags() {
+            if !seen.insert(tag) {
+                return Err(SError::InvalidConfig(format!(
+                    "inbound tag collides with an outbound or DNS tag: {tag}"
+                )));
+            }
+        }
         if let Some(tag) = &self.router.default_outbound
-            && !self.outbounds.iter().any(|outbound| outbound.tag() == tag)
+            && !self.outbound_tags().any(|outbound| outbound == tag)
         {
             return Err(SError::InvalidConfig(format!(
                 "default outbound tag does not match a configured outbound: {tag}"
             )));
+        }
+        #[cfg(feature = "dns-server")]
+        {
+            let reserved = crate::dns::DEFAULT_SYSTEM_DNS_TAG;
+            if self.inbounds.iter().any(|c| c.tag() == reserved)
+                || self.outbounds.iter().any(|c| c.tag() == reserved)
+                || self.dns.iter().any(|c| c.tag() == reserved)
+            {
+                return Err(SError::InvalidConfig(format!(
+                    "tag {reserved} is reserved for the default system DNS"
+                )));
+            }
+            let mut fake_count = 0;
+            for dns in &self.dns {
+                dns.validate()?;
+                fake_count += usize::from(dns.is_fake_ip());
+            }
+            if fake_count > 1 {
+                return Err(SError::InvalidConfig(
+                    "at most one fakeip DNS service is allowed".into(),
+                ));
+            }
+            for outbound in &self.outbounds {
+                if let Some(tag) = outbound.dns() {
+                    let dns = self
+                        .dns
+                        .iter()
+                        .find(|dns| dns.tag() == tag)
+                        .ok_or_else(|| {
+                            SError::InvalidConfig(format!("unknown DNS service: {tag}"))
+                        })?;
+                    if dns.is_fake_ip() {
+                        return Err(SError::InvalidConfig(
+                            "fakeip cannot resolve outbound destinations".into(),
+                        ));
+                    }
+                }
+            }
         }
         self.router.validate()?;
         Ok(())
@@ -124,23 +193,91 @@ impl Config {
 
     pub async fn build_manager(self) -> Result<Manager, SError> {
         self.validate()?;
-        #[cfg(feature = "plugin")]
-        let router = self.router.build()?.map(Arc::new);
         let default_outbound = self
             .router
             .default_outbound
-            .unwrap_or_else(|| self.outbounds[0].tag().to_owned());
+            .clone()
+            .unwrap_or_else(|| self.outbound_tags().next().unwrap().to_owned());
         let mut inbounds = HashMap::new();
         let mut outbounds = HashMap::new();
+        #[cfg(feature = "dns-server")]
+        let mut resolver_manager = Arc::new(ResolverManager::new());
+        #[cfg(not(feature = "dns-server"))]
+        let resolver_manager = Arc::new(ResolverManager::new());
+        #[cfg(all(feature = "dns-server", feature = "tproxy", target_os = "linux"))]
+        let mut fake_ip = None;
+        #[cfg(feature = "dns-server")]
+        for cfg in self.dns {
+            let tag = cfg.tag().to_owned();
+            let server = cfg.build_with_cache(resolver_manager.cache()).await?;
+            #[cfg(all(feature = "tproxy", target_os = "linux"))]
+            if server.resolver.fake_ip.is_some() {
+                fake_ip = server.resolver.fake_ip.clone();
+            }
+            outbounds.insert(tag.clone(), server.resolver.clone() as Arc<dyn Outbound>);
+            Arc::make_mut(&mut resolver_manager).insert(tag.clone(), server.resolver.clone());
+            inbounds.insert(tag.clone(), Box::new(server) as Box<dyn Inbound>);
+        }
+        #[cfg(feature = "plugin")]
+        let router = self
+            .router
+            .build(
+                #[cfg(feature = "dns-server")]
+                resolver_manager.clone(),
+            )?
+            .map(Arc::new);
         for cfg in self.outbounds {
             let tag = cfg.tag().to_owned();
             let span = info_span!("outbound", tag = %tag);
-            outbounds.insert(tag, Arc::from(cfg.build_outbound().instrument(span).await?));
+            #[cfg(feature = "dns-server")]
+            {
+                let resolver = cfg
+                    .dns()
+                    .map(|tag| resolver_manager.resolver(tag).expect("validated DNS tag"));
+                let strategy = match &cfg {
+                    OutboundCfg::Direct(cfg) => cfg.dns_strategy.clone(),
+                    _ => DnsStrategy::default(),
+                };
+                let inner: Arc<dyn Outbound> = cfg
+                    .build_outbound(resolver_manager.clone())
+                    .instrument(span)
+                    .await?;
+                let outbound: Arc<dyn Outbound> = match resolver {
+                    Some(resolver) => Arc::new(crate::dns::ResolvingOutbound {
+                        inner,
+                        resolver,
+                        strategy,
+                    }),
+                    None => inner,
+                };
+                outbounds.insert(tag, outbound);
+            }
+            #[cfg(not(feature = "dns-server"))]
+            outbounds.insert(
+                tag,
+                Arc::from(
+                    cfg.build_outbound(resolver_manager.clone())
+                        .instrument(span)
+                        .await?,
+                ),
+            );
         }
         for cfg in self.inbounds {
             let tag = cfg.tag().to_owned();
             let span = info_span!("inbound", tag = %tag);
-            inbounds.insert(tag, cfg.build_inbound().instrument(span).await?);
+            #[cfg(all(feature = "dns-server", feature = "tproxy", target_os = "linux"))]
+            let restore_fake = matches!(&cfg, InboundCfg::Tproxy(_));
+            let inbound = cfg.build_inbound().instrument(span).await?;
+            #[cfg(all(feature = "dns-server", feature = "tproxy", target_os = "linux"))]
+            let inbound = if restore_fake && let Some(fake) = fake_ip.clone() {
+                Box::new(crate::dns::RestoringInbound {
+                    inner: inbound,
+                    fake,
+                }) as Box<dyn Inbound>
+            } else {
+                inbound
+            };
+            inbounds.insert(tag, inbound);
         }
         Ok(Manager {
             inbounds,
@@ -148,6 +285,8 @@ impl Config {
             default_outbound,
             #[cfg(feature = "plugin")]
             router,
+            #[cfg(feature = "dns-server")]
+            resolver_manager: Some(resolver_manager),
         })
     }
 }
@@ -228,6 +367,17 @@ pub enum OutboundCfg {
 }
 
 impl OutboundCfg {
+    #[cfg(feature = "dns-server")]
+    fn dns(&self) -> Option<&str> {
+        match self {
+            Self::Direct(cfg) => cfg.dns.as_deref(),
+            Self::Socks(cfg) => cfg.dns.as_deref(),
+            Self::ShadowQuic(cfg) => cfg.dns.as_deref(),
+            Self::SunnyQuic(cfg) => cfg.dns.as_deref(),
+            Self::Drop(_) => None,
+        }
+    }
+
     /// Returns the endpoint label.
     pub fn tag(&self) -> &str {
         match self {
@@ -239,13 +389,18 @@ impl OutboundCfg {
         }
     }
 
-    async fn build_outbound(self) -> Result<Box<dyn Outbound>, SError> {
-        let r: Box<dyn Outbound> = match self {
-            OutboundCfg::Socks(cfg) => Box::new(SocksClient::new(cfg)),
-            OutboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicClient::new(cfg)),
-            OutboundCfg::SunnyQuic(cfg) => Box::new(SunnyQuicClient::new(cfg)),
-            OutboundCfg::Direct(cfg) => Box::new(DirectOut::new(cfg)),
-            OutboundCfg::Drop(_) => Box::new(DropOutbound),
+    async fn build_outbound(
+        self,
+        resolver_manager: Arc<ResolverManager>,
+    ) -> Result<Arc<dyn Outbound>, SError> {
+        let r: Arc<dyn Outbound> = match self {
+            OutboundCfg::Socks(cfg) => Arc::new(SocksClient::new(cfg, resolver_manager.clone())),
+            OutboundCfg::ShadowQuic(cfg) => {
+                Arc::new(ShadowQuicClient::new(cfg, resolver_manager.clone()))
+            }
+            OutboundCfg::SunnyQuic(cfg) => Arc::new(SunnyQuicClient::new(cfg, resolver_manager)),
+            OutboundCfg::Direct(cfg) => Arc::new(DirectOut::new(cfg)),
+            OutboundCfg::Drop(_) => Arc::new(DropOutbound),
         };
         Ok(r)
     }
@@ -335,6 +490,12 @@ pub struct AuthUser {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SocksClientCfg {
+    /// DNS service used to resolve destination domains after routing.
+    #[cfg(feature = "dns-server")]
+    pub dns: Option<String>,
+    /// DNS resolver used to resolve the server address.
+    #[cfg(feature = "dns-server")]
+    pub addr_resolver: Option<String>,
     /// Required label for this endpoint.
     pub tag: String,
     pub addr: String,
@@ -496,6 +657,9 @@ impl PartialEq for CongestionControl {
 #[derive(Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct DirectOutCfg {
+    /// DNS service used to resolve destination domains after routing.
+    #[cfg(feature = "dns-server")]
+    pub dns: Option<String>,
     /// Required label for this endpoint.
     pub tag: String,
     #[serde(default)]
@@ -915,6 +1079,52 @@ router:
     }
 
     #[test]
+    fn rejects_tag_collisions_between_inbounds_and_outbounds() {
+        let mut cfg = multi_config();
+        let super::OutboundCfg::Direct(outbound) = &mut cfg.outbounds[0] else {
+            unreachable!()
+        };
+        outbound.tag = "one".into();
+        assert!(
+            cfg.validate()
+                .unwrap_err()
+                .to_string()
+                .contains("inbound tag collides with an outbound or DNS tag: one")
+        );
+    }
+
+    #[test]
+    fn rejects_reserved_default_system_dns_tag() {
+        // DNS services may not claim the reserved default system resolver tag.
+        let mut cfg = multi_config();
+        cfg.dns.push(crate::dns::config::DnsCfg::System(
+            crate::dns::config::DnsSystemServerCfg {
+                tag: crate::dns::DEFAULT_SYSTEM_DNS_TAG.to_string(),
+                bind_addr: "127.0.0.1:0".parse().unwrap(),
+            },
+        ));
+        assert!(
+            cfg.validate()
+                .unwrap_err()
+                .to_string()
+                .contains("reserved for the default system DNS")
+        );
+
+        // Outbound tags share the endpoint namespace and must avoid it too.
+        let mut cfg = multi_config();
+        let super::OutboundCfg::Direct(outbound) = &mut cfg.outbounds[0] else {
+            unreachable!()
+        };
+        outbound.tag = crate::dns::DEFAULT_SYSTEM_DNS_TAG.into();
+        assert!(
+            cfg.validate()
+                .unwrap_err()
+                .to_string()
+                .contains("reserved for the default system DNS")
+        );
+    }
+
+    #[test]
     fn bundled_configs_are_valid() {
         for yaml in [
             include_str!("../../config_examples/client.yaml"),
@@ -993,7 +1203,11 @@ router:
         let cfg: super::OutboundCfg =
             serde_saphyr::from_str("type: drop\ntag: blackhole\n").unwrap();
         assert_eq!(cfg.tag(), "blackhole");
-        assert!(cfg.build_outbound().await.is_ok());
+        assert!(
+            cfg.build_outbound(std::sync::Arc::new(crate::dns::ResolverManager::new()))
+                .await
+                .is_ok()
+        );
     }
 
     #[test]

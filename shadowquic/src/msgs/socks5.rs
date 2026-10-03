@@ -1,6 +1,7 @@
 use std::{
     fmt,
     net::{IpAddr, SocketAddr, ToSocketAddrs},
+    str::FromStr,
     vec,
 };
 
@@ -126,6 +127,28 @@ impl SocksAddr {
                 contents: name.into_bytes(),
             }),
             port,
+        }
+    }
+}
+impl FromStr for SocksAddr {
+    type Err = SError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.parse::<SocketAddr>() {
+            Ok(socket_addr) => Ok(SocksAddr::from(socket_addr)),
+            Err(_) => {
+                let mut parts = s.split(':');
+                let domain = parts
+                    .next()
+                    .ok_or_else(|| SError::SocksError("Invalid domain".into()))?;
+                let port_str = parts
+                    .next()
+                    .ok_or_else(|| SError::SocksError("Missing port".into()))?;
+                let port = port_str
+                    .parse::<u16>()
+                    .map_err(|_| SError::SocksError(format!("Invalid port: {}", port_str)))?;
+                Ok(SocksAddr::from_domain(domain.to_string(), port))
+            }
         }
     }
 }

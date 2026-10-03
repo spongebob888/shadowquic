@@ -36,17 +36,20 @@ async fn shadowquic_client_sqconn_records_authenticated_username() {
     .unwrap();
     server.init().await.unwrap();
 
-    let client = ShadowQuicClient::new(ShadowQuicClientCfg {
-        addr: bind_addr.to_string(),
-        username: username.into(),
-        password: password.into(),
-        server_name: "localhost".into(),
-        alpn: vec!["h3".into()],
-        zero_rtt: true,
-        initial_mtu: 1200,
-        congestion_control: CongestionControl::Bbr,
-        ..Default::default()
-    });
+    let client = ShadowQuicClient::new(
+        ShadowQuicClientCfg {
+            addr: bind_addr.to_string(),
+            username: username.into(),
+            password: password.into(),
+            server_name: "localhost".into(),
+            alpn: vec!["h3".into()],
+            zero_rtt: true,
+            initial_mtu: 1200,
+            congestion_control: CongestionControl::Bbr,
+            ..Default::default()
+        },
+        std::sync::Arc::new(shadowquic::dns::ResolverManager::new()),
+    );
 
     let conn = client.get_conn().await.unwrap();
 
@@ -78,18 +81,21 @@ async fn sunnyquic_client_sqconn_records_authenticated_username() {
     .unwrap();
     server.init().await.unwrap();
 
-    let client = SunnyQuicClient::new(SunnyQuicClientCfg {
-        addr: bind_addr.to_string(),
-        username: username.into(),
-        password: password.into(),
-        server_name: "localhost".into(),
-        alpn: vec!["h3".into()],
-        zero_rtt: true,
-        initial_mtu: 1200,
-        congestion_control: CongestionControl::Bbr,
-        cert_path: Some("../assets/certs/MyCA.pem".into()),
-        ..Default::default()
-    });
+    let client = SunnyQuicClient::new(
+        SunnyQuicClientCfg {
+            addr: bind_addr.to_string(),
+            username: username.into(),
+            password: password.into(),
+            server_name: "localhost".into(),
+            alpn: vec!["h3".into()],
+            zero_rtt: true,
+            initial_mtu: 1200,
+            congestion_control: CongestionControl::Bbr,
+            cert_path: Some("../assets/certs/MyCA.pem".into()),
+            ..Default::default()
+        },
+        std::sync::Arc::new(shadowquic::dns::ResolverManager::new()),
+    );
 
     let conn = client.get_conn().await.unwrap();
     let authed = tokio::time::timeout(Duration::from_secs(3), conn.authed.wait())
