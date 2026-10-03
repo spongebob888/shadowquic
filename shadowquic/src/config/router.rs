@@ -56,6 +56,7 @@ use std::sync::Arc;
 /// | Field | Value |
 /// | --- | --- |
 /// | `inbound_tag` | Tag of the inbound listener |
+/// | `dns_query` | Array of tables with `name` and numeric `record_type`; empty when no DNS metadata is attached |
 /// | `network_type` | `"tcp"` or `"udp"` |
 /// | `dst_domain`, `dst_ip_v4`, `dst_ip_v6` | Destination name or IP string; unused fields are nil |
 /// | `dst_port` | Destination port number |
@@ -67,6 +68,7 @@ use std::sync::Arc;
 /// for TCP requests. Writing these fields for UDP requests raises an error,
 /// including assigning nil.
 /// Setting a destination name or IP clears the other destination address fields.
+/// `dns_query` is a snapshot: changing its tables does not modify the request.
 /// Return a configured outbound tag to route the request, or `nil, error_message`
 /// to reject it. Routing errors do not fall back to `router.default-outbound`.
 ///

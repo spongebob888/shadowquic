@@ -151,13 +151,21 @@ impl UdpRecv for FirstPacketUdpRecv {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct DnsQuery {
+    pub name: String,
+    pub record_type: u16,
+}
+
 /// Per-session context, present even when statistics are not tracked.
 #[derive(Clone, Default)]
 pub struct UserContext {
     pub src_addr: Option<SocketAddr>,
     pub inbound_tag: String,
+    pub dns_query: Vec<DnsQuery>,
     pub stats: Option<StatsContext>,
 }
+
 /// Authenticated connection metadata used for statistics and connection control.
 #[derive(Clone)]
 pub struct StatsContext {

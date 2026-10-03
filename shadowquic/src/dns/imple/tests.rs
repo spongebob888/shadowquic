@@ -67,6 +67,55 @@ fn run(
 }
 
 #[tokio::test]
+async fn upstream_requests_include_dns_query_context() {
+    for tcp in [false, true] {
+        for ty in [TYPE::A, TYPE::AAAA] {
+            let (requests, mut received) = mpsc::channel(1);
+            let resolver = Resolver {
+                tag: "dns".into(),
+                backend: Backend::Udp("192.0.2.1:53".parse().unwrap()),
+                requests,
+                fake_ip: None,
+                cache: Arc::new(DnsCache::default()),
+            };
+            let upstream = tokio::spawn(async move {
+                let request = received.recv().await.unwrap();
+                let context = match &request {
+                    ProxyRequest::Tcp(session) => &session.user_context,
+                    ProxyRequest::Udp(session) => &session.user_context,
+                };
+                assert_eq!(context.dns_query.len(), 1);
+                assert_eq!(context.dns_query[0].name, "context.test");
+                assert_eq!(context.dns_query[0].record_type, u16::from(ty));
+                match request {
+                    ProxyRequest::Tcp(mut session) => {
+                        assert!(tcp);
+                        let query = read_frame(&mut session.stream).await.unwrap();
+                        write_frame(&mut session.stream, &response(&query, 0))
+                            .await
+                            .unwrap();
+                    }
+                    ProxyRequest::Udp(mut session) => {
+                        assert!(!tcp);
+                        let (query, dst) = session.recv.recv_from().await.unwrap();
+                        session
+                            .send
+                            .send_to(response(&query, 0).into(), dst)
+                            .await
+                            .unwrap();
+                    }
+                }
+            });
+            resolver
+                .upstream(&query("context.test", ty, 1), tcp)
+                .await
+                .unwrap();
+            upstream.await.unwrap();
+        }
+    }
+}
+
+#[tokio::test]
 async fn udp_upstream_is_routed_and_cached_with_client_transaction_id() {
     let upstream = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let server = udp_cfg(upstream.local_addr().unwrap())
@@ -387,6 +436,9 @@ async fn tls_exchange(trusted: bool, server_name: &str) -> Result<Vec<u8>> {
             panic!("TLS must emit a TCP proxy request")
         };
         assert_eq!(session.dst.to_string(), "192.0.2.1:853");
+        assert_eq!(session.user_context.dns_query.len(), 1);
+        assert_eq!(session.user_context.dns_query[0].name, "tls.test");
+        assert_eq!(session.user_context.dns_query[0].record_type, 1);
         if let Ok(mut stream) = acceptor.accept(session.stream).await {
             let query = read_frame(&mut stream).await.unwrap();
             // Zero TTL ensures later certificate tests cannot hit this response.

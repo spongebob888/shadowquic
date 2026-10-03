@@ -46,6 +46,24 @@ OS errors, so those also produce SERVFAIL. System DNS returns NOTIMP for record
 types other than A/AAAA; fake-IP DNS returns an empty successful answer for them.
 Both local services use a 60-second answer TTL.
 
+Lua routing scripts can inspect upstream questions through `ctx.dns_query`,
+an array of tables containing `name` and numeric `record_type` (1 for A, 28 for
+AAAA). It is empty when the request has no DNS metadata. Changes to these
+tables do not modify the request or DNS packet. For example:
+
+```lua
+return function(ctx)
+    for _, question in ipairs(ctx.dns_query) do
+        if question.name == "example.com" and question.record_type == 1 then
+            return "direct"
+        end
+    end
+    return "proxy"
+end
+```
+
+The returned tags must refer to configured transport outbounds.
+
 Each DNS service automatically registers an outbound under the same tag. Route
 intercepted UDP DNS sessions directly to that tag (for example, `return "fake"`).
 No explicit DNS outbound configuration is needed. DNS service tags must not

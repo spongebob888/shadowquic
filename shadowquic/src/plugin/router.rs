@@ -13,7 +13,7 @@ use mlua::{Function, Lua, LuaOptions, StdLib, UserData, UserDataFields, chunk::C
 
 use crate::dns::ResolverManager;
 use crate::{
-    ProxyRequest, StatsContext, TcpSession, UdpSession,
+    DnsQuery, ProxyRequest, StatsContext, TcpSession, UdpSession,
     error::SError,
     msgs::socks5::{AddrOrDomain, SocksAddr},
 };
@@ -42,6 +42,8 @@ pub struct RouteContext {
     pub src_ip_v6: Option<Ipv6Addr>,
     pub src_port: Option<u16>,
     pub inbound_tag: String,
+    /// DNS questions attached to the request; empty for requests without DNS metadata.
+    pub dns_query: Vec<DnsQuery>,
     /// Only valid for shadowquic/sunnyquic inbound requests.
     pub stats_context: Option<StatsContext>,
     /// tcp or udp.
@@ -50,6 +52,16 @@ pub struct RouteContext {
 impl UserData for RouteContext {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         fields.add_field_method_get("inbound_tag", |_, this| Ok(this.inbound_tag.clone()));
+        fields.add_field_method_get("dns_query", |lua, this| {
+            let queries = lua.create_table()?;
+            for (index, query) in this.dns_query.iter().enumerate() {
+                let entry = lua.create_table()?;
+                entry.set("name", query.name.as_str())?;
+                entry.set("record_type", query.record_type)?;
+                queries.raw_set(index + 1, entry)?;
+            }
+            Ok(queries)
+        });
         fields.add_field_method_get("network_type", |_, this| {
             Ok(match this.network_type {
                 NetworkType::Tcp => "tcp",
@@ -147,6 +159,7 @@ impl RouteContext {
                 &user_context.inbound_tag,
                 NetworkType::Tcp,
                 user_context.stats.clone(),
+                &user_context.dns_query,
             ),
             ProxyRequest::Udp(UdpSession {
                 dst,
@@ -159,6 +172,7 @@ impl RouteContext {
                 &user_context.inbound_tag,
                 NetworkType::Udp,
                 user_context.stats.clone(),
+                &user_context.dns_query,
             ),
         }
     }
@@ -169,6 +183,7 @@ impl RouteContext {
         inbound_tag: &str,
         network_type: NetworkType,
         stats_context: Option<StatsContext>,
+        dns_query: &[DnsQuery],
     ) -> Self {
         let (dst_domain, dst_ip_v4, dst_ip_v6) = match &dst.addr {
             AddrOrDomain::Domain(domain) => (
@@ -197,6 +212,7 @@ impl RouteContext {
             src_port: src_addr.map(|addr| addr.port()),
             src_addr,
             inbound_tag: inbound_tag.to_owned(),
+            dns_query: dns_query.to_vec(),
             stats_context,
             network_type,
         }
@@ -621,6 +637,7 @@ mod tests {
             src_ip_v6: None,
             src_port: Some(54321),
             inbound_tag: "socks-in".into(),
+            dns_query: Vec::new(),
             stats_context: None,
             network_type: NetworkType::Tcp,
         }
@@ -667,6 +684,73 @@ mod tests {
         .unwrap();
 
         assert_eq!(router.route(&mut context()).unwrap(), "direct");
+    }
+
+    #[test]
+    fn lua_router_receives_dns_questions_from_tcp_and_udp_requests() {
+        let router = Router::from_source(
+            r#"
+                return function(ctx)
+                    local questions = ctx.dns_query
+                    if #questions == 0 then return "empty" end
+                    assert(#questions == 2)
+                    for i, question in ipairs(questions) do
+                        assert(question.name == "query.example")
+                        assert(question.record_type == (i == 1 and 1 or 28))
+                    end
+                    questions[1].name = "changed.example"
+                    assert(ctx.dns_query[1].name == "query.example")
+                    return ctx.network_type
+                end
+            "#,
+        )
+        .unwrap();
+        for populated in [false, true] {
+            let user_context = crate::UserContext {
+                dns_query: if populated {
+                    [1, 28]
+                        .into_iter()
+                        .map(|record_type| DnsQuery {
+                            name: "query.example".into(),
+                            record_type,
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                },
+                ..Default::default()
+            };
+            let (stream, _peer) = tokio::io::duplex(64);
+            let (send, recv) = tokio::sync::mpsc::channel(1);
+            let dst: SocksAddr = "192.0.2.53:53".parse::<SocketAddr>().unwrap().into();
+            let requests: [ProxyRequest; 2] = [
+                ProxyRequest::Tcp(TcpSession {
+                    stream: Box::new(stream) as crate::AnyTcp,
+                    dst: dst.clone(),
+                    src_addr: None,
+                    user_context: user_context.clone(),
+                }),
+                ProxyRequest::Udp(UdpSession {
+                    recv: Box::new(recv),
+                    send: Arc::new(send),
+                    stream: None,
+                    bind_addr: dst.clone(),
+                    dst,
+                    src_addr: None,
+                    user_context,
+                }),
+            ];
+            for (request, network) in requests.iter().zip(["tcp", "udp"]) {
+                let mut context = RouteContext::from_request(request);
+                assert_eq!(
+                    router.route(&mut context).unwrap(),
+                    if populated { network } else { "empty" }
+                );
+                if populated {
+                    assert_eq!(context.dns_query[0].name, "query.example");
+                }
+            }
+        }
     }
 
     #[test]

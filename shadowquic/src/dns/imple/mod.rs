@@ -27,8 +27,8 @@ use tokio::{
 };
 
 use crate::{
-    AnyTcp, Inbound, Outbound, ProxyRequest, TcpSession, TcpTrait, UdpSession, UserContext,
-    error::SError, msgs::socks5::SocksAddr,
+    AnyTcp, DnsQuery, Inbound, Outbound, ProxyRequest, TcpSession, TcpTrait, UdpSession,
+    UserContext, error::SError, msgs::socks5::SocksAddr,
 };
 
 type Result<T> = std::result::Result<T, SError>;
@@ -402,6 +402,17 @@ impl Resolver {
             }
         };
         let dst: SocksAddr = dst.into();
+        let user_context = UserContext {
+            dns_query: parse_query(query)?
+                .questions
+                .iter()
+                .map(|question| DnsQuery {
+                    name: question.qname.to_string(),
+                    record_type: question.qtype.into(),
+                })
+                .collect(),
+            ..UserContext::default()
+        };
         if !tcp {
             let (send_query, recv_query) = mpsc::channel(1);
             let (send_reply, mut recv_reply) = mpsc::channel(1);
@@ -418,7 +429,7 @@ impl Resolver {
                     bind_addr: "0.0.0.0:0".parse::<std::net::SocketAddr>().unwrap().into(),
                     dst: dst.clone(),
                     src_addr: None,
-                    user_context: UserContext::default(),
+                    user_context,
                 }))
                 .await
                 .map_err(dns_error)?;
@@ -438,7 +449,7 @@ impl Resolver {
                     stream: Box::new(peer),
                     dst,
                     src_addr: None,
-                    user_context: UserContext::default(),
+                    user_context,
                 }))
                 .await
                 .map_err(dns_error)?;
