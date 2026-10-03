@@ -33,6 +33,15 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SITE_ROOT = Path(__file__).resolve().parent
 DOCS_ROOT = SITE_ROOT / "docs"
 CONFIG_SRC_PREFIX = "shadowquic/src/config/"
+DNS_CONFIG_SRC = "shadowquic/src/dns/imple/config.rs"
+
+
+def config_sources(repo_root: Path):
+    """Include DNS configuration when present, including in historical builds."""
+    yield from (repo_root / CONFIG_SRC_PREFIX).glob("*.rs")
+    dns = repo_root / DNS_CONFIG_SRC
+    if dns.exists():
+        yield dns
 
 # ----------------------------------------------------------------------------
 # rustdoc invocation
@@ -186,7 +195,7 @@ class Item:
 
     @property
     def is_config(self) -> bool:
-        return self.filename.startswith(CONFIG_SRC_PREFIX)
+        return self.filename.startswith(CONFIG_SRC_PREFIX) or self.filename == DNS_CONFIG_SRC
 
     @property
     def kind(self) -> str:
@@ -343,13 +352,13 @@ def collect_enum_variant_tags(
 
 
 def collect_default_fn_values(repo_root: Path) -> dict[str, str]:
-    """Scan src/config/*.rs for `pub fn default_xxx() -> T { expr }` bodies.
+    """Scan configuration sources for `pub fn default_xxx() -> T { expr }` bodies.
 
     Only matches single-line function bodies; anything more complex falls back
     to displaying the function name in the rendered docs.
     """
     out: dict[str, str] = {}
-    for path in (repo_root / "shadowquic" / "src" / "config").glob("*.rs"):
+    for path in config_sources(repo_root):
         text = path.read_text()
         for m in _DEFAULT_BODY_RE.finditer(text):
             out[m.group(1)] = m.group(2).rstrip(";").strip()
@@ -381,7 +390,7 @@ def _strip_line_comment(line: str) -> str:
 
 
 def parse_source_attrs(repo_root: Path) -> SourceAttrs:
-    """Return container & member attribute strings recovered from src/config/*.rs."""
+    """Return container & member attributes recovered from configuration sources."""
     out = SourceAttrs()
 
     container_decl = re.compile(
@@ -390,7 +399,7 @@ def parse_source_attrs(repo_root: Path) -> SourceAttrs:
     field_decl = re.compile(r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?([a-z_]\w*)\s*:")
     variant_decl = re.compile(r"^\s*([A-Z][A-Za-z0-9_]*)\s*[\(\{,=]?")
 
-    for path in (repo_root / "shadowquic" / "src" / "config").glob("*.rs"):
+    for path in config_sources(repo_root):
         text = path.read_text()
         pending: list[str] = []
         container_name: str | None = None
@@ -1017,8 +1026,8 @@ def plan_pages(
     """Decide which config items get their own page.
 
     Discovers the page set by walking the type graph from `Config` /
-    `InboundCfg` / `OutboundCfg`. Tuple-variant targets of the two
-    dispatcher enums become inbound/outbound pages; everything else
+    `InboundCfg` / `OutboundCfg`. Tuple-variant targets of the inbound,
+    outbound, and DNS dispatcher enums become pages in their sections; everything else
     reachable becomes a shared page. Adding a new struct/enum to
     `shadowquic/src/config/` is a no-op for this generator — re-running
     picks it up automatically.
@@ -1098,8 +1107,26 @@ def plan_pages(
             ))
             placed.add(it.name)
 
-    # Router is a top-level configuration section in newer versions. Older
-    # releases do not have RouterCfg and must not get a dangling navigation link.
+    # Optional sections must not create dangling links in old releases.
+    dns = next((it for it in discovered if it.name == "DnsCfg"), None)
+    if dns is not None:
+        pages.append(PageSpec(
+            title="DNS", nav_label="Overview",
+            rel_path="configuration/dns/index.md", item_id=int(dns.id),
+            intro="Selects a standalone DNS service. Pick a variant via the `type` key.",
+        ))
+        placed.add("DnsCfg")
+        dns_targets = _enum_tuple_variant_targets(dns, index, src_attrs)
+        for it in discovered:
+            if it.name in dns_targets and it.name not in placed:
+                tag, _ = dns_targets[it.name]
+                label = _friendly_label(it.name)
+                pages.append(PageSpec(
+                    title=label, nav_label=label,
+                    rel_path=f"configuration/dns/{tag}.md", item_id=int(it.id),
+                ))
+                placed.add(it.name)
+
     router = next((it for it in discovered if it.name == "RouterCfg"), None)
     if router is not None:
         pages.append(PageSpec(
@@ -1145,6 +1172,7 @@ def render_nav(
 
     inbound_pages = [p for p in cfg_pages if p.rel_path.startswith("configuration/inbound/")]
     outbound_pages = [p for p in cfg_pages if p.rel_path.startswith("configuration/outbound/")]
+    dns_pages = [p for p in cfg_pages if p.rel_path.startswith("configuration/dns/")]
     shared_pages = [p for p in cfg_pages if p.rel_path.startswith("configuration/shared/")]
 
     lines = ["nav = ["]
@@ -1152,25 +1180,19 @@ def render_nav(
     lines.append('  { "Configuration" = [')
     lines.append(f'    {{ "Overview" = "{overview.rel_path}" }},')
 
-    if inbound_pages:
-        lines.append('    { "Inbound" = [')
-        for i, p in enumerate(inbound_pages):
+    for section, section_pages in (("Inbound", inbound_pages), ("Outbound", outbound_pages), ("DNS", dns_pages)):
+        if not section_pages:
+            continue
+        lines.append(f'    {{ "{section}" = [')
+        for i, p in enumerate(section_pages):
             label = "Overview" if p.rel_path.endswith("/index.md") else p.nav_label
-            comma = "," if i < len(inbound_pages) - 1 else ""
-            lines.append(f'      {{ "{label}" = "{p.rel_path}" }}{comma}')
-        lines.append('    ] },')
-
-    if outbound_pages:
-        lines.append('    { "Outbound" = [')
-        for i, p in enumerate(outbound_pages):
-            label = "Overview" if p.rel_path.endswith("/index.md") else p.nav_label
-            comma = "," if i < len(outbound_pages) - 1 else ""
+            comma = "," if i < len(section_pages) - 1 else ""
             lines.append(f'      {{ "{label}" = "{p.rel_path}" }}{comma}')
         lines.append('    ] },')
 
     for p in cfg_pages:
         if p.rel_path == "configuration/router.md":
-            lines.append(f'    {{ "Router" = "{p.rel_path}" }},')
+            lines.append(f'    {{ "{p.nav_label}" = "{p.rel_path}" }},')
 
     if shared_pages:
         lines.append('    { "Shared types" = [')

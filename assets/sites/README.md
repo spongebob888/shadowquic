@@ -1,7 +1,8 @@
 # shadowquic documentation site
 
 A Zensical static site whose configuration reference is generated from the
-doc comments on the structs and enums in `shadowquic/src/config/`.
+doc comments on the structs and enums in `shadowquic/src/config/` and
+`shadowquic/src/dns/imple/config.rs`.
 
 The generator (`gen_docs.py`) drives `cargo +nightly rustdoc` to emit JSON,
 then walks the `Config` / `InboundCfg` / `OutboundCfg` type graph and writes
@@ -22,6 +23,7 @@ assets/sites/
         ├── index.md
         ├── inbound/
         ├── outbound/
+        ├── dns/
         └── shared/
 ```
 
@@ -64,13 +66,17 @@ uv --project assets/sites run python assets/sites/gen_docs.py
 1. `cargo +nightly rustdoc -p shadowquic --lib -- -Z unstable-options --output-format json`
    writes `target/doc/shadowquic.json`.
 2. The generator filters the rustdoc `index` to items whose source path is
-   under `shadowquic/src/config/`, classifies each as a struct or enum, and
+   under `shadowquic/src/config/` or in `shadowquic/src/dns/imple/config.rs`,
+   classifies each as a struct or enum, and
    resolves serde attributes (`rename_all`, `default`, `tag`, ...) to render
    the on-the-wire YAML field name.
 3. For each top-level type a markdown page is written under
    `docs/configuration/...`; field types that resolve to another config
    type become internal links.
-4. If `RouterCfg` is reachable from `Config`, it gets a dedicated
+4. If `DnsCfg` is reachable from `Config`, it gets a dedicated
+   `configuration/dns/index.md` overview and a **Configuration → DNS** navigation
+   section. Its server variants get pages under `configuration/dns/`, alongside
+   the overview. Versions without DNS omit this section. If `RouterCfg` is reachable from `Config`, it gets a dedicated
    `configuration/router.md` page and a **Configuration → Router** navigation
    entry. The overview's `router` field links to it. Older versions without
    `RouterCfg` omit this entry.
