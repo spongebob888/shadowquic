@@ -398,6 +398,13 @@ impl Router {
         // The base library is always loaded, including file and code loaders.
         // Remove these before evaluating any user-provided source.
         let globals = lua.globals();
+        globals.set(
+            "info",
+            lua.create_function(|_, message: String| {
+                info!("{message}");
+                Ok(())
+            })?,
+        )?;
         for name in ["dofile", "loadfile", "load", "loadstring"] {
             globals.set(name, mlua::Value::Nil)?;
         }
@@ -680,6 +687,53 @@ mod tests {
             stats_context: None,
             network_type: NetworkType::Tcp,
         }
+    }
+
+    #[tokio::test]
+    async fn lua_info_logs_during_initialization_and_routing() {
+        use std::io::Write;
+        use tracing::instrument::WithSubscriber;
+
+        #[derive(Clone)]
+        struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+        impl Write for LogBuffer {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().write(bytes)
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let writer = LogBuffer(output.clone());
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(move || writer.clone())
+            .finish();
+        async {
+            let router = Router::from_source(
+                r#"
+                info("script loaded")
+                return function(ctx)
+                    info("routing " .. ctx.dst_domain)
+                    assert(not pcall(info, {}))
+                    assert(not pcall(info))
+                    return "direct"
+                end
+            "#,
+            )
+            .unwrap();
+            assert_eq!(router.route(&mut context()).await.unwrap(), "direct");
+        }
+        .with_subscriber(subscriber)
+        .await;
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        assert!(output.contains("INFO"), "{output}");
+        assert!(output.contains("script loaded"), "{output}");
+        assert!(output.contains("routing api.example"), "{output}");
     }
 
     #[tokio::test]

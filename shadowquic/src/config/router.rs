@@ -77,6 +77,8 @@ use std::sync::Arc;
 /// Scripts have base language functions and string, table, math, and bit helpers.
 /// Filesystem, process, module loading, and dynamic code loading are unavailable.
 /// Console output through `print` is allowed.
+/// `info(message)` accepts a string and emits a `tracing::info!` log, using the
+/// application's logging filters. It is available during loading and routing.
 /// With `dns-server`, `lookup(dns_tag, domain)` returns an array of IP strings
 /// and `reverse_lookup(dns_tag, ip)` returns an array of PTR hostname strings.
 /// These calls suspend the routing function and raise Lua errors on failure.

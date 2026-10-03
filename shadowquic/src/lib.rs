@@ -250,7 +250,11 @@ impl RequestDispatcher {
         let outbound_tag = match self.router.as_ref() {
             Some(router) => {
                 let mut context = plugin::router::RouteContext::from_request(&req);
-                match router.route(&mut context).instrument(info_span!("route")).await {
+                match router
+                    .route(&mut context)
+                    .instrument(info_span!("route"))
+                    .await
+                {
                     Ok(outbound_tag) => match context.destination() {
                         Ok(dst) => {
                             req.set_dst(dst);
