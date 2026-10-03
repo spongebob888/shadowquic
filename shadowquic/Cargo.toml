@@ -15,7 +15,7 @@ statistics = ["dep:portable-atomic"]
 mixed = ["dep:base64"]
 plugin = ["plugin-vendored"]
 plugin-vendored = ["plugin-system", "mlua/vendored"]
-plugin-system = ["dep:mlua", "mlua/send", "dep:notify"]
+plugin-system = ["dep:mlua", "mlua/send", "mlua/async", "dep:notify"]
 ring = [
     "dep:ring",
     "quinn?/rustls-ring",

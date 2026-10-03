@@ -557,6 +557,109 @@ outbounds:
 
 #[cfg(feature = "plugin")]
 #[tokio::test]
+async fn routing_scripts_await_tagged_dns_lookups_and_route_their_upstream_requests() {
+    use crate::plugin::router::{RouteContext, Router};
+
+    let mut manager = ResolverManager::new();
+    let (requests, mut received) = mpsc::channel(4);
+    for (tag, addr) in [("forward", "192.0.2.1:53"), ("reverse", "192.0.2.2:53")] {
+        manager.insert(
+            tag.into(),
+            Arc::new(Resolver {
+                tag: tag.into(),
+                backend: Backend::Udp(addr.parse().unwrap()),
+                requests: requests.clone(),
+                fake_ip: None,
+                cache: manager.cache(),
+            }),
+        );
+    }
+    let router = Arc::new(
+        Router::from_source_with_manager(
+            r#"
+        return function(ctx)
+            if #ctx.dns_query > 0 then return "direct" end
+            local ips = lookup("forward", "async.test")
+            assert(#ips == 2 and ips[1] == "192.0.2.7" and ips[2] == "2001:db8::7")
+            for _, ip in ipairs(ips) do
+                local names = reverse_lookup("reverse", ip)
+                assert(#names == 1 and names[1] == "async.test")
+            end
+            ctx.dst_domain = "rewritten.test"
+            return "proxy"
+        end
+    "#,
+            Arc::new(manager),
+        )
+        .unwrap(),
+    );
+    let upstream_router = router.clone();
+    let upstream = tokio::spawn(async move {
+        for _ in 0..4 {
+            let request = received.recv().await.unwrap();
+            assert_eq!(
+                upstream_router
+                    .route(&mut RouteContext::from_request(&request))
+                    .await
+                    .unwrap(),
+                "direct"
+            );
+            let ProxyRequest::Udp(mut session) = request else {
+                panic!("expected UDP")
+            };
+            let (query, dst) = session.recv.recv_from().await.unwrap();
+            let mut reply = reply_for(Packet::parse(&query).unwrap());
+            let question = &reply.questions[0];
+            let data = match question.qtype {
+                QTYPE::TYPE(TYPE::A) => RData::A("192.0.2.7".parse::<Ipv4Addr>().unwrap().into()),
+                QTYPE::TYPE(TYPE::AAAA) => {
+                    RData::AAAA("2001:db8::7".parse::<std::net::Ipv6Addr>().unwrap().into())
+                }
+                QTYPE::TYPE(TYPE::PTR) => {
+                    RData::PTR(simple_dns::rdata::PTR(Name::new("async.test").unwrap()))
+                }
+                _ => panic!("unexpected query type"),
+            };
+            assert_eq!(
+                dst.to_string(),
+                if question.qtype == QTYPE::TYPE(TYPE::PTR) {
+                    "192.0.2.2:53"
+                } else {
+                    "192.0.2.1:53"
+                }
+            );
+            reply.answers.push(ResourceRecord::new(
+                question.qname.clone(),
+                CLASS::IN,
+                0,
+                data,
+            ));
+            session
+                .send
+                .send_to(reply.build_bytes_vec().unwrap().into(), dst)
+                .await
+                .unwrap();
+        }
+    });
+    let (stream, _peer) = tokio::io::duplex(64);
+    let request: ProxyRequest = ProxyRequest::Tcp(TcpSession {
+        stream: Box::new(stream),
+        dst: SocksAddr::from_domain("original.test".into(), 443),
+        src_addr: None,
+        user_context: UserContext::default(),
+    });
+    let mut context = RouteContext::from_request(&request);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        assert_eq!(router.route(&mut context).await.unwrap(), "proxy");
+        upstream.await.unwrap();
+    })
+    .await
+    .expect("DNS lookups must not block upstream routing");
+    assert_eq!(context.dst_domain.as_deref(), Some("rewritten.test"));
+}
+
+#[cfg(feature = "plugin")]
+#[tokio::test]
 async fn routing_scripts_can_query_shared_cache() {
     use crate::plugin::router::{RouteContext, Router};
     let ip: Ipv4Addr = "203.0.113.250".parse().unwrap();
@@ -596,6 +699,7 @@ async fn routing_scripts_can_query_shared_cache() {
     assert_eq!(
         router
             .route(&mut RouteContext::from_request(&request))
+            .await
             .unwrap(),
         "direct"
     );
@@ -682,7 +786,7 @@ async fn fakeip_tcp_is_restored_before_lua_routing() {
     "#,
     )
     .unwrap();
-    assert_eq!(router.route(&mut context).unwrap(), "direct");
+    assert_eq!(router.route(&mut context).await.unwrap(), "direct");
 }
 
 #[tokio::test]

@@ -50,6 +50,8 @@ use std::sync::Arc;
 /// editor replaces the file. Failed reloads keep the last working script. A
 /// successful reload resets Lua state; existing connections are unaffected.
 /// Inline scripts are not watched.
+/// Routing is asynchronous: suspended calls keep their original script runtime
+/// when a reload occurs, while new calls use the replacement.
 ///
 /// The script must return a function. Each request passes one context userdata:
 ///
@@ -75,6 +77,12 @@ use std::sync::Arc;
 /// Scripts have base language functions and string, table, math, and bit helpers.
 /// Filesystem, process, module loading, and dynamic code loading are unavailable.
 /// Console output through `print` is allowed.
+/// With `dns-server`, `lookup(dns_tag, domain)` returns an array of IP strings
+/// and `reverse_lookup(dns_tag, ip)` returns an array of PTR hostname strings.
+/// These calls suspend the routing function and raise Lua errors on failure.
+/// Call them inside the returned function, and route DNS upstream requests
+/// (`#ctx.dns_query > 0`) before calling them to avoid recursive lookups.
+/// Concurrent routing functions share Lua state and can interleave at awaits.
 ///
 /// The exposed router context to script can be seen in [`crate::plugin::router::RouteContext`]
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]

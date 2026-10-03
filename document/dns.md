@@ -105,6 +105,37 @@ name from the most recently cached matching response; for multiple PTR targets,
 it returns the first. It does not issue a new PTR query. Multiple names may
 share an address.
 
+With `dns-server` and `plugin` enabled, routing functions can also call
+`lookup(dns_tag, domain)` and `reverse_lookup(dns_tag, ip)`. They return arrays
+of IP strings (A and AAAA) and hostname strings (PTR), respectively. Both use
+the selected configured DNS service and its shared cache. Unknown resolver
+tags, invalid inputs, and failed lookups raise Lua errors; use `pcall` to
+handle them in a script. The built-in `default-system` resolver supports
+forward lookups; PTR lookups require a UDP, TCP, or TLS resolver.
+
+These calls suspend the current routing function while waiting for DNS.
+Other requests can route during that wait. Call them inside the returned
+routing function, rather than during script initialization. DNS upstream
+requests also pass through the router, so route them to a transport outbound
+before making lookups:
+
+```lua
+return function(ctx)
+    if #ctx.dns_query > 0 then return "direct" end
+    if ctx.dst_domain then
+        local ips = lookup("resolver", ctx.dst_domain)
+        local ok, names = pcall(reverse_lookup, "resolver", ips[1])
+        if ok then print(names[1]) end
+    end
+    return "proxy"
+end
+```
+
+Use configured transport outbound tags in place of `direct` and `proxy`.
+Routing functions share Lua state and may interleave at these calls. Reloads
+apply to new requests; suspended routing functions finish on their original
+script runtime.
+
 Rust callers can use `DnsService::reverse_lookup(ip).await` to issue a PTR query
 through the selected service. It supports IPv4 (`in-addr.arpa`) and IPv6
 (`ip6.arpa`), follows CNAME aliases, and returns distinct hostnames as
