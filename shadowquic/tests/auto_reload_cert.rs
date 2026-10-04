@@ -134,6 +134,7 @@ async fn test_auto_reload_cert() {
     // Start Client 1 (Uses Cert 1)
     let socks_server_1 = SocksServer::new(SocksServerCfg {
         tag: String::new(),
+        default_outbound: None,
         bind_addr: socks_server_addr.parse().unwrap(),
         users: vec![],
     })
@@ -220,6 +221,7 @@ async fn test_auto_reload_cert() {
 
     let socks_server_2 = SocksServer::new(SocksServerCfg {
         tag: String::new(),
+        default_outbound: None,
         bind_addr: socks_server_addr_2.parse().unwrap(),
         users: vec![],
     })

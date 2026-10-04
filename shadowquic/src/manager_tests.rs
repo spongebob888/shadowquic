@@ -110,6 +110,7 @@ async fn check_manager(fail_init: bool, fail_shutdown: bool) {
             ),
         ]),
         default_outbound: "selected".into(),
+        inbound_defaults: HashMap::new(),
         #[cfg(feature = "plugin")]
         router: None,
         #[cfg(feature = "dns-server")]
@@ -308,4 +309,166 @@ async fn completing_dispatch_does_not_cancel_an_in_progress_accept() {
     .await
     .expect("pending accept was cancelled when the first dispatch completed")
     .unwrap();
+}
+
+struct CountingOutbound(Arc<AtomicUsize>);
+
+#[async_trait]
+impl Outbound for CountingOutbound {
+    async fn handle(&self, _: ProxyRequest) -> Result<(), SError> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn per_inbound_default_outbound_routes_without_a_router() {
+    let hits_a = Arc::new(AtomicUsize::new(0));
+    let hits_b = Arc::new(AtomicUsize::new(0));
+    let dispatcher = RequestDispatcher {
+        outbounds: HashMap::from([
+            (
+                "out-a".to_string(),
+                Arc::new(CountingOutbound(hits_a.clone())) as Arc<dyn Outbound>,
+            ),
+            (
+                "out-b".to_string(),
+                Arc::new(CountingOutbound(hits_b.clone())) as Arc<dyn Outbound>,
+            ),
+        ]),
+        // The global default points at out-b, so out-a is reachable only
+        // through the per-inbound map.
+        default_outbound: "out-b".into(),
+        inbound_defaults: HashMap::from([("inbound-a".to_string(), "out-a".to_string())]),
+        #[cfg(feature = "plugin")]
+        router: None,
+    };
+
+    let mut req = request();
+    req.set_inbound_tag("inbound-a".into());
+    dispatcher.dispatch(req).await;
+    assert_eq!(hits_a.load(Ordering::SeqCst), 1);
+    assert_eq!(hits_b.load(Ordering::SeqCst), 0);
+
+    // An inbound with no `default-outbound` of its own falls back to the
+    // global default.
+    let mut req = request();
+    req.set_inbound_tag("inbound-b".into());
+    dispatcher.dispatch(req).await;
+    assert_eq!(hits_a.load(Ordering::SeqCst), 1);
+    assert_eq!(hits_b.load(Ordering::SeqCst), 1);
+}
+
+#[cfg(feature = "plugin")]
+#[tokio::test]
+async fn router_takes_priority_over_the_per_inbound_default() {
+    let hits_router = Arc::new(AtomicUsize::new(0));
+    let hits_inbound = Arc::new(AtomicUsize::new(0));
+    let dispatcher = RequestDispatcher {
+        outbounds: HashMap::from([
+            (
+                "out-router".to_string(),
+                Arc::new(CountingOutbound(hits_router.clone())) as Arc<dyn Outbound>,
+            ),
+            (
+                "out-inbound".to_string(),
+                Arc::new(CountingOutbound(hits_inbound.clone())) as Arc<dyn Outbound>,
+            ),
+        ]),
+        default_outbound: "out-inbound".into(),
+        inbound_defaults: HashMap::from([("inbound-a".to_string(), "out-inbound".to_string())]),
+        router: Some(Arc::new(
+            plugin::router::Router::from_source(r#"return function(_) return "out-router" end"#)
+                .unwrap(),
+        )),
+    };
+
+    let mut req = request();
+    req.set_inbound_tag("inbound-a".into());
+    dispatcher.dispatch(req).await;
+    // The router decides even when the inbound names its own default.
+    assert_eq!(hits_router.load(Ordering::SeqCst), 1);
+    assert_eq!(hits_inbound.load(Ordering::SeqCst), 0);
+}
+
+struct RoutingOutbound {
+    /// Inbound tag the manager must have stamped on every request it handles.
+    expected_inbound: &'static str,
+    hits: Arc<AtomicUsize>,
+    called: Arc<Barrier>,
+}
+
+#[async_trait]
+impl Outbound for RoutingOutbound {
+    async fn handle(&self, req: ProxyRequest) -> Result<(), SError> {
+        assert_eq!(req.inbound_tag(), self.expected_inbound);
+        self.hits.fetch_add(1, Ordering::SeqCst);
+        self.called.wait().await;
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn manager_tags_requests_and_routes_by_inbound_default() {
+    // Two outbounds plus the shutdown future release the barrier.
+    let called = Arc::new(Barrier::new(3));
+    let hits_a = Arc::new(AtomicUsize::new(0));
+    let hits_b = Arc::new(AtomicUsize::new(0));
+    let mut inbounds: HashMap<String, Box<dyn Inbound>> = HashMap::new();
+    for tag in ["a", "b"] {
+        let (send, recv) = mpsc::channel(1);
+        send.send(request())
+            .await
+            .unwrap_or_else(|_| panic!("request channel closed"));
+        inbounds.insert(
+            tag.to_string(),
+            Box::new(TestInbound {
+                requests: recv,
+                initialized: Arc::new(AtomicUsize::new(0)),
+                stopped: Arc::new(AtomicUsize::new(0)),
+                fail_init: false,
+                fail_shutdown: false,
+            }),
+        );
+    }
+    let manager = Manager {
+        inbounds,
+        outbounds: HashMap::from([
+            (
+                "out-a".to_string(),
+                Arc::new(RoutingOutbound {
+                    expected_inbound: "a",
+                    hits: hits_a.clone(),
+                    called: called.clone(),
+                }) as Arc<dyn Outbound>,
+            ),
+            (
+                "out-b".to_string(),
+                Arc::new(RoutingOutbound {
+                    expected_inbound: "b",
+                    hits: hits_b.clone(),
+                    called: called.clone(),
+                }) as Arc<dyn Outbound>,
+            ),
+        ]),
+        default_outbound: "out-b".into(),
+        inbound_defaults: HashMap::from([("a".to_string(), "out-a".to_string())]),
+        #[cfg(feature = "plugin")]
+        router: None,
+        #[cfg(feature = "dns-server")]
+        resolver_manager: None,
+    };
+    // The requests arrive with an empty inbound tag; the manager stamps it, so
+    // inbound "a" can only reach out-a through the per-inbound default.
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        manager.run_until(async {
+            called.wait().await;
+        }),
+    )
+    .await
+    .expect("manager stalled")
+    .unwrap();
+    assert_eq!(hits_a.load(Ordering::SeqCst), 1);
+    assert_eq!(hits_b.load(Ordering::SeqCst), 1);
 }

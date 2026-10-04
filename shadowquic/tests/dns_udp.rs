@@ -173,6 +173,7 @@ async fn spawn_socks_server() {
 
     let socks_server = SocksServer::new(SocksServerCfg {
         tag: String::new(),
+        default_outbound: None,
         bind_addr: "127.0.0.1:1089".parse().unwrap(),
         users: vec![],
     })
@@ -240,6 +241,7 @@ async fn shadowquic_client_server(over_stream: bool, port: u16) {
 
     let socks_server = SocksServer::new(SocksServerCfg {
         tag: String::new(),
+        default_outbound: None,
         bind_addr: SocketAddr::new("127.0.0.1".parse().unwrap(), port),
         users: vec![],
     })

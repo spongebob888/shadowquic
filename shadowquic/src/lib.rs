@@ -67,6 +67,14 @@ impl ProxyRequest {
             ProxyRequest::Udp(session) => session.user_context.inbound_tag = tag,
         }
     }
+
+    /// Tag of the inbound that accepted this request.
+    pub fn inbound_tag(&self) -> &str {
+        match self {
+            ProxyRequest::Tcp(session) => &session.user_context.inbound_tag,
+            ProxyRequest::Udp(session) => &session.user_context.inbound_tag,
+        }
+    }
 }
 /// Udp socket only use immutable reference to self
 /// So it can be safely wrapped by Arc and cloned to work in duplex way.
@@ -225,8 +233,11 @@ impl UdpRecv for Receiver<(Bytes, SocksAddr)> {
 pub struct Manager {
     pub inbounds: HashMap<String, Box<dyn Inbound>>,
     pub outbounds: HashMap<String, Arc<dyn Outbound>>,
-    /// Tag of the first configured outbound, used by every inbound.
+    /// Fallback outbound tag, used when no router script is configured and the
+    /// request's inbound has no `default-outbound` of its own.
     pub default_outbound: String,
+    /// Per-inbound outbound tag applied when no router script is configured.
+    pub inbound_defaults: HashMap<String, String>,
     #[cfg(feature = "plugin")]
     pub router: Option<Arc<plugin::router::Router>>,
 
@@ -238,6 +249,7 @@ pub struct Manager {
 struct RequestDispatcher {
     outbounds: HashMap<String, Arc<dyn Outbound>>,
     default_outbound: String,
+    inbound_defaults: HashMap<String, String>,
     #[cfg(feature = "plugin")]
     router: Option<Arc<plugin::router::Router>>,
 }
@@ -271,12 +283,12 @@ impl RequestDispatcher {
                     }
                 }
             }
-            None => self.default_outbound.clone(),
+            None => self.inbound_default_tag(&req),
         };
         #[cfg(not(feature = "plugin"))]
-        let outbound_tag = self.default_outbound.clone();
+        let outbound_tag = self.inbound_default_tag(&req);
         let Some(outbound) = self.outbounds.get(&outbound_tag).cloned() else {
-            error!(outbound = %outbound_tag, "router selected an unknown outbound");
+            error!(outbound = %outbound_tag, "selected an unknown outbound");
             return;
         };
         tracing::debug!(outbound = %outbound_tag, dst = %req.dst(), "routing request");
@@ -287,6 +299,15 @@ impl RequestDispatcher {
         {
             error!(outbound = %outbound_tag, %error, "error handling request");
         }
+    }
+
+    /// Outbound for a request with no router script: the inbound's own
+    /// `default-outbound`, else the global default.
+    fn inbound_default_tag(&self, req: &ProxyRequest) -> String {
+        self.inbound_defaults
+            .get(req.inbound_tag())
+            .cloned()
+            .unwrap_or_else(|| self.default_outbound.clone())
     }
 }
 
@@ -315,6 +336,7 @@ impl Manager {
             inbounds: HashMap::from([("inbound".into(), inbound)]),
             outbounds: HashMap::from([("outbound".into(), outbound)]),
             default_outbound: "outbound".into(),
+            inbound_defaults: HashMap::new(),
             #[cfg(feature = "plugin")]
             router: None,
             #[cfg(feature = "dns-server")]
@@ -343,6 +365,7 @@ impl Manager {
         let dispatcher = Arc::new(RequestDispatcher {
             outbounds: self.outbounds,
             default_outbound: self.default_outbound,
+            inbound_defaults: self.inbound_defaults,
             #[cfg(feature = "plugin")]
             router: self.router,
         });

@@ -111,6 +111,7 @@ async fn test_shadowquic() {
 
     let socks_server = SocksServer::new(SocksServerCfg {
         tag: String::new(),
+        default_outbound: None,
         bind_addr: "127.0.0.1:1032".parse().unwrap(),
         users: vec![],
     })

@@ -35,6 +35,7 @@ async fn socks_server_accepts_after_client_closes_before_accept() {
             .unwrap();
         let mut inbound = SocksServer::new(SocksServerCfg {
             tag: "test-socks".into(),
+            default_outbound: None,
             bind_addr: addr,
             users: vec![],
         })

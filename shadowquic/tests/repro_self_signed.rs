@@ -132,6 +132,7 @@ async fn test_self_signed_cert() {
     // Start Client
     let socks_server = SocksServer::new(SocksServerCfg {
         tag: String::new(),
+        default_outbound: None,
         bind_addr: socks_server_addr.parse().unwrap(),
         users: vec![],
     })
