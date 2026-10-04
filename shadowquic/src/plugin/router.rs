@@ -43,6 +43,9 @@ pub struct RouteContext {
     pub src_ip_v6: Option<Ipv6Addr>,
     pub src_port: Option<u16>,
     pub inbound_tag: String,
+    /// Outbound the accepting inbound prefers; a routing hint the script may
+    /// honor or override. `None` means no preference was declared.
+    pub preferred_outbound: Option<String>,
     /// DNS questions attached to the request; empty for requests without DNS metadata.
     pub dns_query: Vec<DnsQuery>,
     /// Only valid for shadowquic/sunnyquic inbound requests.
@@ -53,6 +56,9 @@ pub struct RouteContext {
 impl UserData for RouteContext {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         fields.add_field_method_get("inbound_tag", |_, this| Ok(this.inbound_tag.clone()));
+        fields.add_field_method_get("preferred_outbound", |_, this| {
+            Ok(this.preferred_outbound.clone())
+        });
         fields.add_field_method_get("dns_query", |lua, this| {
             let queries = lua.create_table()?;
             for (index, query) in this.dns_query.iter().enumerate() {
@@ -158,6 +164,7 @@ impl RouteContext {
                 dst,
                 *src_addr,
                 &user_context.inbound_tag,
+                user_context.preferred_outbound.clone(),
                 NetworkType::Tcp,
                 user_context.stats.clone(),
                 &user_context.dns_query,
@@ -171,6 +178,7 @@ impl RouteContext {
                 dst,
                 *src_addr,
                 &user_context.inbound_tag,
+                user_context.preferred_outbound.clone(),
                 NetworkType::Udp,
                 user_context.stats.clone(),
                 &user_context.dns_query,
@@ -182,6 +190,7 @@ impl RouteContext {
         dst: &SocksAddr,
         src_addr: Option<SocketAddr>,
         inbound_tag: &str,
+        preferred_outbound: Option<String>,
         network_type: NetworkType,
         stats_context: Option<StatsContext>,
         dns_query: &[DnsQuery],
@@ -213,6 +222,7 @@ impl RouteContext {
             src_port: src_addr.map(|addr| addr.port()),
             src_addr,
             inbound_tag: inbound_tag.to_owned(),
+            preferred_outbound,
             dns_query: dns_query.to_vec(),
             stats_context,
             network_type,
@@ -697,6 +707,7 @@ mod tests {
             src_ip_v6: None,
             src_port: Some(54321),
             inbound_tag: "socks-in".into(),
+            preferred_outbound: None,
             dns_query: Vec::new(),
             stats_context: None,
             network_type: NetworkType::Tcp,
@@ -858,6 +869,63 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[tokio::test]
+    async fn route_context_copies_preferred_outbound_from_tcp_and_udp_requests() {
+        let (stream, _peer) = tokio::io::duplex(64);
+        let (send, recv) = tokio::sync::mpsc::channel(1);
+        let dst: SocksAddr = "192.0.2.53:53".parse::<SocketAddr>().unwrap().into();
+        let user_context = crate::UserContext {
+            preferred_outbound: Some("proxy-a".into()),
+            ..Default::default()
+        };
+        let requests: [ProxyRequest; 2] = [
+            ProxyRequest::Tcp(TcpSession {
+                stream: Box::new(stream) as crate::AnyTcp,
+                dst: dst.clone(),
+                src_addr: None,
+                user_context: user_context.clone(),
+            }),
+            ProxyRequest::Udp(UdpSession {
+                recv: Box::new(recv),
+                send: Arc::new(send),
+                stream: None,
+                bind_addr: dst.clone(),
+                dst,
+                src_addr: None,
+                user_context,
+            }),
+        ];
+        for request in &requests {
+            assert_eq!(
+                RouteContext::from_request(request)
+                    .preferred_outbound
+                    .as_deref(),
+                Some("proxy-a")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn lua_router_receives_the_inbound_preferred_outbound() {
+        let router = Router::from_source(
+            r#"
+                return function(ctx)
+                    if ctx.preferred_outbound == "proxy-a" then
+                        return "proxy-a"
+                    end
+                    return "direct"
+                end
+            "#,
+        )
+        .unwrap();
+
+        let mut context = context();
+        context.preferred_outbound = Some("proxy-a".into());
+        assert_eq!(router.route(&mut context).await.unwrap(), "proxy-a");
+        context.preferred_outbound = None;
+        assert_eq!(router.route(&mut context).await.unwrap(), "direct");
     }
 
     #[tokio::test]

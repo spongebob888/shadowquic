@@ -240,11 +240,12 @@ async fn handle_tcp(
 #[async_trait]
 impl Inbound for SocksServer {
     async fn accept(&mut self) -> Result<ProxyRequest, SError> {
-        let recv = self
+        let mut recv = self
             .request_receiver
             .recv()
             .await
             .ok_or(SError::InboundUnavailable)?;
+        recv.set_preferred_outbound(self.cfg.default_outbound.clone());
         Ok(recv)
     }
 

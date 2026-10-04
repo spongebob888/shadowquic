@@ -39,6 +39,12 @@ pub fn default_rate_limit() -> u64 {
 pub struct ShadowQuicServerCfg {
     /// Required label for this endpoint.
     pub tag: String,
+    /// Outbound this inbound prefers, stamped on every accepted request as
+    /// `UserContext::preferred_outbound`. A router script may honor or override
+    /// it; without a router it selects the outbound, and unset falls back to the
+    /// global default.
+    #[serde(default)]
+    pub default_outbound: Option<String>,
     /// Binding address. e.g. `0.0.0.0:443`, `[::1]:443`
     pub bind_addr: SocketAddr,
     /// Users for client authentication
@@ -127,6 +133,7 @@ impl Default for ShadowQuicServerCfg {
     fn default() -> Self {
         Self {
             tag: String::new(),
+            default_outbound: None,
             bind_addr: "127.0.0.1:443".parse().unwrap(),
             users: Default::default(),
             jls_upstream: Default::default(),

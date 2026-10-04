@@ -67,6 +67,29 @@ impl ProxyRequest {
             ProxyRequest::Udp(session) => session.user_context.inbound_tag = tag,
         }
     }
+
+    /// Tag of the inbound that accepted this request.
+    pub fn inbound_tag(&self) -> &str {
+        match self {
+            ProxyRequest::Tcp(session) => &session.user_context.inbound_tag,
+            ProxyRequest::Udp(session) => &session.user_context.inbound_tag,
+        }
+    }
+
+    pub(crate) fn set_preferred_outbound(&mut self, tag: Option<String>) {
+        match self {
+            ProxyRequest::Tcp(session) => session.user_context.preferred_outbound = tag,
+            ProxyRequest::Udp(session) => session.user_context.preferred_outbound = tag,
+        }
+    }
+
+    /// Outbound the accepting inbound prefers when no router script decides.
+    pub fn preferred_outbound(&self) -> Option<&str> {
+        match self {
+            ProxyRequest::Tcp(session) => session.user_context.preferred_outbound.as_deref(),
+            ProxyRequest::Udp(session) => session.user_context.preferred_outbound.as_deref(),
+        }
+    }
 }
 /// Udp socket only use immutable reference to self
 /// So it can be safely wrapped by Arc and cloned to work in duplex way.
@@ -162,6 +185,10 @@ pub struct DnsQuery {
 pub struct UserContext {
     pub src_addr: Option<SocketAddr>,
     pub inbound_tag: String,
+    /// Outbound preference stamped by the accepting inbound on every request.
+    /// A router script may honor or override it; without one it selects the
+    /// outbound, and `None` falls back to the global default.
+    pub preferred_outbound: Option<String>,
     pub dns_query: Vec<DnsQuery>,
     pub stats: Option<StatsContext>,
 }
@@ -225,7 +252,8 @@ impl UdpRecv for Receiver<(Bytes, SocksAddr)> {
 pub struct Manager {
     pub inbounds: HashMap<String, Box<dyn Inbound>>,
     pub outbounds: HashMap<String, Arc<dyn Outbound>>,
-    /// Tag of the first configured outbound, used by every inbound.
+    /// Fallback outbound tag, used when no router script is configured and the
+    /// request carries no `preferred_outbound` from its inbound.
     pub default_outbound: String,
     #[cfg(feature = "plugin")]
     pub router: Option<Arc<plugin::router::Router>>,
@@ -271,12 +299,12 @@ impl RequestDispatcher {
                     }
                 }
             }
-            None => self.default_outbound.clone(),
+            None => self.fallback_outbound_tag(&req),
         };
         #[cfg(not(feature = "plugin"))]
-        let outbound_tag = self.default_outbound.clone();
+        let outbound_tag = self.fallback_outbound_tag(&req);
         let Some(outbound) = self.outbounds.get(&outbound_tag).cloned() else {
-            error!(outbound = %outbound_tag, "router selected an unknown outbound");
+            error!(outbound = %outbound_tag, "selected an unknown outbound");
             return;
         };
         tracing::debug!(outbound = %outbound_tag, dst = %req.dst(), "routing request");
@@ -287,6 +315,14 @@ impl RequestDispatcher {
         {
             error!(outbound = %outbound_tag, %error, "error handling request");
         }
+    }
+
+    /// Outbound for a request with no router script: the inbound's preferred
+    /// outbound, else the global default.
+    fn fallback_outbound_tag(&self, req: &ProxyRequest) -> String {
+        req.preferred_outbound()
+            .unwrap_or(self.default_outbound.as_str())
+            .to_owned()
     }
 }
 

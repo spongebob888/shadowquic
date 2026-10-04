@@ -167,6 +167,16 @@ impl Config {
                 "default outbound tag does not match a configured outbound: {tag}"
             )));
         }
+        for inbound in &self.inbounds {
+            if let Some(tag) = inbound.default_outbound()
+                && !self.outbound_tags().any(|outbound| outbound == tag)
+            {
+                return Err(SError::InvalidConfig(format!(
+                    "inbound `{}` default-outbound does not match a configured outbound: {tag}",
+                    inbound.tag()
+                )));
+            }
+        }
         #[cfg(feature = "dns-server")]
         {
             let reserved = crate::dns::DEFAULT_SYSTEM_DNS_TAG;
@@ -347,6 +357,20 @@ impl InboundCfg {
         }
     }
 
+    /// Outbound tag this inbound falls back to when no router script is
+    /// configured. `None` means the global default outbound.
+    pub fn default_outbound(&self) -> Option<&str> {
+        match self {
+            Self::Socks(cfg) => cfg.default_outbound.as_deref(),
+            #[cfg(feature = "mixed")]
+            Self::Mixed(cfg) => cfg.default_outbound.as_deref(),
+            Self::ShadowQuic(cfg) => cfg.default_outbound.as_deref(),
+            Self::SunnyQuic(cfg) => cfg.default_outbound.as_deref(),
+            #[cfg(all(feature = "tproxy", target_os = "linux"))]
+            Self::Tproxy(cfg) => cfg.default_outbound.as_deref(),
+        }
+    }
+
     async fn build_inbound(self) -> Result<Box<dyn Inbound>, SError> {
         let r: Box<dyn Inbound> = match self {
             InboundCfg::Socks(cfg) => Box::new(SocksServer::new(cfg).await?),
@@ -440,6 +464,12 @@ impl OutboundCfg {
 pub struct SocksServerCfg {
     /// Required label for this endpoint.
     pub tag: String,
+    /// Outbound this inbound prefers, stamped on every accepted request as
+    /// `UserContext::preferred_outbound`. A router script may honor or override
+    /// it; without a router it selects the outbound, and unset falls back to the
+    /// global default.
+    #[serde(default)]
+    pub default_outbound: Option<String>,
     /// Server binding address. e.g. `0.0.0.0:1089`, `[::1]:1089`
     pub bind_addr: SocketAddr,
     /// Socks5 username, optional
@@ -464,6 +494,12 @@ pub struct SocksServerCfg {
 pub struct MixedServerCfg {
     /// Required label for this endpoint.
     pub tag: String,
+    /// Outbound this inbound prefers, stamped on every accepted request as
+    /// `UserContext::preferred_outbound`. A router script may honor or override
+    /// it; without a router it selects the outbound, and unset falls back to the
+    /// global default.
+    #[serde(default)]
+    pub default_outbound: Option<String>,
     /// Server binding address. e.g. `0.0.0.0:1080`, `[::]:1080`
     pub bind_addr: SocketAddr,
     /// Socks5 username, optional
@@ -486,6 +522,12 @@ pub struct MixedServerCfg {
 pub struct TproxyServerCfg {
     /// Required label for this endpoint.
     pub tag: String,
+    /// Outbound this inbound prefers, stamped on every accepted request as
+    /// `UserContext::preferred_outbound`. A router script may honor or override
+    /// it; without a router it selects the outbound, and unset falls back to the
+    /// global default.
+    #[serde(default)]
+    pub default_outbound: Option<String>,
     /// Server binding address. e.g. `0.0.0.0:1089`, `[::1]:1089`
     pub bind_addr: SocketAddr,
 }
@@ -1011,6 +1053,64 @@ router:
                 .to_string()
                 .contains("default outbound tag does not match a configured outbound: missing")
         );
+    }
+
+    #[tokio::test]
+    async fn inbound_default_outbound_is_kept_per_inbound() {
+        let cfg: Config = serde_saphyr::from_str(
+            r#"
+inbounds:
+  - {tag: one, type: socks, bind-addr: "127.0.0.1:0", default-outbound: a-second}
+  - {tag: two, type: socks, bind-addr: "127.0.0.1:0"}
+outbounds:
+  - {tag: z-first, type: direct}
+  - {tag: a-second, type: direct}
+"#,
+        )
+        .unwrap();
+        // Each inbound carries its own preference; no shared map is built.
+        assert_eq!(cfg.inbounds[0].default_outbound(), Some("a-second"));
+        assert_eq!(cfg.inbounds[1].default_outbound(), None);
+        let manager = cfg.build_manager().await.unwrap();
+        // The per-inbound preference does not disturb the global default.
+        assert_eq!(manager.default_outbound, "z-first");
+    }
+
+    #[test]
+    fn inbound_default_outbound_rejects_unknown_tags() {
+        let cfg: Config = serde_saphyr::from_str(
+            r#"
+inbounds:
+  - {tag: one, type: socks, bind-addr: "127.0.0.1:0", default-outbound: missing}
+outbounds:
+  - {tag: z-first, type: direct}
+"#,
+        )
+        .unwrap();
+        assert!(cfg.validate().unwrap_err().to_string().contains(
+            "inbound `one` default-outbound does not match a configured outbound: missing"
+        ));
+    }
+
+    #[cfg(feature = "dns-server")]
+    #[tokio::test]
+    async fn inbound_default_outbound_accepts_a_dns_tag() {
+        let cfg: Config = serde_saphyr::from_str(
+            r#"
+inbounds:
+  - {tag: one, type: socks, bind-addr: "127.0.0.1:0", default-outbound: local-dns}
+dns:
+  - {tag: local-dns, type: dns-fakeip, bind-addr: "127.0.0.1:0"}
+outbounds:
+  - {tag: z-first, type: direct}
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.inbounds[0].default_outbound(), Some("local-dns"));
+        let manager = cfg.build_manager().await.unwrap();
+        // Validation accepts the tag as routable, and dispatch agrees: a DNS
+        // service is registered as an outbound.
+        assert!(manager.outbounds.contains_key("local-dns"));
     }
 
     #[test]

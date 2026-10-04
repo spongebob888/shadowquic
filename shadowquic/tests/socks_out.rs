@@ -110,6 +110,7 @@ async fn spawn_socks() {
 
     let socks_server = SocksServer::new(SocksServerCfg {
         tag: String::new(),
+        default_outbound: None,
         bind_addr: "127.0.0.1:1093".parse().unwrap(),
         users: vec![],
     })
@@ -134,6 +135,7 @@ async fn spawn_socks() {
 
     let sq_server = SocksServer::new(SocksServerCfg {
         tag: String::new(),
+        default_outbound: None,
         bind_addr: "[::1]:1094".parse().unwrap(),
         users: vec![AuthUser {
             username: "test".into(),
