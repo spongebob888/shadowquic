@@ -15,7 +15,7 @@ statistics = ["dep:portable-atomic"]
 mixed = ["dep:base64"]
 plugin = ["plugin-vendored"]
 plugin-vendored = ["plugin-system", "mlua/vendored"]
-plugin-system = ["dep:mlua", "mlua/send", "mlua/async", "dep:notify"]
+plugin-system = ["dep:mlua", "mlua/send", "mlua/async", "dep:notify", "dep:redb", "dep:maxminddb", "dep:sha2", "dep:regex", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:tokio-rustls", "dep:url", "dep:tempfile"]
 ring = [
     "dep:ring",
     "quinn?/rustls-ring",
@@ -25,6 +25,7 @@ ring = [
     "noq-proto?/rustls-ring",
     "rustls?/ring",
     "rcgen/ring",
+    "tokio-rustls?/ring",
 ]
 aws-lc-rs = [
     "dep:aws-lc-rs",
@@ -35,6 +36,7 @@ aws-lc-rs = [
     "noq-proto?/rustls-aws-lc-rs",
     "rustls?/aws-lc-rs",
     "rcgen/aws_lc_rs",
+    "tokio-rustls?/aws_lc_rs",
 ]
 tokio-console = ["dep:console-subscriber","tokio/tracing"]
 shadowquic-quinn = ["dep:quinn","dep:rustls_jls", "dep:quinn_proto"]
@@ -43,6 +45,16 @@ sunnyquic-noq = ["dep:noq", "dep:rustls", "dep:rustls-native-certs","dep:notify"
 tproxy = ["dep:etherparse", "dep:libc"]
 
 [dependencies]
+tempfile = { version = "3", optional = true }
+redb = { version = "3", optional = true }
+maxminddb = { version = "0.28", optional = true }
+sha2 = { version = "0.10", optional = true }
+regex = { version = "1", optional = true }
+hyper = { version = "1", features = ["client", "http1"], optional = true }
+hyper-util = { version = "0.1", features = ["tokio"], optional = true }
+http-body-util = { version = "0.1", optional = true }
+tokio-rustls = { version = "0.26", default-features = false, features = ["tls12"], optional = true }
+url = { version = "2", optional = true }
 simple-dns = { version = "0.12", optional = true }
 # Version 0.1.0 requires early-data to compile its server implementation.
 # TLS early data remains disabled in the DNS client configuration.

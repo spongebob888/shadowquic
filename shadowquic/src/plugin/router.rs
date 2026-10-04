@@ -11,6 +11,7 @@ use tracing::{info, info_span, warn};
 
 use mlua::{Function, Lua, LuaOptions, StdLib, UserData, UserDataFields, chunk::ChunkMode};
 
+use super::database::Databases;
 use crate::dns::ResolverManager;
 use crate::{
     DnsQuery, ProxyRequest, StatsContext, TcpSession, UdpSession,
@@ -229,6 +230,7 @@ pub struct Router {
 }
 
 struct RouterInner {
+    databases: Arc<Databases>,
     source: String,
     lua: Lua,
     route: Function,
@@ -237,26 +239,24 @@ struct RouterInner {
 impl Router {
     /// Load a script and watch its parent directory, including atomic file replacements.
     pub fn load(path: &Path) -> Result<Self, SError> {
-        Self::load_inner(path, Arc::new(ResolverManager::new()))
+        Self::load_with_databases(path, Arc::new(ResolverManager::new()), Arc::default())
     }
 
-    pub(crate) fn load_with_manager(
+    pub(crate) fn load_with_databases(
         path: &Path,
         resolver_manager: Arc<ResolverManager>,
+        databases: Arc<Databases>,
     ) -> Result<Self, SError> {
-        Self::load_inner(path, resolver_manager)
-    }
-
-    fn load_inner(path: &Path, resolver_manager: Arc<ResolverManager>) -> Result<Self, SError> {
         let path = watched_script_path(path)?;
         let script = read_script(&path)?;
         let mut router =
-            Self::from_source_inner(&script, resolver_manager.clone()).map_err(|error| {
-                SError::InvalidConfig(format!(
-                    "failed to load router script {}: {error}",
-                    path.display()
-                ))
-            })?;
+            Self::from_source_with_databases(&script, resolver_manager.clone(), databases)
+                .map_err(|error| {
+                    SError::InvalidConfig(format!(
+                        "failed to load router script {}: {error}",
+                        path.display()
+                    ))
+                })?;
         let inner = Arc::downgrade(&router.inner);
         let watched_path = path.clone();
         let span = info_span!("router", path = %path.display());
@@ -301,33 +301,41 @@ impl Router {
         Ok(router)
     }
 
-    #[cfg(any(test, not(feature = "dns-server")))]
+    #[cfg(test)]
     pub(crate) fn from_source(source: &str) -> mlua::Result<Self> {
-        Self::from_source_inner(source, Arc::new(ResolverManager::new()))
+        Self::from_source_with_databases(source, Arc::new(ResolverManager::new()), Arc::default())
     }
 
-    #[cfg(feature = "dns-server")]
+    #[cfg(all(test, feature = "dns-server"))]
     pub(crate) fn from_source_with_manager(
         source: &str,
         resolver_manager: Arc<ResolverManager>,
     ) -> mlua::Result<Self> {
-        Self::from_source_inner(source, resolver_manager)
+        Self::from_source_with_databases(source, resolver_manager, Arc::default())
     }
 
-    fn from_source_inner(
+    pub(crate) fn from_source_with_databases(
         source: &str,
         resolver_manager: Arc<ResolverManager>,
+        databases: Arc<Databases>,
     ) -> mlua::Result<Self> {
         Ok(Self {
             _watcher: None,
-            inner: Arc::new(Mutex::new(Self::compile_inner(source, resolver_manager)?)),
+            inner: Arc::new(Mutex::new(Self::compile_inner(
+                source,
+                resolver_manager,
+                databases,
+            )?)),
         })
     }
 
     fn compile_inner(
         source: &str,
         resolver_manager: Arc<ResolverManager>,
+        databases: Arc<Databases>,
     ) -> mlua::Result<RouterInner> {
+        #[cfg(not(feature = "dns-server"))]
+        let _ = resolver_manager;
         let libs = StdLib::STRING | StdLib::TABLE | StdLib::MATH;
         let libs = libs | StdLib::BIT;
         let lua = Lua::new_with(libs, LuaOptions::default())?;
@@ -391,10 +399,15 @@ impl Router {
                 })?,
             )?;
         }
-        Self::compile_common(source, lua)
+        databases.install(&lua)?;
+        Self::compile_common(source, lua, databases)
     }
 
-    fn compile_common(source: &str, lua: Lua) -> mlua::Result<RouterInner> {
+    fn compile_common(
+        source: &str,
+        lua: Lua,
+        databases: Arc<Databases>,
+    ) -> mlua::Result<RouterInner> {
         // The base library is always loaded, including file and code loaders.
         // Remove these before evaluating any user-provided source.
         let globals = lua.globals();
@@ -418,6 +431,7 @@ impl Router {
             .set_mode(ChunkMode::Text)
             .eval::<Function>()?;
         Ok(RouterInner {
+            databases,
             source: source.to_owned(),
             lua,
             route,
@@ -509,7 +523,7 @@ fn reload_script(inner: &Mutex<RouterInner>, path: &Path, resolver_manager: Arc<
         if source == inner.source {
             return Ok(false);
         }
-        let replacement = Router::compile_inner(&source, resolver_manager)
+        let replacement = Router::compile_inner(&source, resolver_manager, inner.databases.clone())
             .map_err(|error| SError::RouterError(error.to_string()))?;
         *inner = replacement;
         Ok::<_, SError>(true)
@@ -994,6 +1008,31 @@ mod tests {
                 .unwrap(),
             "old"
         );
+    }
+
+    #[tokio::test]
+    async fn database_helpers_remain_available_after_script_reload() {
+        use crate::config::{RouterDBCfg, RouterDBKind};
+        use crate::plugin::database::RedbDatabase;
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = RouterDBCfg {
+            tag: "site".into(),
+            kind: RouterDBKind::Geosite,
+            url: "https://example.test/db".into(),
+            path: dir.path().join("site.redb"),
+        };
+        let source = dir.path().join("source.yml");
+        std::fs::write(&source, "lists: [{name: test, rules: ['domain:example']}] ").unwrap();
+        drop(RedbDatabase::import(&cfg, &source).unwrap());
+        let databases = Databases::build(&[cfg], &mut Default::default()).unwrap();
+        let resolver = Arc::new(ResolverManager::new());
+        let path = dir.path().join("router.lua");
+        std::fs::write(&path, "assert(find_domain('site', 'test', 'api.example')); return function(ctx) return 'old' end").unwrap();
+        let router = Router::load_with_databases(&path, resolver.clone(), databases).unwrap();
+        assert_eq!(router.route(&mut context()).await.unwrap(), "old");
+        std::fs::write(&path, "return function(ctx) if find_domain('site', 'test', ctx.dst_domain) then return 'new' end end").unwrap();
+        reload_script(&router.inner, &path, resolver);
+        assert_eq!(router.route(&mut context()).await.unwrap(), "new");
     }
 
     #[tokio::test]
