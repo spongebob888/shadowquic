@@ -6,7 +6,7 @@ mod tests;
 
 use crate::{
     Inbound,
-    config::{RouterDBCfg, RouterDBKind},
+    config::{RouterDatabaseCfg, RouterDBKind},
     error::SError,
 };
 use redb::{Database, ReadableDatabase, TableDefinition};
@@ -58,22 +58,22 @@ fn ip_key(list: &str, ip: IpAddr, prefix: u8) -> String {
 }
 impl RedbDatabase {
     /// Open a converted database, checking format and source identity.
-    pub fn open(cfg: &RouterDBCfg) -> Result<Self> {
+    pub fn open(cfg: &RouterDatabaseCfg) -> Result<Self> {
         let db = Database::builder()
             .set_cache_size(8 * 1024 * 1024)
-            .open(&cfg.path)?;
+            .open(cfg.path())?;
         {
             let read = db.begin_read()?;
             let meta = read.open_table(META)?;
             for (name, expected) in [
                 ("schema", SCHEMA),
-                ("type", kind_name(cfg.kind)),
-                ("url", cfg.url.as_str()),
+                ("type", kind_name(cfg.kind())),
+                ("url", cfg.url()),
             ] {
                 if meta.get(name)?.as_ref().map(|v| v.value()) != Some(expected) {
                     return Err(format!(
                         "database {} has incompatible {name}; remove it to download again",
-                        cfg.tag
+                        cfg.tag()
                     )
                     .into());
                 }
@@ -83,13 +83,16 @@ impl RedbDatabase {
             }
             read.open_table(RULES)?;
         }
-        Ok(Self { db, kind: cfg.kind })
+        Ok(Self {
+            db,
+            kind: cfg.kind(),
+        })
     }
 
     /// Convert a source into a new redb, then publish the complete file atomically.
-    pub fn import(cfg: &RouterDBCfg, source: &Path) -> Result<Self> {
+    pub fn import(cfg: &RouterDatabaseCfg, source: &Path) -> Result<Self> {
         let parent = cfg
-            .path
+            .path()
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
@@ -101,7 +104,7 @@ impl RedbDatabase {
         let write = db.begin_write()?;
         {
             let mut rules = write.open_table(RULES)?;
-            match cfg.kind {
+            match cfg.kind() {
                 RouterDBKind::Geosite => import_geosite(source, &mut rules)?,
                 RouterDBKind::Country => import_country(source, &mut rules)?,
             }
@@ -113,15 +116,15 @@ impl RedbDatabase {
                 ("schema", SCHEMA),
                 ("version", env!("CARGO_PKG_VERSION")),
                 ("sha256", digest.as_str()),
-                ("type", kind_name(cfg.kind)),
-                ("url", cfg.url.as_str()),
+                ("type", kind_name(cfg.kind())),
+                ("url", cfg.url()),
             ] {
                 meta.insert(name, value)?;
             }
         }
         write.commit()?;
         drop(db);
-        temporary.persist_noclobber(&cfg.path)?;
+        temporary.persist_noclobber(cfg.path())?;
         Self::open(cfg)
     }
 }
@@ -263,28 +266,28 @@ pub(crate) struct Databases {
 }
 impl Databases {
     pub(crate) fn build(
-        configs: &[RouterDBCfg],
+        configs: &[RouterDatabaseCfg],
         inbounds: &mut HashMap<String, Box<dyn Inbound>>,
     ) -> std::result::Result<Arc<Self>, SError> {
         let mut manager = Self::default();
         for cfg in configs {
-            let existing = cfg.path.try_exists()?;
+            let existing = cfg.path().try_exists()?;
             let value = if existing {
                 Ok(Arc::new(RedbDatabase::open(cfg).map_err(config_error)?))
             } else {
                 Err("download pending".into())
             };
             let slot = Arc::new(Slot {
-                kind: cfg.kind,
+                kind: cfg.kind(),
                 value: RwLock::new(value),
             });
             if !existing {
                 inbounds.insert(
-                    cfg.tag.clone(),
+                    cfg.tag().to_owned(),
                     Box::new(download::DownloadInbound::new(cfg.clone(), slot.clone())),
                 );
             }
-            manager.slots.insert(cfg.tag.clone(), slot);
+            manager.slots.insert(cfg.tag().to_owned(), slot);
         }
         Ok(Arc::new(manager))
     }

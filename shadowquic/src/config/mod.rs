@@ -38,7 +38,7 @@ pub use crate::config::sunnyquic::*;
 mod router;
 mod router_database;
 pub use router::RouterCfg;
-pub use router_database::{RouterDBCfg, RouterDBKind};
+pub use router_database::{CountryDBCfg, GeositeDBCfg, RouterDatabaseCfg, RouterDBKind};
 
 /// Overall configuration of shadowquic.
 ///
@@ -153,10 +153,11 @@ impl Config {
             }
         }
         for db in &self.router.database {
-            if db.tag.trim().is_empty() || !seen.insert(&db.tag) || db.tag == "default-system" {
+            if db.tag().trim().is_empty() || !seen.insert(db.tag()) || db.tag() == "default-system"
+            {
                 return Err(SError::InvalidConfig(format!(
                     "invalid or duplicate router database tag: {}",
-                    db.tag
+                    db.tag()
                 )));
             }
         }

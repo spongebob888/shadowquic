@@ -1,5 +1,8 @@
 use super::*;
-use crate::{ProxyRequest, config::Config};
+use crate::{
+    ProxyRequest,
+    config::{Config, CountryDBCfg, GeositeDBCfg},
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const YAML: &str = r#"lists:
@@ -15,15 +18,21 @@ const YAML: &str = r#"lists:
     rules:
       - 'full:other.example'
 "#;
-fn config(dir: &Path, kind: RouterDBKind) -> RouterDBCfg {
-    RouterDBCfg {
-        tag: "db".into(),
-        kind,
-        url: "https://example.test/db".into(),
-        path: dir.join("db.redb"),
+fn config(dir: &Path, kind: RouterDBKind) -> RouterDatabaseCfg {
+    match kind {
+        RouterDBKind::Country => RouterDatabaseCfg::Country(CountryDBCfg {
+            tag: "db".into(),
+            url: "https://example.test/db".into(),
+            path: dir.join("db.redb"),
+        }),
+        RouterDBKind::Geosite => RouterDatabaseCfg::Geosite(GeositeDBCfg {
+            tag: "db".into(),
+            url: "https://example.test/db".into(),
+            path: dir.join("db.redb"),
+        }),
     }
 }
-fn geosite(dir: &Path) -> (RouterDBCfg, RedbDatabase) {
+fn geosite(dir: &Path) -> (RouterDatabaseCfg, RedbDatabase) {
     let cfg = config(dir, RouterDBKind::Geosite);
     let source = dir.join("source.yml");
     std::fs::write(&source, YAML).unwrap();
@@ -75,7 +84,10 @@ fn geosite_indexed_and_sequential_rules_and_metadata_survive_reopen() {
             .unwrap()
     );
     let mut changed = cfg;
-    changed.url.push_str("/changed");
+    let RouterDatabaseCfg::Geosite(source) = &mut changed else {
+        unreachable!()
+    };
+    source.url.push_str("/changed");
     assert!(RedbDatabase::open(&changed).is_err());
 }
 #[test]
@@ -90,7 +102,7 @@ fn failed_import_never_publishes_or_replaces_database() {
     ] {
         std::fs::write(&source, data).unwrap();
         assert!(RedbDatabase::import(&cfg, &source).is_err());
-        assert!(!cfg.path.exists());
+        assert!(!cfg.path().exists());
     }
     let (_, db) = geosite(dir.path());
     drop(db);
@@ -184,11 +196,12 @@ fn database_config_rejects_tag_collisions_and_bad_urls() {
         let count = if tag == "db" { 2 } else { 1 };
         let mut config: Config = serde_saphyr::from_str(base).unwrap();
         config.router.database = (0..count)
-            .map(|i| RouterDBCfg {
-                tag: tag.into(),
-                kind: RouterDBKind::Geosite,
-                url: "https://example.test/db".into(),
-                path: format!("db{i}.redb").into(),
+            .map(|i| {
+                RouterDatabaseCfg::Geosite(GeositeDBCfg {
+                    tag: tag.into(),
+                    url: "https://example.test/db".into(),
+                    path: format!("db{i}.redb").into(),
+                })
             })
             .collect();
         assert!(config.validate().is_err(), "{tag}");
@@ -205,7 +218,10 @@ async fn download_uses_tagged_inbound_for_redirects_and_publishes_database() {
     // Use HTTP locally while still asserting that no direct connection is made:
     // the test serves all responses over the emitted proxy sessions.
     let mut cfg = cfg;
-    cfg.url = "http://download.test/start".into();
+    let RouterDatabaseCfg::Geosite(source) = &mut cfg else {
+        unreachable!()
+    };
+    source.url = "http://download.test/start".into();
     let mut inbounds = HashMap::new();
     let manager = Databases::build(std::slice::from_ref(&cfg), &mut inbounds).unwrap();
     let mut inbound = inbounds.remove("db").unwrap();
@@ -253,7 +269,7 @@ async fn download_uses_tagged_inbound_for_redirects_and_publishes_database() {
     })
     .await
     .unwrap();
-    assert!(cfg.path.exists());
+    assert!(cfg.path().exists());
     let lua = mlua::Lua::new();
     manager.install(&lua).unwrap();
     assert!(
@@ -305,7 +321,10 @@ async fn manager_routes_database_download_to_lua_selected_outbound() {
     let dir = tempfile::tempdir().unwrap();
     let mut cfg: Config = serde_saphyr::from_str("inbounds: [{type: socks, tag: in, bind-addr: '127.0.0.1:0'}]\noutbounds: [{type: drop, tag: wrong}, {type: direct, tag: selected}]\n").unwrap();
     let mut db = config(dir.path(), RouterDBKind::Geosite);
-    db.url = "http://database.test/source".into();
+    let RouterDatabaseCfg::Geosite(source) = &mut db else {
+        unreachable!()
+    };
+    source.url = "http://database.test/source".into();
     cfg.router.database.push(db.clone());
     cfg.router.src = Some("return function(ctx) if ctx.inbound_tag == 'db' then return 'selected' end return 'wrong' end".into());
     let mut manager = cfg.build_manager().await.unwrap();
@@ -317,7 +336,7 @@ async fn manager_routes_database_download_to_lua_selected_outbound() {
     tokio::time::timeout(
         std::time::Duration::from_secs(5),
         manager.run_until(async {
-            while !db.path.exists() {
+            while !db.path().exists() {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
         }),
@@ -337,7 +356,10 @@ async fn manager_routes_database_download_to_lua_selected_outbound() {
 async fn failed_http_download_reports_error_without_publishing() {
     let dir = tempfile::tempdir().unwrap();
     let mut cfg = config(dir.path(), RouterDBKind::Geosite);
-    cfg.url = "http://database.test/missing".into();
+    let RouterDatabaseCfg::Geosite(source) = &mut cfg else {
+        unreachable!()
+    };
+    source.url = "http://database.test/missing".into();
     let mut inbounds = HashMap::new();
     let databases = Databases::build(std::slice::from_ref(&cfg), &mut inbounds).unwrap();
     let mut inbound = inbounds.remove("db").unwrap();
@@ -372,6 +394,6 @@ async fn failed_http_download_reports_error_without_publishing() {
     })
     .await
     .unwrap();
-    assert!(!cfg.path.exists());
+    assert!(!cfg.path().exists());
     inbound.shutdown().await.unwrap();
 }

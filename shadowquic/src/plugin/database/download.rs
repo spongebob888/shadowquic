@@ -1,6 +1,6 @@
 use super::{RedbDatabase, Result, Slot};
 use crate::{
-    AnyTcp, Inbound, ProxyRequest, TcpSession, TcpTrait, UserContext, config::RouterDBCfg,
+    AnyTcp, Inbound, ProxyRequest, TcpSession, TcpTrait, UserContext, config::RouterDatabaseCfg,
     error::SError, msgs::socks5::SocksAddr,
 };
 use async_trait::async_trait;
@@ -28,7 +28,7 @@ pub(super) fn parse_url(value: &str) -> Result<Url> {
 }
 
 pub(super) struct DownloadInbound {
-    cfg: RouterDBCfg,
+    cfg: RouterDatabaseCfg,
     slot: Arc<Slot>,
     tx: mpsc::Sender<ProxyRequest>,
     rx: mpsc::Receiver<ProxyRequest>,
@@ -36,7 +36,7 @@ pub(super) struct DownloadInbound {
     stop: tokio::sync::watch::Sender<bool>,
 }
 impl DownloadInbound {
-    pub(super) fn new(cfg: RouterDBCfg, slot: Arc<Slot>) -> Self {
+    pub(super) fn new(cfg: RouterDatabaseCfg, slot: Arc<Slot>) -> Self {
         let (tx, rx) = mpsc::channel(1);
         Self {
             cfg,
@@ -82,11 +82,11 @@ impl Inbound for DownloadInbound {
             match result {
                 Ok(db) => {
                     *slot.value.write().unwrap() = Ok(Arc::new(db));
-                    tracing::info!(tag = %cfg.tag, "router database ready");
+                    tracing::info!(tag = %cfg.tag(), "router database ready");
                 }
                 Err(error) => {
                     *slot.value.write().unwrap() = Err(error.to_string());
-                    tracing::error!(tag = %cfg.tag, %error, "router database download/import failed");
+                    tracing::error!(tag = %cfg.tag(), %error, "router database download/import failed");
                 }
             }
         }));
@@ -142,10 +142,10 @@ impl TcpTrait for DownloadStream {}
 impl TcpTrait for tokio_rustls::client::TlsStream<tokio::io::DuplexStream> {}
 
 async fn download(
-    cfg: &RouterDBCfg,
+    cfg: &RouterDatabaseCfg,
     tx: mpsc::Sender<ProxyRequest>,
 ) -> Result<tempfile::NamedTempFile> {
-    let mut url = parse_url(&cfg.url)?;
+    let mut url = parse_url(cfg.url())?;
     for _ in 0..10 {
         let host = url
             .host_str()
@@ -163,7 +163,7 @@ async fn download(
             dst,
             src_addr: None,
             user_context: UserContext {
-                inbound_tag: cfg.tag.clone(),
+                inbound_tag: cfg.tag().to_owned(),
                 ..Default::default()
             },
         }))

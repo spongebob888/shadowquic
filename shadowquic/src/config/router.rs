@@ -117,7 +117,7 @@ pub struct RouterCfg {
     pub default_outbound: Option<String>,
     /// Persistent databases available to Lua membership helpers.
     #[serde(default)]
-    pub database: Vec<super::RouterDBCfg>,
+    pub database: Vec<super::RouterDatabaseCfg>,
     /// Inline Lua source returning a routing function. Mutually exclusive with `path`.
     #[serde(default)]
     pub src: Option<String>,
@@ -141,13 +141,13 @@ impl RouterCfg {
         }
         let mut paths = std::collections::HashSet::new();
         for db in &self.database {
-            if db.path.as_os_str().is_empty() || !paths.insert(&db.path) {
+            if db.path().as_os_str().is_empty() || !paths.insert(db.path()) {
                 return Err(SError::InvalidConfig(
                     "router database paths must be nonempty and unique".into(),
                 ));
             }
             #[cfg(feature = "plugin")]
-            crate::plugin::database::validate_url(&db.url)?;
+            crate::plugin::database::validate_url(db.url())?;
         }
         Ok(())
     }

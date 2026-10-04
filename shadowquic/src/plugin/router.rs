@@ -1080,15 +1080,14 @@ mod tests {
 
     #[tokio::test]
     async fn database_helpers_remain_available_after_script_reload() {
-        use crate::config::{RouterDBCfg, RouterDBKind};
+        use crate::config::{GeositeDBCfg, RouterDatabaseCfg};
         use crate::plugin::database::RedbDatabase;
         let dir = tempfile::tempdir().unwrap();
-        let cfg = RouterDBCfg {
+        let cfg = RouterDatabaseCfg::Geosite(GeositeDBCfg {
             tag: "site".into(),
-            kind: RouterDBKind::Geosite,
             url: "https://example.test/db".into(),
             path: dir.path().join("site.redb"),
-        };
+        });
         let source = dir.path().join("source.yml");
         std::fs::write(&source, "lists: [{name: test, rules: ['domain:example']}] ").unwrap();
         drop(RedbDatabase::import(&cfg, &source).unwrap());
