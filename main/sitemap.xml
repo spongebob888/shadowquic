@@ -67,6 +67,9 @@
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/loglevel/</loc>
       </url>
       <url>
+        <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/routerdbcfg/</loc>
+      </url>
+      <url>
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/authuser/</loc>
       </url>
       <url>
@@ -86,6 +89,9 @@
       </url>
       <url>
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/dnsstrategy/</loc>
+      </url>
+      <url>
+        <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/routerdbkind/</loc>
       </url>
       <url>
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/interface/</loc>

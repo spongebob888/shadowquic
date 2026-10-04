@@ -1196,6 +1196,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#database" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>database</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#src" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1239,6 +1250,10 @@
   
     
     
+      
+        
+      
+        
       
         
       
@@ -1321,6 +1336,33 @@
     
   
   Log level
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shared/routerdbcfg/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Router d b
 
     
   </span>
@@ -1529,6 +1571,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../shared/routerdbkind/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Router d b kind
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../shared/interface/" class="md-nav__link">
         
   
@@ -1673,6 +1742,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         <code>default-outbound</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#database" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>database</code>
       </span>
     </span>
   </a>
@@ -1864,6 +1944,13 @@ Filesystem, process, module loading, and dynamic code loading are unavailable.</
 no network I/O or asynchronous suspension. They do not take a DNS service tag.
 <code>lookup</code> and <code>reverse_lookup</code> suspend the routing function and raise Lua errors
 on failure. Route DNS upstream requests</p>
+<p>Database membership helpers require <code>router.database</code> entries (see
+<a href="../shared/routerdbcfg/"><code>super::RouterDBCfg</code></a>). <code>find_domain(tag, list, domain)</code>,
+<code>find_ip_v4(tag, list, ip)</code>, and <code>find_ip_v6(tag, list, ip)</code> return booleans.
+Missing databases download through an internal inbound with the database tag.
+Route that traffic before calling helpers. Unavailable databases raise Lua
+errors; use <code>pcall</code> for an explicit fallback while downloading. Existing redb
+files are reused, including across script reloads.</p>
 <p>The exposed router context to script can be seen in [<code>crate::plugin::router::RouteContext</code>]</p>
 <h2 id="fields">Fields<a class="headerlink" href="#fields" title="Permanent link">&para;</a></h2>
 <h3 id="default-outbound"><code>default-outbound</code><a class="headerlink" href="#default-outbound" title="Permanent link">&para;</a></h3>
@@ -1873,6 +1960,13 @@ on failure. Route DNS upstream requests</p>
 </ul>
 <p>Outbound tag used when no routing script is configured. Defaults to the
 first configured outbound. Does not require the <code>plugin</code> feature.</p>
+<h3 id="database"><code>database</code><a class="headerlink" href="#database" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> list of <a href="../shared/routerdbcfg/"><code>RouterDBCfg</code></a></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <em>(type default)</em></li>
+</ul>
+<p>Persistent databases available to Lua membership helpers.</p>
 <h3 id="src"><code>src</code><a class="headerlink" href="#src" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Type:</strong> <code>string</code> <em>(optional)</em></li>
