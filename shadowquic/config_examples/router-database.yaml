@@ -1,0 +1,24 @@
+inbounds:
+  - type: socks
+    tag: socks-in
+    bind-addr: 127.0.0.1:1080
+outbounds:
+  - type: direct
+    tag: direct
+  - type: drop
+    tag: block
+router:
+  database:
+    - tag: geosite-db
+      type: geosite
+      url: https://raw.githubusercontent.com/v2fly/domain-list-community/release/dlc.dat_plain.yml
+      path: data/geosite.redb
+  src: |
+    return function(ctx)
+      if ctx.inbound_tag == "geosite-db" then return "direct" end
+      if ctx.dst_domain then
+        local ready, matches = pcall(find_domain, "geosite-db", "category-ads-all", ctx.dst_domain)
+        if ready and matches then return "block" end
+      end
+      return "direct"
+    end

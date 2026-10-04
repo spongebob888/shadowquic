@@ -36,7 +36,9 @@ pub use crate::config::serde_utils::*;
 pub use crate::config::shadowquic::*;
 pub use crate::config::sunnyquic::*;
 mod router;
+mod router_database;
 pub use router::RouterCfg;
+pub use router_database::{RouterDBCfg, RouterDBKind};
 
 /// Overall configuration of shadowquic.
 ///
@@ -150,6 +152,14 @@ impl Config {
                 )));
             }
         }
+        for db in &self.router.database {
+            if db.tag.trim().is_empty() || !seen.insert(&db.tag) || db.tag == "default-system" {
+                return Err(SError::InvalidConfig(format!(
+                    "invalid or duplicate router database tag: {}",
+                    db.tag
+                )));
+            }
+        }
         if let Some(tag) = &self.router.default_outbound
             && !self.outbound_tags().any(|outbound| outbound == tag)
         {
@@ -227,12 +237,12 @@ impl Config {
             inbounds.insert(tag.clone(), Box::new(server) as Box<dyn Inbound>);
         }
         #[cfg(feature = "plugin")]
+        let databases =
+            crate::plugin::database::Databases::build(&self.router.database, &mut inbounds)?;
+        #[cfg(feature = "plugin")]
         let router = self
             .router
-            .build(
-                #[cfg(feature = "dns-server")]
-                resolver_manager.clone(),
-            )?
+            .build(resolver_manager.clone(), databases)?
             .map(Arc::new);
         for cfg in self.outbounds {
             let tag = cfg.tag().to_owned();
