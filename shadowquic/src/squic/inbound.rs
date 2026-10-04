@@ -104,6 +104,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                     user_context: UserContext {
                         src_addr: Some(self.inner.conn.remote_address()),
                         inbound_tag: String::new(),
+                        preferred_outbound: None,
                         dns_query: Vec::new(),
                         stats: Some(StatsContext {
                             username: user,
@@ -132,6 +133,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                         UserContext {
                             src_addr: Some(self.inner.conn.remote_address()),
                             inbound_tag: String::new(),
+                            preferred_outbound: None,
                             dns_query: Vec::new(),
                             stats: Some(StatsContext {
                                 username: user,

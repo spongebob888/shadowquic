@@ -35,7 +35,7 @@ async fn socks_server_accepts_after_client_closes_before_accept() {
             .unwrap();
         let mut inbound = SocksServer::new(SocksServerCfg {
             tag: "test-socks".into(),
-            default_outbound: None,
+            default_outbound: Some("proxy-out".into()),
             bind_addr: addr,
             users: vec![],
         })
@@ -69,7 +69,11 @@ async fn socks_server_accepts_after_client_closes_before_accept() {
         client.read_exact(&mut connect_reply).await.unwrap();
         assert_eq!(&connect_reply[..4], &[0x05, 0x00, 0x00, 0x01]);
 
-        let ProxyRequest::Tcp(mut session) = inbound.accept().await.unwrap() else {
+        let req = inbound.accept().await.unwrap();
+        // The inbound stamps its configured default outbound as the request's
+        // preference before handing it to the manager.
+        assert_eq!(req.preferred_outbound(), Some("proxy-out"));
+        let ProxyRequest::Tcp(mut session) = req else {
             panic!("expected the second client's TCP request");
         };
         assert_eq!(session.src_addr, Some(client_addr));

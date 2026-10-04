@@ -216,7 +216,6 @@ impl Config {
             .default_outbound
             .clone()
             .unwrap_or_else(|| self.outbound_tags().next().unwrap().to_owned());
-        let mut inbound_defaults = HashMap::new();
         let mut inbounds = HashMap::new();
         let mut outbounds = HashMap::new();
         #[cfg(feature = "dns-server")]
@@ -283,9 +282,6 @@ impl Config {
         }
         for cfg in self.inbounds {
             let tag = cfg.tag().to_owned();
-            if let Some(outbound) = cfg.default_outbound() {
-                inbound_defaults.insert(tag.clone(), outbound.to_owned());
-            }
             let span = info_span!("inbound", tag = %tag);
             #[cfg(all(feature = "dns-server", feature = "tproxy", target_os = "linux"))]
             let restore_fake = matches!(&cfg, InboundCfg::Tproxy(_));
@@ -305,7 +301,6 @@ impl Config {
             inbounds,
             outbounds,
             default_outbound,
-            inbound_defaults,
             #[cfg(feature = "plugin")]
             router,
             #[cfg(feature = "dns-server")]
@@ -459,9 +454,10 @@ impl OutboundCfg {
 pub struct SocksServerCfg {
     /// Required label for this endpoint.
     pub tag: String,
-    /// Outbound tag every request from this inbound uses when no router script
-    /// is configured, applied by [`Config::build_manager`]. Unset falls back to
-    /// the global default outbound.
+    /// Outbound this inbound prefers, stamped on every accepted request as
+    /// `UserContext::preferred_outbound`. A router script may honor or override
+    /// it; without a router it selects the outbound, and unset falls back to the
+    /// global default.
     #[serde(default)]
     pub default_outbound: Option<String>,
     /// Server binding address. e.g. `0.0.0.0:1089`, `[::1]:1089`
@@ -488,9 +484,10 @@ pub struct SocksServerCfg {
 pub struct MixedServerCfg {
     /// Required label for this endpoint.
     pub tag: String,
-    /// Outbound tag every request from this inbound uses when no router script
-    /// is configured, applied by [`Config::build_manager`]. Unset falls back to
-    /// the global default outbound.
+    /// Outbound this inbound prefers, stamped on every accepted request as
+    /// `UserContext::preferred_outbound`. A router script may honor or override
+    /// it; without a router it selects the outbound, and unset falls back to the
+    /// global default.
     #[serde(default)]
     pub default_outbound: Option<String>,
     /// Server binding address. e.g. `0.0.0.0:1080`, `[::]:1080`
@@ -515,9 +512,10 @@ pub struct MixedServerCfg {
 pub struct TproxyServerCfg {
     /// Required label for this endpoint.
     pub tag: String,
-    /// Outbound tag every request from this inbound uses when no router script
-    /// is configured, applied by [`Config::build_manager`]. Unset falls back to
-    /// the global default outbound.
+    /// Outbound this inbound prefers, stamped on every accepted request as
+    /// `UserContext::preferred_outbound`. A router script may honor or override
+    /// it; without a router it selects the outbound, and unset falls back to the
+    /// global default.
     #[serde(default)]
     pub default_outbound: Option<String>,
     /// Server binding address. e.g. `0.0.0.0:1089`, `[::1]:1089`
@@ -1048,7 +1046,7 @@ router:
     }
 
     #[tokio::test]
-    async fn inbound_default_outbound_is_collected_per_tag() {
+    async fn inbound_default_outbound_is_kept_per_inbound() {
         let cfg: Config = serde_saphyr::from_str(
             r#"
 inbounds:
@@ -1060,13 +1058,11 @@ outbounds:
 "#,
         )
         .unwrap();
+        // Each inbound carries its own preference; no shared map is built.
+        assert_eq!(cfg.inbounds[0].default_outbound(), Some("a-second"));
+        assert_eq!(cfg.inbounds[1].default_outbound(), None);
         let manager = cfg.build_manager().await.unwrap();
-        assert_eq!(
-            manager.inbound_defaults.get("one").map(String::as_str),
-            Some("a-second")
-        );
-        assert_eq!(manager.inbound_defaults.get("two"), None);
-        // The per-inbound tag does not disturb the global default.
+        // The per-inbound preference does not disturb the global default.
         assert_eq!(manager.default_outbound, "z-first");
     }
 
@@ -1100,13 +1096,10 @@ outbounds:
 "#,
         )
         .unwrap();
+        assert_eq!(cfg.inbounds[0].default_outbound(), Some("local-dns"));
         let manager = cfg.build_manager().await.unwrap();
-        assert_eq!(
-            manager.inbound_defaults.get("one").map(String::as_str),
-            Some("local-dns")
-        );
-        // The tag set used by validation and the dispatch map must agree: a DNS
-        // service is registered as an outbound, so a DNS tag is routable.
+        // Validation accepts the tag as routable, and dispatch agrees: a DNS
+        // service is registered as an outbound.
         assert!(manager.outbounds.contains_key("local-dns"));
     }
 

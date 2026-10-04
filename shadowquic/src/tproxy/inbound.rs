@@ -94,7 +94,7 @@ impl TproxyServer {
 impl Inbound for TproxyServer {
     async fn accept(&mut self) -> Result<ProxyRequest, SError> {
         let tag = self.cfg.tag.clone();
-        tokio::select! {
+        let mut req: ProxyRequest = tokio::select! {
             (stream, addr) = async {
                 loop {
                     match self.tcp_listener.accept().await {
@@ -129,12 +129,12 @@ impl Inbound for TproxyServer {
                     },
                     port: orig_dst.port(),
                 };
-                Ok(ProxyRequest::Tcp(TcpSession {
+                ProxyRequest::Tcp(TcpSession {
                     stream: Box::new(stream),
                     dst,
                     src_addr,
                     user_context: Default::default(),
-                }))
+                })
             }
             Some(req) = self.udp_req_rx.recv() => {
                 let span = tracing::info_span!("inbound",
@@ -150,9 +150,11 @@ impl Inbound for TproxyServer {
                 span.in_scope(|| {
                     tracing::info!("accepted tproxy udp request");
                 });
-                Ok(req)
+                req
             }
-        }
+        };
+        req.set_preferred_outbound(self.cfg.default_outbound.clone());
+        Ok(req)
     }
 }
 

@@ -75,6 +75,21 @@ impl ProxyRequest {
             ProxyRequest::Udp(session) => &session.user_context.inbound_tag,
         }
     }
+
+    pub(crate) fn set_preferred_outbound(&mut self, tag: Option<String>) {
+        match self {
+            ProxyRequest::Tcp(session) => session.user_context.preferred_outbound = tag,
+            ProxyRequest::Udp(session) => session.user_context.preferred_outbound = tag,
+        }
+    }
+
+    /// Outbound the accepting inbound prefers when no router script decides.
+    pub fn preferred_outbound(&self) -> Option<&str> {
+        match self {
+            ProxyRequest::Tcp(session) => session.user_context.preferred_outbound.as_deref(),
+            ProxyRequest::Udp(session) => session.user_context.preferred_outbound.as_deref(),
+        }
+    }
 }
 /// Udp socket only use immutable reference to self
 /// So it can be safely wrapped by Arc and cloned to work in duplex way.
@@ -170,6 +185,10 @@ pub struct DnsQuery {
 pub struct UserContext {
     pub src_addr: Option<SocketAddr>,
     pub inbound_tag: String,
+    /// Outbound preference stamped by the accepting inbound on every request.
+    /// A router script may honor or override it; without one it selects the
+    /// outbound, and `None` falls back to the global default.
+    pub preferred_outbound: Option<String>,
     pub dns_query: Vec<DnsQuery>,
     pub stats: Option<StatsContext>,
 }
@@ -234,10 +253,8 @@ pub struct Manager {
     pub inbounds: HashMap<String, Box<dyn Inbound>>,
     pub outbounds: HashMap<String, Arc<dyn Outbound>>,
     /// Fallback outbound tag, used when no router script is configured and the
-    /// request's inbound has no `default-outbound` of its own.
+    /// request carries no `preferred_outbound` from its inbound.
     pub default_outbound: String,
-    /// Per-inbound outbound tag applied when no router script is configured.
-    pub inbound_defaults: HashMap<String, String>,
     #[cfg(feature = "plugin")]
     pub router: Option<Arc<plugin::router::Router>>,
 
@@ -249,7 +266,6 @@ pub struct Manager {
 struct RequestDispatcher {
     outbounds: HashMap<String, Arc<dyn Outbound>>,
     default_outbound: String,
-    inbound_defaults: HashMap<String, String>,
     #[cfg(feature = "plugin")]
     router: Option<Arc<plugin::router::Router>>,
 }
@@ -283,10 +299,10 @@ impl RequestDispatcher {
                     }
                 }
             }
-            None => self.inbound_default_tag(&req),
+            None => self.fallback_outbound_tag(&req),
         };
         #[cfg(not(feature = "plugin"))]
-        let outbound_tag = self.inbound_default_tag(&req);
+        let outbound_tag = self.fallback_outbound_tag(&req);
         let Some(outbound) = self.outbounds.get(&outbound_tag).cloned() else {
             error!(outbound = %outbound_tag, "selected an unknown outbound");
             return;
@@ -301,13 +317,12 @@ impl RequestDispatcher {
         }
     }
 
-    /// Outbound for a request with no router script: the inbound's own
-    /// `default-outbound`, else the global default.
-    fn inbound_default_tag(&self, req: &ProxyRequest) -> String {
-        self.inbound_defaults
-            .get(req.inbound_tag())
-            .cloned()
-            .unwrap_or_else(|| self.default_outbound.clone())
+    /// Outbound for a request with no router script: the inbound's preferred
+    /// outbound, else the global default.
+    fn fallback_outbound_tag(&self, req: &ProxyRequest) -> String {
+        req.preferred_outbound()
+            .unwrap_or(self.default_outbound.as_str())
+            .to_owned()
     }
 }
 
@@ -336,7 +351,6 @@ impl Manager {
             inbounds: HashMap::from([("inbound".into(), inbound)]),
             outbounds: HashMap::from([("outbound".into(), outbound)]),
             default_outbound: "outbound".into(),
-            inbound_defaults: HashMap::new(),
             #[cfg(feature = "plugin")]
             router: None,
             #[cfg(feature = "dns-server")]
@@ -365,7 +379,6 @@ impl Manager {
         let dispatcher = Arc::new(RequestDispatcher {
             outbounds: self.outbounds,
             default_outbound: self.default_outbound,
-            inbound_defaults: self.inbound_defaults,
             #[cfg(feature = "plugin")]
             router: self.router,
         });

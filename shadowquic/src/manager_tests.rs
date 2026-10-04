@@ -110,7 +110,6 @@ async fn check_manager(fail_init: bool, fail_shutdown: bool) {
             ),
         ]),
         default_outbound: "selected".into(),
-        inbound_defaults: HashMap::new(),
         #[cfg(feature = "plugin")]
         router: None,
         #[cfg(feature = "dns-server")]
@@ -322,7 +321,7 @@ impl Outbound for CountingOutbound {
 }
 
 #[tokio::test]
-async fn per_inbound_default_outbound_routes_without_a_router() {
+async fn preferred_outbound_routes_without_a_router() {
     let hits_a = Arc::new(AtomicUsize::new(0));
     let hits_b = Arc::new(AtomicUsize::new(0));
     let dispatcher = RequestDispatcher {
@@ -337,21 +336,20 @@ async fn per_inbound_default_outbound_routes_without_a_router() {
             ),
         ]),
         // The global default points at out-b, so out-a is reachable only
-        // through the per-inbound map.
+        // through the request's preferred outbound.
         default_outbound: "out-b".into(),
-        inbound_defaults: HashMap::from([("inbound-a".to_string(), "out-a".to_string())]),
         #[cfg(feature = "plugin")]
         router: None,
     };
 
     let mut req = request();
     req.set_inbound_tag("inbound-a".into());
+    req.set_preferred_outbound(Some("out-a".into()));
     dispatcher.dispatch(req).await;
     assert_eq!(hits_a.load(Ordering::SeqCst), 1);
     assert_eq!(hits_b.load(Ordering::SeqCst), 0);
 
-    // An inbound with no `default-outbound` of its own falls back to the
-    // global default.
+    // A request with no preference falls back to the global default.
     let mut req = request();
     req.set_inbound_tag("inbound-b".into());
     dispatcher.dispatch(req).await;
@@ -361,7 +359,7 @@ async fn per_inbound_default_outbound_routes_without_a_router() {
 
 #[cfg(feature = "plugin")]
 #[tokio::test]
-async fn router_takes_priority_over_the_per_inbound_default() {
+async fn router_takes_priority_over_the_preferred_outbound() {
     let hits_router = Arc::new(AtomicUsize::new(0));
     let hits_inbound = Arc::new(AtomicUsize::new(0));
     let dispatcher = RequestDispatcher {
@@ -376,7 +374,6 @@ async fn router_takes_priority_over_the_per_inbound_default() {
             ),
         ]),
         default_outbound: "out-inbound".into(),
-        inbound_defaults: HashMap::from([("inbound-a".to_string(), "out-inbound".to_string())]),
         router: Some(Arc::new(
             plugin::router::Router::from_source(r#"return function(_) return "out-router" end"#)
                 .unwrap(),
@@ -385,8 +382,9 @@ async fn router_takes_priority_over_the_per_inbound_default() {
 
     let mut req = request();
     req.set_inbound_tag("inbound-a".into());
+    req.set_preferred_outbound(Some("out-inbound".into()));
     dispatcher.dispatch(req).await;
-    // The router decides even when the inbound names its own default.
+    // The router decides even when the request carries a preference.
     assert_eq!(hits_router.load(Ordering::SeqCst), 1);
     assert_eq!(hits_inbound.load(Ordering::SeqCst), 0);
 }
@@ -409,15 +407,19 @@ impl Outbound for RoutingOutbound {
 }
 
 #[tokio::test]
-async fn manager_tags_requests_and_routes_by_inbound_default() {
+async fn manager_tags_requests_and_routes_by_preferred_outbound() {
     // Two outbounds plus the shutdown future release the barrier.
     let called = Arc::new(Barrier::new(3));
     let hits_a = Arc::new(AtomicUsize::new(0));
     let hits_b = Arc::new(AtomicUsize::new(0));
     let mut inbounds: HashMap<String, Box<dyn Inbound>> = HashMap::new();
-    for tag in ["a", "b"] {
+    for (tag, preferred) in [("a", Some("out-a")), ("b", None)] {
         let (send, recv) = mpsc::channel(1);
-        send.send(request())
+        let mut req = request();
+        // The accepting inbound stamps its preference before handing the
+        // request to the manager.
+        req.set_preferred_outbound(preferred.map(str::to_owned));
+        send.send(req)
             .await
             .unwrap_or_else(|_| panic!("request channel closed"));
         inbounds.insert(
@@ -451,15 +453,16 @@ async fn manager_tags_requests_and_routes_by_inbound_default() {
                 }) as Arc<dyn Outbound>,
             ),
         ]),
+        // out-a is reachable only through the preference; inbound "b" has none,
+        // so it falls back to the global default.
         default_outbound: "out-b".into(),
-        inbound_defaults: HashMap::from([("a".to_string(), "out-a".to_string())]),
         #[cfg(feature = "plugin")]
         router: None,
         #[cfg(feature = "dns-server")]
         resolver_manager: None,
     };
-    // The requests arrive with an empty inbound tag; the manager stamps it, so
-    // inbound "a" can only reach out-a through the per-inbound default.
+    // The requests arrive with an empty inbound tag; the manager stamps it and
+    // the outbounds assert it, while routing follows the stamped preference.
     tokio::time::timeout(
         Duration::from_secs(5),
         manager.run_until(async {

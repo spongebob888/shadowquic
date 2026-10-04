@@ -33,9 +33,10 @@ pub(crate) fn default_multipath_num() -> u32 {
 pub struct SunnyQuicServerCfg {
     /// Required label for this endpoint.
     pub tag: String,
-    /// Outbound tag every request from this inbound uses when no router script
-    /// is configured, applied by [`Config::build_manager`]. Unset falls back to
-    /// the global default outbound.
+    /// Outbound this inbound prefers, stamped on every accepted request as
+    /// `UserContext::preferred_outbound`. A router script may honor or override
+    /// it; without a router it selects the outbound, and unset falls back to the
+    /// global default.
     #[serde(default)]
     pub default_outbound: Option<String>,
     /// Binding address. e.g. `0.0.0.0:443`, `[::1]:443`
