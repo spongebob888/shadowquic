@@ -715,6 +715,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#default-outbound" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>default-outbound</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#bind-addr" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1727,6 +1738,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#default-outbound" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>default-outbound</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#bind-addr" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1774,6 +1796,15 @@
 <li><strong>Required:</strong> <strong>yes</strong></li>
 </ul>
 <p>Required label for this endpoint.</p>
+<h3 id="default-outbound"><code>default-outbound</code><a class="headerlink" href="#default-outbound" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>string</code> <em>(optional)</em></li>
+<li><strong>Required:</strong> no</li>
+</ul>
+<p>Outbound this inbound prefers, stamped on every accepted request as
+<code>UserContext::preferred_outbound</code>. A router script may honor or override
+it; without a router it selects the outbound, and unset falls back to the
+global default.</p>
 <h3 id="bind-addr"><code>bind-addr</code><a class="headerlink" href="#bind-addr" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Type:</strong> <code>SocketAddr</code></li>
