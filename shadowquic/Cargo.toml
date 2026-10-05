@@ -9,7 +9,7 @@ description = { workspace = true }
 license = { workspace = true}
 readme = { workspace = true}
 [features]
-default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", "mixed", "plugin", "router-db", "dns-server"]
+default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", "mixed", "plugin-vendored", "router-db", "dns-server"]
 # cost 1.4 mb
 dns-server = ["dep:simple-dns", "dep:tokio-rustls-jls", "dep:rustls_jls"]
 # cost 200k
@@ -17,11 +17,11 @@ statistics = ["dep:portable-atomic"]
 # cost 200k
 mixed = ["dep:base64"]
 # cost about 2.4m
-plugin = ["plugin-vendored"]
-plugin-vendored = ["plugin-system", "mlua/vendored"]
-plugin-system = ["dep:mlua", "mlua/send", "mlua/async", "dep:notify"]
+plugin-vendored = ["plugin", "mlua/vendored"] # compiling luajit from source
+plugin-system = ["plugin"] # use system package provided luajit lib.
+plugin = ["dep:mlua", "mlua/send", "mlua/async", "dep:notify"]
 # cost about 2mb, requires plugin enabled
-router-db = ["plugin-system", "dep:redb", "dep:maxminddb", "dep:sha2", "dep:regex", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:tokio-rustls-jls", "dep:rustls_jls", "tokio-rustls-jls/tls12", "dep:url", "dep:tempfile"]
+router-db = ["plugin", "dep:redb", "dep:maxminddb", "dep:sha2", "dep:regex", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:tokio-rustls-jls", "dep:rustls_jls", "tokio-rustls-jls/tls12", "dep:url", "dep:tempfile"]
 ring = [
     "dep:ring",
     "quinn?/rustls-ring",

@@ -70,7 +70,7 @@
         src = craneLib.cleanCargoSource ./.;
         pname = "shadowquic";
         doCheck = false;
-        cargoExtraArgs = "--no-default-features --features shadowquic-quinn,sunnyquic-noq,ring,statistics,tproxy,mixed,plugin-system";
+        cargoExtraArgs = "--no-default-features --features shadowquic-quinn,sunnyquic-noq,ring,statistics,tproxy,mixed,plugin-system,router-db,dns-server";
         nativeBuildInputs = [ pkgs.pkg-config ];
         buildInputs = [ pkgs.luajit ];
         # Add extra inputs here or any other derivation settings
