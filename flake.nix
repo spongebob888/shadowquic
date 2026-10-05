@@ -25,7 +25,16 @@
             dnspython
           ]);
 
-        craneLib = crane.mkLib pkgs;
+        mkPackage = targetPkgs:
+          let craneLib = crane.mkLib targetPkgs;
+          in craneLib.buildPackage {
+            src = craneLib.cleanCargoSource ./.;
+            pname = "shadowquic";
+            doCheck = false;
+            cargoExtraArgs = "--no-default-features --features shadowquic-quinn,sunnyquic-noq,ring,statistics,tproxy,mixed,plugin-system,router-db,dns-server";
+            nativeBuildInputs = [ targetPkgs.buildPackages.pkg-config ];
+            buildInputs = [ targetPkgs.luajit ];
+          };
         packages = with pkgs; [
           curlHTTP3
           pythonEnv
@@ -66,17 +75,10 @@
               export XDG_DATA_DIRS=${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:$XDG_DATA_DIRS
             '';
         };
-      packages.default = craneLib.buildPackage rec {
-        src = craneLib.cleanCargoSource ./.;
-        pname = "shadowquic";
-        doCheck = false;
-        cargoExtraArgs = "--no-default-features --features shadowquic-quinn,sunnyquic-noq,ring,statistics,tproxy,mixed,plugin-system,router-db,dns-server";
-        nativeBuildInputs = [ pkgs.pkg-config ];
-        buildInputs = [ pkgs.luajit ];
-        # Add extra inputs here or any other derivation settings
-        # doCheck = true;
-        # buildInputs = [];
-        # nativeBuildInputs = [];
-      };
+        packages = {
+          default = mkPackage pkgs;
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          musl = mkPackage pkgs.pkgsStatic;
+        };
       });
 }

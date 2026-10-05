@@ -12,6 +12,16 @@
     - Resisting active detection
     - Free of certificates
 
+## Building with Nix
+
+Build the native package with `nix build`. On Linux, build a static musl binary
+for the host architecture with:
+
+```bash
+nix build .#musl
+./result/bin/shadowquic --help
+```
+
 ## Usage
 ### Client
 ```bash
