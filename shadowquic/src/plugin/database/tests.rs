@@ -88,8 +88,45 @@ fn geosite_indexed_and_sequential_rules_and_metadata_survive_reopen() {
         unreachable!()
     };
     source.url.push_str("/changed");
-    assert!(RedbDatabase::open(&changed).is_err());
+    let error = RedbDatabase::open(&changed).err().unwrap().to_string();
+    assert!(error.contains("database \"db\""));
+    assert!(error.contains(&format!("at {:?}", changed.path())));
+    assert!(error.contains(
+        "incompatible url: stored \"https://example.test/db\", expected \"https://example.test/db/changed\""
+    ));
+    assert!(error.contains(&format!("Remove the database file {:?}", changed.path())));
+    assert!(error.contains("restart Shadowquic to download and rebuild it"));
 }
+#[test]
+fn database_opens_with_missing_or_different_application_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let (cfg, db) = geosite(dir.path());
+    drop(db);
+    for version in [Some("0.0.0"), None] {
+        let db = Database::open(cfg.path()).unwrap();
+        let write = db.begin_write().unwrap();
+        {
+            let mut meta = write.open_table(META).unwrap();
+            match version {
+                Some(version) => {
+                    meta.insert("version", version).unwrap();
+                }
+                None => {
+                    meta.remove("version").unwrap();
+                }
+            }
+        }
+        write.commit().unwrap();
+        drop(db);
+        assert!(
+            RedbDatabase::open(&cfg)
+                .unwrap()
+                .find_domain("test", "exact.example")
+                .unwrap()
+        );
+    }
+}
+
 #[test]
 fn failed_import_never_publishes_or_replaces_database() {
     let dir = tempfile::tempdir().unwrap();

@@ -70,16 +70,24 @@ impl RedbDatabase {
                 ("type", kind_name(cfg.kind())),
                 ("url", cfg.url()),
             ] {
-                if meta.get(name)?.as_ref().map(|v| v.value()) != Some(expected) {
+                let stored = meta.get(name)?;
+                let stored = stored.as_ref().map(|value| value.value());
+                if stored != Some(expected) {
+                    let stored = stored
+                        .map(|value| format!("{value:?}"))
+                        .unwrap_or_else(|| "<missing>".into());
                     return Err(format!(
-                        "database {} has incompatible {name}; remove it to download again",
-                        cfg.tag()
+                        "database {:?} at {:?} has incompatible {name}: stored {stored}, expected {expected:?}. Remove the database file {:?} and restart Shadowquic to download and rebuild it from {:?}",
+                        cfg.tag(), cfg.path(), cfg.path(), cfg.url()
                     )
                     .into());
                 }
             }
-            if meta.get("version")?.is_none() || meta.get("sha256")?.is_none() {
-                return Err("database metadata is incomplete".into());
+            if meta.get("sha256")?.is_none() {
+                return Err(format!(
+                    "database {:?} at {:?} has incomplete metadata (missing sha256). Remove the database file {:?} and restart Shadowquic to download and rebuild it from {:?}",
+                    cfg.tag(), cfg.path(), cfg.path(), cfg.url()
+                ).into());
             }
             read.open_table(RULES)?;
         }
