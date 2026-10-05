@@ -174,7 +174,7 @@ fn init_tracing() {
 async fn spawn_mixed_proxy_chain(entry_port: u16, upstream_port: u16) {
     // entry proxy: mixed inbound -> socks outbound
     let mixed_server = MixedServer::new(MixedServerCfg {
-        tag: String::new(),
+        tag: "inbound".into(),
         default_outbound: None,
         bind_addr: format!("127.0.0.1:{}", entry_port).parse().unwrap(),
         users: vec![],
@@ -201,7 +201,7 @@ async fn spawn_mixed_proxy_chain(entry_port: u16, upstream_port: u16) {
 
     // upstream proxy: socks inbound -> direct outbound
     let socks_server = SocksServer::new(SocksServerCfg {
-        tag: String::new(),
+        tag: "inbound".into(),
         default_outbound: None,
         bind_addr: format!("[::1]:{}", upstream_port).parse().unwrap(),
         users: vec![AuthUser {
@@ -347,7 +347,7 @@ async fn test_http_auth_required() {
     let upstream_port = 11097;
 
     let mixed_server = MixedServer::new(MixedServerCfg {
-        tag: String::new(),
+        tag: "inbound".into(),
         default_outbound: None,
         bind_addr: format!("127.0.0.1:{}", entry_port).parse().unwrap(),
         users: vec![AuthUser {

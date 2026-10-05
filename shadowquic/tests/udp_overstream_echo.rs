@@ -97,7 +97,7 @@ async fn test_shadowquic() {
     trace!("Running");
 
     let socks_server = SocksServer::new(SocksServerCfg {
-        tag: String::new(),
+        tag: "inbound".into(),
         default_outbound: None,
         bind_addr: "127.0.0.1:1030".parse().unwrap(),
         users: vec![],
@@ -123,6 +123,7 @@ async fn test_shadowquic() {
     let client = Manager::single(Box::new(socks_server), std::sync::Arc::new(sq_client));
 
     let sq_server = ShadowQuicServer::new(ShadowQuicServerCfg {
+        tag: "inbound".into(),
         bind_addr: "[::1]:4448".parse().unwrap(),
         users: vec![AuthUser {
             username: "123".into(),

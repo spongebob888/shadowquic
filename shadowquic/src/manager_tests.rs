@@ -6,6 +6,7 @@ use std::{
 use tokio::sync::{Barrier, mpsc};
 
 struct TestInbound {
+    tag: String,
     requests: mpsc::Receiver<ProxyRequest>,
     initialized: Arc<AtomicUsize>,
     stopped: Arc<AtomicUsize>,
@@ -25,7 +26,10 @@ impl Inbound for TestInbound {
 
     async fn accept(&mut self) -> Result<ProxyRequest, SError> {
         match self.requests.recv().await {
-            Some(request) => Ok(request),
+            Some(mut request) => {
+                request.user_context_mut().inbound_tag = self.tag.clone();
+                Ok(request)
+            }
             None => std::future::pending().await,
         }
     }
@@ -84,6 +88,7 @@ async fn check_manager(fail_init: bool, fail_shutdown: bool) {
         inbounds.insert(
             i.to_string(),
             Box::new(TestInbound {
+                tag: i.to_string(),
                 requests: recv,
                 initialized: initialized.clone(),
                 stopped: stopped.clone(),
@@ -189,6 +194,7 @@ async fn one_inbound_dispatches_concurrently_and_cancels_requests_on_shutdown() 
     });
     let manager = Manager::single(
         Box::new(TestInbound {
+            tag: "inbound".into(),
             requests: recv,
             initialized: initialized.clone(),
             stopped: stopped.clone(),
@@ -245,9 +251,10 @@ struct PausingInbound {
 #[async_trait]
 impl Inbound for PausingInbound {
     async fn accept(&mut self) -> Result<ProxyRequest, SError> {
-        let Some(req) = self.requests.recv().await else {
+        let Some(mut req) = self.requests.recv().await else {
             return std::future::pending().await;
         };
+        req.user_context_mut().inbound_tag = "inbound".into();
         if req.dst().port == 54 {
             self.accepting.notify_one();
             self.resume.notified().await;
@@ -416,15 +423,15 @@ async fn manager_preserves_inbound_tags_and_routes_by_preferred_outbound() {
     for (tag, preferred) in [("a", Some("out-a")), ("b", None)] {
         let (send, recv) = mpsc::channel(1);
         let mut req = request();
-        // Simulate an inbound returning a request with its tag and preference.
-        req.user_context_mut().inbound_tag = tag.to_owned();
+        // The inbound stamps the tag when accepting the request.
         req.user_context_mut().preferred_outbound = preferred.map(str::to_owned);
         send.send(req)
             .await
             .unwrap_or_else(|_| panic!("request channel closed"));
         inbounds.insert(
-            format!("manager-{tag}"),
+            tag.to_owned(),
             Box::new(TestInbound {
+                tag: tag.to_owned(),
                 requests: recv,
                 initialized: Arc::new(AtomicUsize::new(0)),
                 stopped: Arc::new(AtomicUsize::new(0)),

@@ -33,6 +33,7 @@ fn store_path(name: &str) -> PathBuf {
 
 fn server_cfg(addr: &str, store: PathBuf, flush_interval: u64) -> ShadowQuicServerCfg {
     ShadowQuicServerCfg {
+        tag: "inbound".into(),
         bind_addr: addr.parse().unwrap(),
         users: vec![
             AuthUser {

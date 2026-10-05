@@ -109,6 +109,7 @@ async fn test_auto_reload_cert() {
 
     // Start Server
     let sq_server = SunnyQuicServer::new(SunnyQuicServerCfg {
+        tag: "inbound".into(),
         bind_addr: quic_addr.parse().unwrap(),
         users: vec![AuthUser {
             username: "user".into(),
@@ -133,7 +134,7 @@ async fn test_auto_reload_cert() {
 
     // Start Client 1 (Uses Cert 1)
     let socks_server_1 = SocksServer::new(SocksServerCfg {
-        tag: String::new(),
+        tag: "inbound".into(),
         default_outbound: None,
         bind_addr: socks_server_addr.parse().unwrap(),
         users: vec![],
@@ -220,7 +221,7 @@ async fn test_auto_reload_cert() {
     let socks_server_addr_2 = format!("127.0.0.1:{}", socks_port_2);
 
     let socks_server_2 = SocksServer::new(SocksServerCfg {
-        tag: String::new(),
+        tag: "inbound".into(),
         default_outbound: None,
         bind_addr: socks_server_addr_2.parse().unwrap(),
         users: vec![],

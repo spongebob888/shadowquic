@@ -54,10 +54,13 @@ fn run(
     tokio::task::JoinHandle<Result<()>>,
 ) {
     let (stop, stopped) = tokio::sync::oneshot::channel();
-    let manager = Manager::single(
+    let tag = server.resolver.tag.clone();
+    let mut manager = Manager::single(
         Box::new(server),
         Arc::new(DirectOut::new(DirectOutCfg::default())),
     );
+    let inbound = manager.inbounds.remove("inbound").unwrap();
+    manager.inbounds.insert(tag, inbound);
     (
         stop,
         tokio::spawn(manager.run_until(async {

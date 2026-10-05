@@ -25,10 +25,12 @@ async fn resolves_through_alidns_over_tls() -> Result<(), Box<dyn Error>> {
     .build()
     .await?;
     let local_addr = server.local_addr;
-    let manager = Manager::single(
+    let mut manager = Manager::single(
         Box::new(server),
         Arc::new(DirectOut::new(DirectOutCfg::default())),
     );
+    let inbound = manager.inbounds.remove("inbound").unwrap();
+    manager.inbounds.insert("alidns".into(), inbound);
     assert_alidns_query(manager, local_addr, "www.aliyun.com").await
 }
 

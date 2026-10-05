@@ -401,6 +401,9 @@ impl Manager {
                     match req {
                         Ok(req) => {
                             assert!(req.user_context().inbound_tag == tag);
+                            let span = tracing::Span::current();
+                            let _ = req.user_context().src_addr.map(|a| span.record("src", tracing::field::display(a)));
+                            let _ = req.user_context().stats.as_ref().map(|a| span.record("user", tracing::field::display(&a.username)));
                             let dispatcher = dispatcher.clone();
                             requests.spawn(async move {
                                 dispatcher.dispatch(req).await;

@@ -31,6 +31,7 @@ const UDP_STATS_BYTES: usize = 777;
 #[tokio::test]
 async fn shadowquic_user_api_add_remove_and_permissions() {
     let server = ShadowQuicServer::new(ShadowQuicServerCfg {
+        tag: "inbound".into(),
         bind_addr: SERVER_ADDR.parse().unwrap(),
         users: vec![
             AuthUser {
@@ -99,6 +100,7 @@ async fn shadowquic_user_api_add_remove_and_permissions() {
 #[tokio::test]
 async fn shadowquic_user_api_get_stats_and_kill_user_conns() {
     let mut server = ShadowQuicServer::new(ShadowQuicServerCfg {
+        tag: "inbound".into(),
         bind_addr: STATS_SERVER_ADDR.parse().unwrap(),
         users: vec![
             AuthUser {
@@ -209,6 +211,7 @@ async fn shadowquic_user_api_get_stats_tracks_tcp_and_udp_bytes() {
     tokio::spawn(udp_echo_once(udp_socket, UDP_STATS_BYTES));
 
     let sq_server = ShadowQuicServer::new(ShadowQuicServerCfg {
+        tag: "inbound".into(),
         bind_addr: TRAFFIC_STATS_SERVER_ADDR.parse().unwrap(),
         users: vec![
             AuthUser {
@@ -306,6 +309,7 @@ async fn shadowquic_user_api_clear_stats() {
     tokio::spawn(udp_echo_once(udp_socket, UDP_STATS_BYTES));
 
     let sq_server = ShadowQuicServer::new(ShadowQuicServerCfg {
+        tag: "inbound".into(),
         bind_addr: CLEAR_STATS_SERVER_ADDR.parse().unwrap(),
         users: vec![
             AuthUser {
