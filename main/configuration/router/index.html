@@ -1580,7 +1580,7 @@
   <span class="md-ellipsis">
     
   
-  Country d b
+  Country db
 
     
   </span>
@@ -1607,7 +1607,7 @@
   <span class="md-ellipsis">
     
   
-  Geosite d b
+  Geosite db
 
     
   </span>
@@ -1974,7 +1974,7 @@ no network I/O or asynchronous suspension. They do not take a DNS service tag.
 <code>lookup</code> and <code>reverse_lookup</code> suspend the routing function and raise Lua errors
 on failure. Route DNS upstream requests</p>
 <p>Database membership helpers require <code>router.database</code> entries (see
-[<code>super::RouterDBCfg</code>]). <code>find_domain(tag, list, domain)</code>,
+<a href="../shared/routerdatabasecfg/"><code>super::RouterDatabaseCfg</code></a>). <code>find_domain(tag, list, domain)</code>,
 <code>find_ip_v4(tag, list, ip)</code>, and <code>find_ip_v6(tag, list, ip)</code> return booleans.
 Missing databases download through an internal inbound with the database tag.
 Route that traffic before calling helpers. Unavailable databases raise Lua
