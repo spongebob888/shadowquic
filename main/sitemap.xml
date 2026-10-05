@@ -67,7 +67,7 @@
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/loglevel/</loc>
       </url>
       <url>
-        <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/routerdbcfg/</loc>
+        <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/routerdatabasecfg/</loc>
       </url>
       <url>
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/authuser/</loc>
@@ -91,7 +91,10 @@
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/dnsstrategy/</loc>
       </url>
       <url>
-        <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/routerdbkind/</loc>
+        <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/countrydbcfg/</loc>
+      </url>
+      <url>
+        <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/geositedbcfg/</loc>
       </url>
       <url>
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/interface/</loc>
