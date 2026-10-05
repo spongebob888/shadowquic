@@ -11,14 +11,14 @@ pub fn default_geosite_url() -> String {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", tag = "type")]
 pub enum RouterDatabaseCfg {
-    Country(CountryDBCfg),
-    Geosite(GeositeDBCfg),
+    Country(CountryDbCfg),
+    Geosite(GeositeDbCfg),
 }
 
 /// Country IP database sourced from MMDB.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct CountryDBCfg {
+pub struct CountryDbCfg {
     /// Unique tag, also used as the inbound tag of download connections.
     pub tag: String,
     /// HTTP(S) source URL. Used only when `path` does not exist.
@@ -33,7 +33,7 @@ pub struct CountryDBCfg {
 /// Domain membership database sourced from geosite YAML.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct GeositeDBCfg {
+pub struct GeositeDbCfg {
     /// Unique tag, also used as the inbound tag of download connections.
     pub tag: String,
     /// HTTP(S) source URL. Used only when `path` does not exist.

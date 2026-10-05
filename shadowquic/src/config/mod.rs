@@ -38,7 +38,7 @@ pub use crate::config::sunnyquic::*;
 mod router;
 mod router_database;
 pub use router::RouterCfg;
-pub use router_database::{CountryDBCfg, GeositeDBCfg, RouterDatabaseCfg, RouterDBKind};
+pub use router_database::{CountryDbCfg, GeositeDbCfg, RouterDatabaseCfg, RouterDBKind};
 
 /// Overall configuration of shadowquic.
 ///

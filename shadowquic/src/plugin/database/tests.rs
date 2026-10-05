@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     ProxyRequest,
-    config::{Config, CountryDBCfg, GeositeDBCfg},
+    config::{Config, CountryDbCfg, GeositeDbCfg},
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -20,12 +20,12 @@ const YAML: &str = r#"lists:
 "#;
 fn config(dir: &Path, kind: RouterDBKind) -> RouterDatabaseCfg {
     match kind {
-        RouterDBKind::Country => RouterDatabaseCfg::Country(CountryDBCfg {
+        RouterDBKind::Country => RouterDatabaseCfg::Country(CountryDbCfg {
             tag: "db".into(),
             url: "https://example.test/db".into(),
             path: dir.join("db.redb"),
         }),
-        RouterDBKind::Geosite => RouterDatabaseCfg::Geosite(GeositeDBCfg {
+        RouterDBKind::Geosite => RouterDatabaseCfg::Geosite(GeositeDbCfg {
             tag: "db".into(),
             url: "https://example.test/db".into(),
             path: dir.join("db.redb"),
@@ -197,7 +197,7 @@ fn database_config_rejects_tag_collisions_and_bad_urls() {
         let mut config: Config = serde_saphyr::from_str(base).unwrap();
         config.router.database = (0..count)
             .map(|i| {
-                RouterDatabaseCfg::Geosite(GeositeDBCfg {
+                RouterDatabaseCfg::Geosite(GeositeDbCfg {
                     tag: tag.into(),
                     url: "https://example.test/db".into(),
                     path: format!("db{i}.redb").into(),
