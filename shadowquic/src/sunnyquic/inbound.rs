@@ -287,14 +287,12 @@ impl Inbound for SunnyQuicServer {
             .recv()
             .await
             .ok_or(SError::InboundUnavailable)?;
-        let preferred = self
-            .user_manager
-            .config
-            .read()
-            .await
-            .default_outbound
-            .clone();
-        req.set_preferred_outbound(preferred);
+        {
+            let config = self.user_manager.config.read().await;
+            let context = req.user_context_mut();
+            context.inbound_tag = config.tag.clone();
+            context.preferred_outbound = config.default_outbound.clone();
+        }
         Ok(self.observer.wrap_request(req).await)
     }
     /// Init background job for accepting connection

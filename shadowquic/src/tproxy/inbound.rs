@@ -153,7 +153,8 @@ impl Inbound for TproxyServer {
                 req
             }
         };
-        req.set_preferred_outbound(self.cfg.default_outbound.clone());
+        req.user_context_mut().inbound_tag = self.cfg.tag.clone();
+        req.user_context_mut().preferred_outbound = self.cfg.default_outbound.clone();
         Ok(req)
     }
 }

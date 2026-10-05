@@ -343,15 +343,15 @@ async fn preferred_outbound_routes_without_a_router() {
     };
 
     let mut req = request();
-    req.set_inbound_tag("inbound-a".into());
-    req.set_preferred_outbound(Some("out-a".into()));
+    req.user_context_mut().inbound_tag = "inbound-a".into();
+    req.user_context_mut().preferred_outbound = Some("out-a".into());
     dispatcher.dispatch(req).await;
     assert_eq!(hits_a.load(Ordering::SeqCst), 1);
     assert_eq!(hits_b.load(Ordering::SeqCst), 0);
 
     // A request with no preference falls back to the global default.
     let mut req = request();
-    req.set_inbound_tag("inbound-b".into());
+    req.user_context_mut().inbound_tag = "inbound-b".into();
     dispatcher.dispatch(req).await;
     assert_eq!(hits_a.load(Ordering::SeqCst), 1);
     assert_eq!(hits_b.load(Ordering::SeqCst), 1);
@@ -381,8 +381,8 @@ async fn router_takes_priority_over_the_preferred_outbound() {
     };
 
     let mut req = request();
-    req.set_inbound_tag("inbound-a".into());
-    req.set_preferred_outbound(Some("out-inbound".into()));
+    req.user_context_mut().inbound_tag = "inbound-a".into();
+    req.user_context_mut().preferred_outbound = Some("out-inbound".into());
     dispatcher.dispatch(req).await;
     // The router decides even when the request carries a preference.
     assert_eq!(hits_router.load(Ordering::SeqCst), 1);
@@ -390,7 +390,7 @@ async fn router_takes_priority_over_the_preferred_outbound() {
 }
 
 struct RoutingOutbound {
-    /// Inbound tag the manager must have stamped on every request it handles.
+    /// Inbound tag supplied by the accepting inbound.
     expected_inbound: &'static str,
     hits: Arc<AtomicUsize>,
     called: Arc<Barrier>,
@@ -399,7 +399,7 @@ struct RoutingOutbound {
 #[async_trait]
 impl Outbound for RoutingOutbound {
     async fn handle(&self, req: ProxyRequest) -> Result<(), SError> {
-        assert_eq!(req.inbound_tag(), self.expected_inbound);
+        assert_eq!(req.user_context().inbound_tag, self.expected_inbound);
         self.hits.fetch_add(1, Ordering::SeqCst);
         self.called.wait().await;
         Ok(())
@@ -407,7 +407,7 @@ impl Outbound for RoutingOutbound {
 }
 
 #[tokio::test]
-async fn manager_tags_requests_and_routes_by_preferred_outbound() {
+async fn manager_preserves_inbound_tags_and_routes_by_preferred_outbound() {
     // Two outbounds plus the shutdown future release the barrier.
     let called = Arc::new(Barrier::new(3));
     let hits_a = Arc::new(AtomicUsize::new(0));
@@ -416,14 +416,14 @@ async fn manager_tags_requests_and_routes_by_preferred_outbound() {
     for (tag, preferred) in [("a", Some("out-a")), ("b", None)] {
         let (send, recv) = mpsc::channel(1);
         let mut req = request();
-        // The accepting inbound stamps its preference before handing the
-        // request to the manager.
-        req.set_preferred_outbound(preferred.map(str::to_owned));
+        // Simulate an inbound returning a request with its tag and preference.
+        req.user_context_mut().inbound_tag = tag.to_owned();
+        req.user_context_mut().preferred_outbound = preferred.map(str::to_owned);
         send.send(req)
             .await
             .unwrap_or_else(|_| panic!("request channel closed"));
         inbounds.insert(
-            tag.to_string(),
+            format!("manager-{tag}"),
             Box::new(TestInbound {
                 requests: recv,
                 initialized: Arc::new(AtomicUsize::new(0)),

@@ -70,9 +70,13 @@ async fn socks_server_accepts_after_client_closes_before_accept() {
         assert_eq!(&connect_reply[..4], &[0x05, 0x00, 0x00, 0x01]);
 
         let req = inbound.accept().await.unwrap();
+        assert_eq!(req.user_context().inbound_tag, "test-socks");
         // The inbound stamps its configured default outbound as the request's
         // preference before handing it to the manager.
-        assert_eq!(req.preferred_outbound(), Some("proxy-out"));
+        assert_eq!(
+            req.user_context().preferred_outbound.as_deref(),
+            Some("proxy-out")
+        );
         let ProxyRequest::Tcp(mut session) = req else {
             panic!("expected the second client's TCP request");
         };

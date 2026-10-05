@@ -324,7 +324,13 @@ impl DnsServer {
 #[async_trait]
 impl Inbound for DnsServer {
     async fn accept(&mut self) -> Result<ProxyRequest> {
-        self.requests.recv().await.ok_or(SError::InboundUnavailable)
+        let mut req = self
+            .requests
+            .recv()
+            .await
+            .ok_or(SError::InboundUnavailable)?;
+        req.user_context_mut().inbound_tag = self.resolver.tag.clone();
+        Ok(req)
     }
     async fn shutdown(&self) -> Result<()> {
         let mut tasks = self.tasks.lock().await;

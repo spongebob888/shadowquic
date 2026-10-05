@@ -73,7 +73,8 @@ impl Inbound for MixedServer {
             .recv()
             .await
             .ok_or(SError::InboundUnavailable)?;
-        recv.set_preferred_outbound(self.cfg.default_outbound.clone());
+        recv.user_context_mut().inbound_tag = self.cfg.tag.clone();
+        recv.user_context_mut().preferred_outbound = self.cfg.default_outbound.clone();
         Ok(recv)
     }
 

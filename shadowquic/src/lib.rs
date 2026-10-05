@@ -47,6 +47,18 @@ pub enum ProxyRequest<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend> {
 }
 
 impl ProxyRequest {
+    pub fn user_context(&self) -> &UserContext {
+        match self {
+            ProxyRequest::Tcp(TcpSession { user_context, .. }) => user_context,
+            ProxyRequest::Udp(UdpSession { user_context, .. }) => user_context,
+        }
+    }
+    pub fn user_context_mut(&mut self) -> &mut UserContext {
+        match self {
+            ProxyRequest::Tcp(TcpSession { user_context, .. }) => user_context,
+            ProxyRequest::Udp(UdpSession { user_context, .. }) => user_context,
+        }
+    }
     pub fn dst(&self) -> &SocksAddr {
         match self {
             ProxyRequest::Tcp(TcpSession { dst, .. }) => dst,
@@ -58,36 +70,6 @@ impl ProxyRequest {
         match self {
             ProxyRequest::Tcp(session) => session.dst = dst,
             ProxyRequest::Udp(session) => session.dst = dst,
-        }
-    }
-
-    pub(crate) fn set_inbound_tag(&mut self, tag: String) {
-        match self {
-            ProxyRequest::Tcp(session) => session.user_context.inbound_tag = tag,
-            ProxyRequest::Udp(session) => session.user_context.inbound_tag = tag,
-        }
-    }
-
-    /// Tag of the inbound that accepted this request.
-    pub fn inbound_tag(&self) -> &str {
-        match self {
-            ProxyRequest::Tcp(session) => &session.user_context.inbound_tag,
-            ProxyRequest::Udp(session) => &session.user_context.inbound_tag,
-        }
-    }
-
-    pub(crate) fn set_preferred_outbound(&mut self, tag: Option<String>) {
-        match self {
-            ProxyRequest::Tcp(session) => session.user_context.preferred_outbound = tag,
-            ProxyRequest::Udp(session) => session.user_context.preferred_outbound = tag,
-        }
-    }
-
-    /// Outbound the accepting inbound prefers when no router script decides.
-    pub fn preferred_outbound(&self) -> Option<&str> {
-        match self {
-            ProxyRequest::Tcp(session) => session.user_context.preferred_outbound.as_deref(),
-            ProxyRequest::Udp(session) => session.user_context.preferred_outbound.as_deref(),
         }
     }
 }
@@ -217,6 +199,7 @@ impl TcpTrait for TcpStream {
 
 #[async_trait]
 pub trait Inbound<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend>: Send + Sync + Unpin {
+    /// Return a request with its inbound tag and routing preference populated.
     async fn accept(&mut self) -> Result<ProxyRequest<T, I, O>, SError>;
     async fn init(&self) -> Result<(), SError> {
         Ok(())
@@ -320,7 +303,9 @@ impl RequestDispatcher {
     /// Outbound for a request with no router script: the inbound's preferred
     /// outbound, else the global default.
     fn fallback_outbound_tag(&self, req: &ProxyRequest) -> String {
-        req.preferred_outbound()
+        req.user_context()
+            .preferred_outbound
+            .as_deref()
             .unwrap_or(self.default_outbound.as_str())
             .to_owned()
     }
@@ -414,8 +399,8 @@ impl Manager {
                         }
                     };
                     match req {
-                        Ok(mut req) => {
-                            req.set_inbound_tag(tag.clone());
+                        Ok(req) => {
+                            assert!(req.user_context().inbound_tag == tag);
                             let dispatcher = dispatcher.clone();
                             requests.spawn(async move {
                                 dispatcher.dispatch(req).await;

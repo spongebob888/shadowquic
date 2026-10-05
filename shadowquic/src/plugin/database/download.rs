@@ -93,7 +93,9 @@ impl Inbound for DownloadInbound {
         Ok(())
     }
     async fn accept(&mut self) -> std::result::Result<ProxyRequest, SError> {
-        self.rx.recv().await.ok_or(SError::InboundUnavailable)
+        let mut req = self.rx.recv().await.ok_or(SError::InboundUnavailable)?;
+        req.user_context_mut().inbound_tag = self.cfg.tag().to_owned();
+        Ok(req)
     }
     async fn shutdown(&self) -> std::result::Result<(), SError> {
         self.stop.send_replace(true);
@@ -164,7 +166,6 @@ async fn download(
             dst,
             src_addr: None,
             user_context: UserContext {
-                inbound_tag: cfg.tag().to_owned(),
                 ..Default::default()
             },
         }))
