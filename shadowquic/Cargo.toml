@@ -10,12 +10,17 @@ license = { workspace = true}
 readme = { workspace = true}
 [features]
 default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", "mixed", "plugin", "router-db", "dns-server"]
+# cost 1.4 mb
 dns-server = ["dep:simple-dns", "dep:tokio-rustls-jls", "dep:rustls_jls"]
+# cost 200k
 statistics = ["dep:portable-atomic"]
+# cost 200k
 mixed = ["dep:base64"]
+# cost about 2.4m
 plugin = ["plugin-vendored"]
 plugin-vendored = ["plugin-system", "mlua/vendored"]
 plugin-system = ["dep:mlua", "mlua/send", "mlua/async", "dep:notify"]
+# cost about 2mb, requires plugin enabled
 router-db = ["plugin-system", "dep:redb", "dep:maxminddb", "dep:sha2", "dep:regex", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:tokio-rustls-jls", "dep:rustls_jls", "tokio-rustls-jls/tls12", "dep:url", "dep:tempfile"]
 ring = [
     "dep:ring",
@@ -40,7 +45,9 @@ aws-lc-rs = [
 tokio-console = ["dep:console-subscriber","tokio/tracing"]
 shadowquic-quinn = ["dep:quinn","dep:rustls_jls", "dep:quinn_proto"]
 sunnyquic-gm-quic = ["dep:gm-quic","dep:qevent","dep:qbase","dep:qunreliable", "dep:rustls","dep:rustls-native-certs","dep:notify"]
+# cost 3.6mb
 sunnyquic-noq = ["dep:noq", "dep:rustls", "dep:rustls-native-certs","dep:notify", "dep:noq-proto"]
+# cost 200k
 tproxy = ["dep:etherparse", "dep:libc"]
 
 [dependencies]
