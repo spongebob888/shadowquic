@@ -38,7 +38,7 @@ pub use crate::config::sunnyquic::*;
 mod router;
 mod router_database;
 pub use router::RouterCfg;
-pub use router_database::{CountryDbCfg, GeositeDbCfg, RouterDatabaseCfg, RouterDBKind};
+pub use router_database::{CountryDbCfg, GeositeDbCfg, RouterDBKind, RouterDatabaseCfg};
 
 /// Overall configuration of shadowquic.
 ///
@@ -247,13 +247,17 @@ impl Config {
             Arc::make_mut(&mut resolver_manager).insert(tag.clone(), server.resolver.clone());
             inbounds.insert(tag.clone(), Box::new(server) as Box<dyn Inbound>);
         }
-        #[cfg(feature = "plugin")]
+        #[cfg(feature = "router-db")]
         let databases =
             crate::plugin::database::Databases::build(&self.router.database, &mut inbounds)?;
         #[cfg(feature = "plugin")]
         let router = self
             .router
-            .build(resolver_manager.clone(), databases)?
+            .build(
+                resolver_manager.clone(),
+                #[cfg(feature = "router-db")]
+                databases,
+            )?
             .map(Arc::new);
         for cfg in self.outbounds {
             let tag = cfg.tag().to_owned();

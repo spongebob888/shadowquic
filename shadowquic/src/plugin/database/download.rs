@@ -139,7 +139,8 @@ impl tokio::io::AsyncWrite for DownloadStream {
     }
 }
 impl TcpTrait for DownloadStream {}
-impl TcpTrait for tokio_rustls::client::TlsStream<tokio::io::DuplexStream> {}
+#[cfg(not(feature = "dns-server"))]
+impl TcpTrait for tokio_rustls_jls::client::TlsStream<tokio::io::DuplexStream> {}
 
 async fn download(
     cfg: &RouterDatabaseCfg,
@@ -169,23 +170,19 @@ async fn download(
         }))
         .await?;
         let stream: AnyTcp = if url.scheme() == "https" {
-            let roots = tokio_rustls::rustls::RootCertStore::from_iter(
+            let roots = rustls_jls::RootCertStore::from_iter(
                 webpki_roots::TLS_SERVER_ROOTS.iter().cloned(),
             );
-            let provider = tokio_rustls::rustls::crypto::CryptoProvider::get_default()
+            let provider = rustls_jls::crypto::CryptoProvider::get_default()
                 .cloned()
                 .or_else(|| {
                     #[cfg(feature = "ring")]
                     {
-                        Some(Arc::new(
-                            tokio_rustls::rustls::crypto::ring::default_provider(),
-                        ))
+                        Some(Arc::new(rustls_jls::crypto::ring::default_provider()))
                     }
                     #[cfg(all(not(feature = "ring"), feature = "aws-lc-rs"))]
                     {
-                        Some(Arc::new(
-                            tokio_rustls::rustls::crypto::aws_lc_rs::default_provider(),
-                        ))
+                        Some(Arc::new(rustls_jls::crypto::aws_lc_rs::default_provider()))
                     }
                     #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
                     {
@@ -193,13 +190,15 @@ async fn download(
                     }
                 })
                 .ok_or("HTTPS database downloads require a TLS crypto provider")?;
-            let tls = tokio_rustls::rustls::ClientConfig::builder_with_provider(provider)
+            let mut tls = rustls_jls::ClientConfig::builder_with_provider(provider)
                 .with_safe_default_protocol_versions()?
                 .with_root_certificates(roots)
                 .with_no_client_auth();
-            let name = tokio_rustls::rustls::pki_types::ServerName::try_from(host.to_owned())?;
+            // Database sources use ordinary HTTPS with certificate verification.
+            tls.jls_config.enable = false;
+            let name = rustls_jls::pki_types::ServerName::try_from(host.to_owned())?;
             Box::new(
-                tokio_rustls::TlsConnector::from(Arc::new(tls))
+                tokio_rustls_jls::TlsConnector::from(Arc::new(tls))
                     .connect(name, client)
                     .await?,
             )

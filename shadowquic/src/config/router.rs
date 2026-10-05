@@ -100,7 +100,7 @@ use std::sync::Arc;
 /// on failure. Route DNS upstream requests
 ///
 /// Database membership helpers require `router.database` entries (see
-/// [`super::RouterDBCfg`]). `find_domain(tag, list, domain)`,
+/// [`super::RouterDatabaseCfg`]). `find_domain(tag, list, domain)`,
 /// `find_ip_v4(tag, list, ip)`, and `find_ip_v6(tag, list, ip)` return booleans.
 /// Missing databases download through an internal inbound with the database tag.
 /// Route that traffic before calling helpers. Unavailable databases raise Lua
@@ -133,6 +133,12 @@ impl RouterCfg {
                 "configure either `router.src` or `router.path`, not both".into(),
             ));
         }
+        #[cfg(not(feature = "router-db"))]
+        if !self.database.is_empty() {
+            return Err(SError::InvalidConfig(
+                "router.database requires building with the `router-db` feature".into(),
+            ));
+        }
         #[cfg(not(feature = "plugin"))]
         if self.src.is_some() || self.path.is_some() || !self.database.is_empty() {
             return Err(SError::InvalidConfig(
@@ -146,7 +152,7 @@ impl RouterCfg {
                     "router database paths must be nonempty and unique".into(),
                 ));
             }
-            #[cfg(feature = "plugin")]
+            #[cfg(feature = "router-db")]
             crate::plugin::database::validate_url(db.url())?;
         }
         Ok(())
@@ -156,24 +162,49 @@ impl RouterCfg {
     pub(super) fn build(
         &self,
         resolver_manager: Arc<ResolverManager>,
-        databases: Arc<crate::plugin::database::Databases>,
+        #[cfg(feature = "router-db")] databases: Arc<crate::plugin::database::Databases>,
     ) -> Result<Option<Router>, SError> {
         self.validate()?;
         match (self.src.as_deref(), self.path.as_deref()) {
-            (Some(source), None) => {
-                Router::from_source_with_databases(source, resolver_manager, databases)
-                    .map(Some)
-                    .map_err(|error| {
-                        SError::InvalidConfig(format!(
-                            "failed to load inline router script: {error}"
-                        ))
-                    })
-            }
-            (None, Some(path)) => {
-                Router::load_with_databases(path, resolver_manager, databases).map(Some)
-            }
+            (Some(source), None) => Router::from_source_with_databases(
+                source,
+                resolver_manager,
+                #[cfg(feature = "router-db")]
+                databases,
+            )
+            .map(Some)
+            .map_err(|error| {
+                SError::InvalidConfig(format!("failed to load inline router script: {error}"))
+            }),
+            (None, Some(path)) => Router::load_with_databases(
+                path,
+                resolver_manager,
+                #[cfg(feature = "router-db")]
+                databases,
+            )
+            .map(Some),
             (None, None) => Ok(None),
             (Some(_), Some(_)) => unreachable!("validated above"),
         }
+    }
+}
+
+#[cfg(all(test, not(feature = "router-db")))]
+mod tests {
+    use super::RouterCfg;
+
+    #[test]
+    fn database_configuration_requires_router_db_feature() {
+        let config: RouterCfg = serde_saphyr::from_str(
+            "database:\n  - type: country\n    tag: country\n    path: country.redb\n",
+        )
+        .unwrap();
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("router-db")
+        );
     }
 }

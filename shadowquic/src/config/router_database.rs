@@ -5,7 +5,8 @@ pub fn default_country_url() -> String {
     "https://git.io/GeoLite2-Country.mmdb".into()
 }
 pub fn default_geosite_url() -> String {
-    "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat_plain.yml".into()
+    "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat_plain.yml"
+        .into()
 }
 /// A downloaded routing database, converted to an indexed redb file.
 #[derive(Serialize, Deserialize, Clone, Debug)]

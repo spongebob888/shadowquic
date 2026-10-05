@@ -6,7 +6,7 @@ mod tests;
 
 use crate::{
     Inbound,
-    config::{RouterDatabaseCfg, RouterDBKind},
+    config::{RouterDBKind, RouterDatabaseCfg},
     error::SError,
 };
 use redb::{Database, ReadableDatabase, TableDefinition};

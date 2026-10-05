@@ -9,13 +9,14 @@ description = { workspace = true }
 license = { workspace = true}
 readme = { workspace = true}
 [features]
-default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", "mixed", "plugin", "dns-server"]
+default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", "mixed", "plugin", "router-db", "dns-server"]
 dns-server = ["dep:simple-dns", "dep:tokio-rustls-jls", "dep:rustls_jls"]
 statistics = ["dep:portable-atomic"]
 mixed = ["dep:base64"]
 plugin = ["plugin-vendored"]
 plugin-vendored = ["plugin-system", "mlua/vendored"]
-plugin-system = ["dep:mlua", "mlua/send", "mlua/async", "dep:notify", "dep:redb", "dep:maxminddb", "dep:sha2", "dep:regex", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:tokio-rustls", "dep:url", "dep:tempfile"]
+plugin-system = ["dep:mlua", "mlua/send", "mlua/async", "dep:notify"]
+router-db = ["plugin-system", "dep:redb", "dep:maxminddb", "dep:sha2", "dep:regex", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:tokio-rustls-jls", "dep:rustls_jls", "tokio-rustls-jls/tls12", "dep:url", "dep:tempfile"]
 ring = [
     "dep:ring",
     "quinn?/rustls-ring",
@@ -25,7 +26,6 @@ ring = [
     "noq-proto?/rustls-ring",
     "rustls?/ring",
     "rcgen/ring",
-    "tokio-rustls?/ring",
 ]
 aws-lc-rs = [
     "dep:aws-lc-rs",
@@ -36,7 +36,6 @@ aws-lc-rs = [
     "noq-proto?/rustls-aws-lc-rs",
     "rustls?/aws-lc-rs",
     "rcgen/aws_lc_rs",
-    "tokio-rustls?/aws_lc_rs",
 ]
 tokio-console = ["dep:console-subscriber","tokio/tracing"]
 shadowquic-quinn = ["dep:quinn","dep:rustls_jls", "dep:quinn_proto"]
@@ -53,11 +52,10 @@ regex = { version = "1", optional = true }
 hyper = { version = "1", features = ["client", "http1"], optional = true }
 hyper-util = { version = "0.1", features = ["tokio"], optional = true }
 http-body-util = { version = "0.1", optional = true }
-tokio-rustls = { version = "0.26", default-features = false, features = ["tls12"], optional = true }
 url = { version = "2", optional = true }
 simple-dns = { version = "0.12", optional = true }
 # Version 0.1.0 requires early-data to compile its server implementation.
-# TLS early data remains disabled in the DNS client configuration.
+# TLS early data remains disabled in DNS and database download clients.
 tokio-rustls-jls = { version = "0.1.0", default-features = false, features = ["early-data"], optional = true }
 thiserror = "2.0.18"
 tokio = {version = "1.52.3", features = ["io-util", "net","rt","macros","rt-multi-thread","signal","time"]}

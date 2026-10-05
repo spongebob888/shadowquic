@@ -11,6 +11,7 @@ use tracing::{info, info_span, warn};
 
 use mlua::{Function, Lua, LuaOptions, StdLib, UserData, UserDataFields, chunk::ChunkMode};
 
+#[cfg(feature = "router-db")]
 use super::database::Databases;
 use crate::dns::ResolverManager;
 use crate::{
@@ -240,6 +241,7 @@ pub struct Router {
 }
 
 struct RouterInner {
+    #[cfg(feature = "router-db")]
     databases: Arc<Databases>,
     source: String,
     lua: Lua,
@@ -249,24 +251,33 @@ struct RouterInner {
 impl Router {
     /// Load a script and watch its parent directory, including atomic file replacements.
     pub fn load(path: &Path) -> Result<Self, SError> {
-        Self::load_with_databases(path, Arc::new(ResolverManager::new()), Arc::default())
+        Self::load_with_databases(
+            path,
+            Arc::new(ResolverManager::new()),
+            #[cfg(feature = "router-db")]
+            Arc::default(),
+        )
     }
 
     pub(crate) fn load_with_databases(
         path: &Path,
         resolver_manager: Arc<ResolverManager>,
-        databases: Arc<Databases>,
+        #[cfg(feature = "router-db")] databases: Arc<Databases>,
     ) -> Result<Self, SError> {
         let path = watched_script_path(path)?;
         let script = read_script(&path)?;
-        let mut router =
-            Self::from_source_with_databases(&script, resolver_manager.clone(), databases)
-                .map_err(|error| {
-                    SError::InvalidConfig(format!(
-                        "failed to load router script {}: {error}",
-                        path.display()
-                    ))
-                })?;
+        let mut router = Self::from_source_with_databases(
+            &script,
+            resolver_manager.clone(),
+            #[cfg(feature = "router-db")]
+            databases,
+        )
+        .map_err(|error| {
+            SError::InvalidConfig(format!(
+                "failed to load router script {}: {error}",
+                path.display()
+            ))
+        })?;
         let inner = Arc::downgrade(&router.inner);
         let watched_path = path.clone();
         let span = info_span!("router", path = %path.display());
@@ -313,7 +324,12 @@ impl Router {
 
     #[cfg(test)]
     pub(crate) fn from_source(source: &str) -> mlua::Result<Self> {
-        Self::from_source_with_databases(source, Arc::new(ResolverManager::new()), Arc::default())
+        Self::from_source_with_databases(
+            source,
+            Arc::new(ResolverManager::new()),
+            #[cfg(feature = "router-db")]
+            Arc::default(),
+        )
     }
 
     #[cfg(all(test, feature = "dns-server"))]
@@ -321,19 +337,25 @@ impl Router {
         source: &str,
         resolver_manager: Arc<ResolverManager>,
     ) -> mlua::Result<Self> {
-        Self::from_source_with_databases(source, resolver_manager, Arc::default())
+        Self::from_source_with_databases(
+            source,
+            resolver_manager,
+            #[cfg(feature = "router-db")]
+            Arc::default(),
+        )
     }
 
     pub(crate) fn from_source_with_databases(
         source: &str,
         resolver_manager: Arc<ResolverManager>,
-        databases: Arc<Databases>,
+        #[cfg(feature = "router-db")] databases: Arc<Databases>,
     ) -> mlua::Result<Self> {
         Ok(Self {
             _watcher: None,
             inner: Arc::new(Mutex::new(Self::compile_inner(
                 source,
                 resolver_manager,
+                #[cfg(feature = "router-db")]
                 databases,
             )?)),
         })
@@ -342,7 +364,7 @@ impl Router {
     fn compile_inner(
         source: &str,
         resolver_manager: Arc<ResolverManager>,
-        databases: Arc<Databases>,
+        #[cfg(feature = "router-db")] databases: Arc<Databases>,
     ) -> mlua::Result<RouterInner> {
         #[cfg(not(feature = "dns-server"))]
         let _ = resolver_manager;
@@ -409,14 +431,20 @@ impl Router {
                 })?,
             )?;
         }
+        #[cfg(feature = "router-db")]
         databases.install(&lua)?;
-        Self::compile_common(source, lua, databases)
+        Self::compile_common(
+            source,
+            lua,
+            #[cfg(feature = "router-db")]
+            databases,
+        )
     }
 
     fn compile_common(
         source: &str,
         lua: Lua,
-        databases: Arc<Databases>,
+        #[cfg(feature = "router-db")] databases: Arc<Databases>,
     ) -> mlua::Result<RouterInner> {
         // The base library is always loaded, including file and code loaders.
         // Remove these before evaluating any user-provided source.
@@ -441,6 +469,7 @@ impl Router {
             .set_mode(ChunkMode::Text)
             .eval::<Function>()?;
         Ok(RouterInner {
+            #[cfg(feature = "router-db")]
             databases,
             source: source.to_owned(),
             lua,
@@ -533,8 +562,13 @@ fn reload_script(inner: &Mutex<RouterInner>, path: &Path, resolver_manager: Arc<
         if source == inner.source {
             return Ok(false);
         }
-        let replacement = Router::compile_inner(&source, resolver_manager, inner.databases.clone())
-            .map_err(|error| SError::RouterError(error.to_string()))?;
+        let replacement = Router::compile_inner(
+            &source,
+            resolver_manager,
+            #[cfg(feature = "router-db")]
+            inner.databases.clone(),
+        )
+        .map_err(|error| SError::RouterError(error.to_string()))?;
         *inner = replacement;
         Ok::<_, SError>(true)
     })();
@@ -1078,6 +1112,18 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "router-db"))]
+    #[tokio::test]
+    async fn database_helpers_are_absent_without_router_db() {
+        let router = Router::from_source(
+            r#"assert(find_domain == nil and find_ip_v4 == nil and find_ip_v6 == nil)
+               return function(_) return "direct" end"#,
+        )
+        .unwrap();
+        assert_eq!(router.route(&mut context()).await.unwrap(), "direct");
+    }
+
+    #[cfg(feature = "router-db")]
     #[tokio::test]
     async fn database_helpers_remain_available_after_script_reload() {
         use crate::config::{GeositeDbCfg, RouterDatabaseCfg};

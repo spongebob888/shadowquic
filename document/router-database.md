@@ -1,5 +1,10 @@
 # Router databases
 
+Requires the `router-db` Cargo feature (enabled by default). This feature enables
+Lua routing and the database import, download, and lookup dependencies. For Lua
+routing without database support, build with `--no-default-features` and select
+`plugin` alongside the other features you need.
+
 `router.database` makes Country MMDB and v2fly Geosite lists available to Lua.
 This requires the `plugin` feature. Each entry has four required fields:
 
