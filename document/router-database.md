@@ -84,6 +84,9 @@ Country databases store inclusive IP ranges in two tables per lowercase ISO code
 `country_v4_us` and `country_v6_us`, for example. Records without a country ISO
 code are skipped. Existing files containing English-name tables must be rebuilt
 to reclaim that space.
+Adjacent ranges belonging to the same country and address family are merged
+during import. Gaps remain unmatched. Rebuild existing files to apply this
+storage optimization; the Country schema remains `2`.
 IPv4 tables map `ip_start: u32` to `ip_end: u32`; IPv6 tables map
 `ip_start: u128` to `ip_end: u128`. Both tables are created even if one is empty.
 Addresses use their numeric network-order values, computed with

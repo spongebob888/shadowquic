@@ -203,16 +203,22 @@ fn country_import_matches_mmdb_for_ipv4_and_ipv6() {
             .unwrap();
         match (network.network(), network.broadcast()) {
             (IpAddr::V4(start), IpAddr::V4(end)) => {
-                assert_eq!(
-                    v4.get(u32::from(start)).unwrap().unwrap().value(),
-                    u32::from(end)
-                );
+                let (_, stored_end) = v4
+                    .range(..=u32::from(start))
+                    .unwrap()
+                    .next_back()
+                    .unwrap()
+                    .unwrap();
+                assert!(stored_end.value() >= u32::from(end));
             }
             (IpAddr::V6(start), IpAddr::V6(end)) => {
-                assert_eq!(
-                    v6.get(u128::from(start)).unwrap().unwrap().value(),
-                    u128::from(end)
-                );
+                let (_, stored_end) = v6
+                    .range(..=u128::from(start))
+                    .unwrap()
+                    .next_back()
+                    .unwrap()
+                    .unwrap();
+                assert!(stored_end.value() >= u128::from(end));
             }
             _ => unreachable!(),
         }
@@ -232,6 +238,82 @@ fn country_import_matches_mmdb_for_ipv4_and_ipv6() {
     }
     assert_eq!(families, [true, true]);
     assert!(!db.find_ip("US", "127.0.0.1".parse().unwrap()).unwrap());
+    for handle in read.list_tables().unwrap() {
+        if handle.name().starts_with("country_v4_") {
+            let table = read.open_table(CountryV4Table::new(handle.name())).unwrap();
+            let mut previous: Option<u32> = None;
+            for entry in table.iter().unwrap() {
+                let (start, end) = entry.unwrap();
+                if let Some(previous) = previous {
+                    assert!(previous.checked_add(1).unwrap() < start.value());
+                }
+                previous = Some(end.value());
+            }
+        } else if handle.name().starts_with("country_v6_") {
+            let table = read.open_table(CountryV6Table::new(handle.name())).unwrap();
+            let mut previous: Option<u128> = None;
+            for entry in table.iter().unwrap() {
+                let (start, end) = entry.unwrap();
+                if let Some(previous) = previous {
+                    assert!(previous.checked_add(1).unwrap() < start.value());
+                }
+                previous = Some(end.value());
+            }
+        }
+    }
+}
+
+#[test]
+fn country_import_merges_adjacent_ranges_in_either_order_without_crossing_gaps() {
+    fn check<T>(maximum: T)
+    where
+        T: for<'a> redb::Key<SelfType<'a> = T>
+            + Copy
+            + Ord
+            + Into<u128>
+            + From<u8>
+            + std::fmt::Debug
+            + 'static,
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::create(dir.path().join("merge.redb")).unwrap();
+        let write = db.begin_write().unwrap();
+        let mut table = write
+            .open_table(TableDefinition::<T, T>::new("ranges"))
+            .unwrap();
+        // Exercise a predecessor merge, successor merge, and a bridge joining both.
+        for (start, end) in [
+            (10, 19),
+            (20, 29),
+            (5, 9),
+            (40, 49),
+            (30, 39),
+            (51, 60),
+            (0, 0),
+        ] {
+            insert_country_range(&mut table, T::from(start), T::from(end)).unwrap();
+        }
+        insert_country_range(&mut table, maximum, maximum).unwrap();
+        let ranges: Vec<_> = table
+            .iter()
+            .unwrap()
+            .map(|entry| {
+                let (start, end) = entry.unwrap();
+                (start.value(), end.value())
+            })
+            .collect();
+        assert_eq!(
+            ranges,
+            vec![
+                (T::from(0), T::from(0)),
+                (T::from(5), T::from(49)),
+                (T::from(51), T::from(60)),
+                (maximum, maximum)
+            ]
+        );
+    }
+    check(u32::MAX);
+    check(u128::MAX);
 }
 
 #[test]

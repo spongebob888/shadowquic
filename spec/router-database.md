@@ -33,6 +33,8 @@ The entry of mmdb can be regarded as a list of ip ranges. In `SCHEMA = 2`, each 
 
 Each table is a list of inclusive ip ranges with key = ip_start, value = ip_end. IPv4 tables use `u32` for both key and value; IPv6 tables use `u128`.
 
+Merge adjacent ranges within each country and address family during import. Preserve gaps between ranges and never merge ranges belonging to different countries or address families.(Disk usage changed change from 65mb to 33mb)
+
 Convert IP octets to integers in network (big-endian) order, independently of host endianness, using `u32::from_be_bytes` or `u128::from_be_bytes`.
 
 To implement find_ip, select the table for the queried address family, find the greatest key that is equal to or smaller than the queried IP, and check that the IP is no larger than the range end.
