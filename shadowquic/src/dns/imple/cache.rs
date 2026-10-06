@@ -17,7 +17,7 @@ struct Entry {
     expires: Instant,
 }
 
-/// Shared by all DNS services, keyed only by the query with its transaction ID cleared.
+/// Shared by non-fake-IP DNS services, keyed by the query with its transaction ID cleared.
 #[derive(Default)]
 pub struct DnsCache {
     entries: Mutex<HashMap<Vec<u8>, Entry>>,
