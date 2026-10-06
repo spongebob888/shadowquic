@@ -98,7 +98,7 @@ impl Inbound for TproxyServer {
             (stream, addr) = async {
                 loop {
                     match self.tcp_listener.accept().await {
-                        Ok(connection) => return connection,
+                        Ok((conn, addr)) => return (conn, addr.to_canonical()),
                         Err(error) => {
                             tracing::error!(%error, "failed to accept tproxy tcp connection");
                             // Keep UDP requests available while TCP accepts back off.
@@ -121,7 +121,8 @@ impl Inbound for TproxyServer {
                     tracing::info!("accepted tproxy tcp connection");
                 });
                 let src_addr = Some(addr);
-                let orig_dst = stream.local_addr().map_err(|e| SError::SocksError(e.to_string()))?;
+                let orig_dst = stream.local_addr().map_err(|e| SError::SocksError(e.to_string()))?
+                .to_canonical();
                 let dst = SocksAddr {
                     addr: match orig_dst.ip() {
                         std::net::IpAddr::V4(v4) => AddrOrDomain::V4(v4.octets()),
