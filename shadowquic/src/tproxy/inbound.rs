@@ -111,15 +111,9 @@ impl Inbound for TproxyServer {
                 // other two inbounds there is no measured handshake delay to fix
                 // here; this only keeps every accepted socket behaving the same.
                 let _ = stream.set_nodelay(true);
-                let span = tracing::info_span!("inbound",
-                    tag = %tag,
-                    src = %addr,
-                    user = tracing::field::Empty,
-                    id = tracing::field::Empty,
-                );
-                span.in_scope(|| {
-                    tracing::info!("accepted tproxy tcp connection");
-                });
+
+                tracing::info!("accepted tproxy tcp connection");
+
                 let src_addr = Some(addr);
                 let orig_dst = stream.local_addr().map_err(|e| SError::SocksError(e.to_string()))?
                 .to_canonical();
