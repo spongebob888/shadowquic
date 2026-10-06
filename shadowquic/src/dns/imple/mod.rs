@@ -517,6 +517,10 @@ impl Resolver {
 impl DnsService for Resolver {
     async fn exchange(&self, query: &[u8]) -> Result<Vec<u8>> {
         let packet = parse_query(query)?;
+        // Fake addresses belong only to this resolver's mapping, never the shared cache.
+        if matches!(self.backend, Backend::FakeIp) {
+            return self.local(packet).await;
+        }
         if let Some(cached) = self.cache.get(query)? {
             return Ok(cached);
         }
@@ -613,7 +617,7 @@ async fn write_frame(stream: &mut (impl AsyncWrite + Unpin), bytes: &[u8]) -> Re
     Ok(())
 }
 
-/// Owns the resolver tag map and the shared DNS cache used by every resolver.
+/// Owns the resolver tag map and the shared DNS cache used by non-fake-IP resolvers.
 #[derive(Clone)]
 pub struct ResolverManager {
     pub(crate) resolvers: Arc<HashMap<String, Arc<Resolver>>>,

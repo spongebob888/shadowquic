@@ -234,6 +234,70 @@ fn cache_expires_and_ages_ttls() {
 }
 
 #[tokio::test]
+async fn fakeip_bypasses_shared_cache() {
+    let manager = ResolverManager::new();
+    let cache = manager.cache();
+    let fake = Arc::new(FakeIp::default());
+    let resolver = Resolver {
+        tag: "fake".into(),
+        backend: Backend::FakeIp,
+        requests: mpsc::channel(1).0,
+        fake_ip: Some(fake.clone()),
+        cache: cache.clone(),
+    };
+    for ty in [TYPE::A, TYPE::AAAA] {
+        let query = query("isolated.test", ty, 42);
+        let expected = fake.allocate("isolated.test", ty == TYPE::AAAA).unwrap();
+        let reply = resolver.exchange(&query).await.unwrap();
+        assert_eq!(
+            cache::addresses(&Packet::parse(&reply).unwrap()),
+            vec![expected]
+        );
+        assert!(cache.get(&query).unwrap().is_none());
+        assert!(cache.lookup_cache("isolated.test").is_empty());
+        assert!(cache.reverse_lookup_cache(expected).is_none());
+    }
+
+    for ty in [TYPE::A, TYPE::AAAA] {
+        let query = query("cached.test", ty, 43);
+        let real_ip: IpAddr = if ty == TYPE::A {
+            "192.0.2.1".parse().unwrap()
+        } else {
+            "2001:db8::1".parse().unwrap()
+        };
+        let mut reply = reply_for(Packet::parse(&query).unwrap());
+        reply.answers.push(ResourceRecord::new(
+            reply.questions[0].qname.clone(),
+            CLASS::IN,
+            60,
+            match real_ip {
+                IpAddr::V4(ip) => RData::A(ip.into()),
+                IpAddr::V6(ip) => RData::AAAA(ip.into()),
+            },
+        ));
+        cache.insert(&query, reply);
+
+        let expected = fake.allocate("cached.test", ty == TYPE::AAAA).unwrap();
+        let reply = resolver.exchange(&query).await.unwrap();
+        assert_eq!(
+            cache::addresses(&Packet::parse(&reply).unwrap()),
+            vec![expected]
+        );
+        assert!(cache.reverse_lookup_cache(expected).is_none());
+        let real_reply = manager
+            .resolver(DEFAULT_SYSTEM_DNS_TAG)
+            .unwrap()
+            .exchange(&query)
+            .await
+            .unwrap();
+        assert_eq!(
+            cache::addresses(&Packet::parse(&real_reply).unwrap()),
+            vec![real_ip]
+        );
+    }
+}
+
+#[tokio::test]
 async fn fakeip_is_stable_dual_stack_and_restores_ports() {
     let server = DnsFakeIpServerCfg {
         tag: "dns".into(),
