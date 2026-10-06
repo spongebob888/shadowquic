@@ -9,7 +9,7 @@ use crate::{
     config::{RouterDBKind, RouterDatabaseCfg},
     error::SError,
 };
-use redb::{Database, ReadableDatabase, TableDefinition, TableHandle};
+use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition, TableHandle};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -283,6 +283,36 @@ fn import_geosite(source: &Path, table: &mut redb::Table<&str, ()>) -> Result<()
     }
     Ok(())
 }
+/// Insert a disjoint MMDB range, joining adjacent ranges in either direction.
+fn insert_country_range<T>(table: &mut redb::Table<T, T>, mut start: T, mut end: T) -> Result<()>
+where
+    T: for<'a> redb::Key<SelfType<'a> = T> + Copy + Ord + Into<u128> + 'static,
+{
+    let previous = table
+        .range(..start)?
+        .next_back()
+        .transpose()?
+        .map(|(start, end)| (start.value(), end.value()));
+    if let Some((previous_start, previous_end)) = previous
+        && previous_end.into().checked_add(1) == Some(start.into())
+    {
+        start = previous_start;
+    }
+    let next = table
+        .range(end..)?
+        .next()
+        .transpose()?
+        .map(|(start, end)| (start.value(), end.value()));
+    if let Some((next_start, next_end)) = next
+        && end.into().checked_add(1) == Some(next_start.into())
+    {
+        table.remove(next_start)?;
+        end = next_end;
+    }
+    table.insert(start, end)?;
+    Ok(())
+}
+
 fn import_country(source: &Path, write: &redb::WriteTransaction) -> Result<()> {
     let reader = maxminddb::Reader::open_readfile(source)?;
     let mut count = 0;
@@ -301,13 +331,15 @@ fn import_country(source: &Path, write: &redb::WriteTransaction) -> Result<()> {
         let mut v6 = write.open_table(CountryV6Table::new(&v6_name))?;
         match (network.network(), network.broadcast()) {
             (IpAddr::V4(start), IpAddr::V4(end)) => {
-                v4.insert(
+                insert_country_range(
+                    &mut v4,
                     u32::from_be_bytes(start.octets()),
                     u32::from_be_bytes(end.octets()),
                 )?;
             }
             (IpAddr::V6(start), IpAddr::V6(end)) => {
-                v6.insert(
+                insert_country_range(
+                    &mut v6,
                     u128::from_be_bytes(start.octets()),
                     u128::from_be_bytes(end.octets()),
                 )?;
