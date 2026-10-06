@@ -66,6 +66,7 @@ fn geosite_indexed_and_sequential_rules_and_metadata_survive_reopen() {
     assert!(!db.find_domain("missing", "exact.example").unwrap());
     let read = db.db.begin_read().unwrap();
     let meta = read.open_table(META).unwrap();
+    assert_eq!(meta.get("schema").unwrap().unwrap().value(), "1");
     assert_eq!(
         meta.get("version").unwrap().unwrap().value(),
         env!("CARGO_PKG_VERSION")
@@ -159,6 +160,22 @@ fn country_import_matches_mmdb_for_ipv4_and_ipv6() {
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/router-database/GeoIP2-Country-Test.mmdb");
     let db = RedbDatabase::import(&cfg, &source).unwrap();
+    drop(db);
+    let db = RedbDatabase::open(&cfg).unwrap();
+    let read = db.db.begin_read().unwrap();
+    assert_eq!(
+        read.open_table(META)
+            .unwrap()
+            .get("schema")
+            .unwrap()
+            .unwrap()
+            .value(),
+        "2"
+    );
+    assert!(matches!(
+        read.open_table(RULES),
+        Err(redb::TableError::TableDoesNotExist(_))
+    ));
     let reader = maxminddb::Reader::open_readfile(&source).unwrap();
     let mut families = [false; 2];
     for result in reader.networks(Default::default()).unwrap() {
@@ -174,13 +191,152 @@ fn country_import_matches_mmdb_for_ipv4_and_ipv6() {
         let ip = network.ip();
         families[usize::from(ip.is_ipv6())] = true;
         assert!(db.find_ip(code, ip).unwrap(), "{network} {code}");
+        assert!(db.find_ip(code, network.broadcast()).unwrap());
+        let v4_name = format!("country_v4_{}", code.to_ascii_lowercase());
+        let v6_name = format!("country_v6_{}", code.to_ascii_lowercase());
+        // Both tables exist even if this country only has one address family.
+        let v4 = read
+            .open_table(TableDefinition::<u32, u32>::new(&v4_name))
+            .unwrap();
+        let v6 = read
+            .open_table(TableDefinition::<u128, u128>::new(&v6_name))
+            .unwrap();
+        match (network.network(), network.broadcast()) {
+            (IpAddr::V4(start), IpAddr::V4(end)) => {
+                assert_eq!(
+                    v4.get(u32::from(start)).unwrap().unwrap().value(),
+                    u32::from(end)
+                );
+            }
+            (IpAddr::V6(start), IpAddr::V6(end)) => {
+                assert_eq!(
+                    v6.get(u128::from(start)).unwrap().unwrap().value(),
+                    u128::from(end)
+                );
+            }
+            _ => unreachable!(),
+        }
         assert!(!db.find_ip("missing", ip).unwrap());
         if let Some(name) = record.country.names.english {
-            assert!(db.find_ip(name, ip).unwrap());
+            assert!(!db.find_ip(name, ip).unwrap());
+            for family in [4, 6] {
+                let name = country_table_name(name, family);
+                assert!(
+                    !read
+                        .list_tables()
+                        .unwrap()
+                        .any(|table| table.name() == name)
+                );
+            }
         }
     }
     assert_eq!(families, [true, true]);
     assert!(!db.find_ip("US", "127.0.0.1".parse().unwrap()).unwrap());
+}
+
+#[test]
+fn country_ranges_match_boundaries_gaps_and_separate_families() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = Database::create(dir.path().join("ranges.redb")).unwrap();
+    let write = db.begin_write().unwrap();
+    write
+        .open_table(CountryV4Table::new("country_v4_empty"))
+        .unwrap();
+    write
+        .open_table(CountryV6Table::new("country_v6_empty"))
+        .unwrap();
+    {
+        let mut table = write
+            .open_table(CountryV4Table::new("country_v4_test"))
+            .unwrap();
+        // Include values crossing a byte boundary to exercise numeric ordering.
+        for (start, end) in [
+            (0, 0),
+            (10, 20),
+            (255, 256),
+            (0x01020304, 0x01020304),
+            (u32::MAX, u32::MAX),
+        ] {
+            table.insert(start, end).unwrap();
+        }
+        let mut table = write
+            .open_table(CountryV6Table::new("country_v6_test"))
+            .unwrap();
+        for (start, end) in [
+            (10, 20),
+            (
+                0x20010db81234567890abcdef01234567,
+                0x20010db81234567890abcdef01234567,
+            ),
+            (u128::MAX, u128::MAX),
+        ] {
+            table.insert(start, end).unwrap();
+        }
+    }
+    write.commit().unwrap();
+    let db = RedbDatabase {
+        db,
+        kind: RouterDBKind::Country,
+    };
+    for (ip, expected) in [
+        ("0.0.0.0", true),
+        ("0.0.0.1", false),
+        ("0.0.0.9", false),
+        ("0.0.0.10", true),
+        ("0.0.0.15", true),
+        ("0.0.0.20", true),
+        ("0.0.0.21", false),
+        ("0.0.0.255", true),
+        ("0.0.1.0", true),
+        ("0.0.1.1", false),
+        ("1.2.3.4", true),
+        ("4.3.2.1", false),
+        ("255.255.255.255", true),
+        ("::", false),
+        ("::9", false),
+        ("::a", true),
+        ("::f", true),
+        ("::14", true),
+        ("::15", false),
+        ("::ffff:ffff", false),
+        ("::ffff:0.0.0.10", false),
+        ("2001:db8:1234:5678:90ab:cdef:123:4567", true),
+        ("6745:2301:efcd:ab90:7856:3412:b80d:120", false),
+        ("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", true),
+    ] {
+        let ip = ip.parse().unwrap();
+        assert_eq!(db.find_ip("TEST", ip).unwrap(), expected, "{ip}");
+        assert!(!db.find_ip("missing", ip).unwrap());
+        assert!(!db.find_ip("empty", ip).unwrap());
+    }
+}
+
+#[test]
+fn incompatible_schema_is_rejected_for_each_database_type() {
+    for (kind, stored, expected) in [
+        (RouterDBKind::Country, "1", "2"),
+        (RouterDBKind::Geosite, "2", "1"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path(), kind);
+        let db = Database::create(cfg.path()).unwrap();
+        let write = db.begin_write().unwrap();
+        {
+            let mut meta = write.open_table(META).unwrap();
+            meta.insert("schema", stored).unwrap();
+            write.open_table(RULES).unwrap();
+        }
+        write.commit().unwrap();
+        drop(db);
+        let error = RedbDatabase::open(&cfg).err().unwrap().to_string();
+        assert!(
+            error.contains(&format!(
+                "incompatible schema: stored {stored:?}, expected {expected:?}"
+            )),
+            "{error}"
+        );
+        assert!(error.contains("Remove the database file"));
+    }
 }
 #[test]
 fn lua_helpers_report_unavailable_unknown_and_wrong_family() {

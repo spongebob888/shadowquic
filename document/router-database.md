@@ -48,7 +48,7 @@ separate path such as `data/country.redb`.
 | `find_ip_v6(tag, list, ip)` | Country of an IPv6 address string |
 
 The helpers return booleans and perform no DNS resolution. Country lists accept
-ISO codes (such as `US`) or English country names (such as `United States`). List
+ISO codes (such as `US`) only; English country names are not stored. List
 names and domain names are case insensitive; a trailing domain dot is ignored.
 Unknown lists return false. Unknown database tags, unavailable databases, invalid
 IP strings, or a helper used with the wrong database type raise Lua errors.
@@ -75,8 +75,25 @@ traffic and any DNS upstream traffic needed by its outbound before these calls.
 Lua script reloads retain the same database handles.
 
 Each redb stores a format version, the creating Shadowquic version, source URL,
-database type, and SHA-256 of the downloaded source bytes. Incompatible, corrupt,
-or mismatched existing files fail startup. There is no automatic refresh: stop
+database type, and SHA-256 of the downloaded source bytes. Schema versions are
+independent: Country uses schema `2`, while Geosite continues to use schema `1`.
+Country schema `1` is unsupported; remove old converted Country files and restart
+to download and rebuild them. Existing Geosite schema `1` files remain supported.
+
+Country databases store inclusive IP ranges in two tables per lowercase ISO code:
+`country_v4_us` and `country_v6_us`, for example. Records without a country ISO
+code are skipped. Existing files containing English-name tables must be rebuilt
+to reclaim that space.
+IPv4 tables map `ip_start: u32` to `ip_end: u32`; IPv6 tables map
+`ip_start: u128` to `ip_end: u128`. Both tables are created even if one is empty.
+Addresses use their numeric network-order values, computed with
+`from_be_bytes(ip.octets())` independently of host endianness. A lookup selects the table
+for the query's address family and the greatest start key no larger than the
+query, then checks the inclusive end. Missing tables
+and gaps between ranges return false. Geosite retains its `rules` table layout.
+
+Incompatible, corrupt, or mismatched existing files fail startup. There is no
+automatic refresh: stop
 Shadowquic and remove the converted file to download again. Paths must be distinct
 and writable. Imports temporarily parse the source; lookups retain only redb's
 bounded 8 MiB page cache per database, not an in-memory copy of the source lists.

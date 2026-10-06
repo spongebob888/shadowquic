@@ -21,11 +21,23 @@ We use redb as underlying database for each router db.
 
 Each redb should has a version string noting which shadowquic version created it and a sha256 of its downloading source file(Not itself ).
 
+Schema versions are independent for each database type: Country uses schema `2`, and Geosite uses schema `1`.
+
 
 ## Supported RouterDB
 
 ### Country.mmdb
-This is type of mmdb and convert it to redb. The list is the country name.
+This is type of mmdb and convert it to redb. The list is the country ISO code. Only `country.iso_code` is stored; English country names are not stored, and records without an ISO code are skipped.
+
+The entry of mmdb can be regarded as a list of ip ranges. In `SCHEMA = 2`, each country creates two tables named like `country_v4_us` and `country_v6_us`, including an empty table if a country has no ranges for that address family. The old schema is not supported.
+
+Each table is a list of inclusive ip ranges with key = ip_start, value = ip_end. IPv4 tables use `u32` for both key and value; IPv6 tables use `u128`.
+
+Convert IP octets to integers in network (big-endian) order, independently of host endianness, using `u32::from_be_bytes` or `u128::from_be_bytes`.
+
+To implement find_ip, select the table for the queried address family, find the greatest key that is equal to or smaller than the queried IP, and check that the IP is no larger than the range end.
+
+Disk usage is about 129mb
 
 ### Geosite of v2fly
 
