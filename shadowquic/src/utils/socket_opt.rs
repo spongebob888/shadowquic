@@ -46,14 +46,13 @@ impl SocketFactory for UdpSocketFactory {
                 socks_addr.port,
             ),
         };
-        let socket = if let Some(Interface::Address(ip)) = self.interface {
-            let domain = if ip.is_ipv4() {
+        let socket = if let Some(Interface::Address(bind_addr)) = self.interface {
+            let domain = if bind_addr.ip().is_ipv4() {
                 Domain::IPV4
             } else {
                 Domain::IPV6
             };
             let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
-            let bind_addr = SocketAddr::new(ip, 0);
             socket.bind(&bind_addr.into())?;
             socket
         } else {
@@ -162,14 +161,13 @@ impl SocketFactory for TcpSocketFactory {
                 socks_addr.port,
             ),
         };
-        let socket = if let Some(Interface::Address(ip)) = self.interface {
-            let domain = if ip.is_ipv4() {
+        let socket = if let Some(Interface::Address(bind_addr)) = self.interface {
+            let domain = if bind_addr.ip().is_ipv4() {
                 Domain::IPV4
             } else {
                 Domain::IPV6
             };
             let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
-            let bind_addr = SocketAddr::new(ip, 0);
             socket.bind(&bind_addr.into())?;
             socket
         } else {
@@ -390,7 +388,7 @@ mod tests {
         // Create factory with interface address
         let factory_ip = UdpSocketFactory {
             addr: "127.0.0.1:0".to_string(),
-            interface: Some(Interface::Address("127.0.0.1".parse().unwrap())),
+            interface: Some(Interface::Address("127.0.0.1:0".parse().unwrap())),
             fw_mark: None,
             protect_path: None,
             try_dual_stack: true,
@@ -446,7 +444,7 @@ mod tests {
         // Create factory with interface address
         let factory_ip = TcpSocketFactory {
             addr: "127.0.0.1:0".to_string(),
-            interface: Some(Interface::Address("127.0.0.1".parse().unwrap())),
+            interface: Some(Interface::Address("127.0.0.1:0".parse().unwrap())),
             fw_mark: None,
             protect_path: None,
             resolver: test_resolver(),
@@ -626,7 +624,7 @@ mod tests {
 
         let factory = UdpSocketFactory {
             addr: "1.1.1.1:53".to_string(),
-            interface: Some(Interface::Address(local_ip)),
+            interface: Some(Interface::Address(SocketAddr::new(local_ip, 0))),
             fw_mark: None,
             protect_path: None,
             try_dual_stack: false,
@@ -679,7 +677,7 @@ mod tests {
 
         let factory = TcpSocketFactory {
             addr: "1.1.1.1:80".to_string(),
-            interface: Some(Interface::Address(local_ip)),
+            interface: Some(Interface::Address(SocketAddr::new(local_ip, 0))),
             fw_mark: None,
             protect_path: None,
             resolver: test_resolver(),

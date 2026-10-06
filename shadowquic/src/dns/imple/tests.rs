@@ -57,7 +57,10 @@ fn run(
     let tag = server.resolver.tag.clone();
     let mut manager = Manager::single(
         Box::new(server),
-        Arc::new(DirectOut::new(DirectOutCfg::default())),
+        Arc::new(DirectOut::new(
+            DirectOutCfg::default(),
+            Arc::new(ResolverManager::new()),
+        )),
     );
     let inbound = manager.inbounds.remove("inbound").unwrap();
     manager.inbounds.insert(tag, inbound);

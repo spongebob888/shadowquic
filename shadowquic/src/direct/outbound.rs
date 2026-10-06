@@ -6,23 +6,40 @@ use std::{
 
 use bytes::BytesMut;
 use tokio::{
-    net::{TcpStream, lookup_host},
+    net::{TcpSocket, TcpStream, lookup_host},
     sync::Mutex,
 };
-use tracing::{Instrument, debug, error, info_span, trace};
+use tracing::{Instrument, error, info_span, trace};
 
 use crate::{
     Outbound, UdpSession,
-    config::{DirectOutCfg, DnsStrategy},
+    config::{DirectOutCfg, DnsStrategy, Interface},
+    dns::{DnsService, ResolverManager},
     error::SError,
     msgs::socks5::{AddrOrDomain, SocksAddr},
-    utils::dual_socket::DualSocket,
+    utils::{
+        dual_socket::DualSocket,
+        socket_opt::{SocketFactory, TcpSocketFactory, UdpSocketFactory},
+    },
 };
 use async_trait::async_trait;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone)]
 pub struct DirectOut {
     pub cfg: DirectOutCfg,
+    pub(crate) addr_resolver: Arc<dyn DnsService>,
+}
+
+impl std::fmt::Debug for DirectOut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DirectOut").field("cfg", &self.cfg).finish()
+    }
+}
+
+impl Default for DirectOut {
+    fn default() -> Self {
+        Self::new(DirectOutCfg::default(), Arc::new(ResolverManager::new()))
+    }
 }
 
 #[async_trait]
@@ -40,7 +57,7 @@ impl Outbound for DirectOut {
                         .ok_or(SError::DomainResolveFailed(tcp_session.dst.to_string()))?;
                     trace!("resolved to {}", dst);
 
-                    let mut upstream = TcpStream::connect(dst).await?;
+                    let mut upstream = self_clone.connect_tcp(dst).await?;
                     let _ = upstream.set_nodelay(true);
                     let (_, _) = tokio::io::copy_bidirectional_with_sizes(
                         &mut tcp_session.stream,
@@ -123,13 +140,53 @@ async fn resolve(socks: &SocksAddr, strategy: &DnsStrategy) -> Result<SocketAddr
 }
 
 impl DirectOut {
-    pub fn new(cfg: DirectOutCfg) -> Self {
-        Self { cfg }
+    pub fn new(cfg: DirectOutCfg, resolver_manager: Arc<ResolverManager>) -> Self {
+        #[cfg(feature = "dns-server")]
+        let tag = crate::dns::DEFAULT_SYSTEM_DNS_TAG;
+        #[cfg(not(feature = "dns-server"))]
+        let tag = "";
+        let addr_resolver = resolver_manager
+            .resolver(tag)
+            .expect("default system resolver exists");
+        Self { cfg, addr_resolver }
+    }
+
+    async fn connect_tcp(&self, dst: SocketAddr) -> Result<TcpStream, SError> {
+        let socket = TcpSocketFactory {
+            addr: dst.to_string(),
+            interface: self.cfg.socket_opt.bind_interface.clone(),
+            fw_mark: self.cfg.socket_opt.fw_mark,
+            protect_path: None,
+            resolver: self.addr_resolver.clone(),
+        }
+        .create_socket()
+        .await?;
+        let socket = TcpSocket::from_std_stream(socket.into());
+        Ok(socket.connect(dst).await?)
+    }
+
+    async fn bind_udp(&self, bind_addr: SocketAddr, dst: SocksAddr) -> Result<DualSocket, SError> {
+        let interface = match self.cfg.socket_opt.bind_interface.clone() {
+            Some(iface) => Some(iface),
+            None if !bind_addr.ip().is_unspecified() => Some(Interface::Address(bind_addr)),
+            _ => None,
+        };
+        let socket = UdpSocketFactory {
+            addr: dst.to_string(),
+            interface,
+            fw_mark: self.cfg.socket_opt.fw_mark,
+            protect_path: None,
+            try_dual_stack: bind_addr.ip().is_unspecified(),
+            resolver: self.addr_resolver.clone(),
+        }
+        .create_socket()
+        .await?;
+        Ok(DualSocket::from_socket(socket)?)
     }
 
     async fn handle_udp(&self, udp_session: UdpSession) -> Result<(), SError> {
         trace!(bind_addr = %udp_session.bind_addr,"associating udp");
-        let dst =
+        let bind_addr =
             udp_session
                 .bind_addr
                 .to_socket_addrs()?
@@ -137,36 +194,7 @@ impl DirectOut {
                 .ok_or(SError::DomainResolveFailed(
                     udp_session.bind_addr.to_string(),
                 ))?;
-        let ipv4 = dst.is_ipv4();
-        // For unspecified address, we try to bind a dual stack socket first.
-        // If it fails, we fallback to single stack socket
-        // https://github.com/spongebob888/shadowquic/issues/172
-        let socket = if dst.ip().is_unspecified() {
-            // Creating and binding the v6 socket can fail by itself, not only
-            // set_only_v6: a host without IPv6 (kernel `ipv6.disable`, or a
-            // container that drops it) fails right here. Both cases have to
-            // fall back, or every udp association with an unspecified bind
-            // address fails and udp is silently dead on that host.
-            match DualSocket::new_bind("[::]:0".parse().unwrap(), true) {
-                Ok(socket) if socket.dual_stack || !ipv4 => {
-                    trace!("bound to dual stack socket");
-                    socket
-                }
-                Ok(_) => {
-                    trace!("fallback to single stack socket");
-                    DualSocket::new_bind(dst, false)?
-                }
-                Err(e) => {
-                    debug!(
-                        "dual stack socket unavailable ({}), fallback to single stack socket",
-                        e
-                    );
-                    DualSocket::new_bind(dst, false)?
-                }
-            }
-        } else {
-            DualSocket::new_bind(dst, false)?
-        };
+        let socket = self.bind_udp(bind_addr, udp_session.dst).await?;
         let upstream = Arc::new(socket);
         let upstream_clone = upstream.clone();
         let mut downstream = udp_session.recv;
@@ -259,6 +287,88 @@ mod test {
             assert_eq!(resolved.port(), port);
             assert_eq!(cache.inv_resolve(&resolved).await, domain);
         }
+    }
+
+    #[tokio::test]
+    #[cfg(target_os = "linux")]
+    async fn tcp_and_udp_use_configured_source_address() {
+        use crate::config::{Interface, SocketOpt};
+        use tokio::net::{TcpListener, UdpSocket};
+        use tokio::time::{Duration, timeout};
+
+        let source: IpAddr = "127.0.0.2".parse().unwrap();
+        let direct = DirectOut::new(
+            DirectOutCfg {
+                socket_opt: SocketOpt {
+                    bind_interface: Some(Interface::Address(SocketAddr::new(source, 0))),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Arc::new(ResolverManager::new()),
+        );
+        timeout(Duration::from_secs(5), async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let stream = direct
+                .connect_tcp(listener.local_addr().unwrap())
+                .await
+                .unwrap();
+            assert_eq!(stream.local_addr().unwrap().ip(), source);
+            let (_, peer) = listener.accept().await.unwrap();
+            assert_eq!(peer.ip(), source);
+
+            let receiver = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            let socket = direct
+                .bind_udp(
+                    "0.0.0.0:0".parse().unwrap(),
+                    SocksAddr::from(receiver.local_addr().unwrap()),
+                )
+                .await
+                .unwrap();
+            assert_eq!(socket.local_addr().unwrap().ip(), source);
+            socket
+                .send_to(b"ping", &receiver.local_addr().unwrap())
+                .await
+                .unwrap();
+            let mut buf = [0; 4];
+            let (_, peer) = receiver.recv_from(&mut buf).await.unwrap();
+            assert_eq!(peer.ip(), source);
+            receiver.send_to(b"pong", peer).await.unwrap();
+            let (_, peer) = socket.recv_from(&mut buf).await.unwrap();
+            assert_eq!(&buf, b"pong");
+            assert_eq!(peer, receiver.local_addr().unwrap());
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn default_udp_socket_maps_ipv4_replies() {
+        use tokio::net::UdpSocket;
+        use tokio::time::{Duration, timeout};
+
+        timeout(Duration::from_secs(5), async {
+            let receiver = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            let socket = DirectOut::default()
+                .bind_udp(
+                    "0.0.0.0:0".parse().unwrap(),
+                    SocksAddr::from(receiver.local_addr().unwrap()),
+                )
+                .await
+                .unwrap();
+            socket
+                .send_to(b"ping", &receiver.local_addr().unwrap())
+                .await
+                .unwrap();
+            let mut buf = [0; 4];
+            let (_, peer) = receiver.recv_from(&mut buf).await.unwrap();
+            receiver.send_to(b"pong", peer).await.unwrap();
+            let (_, peer) = socket.recv_from(&mut buf).await.unwrap();
+            assert_eq!(&buf, b"pong");
+            assert_eq!(peer, receiver.local_addr().unwrap());
+        })
+        .await
+        .unwrap();
     }
 
     fn make_addrs() -> Vec<SocketAddr> {

@@ -43,6 +43,15 @@ impl DualSocket {
             dual_stack,
         })
     }
+    pub fn from_socket(socket: Socket) -> io::Result<Self> {
+        let dual_stack = socket.local_addr()?.is_ipv6() && !socket.only_v6()?;
+        socket.set_nonblocking(true)?;
+        Ok(Self {
+            inner: UdpSocket::from_std(socket.into())?,
+            dual_stack,
+        })
+    }
+
     pub async fn send_to(&self, buf: &[u8], addr: &SocketAddr) -> io::Result<usize> {
         let ip = match (self.dual_stack, addr.ip()) {
             (true, IpAddr::V4(ipv4_addr)) => IpAddr::V6(ipv4_addr.to_ipv6_mapped()),
