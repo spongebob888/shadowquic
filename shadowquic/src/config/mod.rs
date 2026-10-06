@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use shadowquic_macros::{SDecode, SEncode};
 use std::{
     collections::{HashMap, HashSet},
-    net::{IpAddr, SocketAddr},
+    net::SocketAddr,
     sync::Arc,
 };
 use tracing::{Instrument, Level, info_span, warn};
@@ -446,7 +446,7 @@ impl OutboundCfg {
                 Arc::new(ShadowQuicClient::new(cfg, resolver_manager.clone()))
             }
             OutboundCfg::SunnyQuic(cfg) => Arc::new(SunnyQuicClient::new(cfg, resolver_manager)),
-            OutboundCfg::Direct(cfg) => Arc::new(DirectOut::new(cfg)),
+            OutboundCfg::Direct(cfg) => Arc::new(DirectOut::new(cfg, resolver_manager)),
             OutboundCfg::Drop(_) => Arc::new(DropOutbound),
         };
         Ok(r)
@@ -602,14 +602,14 @@ pub struct SocketOpt {
 /// Example:
 /// ```yaml
 /// # by ip address
-/// bind-interface: "127.0.0.1"
+/// bind-interface: "127.0.0.1:0"
 /// # by interface name
 /// bind-interface: "eth0"
 /// ```
 #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum Interface {
-    Address(IpAddr),
+    Address(SocketAddr),
     Device(String),
 }
 
@@ -718,6 +718,8 @@ impl PartialEq for CongestionControl {
 /// ```yaml
 /// tag: proxy
 /// dns-strategy: prefer-ipv4 # or prefer-ipv6, ipv4-only, ipv6-only
+/// bind-interface: "127.0.0.1" # optional, by IP address or interface name
+/// fw-mark: 1234 # optional, Linux fwmark
 /// ```
 #[derive(Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -729,6 +731,9 @@ pub struct DirectOutCfg {
     pub tag: String,
     #[serde(default)]
     pub dns_strategy: DnsStrategy,
+    /// Socket options like bind interface and fwmark
+    #[serde(flatten)]
+    pub socket_opt: SocketOpt,
 }
 
 /// Outbound that discards every request.

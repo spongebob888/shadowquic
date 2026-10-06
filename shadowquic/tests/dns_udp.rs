@@ -179,7 +179,10 @@ async fn spawn_socks_server() {
     })
     .await
     .unwrap();
-    let direct_client = DirectOut::new(DirectOutCfg::default());
+    let direct_client = DirectOut::new(
+        DirectOutCfg::default(),
+        std::sync::Arc::new(shadowquic::dns::ResolverManager::new()),
+    );
     let server = Manager::single(Box::new(socks_server), std::sync::Arc::new(direct_client));
     tokio::spawn(server.run());
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -284,7 +287,10 @@ async fn shadowquic_client_server(over_stream: bool, port: u16) {
     })
     .await
     .unwrap();
-    let direct_client = DirectOut::new(DirectOutCfg::default());
+    let direct_client = DirectOut::new(
+        DirectOutCfg::default(),
+        std::sync::Arc::new(shadowquic::dns::ResolverManager::new()),
+    );
     let server = Manager::single(Box::new(sq_server), std::sync::Arc::new(direct_client));
 
     tokio::spawn(server.run());
