@@ -3,12 +3,12 @@
 Router can access certain database for classify certain ip and domain.
 
 ## Architecture
-There is database field in router it is a list of RouterDBCfg. Create a RouterDB
+There is database field in router it is a list of RouterDatabaseCfg. Create a RouterDB
 trait that defines the common behavior of RouterDB. It includes, find_ip(list, ip)/find_domain(list, domain) two methods. Most db only suuports one of them, in this case, the other method should always panic.
 
 The search api should all be based on redb engine. Do not use in memory full database which cost too much memory.
 
-Each RouterDBCfg has a field of tag(should be unique among all dns/inbound/outbound tag).
+Each RouterDatabaseCfg has a field of tag(should be unique among all dns/inbound/outbound tag).
 It has a download link, when database doesn't exist, it will register an inbound so that router can route this download traffic after downloading finished it should convert to certain db format shadowquic used.
 
 
