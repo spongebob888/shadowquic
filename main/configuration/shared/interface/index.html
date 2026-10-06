@@ -1739,7 +1739,7 @@
 specified interface. Recommend to use to cooporate with other tun based proxy like sing-box/mihomo</p>
 <p>Example:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># by ip address</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">bind-interface</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;127.0.0.1&quot;</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">bind-interface</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;127.0.0.1:0&quot;</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="c1"># by interface name</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nt">bind-interface</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;eth0&quot;</span>
 </code></pre></div>
@@ -1755,7 +1755,7 @@ specified interface. Recommend to use to cooporate with other tun based proxy li
 <tbody>
 <tr>
 <td><code>Address</code></td>
-<td><code>IpAddr</code></td>
+<td><code>SocketAddr</code></td>
 <td>—</td>
 </tr>
 <tr>

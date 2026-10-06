@@ -932,6 +932,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#fw-mark" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>fw-mark</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bind-interface" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>bind-interface</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1788,6 +1810,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#fw-mark" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>fw-mark</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bind-interface" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>bind-interface</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1816,6 +1860,8 @@
 Example:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">tag</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">proxy</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">dns-strategy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prefer-ipv4</span><span class="w"> </span><span class="c1"># or prefer-ipv6, ipv4-only, ipv6-only</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nt">bind-interface</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;127.0.0.1&quot;</span><span class="w"> </span><span class="c1"># optional, by IP address or interface name</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nt">fw-mark</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1234</span><span class="w"> </span><span class="c1"># optional, Linux fwmark</span>
 </code></pre></div>
 <h2 id="fields">Fields<a class="headerlink" href="#fields" title="Permanent link">&para;</a></h2>
 <h3 id="dns"><code>dns</code><a class="headerlink" href="#dns" title="Permanent link">&para;</a></h3>
@@ -1836,6 +1882,26 @@ Example:</p>
 <li><strong>Required:</strong> no</li>
 <li><strong>Default:</strong> <code>prefer-ipv4</code></li>
 </ul>
+<h3 id="fw-mark"><code>fw-mark</code><a class="headerlink" href="#fw-mark" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>u32</code> <em>(optional)</em></li>
+<li><strong>Required:</strong> no</li>
+</ul>
+<p>fw_mark on linux</p>
+<h3 id="bind-interface"><code>bind-interface</code><a class="headerlink" href="#bind-interface" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <a href="../../shared/interface/"><code>Interface</code></a> <em>(optional)</em></li>
+<li><strong>Required:</strong> no</li>
+</ul>
+<p>binding interface of this outgoing packet.</p>
+<p>If <code>bind_interface</code> is set, the outgoing packet will be sent from the
+specified interface. Recommend to use to cooporate with other tun based proxy like sing-box/mihomo</p>
+<p>Example:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># by ip address</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nt">bind-interface</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;127.0.0.1&quot;</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="c1"># by interface name</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="nt">bind-interface</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;eth0&quot;</span>
+</code></pre></div>
 
 
 
