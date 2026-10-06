@@ -9,7 +9,7 @@ use crate::{
     config::{RouterDBKind, RouterDatabaseCfg},
     error::SError,
 };
-use redb::{Database, ReadableDatabase, TableDefinition};
+use redb::{Database, ReadableDatabase, TableDefinition, TableHandle};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -22,7 +22,38 @@ use std::{
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 const META: TableDefinition<&str, &str> = TableDefinition::new("metadata");
 const RULES: TableDefinition<&str, ()> = TableDefinition::new("rules");
-const SCHEMA: &str = "1";
+const COUNTRY_SCHEMA: &str = "2";
+const GEOSITE_SCHEMA: &str = "1";
+
+fn schema(kind: RouterDBKind) -> &'static str {
+    match kind {
+        RouterDBKind::Country => COUNTRY_SCHEMA,
+        RouterDBKind::Geosite => GEOSITE_SCHEMA,
+    }
+}
+
+type CountryV4Table<'a> = TableDefinition<'a, u32, u32>;
+type CountryV6Table<'a> = TableDefinition<'a, u128, u128>;
+
+fn country_table_name(list: &str, family: u8) -> String {
+    format!("country_v{family}_{}", list.to_ascii_lowercase())
+}
+
+fn find_range<T>(read: &redb::ReadTransaction, name: &str, query: T) -> Result<bool>
+where
+    T: for<'a> redb::Key<SelfType<'a> = T> + Copy + Ord + 'static,
+{
+    let table = match read.open_table(TableDefinition::<T, T>::new(name)) {
+        Ok(table) => table,
+        Err(redb::TableError::TableDoesNotExist(_)) => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    let Some(entry) = table.range(..=query)?.next_back() else {
+        return Ok(false);
+    };
+    let (_, end) = entry?;
+    Ok(query <= end.value())
+}
 
 /// Unsupported lookup families panic. Lua checks the family before calling.
 pub trait RouterDB: Send + Sync {
@@ -44,18 +75,6 @@ fn kind_name(kind: RouterDBKind) -> &'static str {
 fn key(list: &str, kind: &str, value: &str) -> String {
     format!("{}\0{kind}\0{value}", list.to_ascii_lowercase())
 }
-fn ip_key(list: &str, ip: IpAddr, prefix: u8) -> String {
-    let (family, bits, value) = match ip {
-        IpAddr::V4(ip) => ("4", 32, u32::from(ip) as u128),
-        IpAddr::V6(ip) => ("6", 128, u128::from(ip)),
-    };
-    let value = if prefix == 0 {
-        0
-    } else {
-        value & (u128::MAX << (bits - prefix))
-    };
-    key(list, family, &format!("{prefix:03}/{value:032x}"))
-}
 impl RedbDatabase {
     /// Open a converted database, checking format and source identity.
     pub fn open(cfg: &RouterDatabaseCfg) -> Result<Self> {
@@ -66,7 +85,7 @@ impl RedbDatabase {
             let read = db.begin_read()?;
             let meta = read.open_table(META)?;
             for (name, expected) in [
-                ("schema", SCHEMA),
+                ("schema", schema(cfg.kind())),
                 ("type", kind_name(cfg.kind())),
                 ("url", cfg.url()),
             ] {
@@ -89,7 +108,26 @@ impl RedbDatabase {
                     cfg.tag(), cfg.path(), cfg.path(), cfg.url()
                 ).into());
             }
-            read.open_table(RULES)?;
+            match cfg.kind() {
+                RouterDBKind::Geosite => {
+                    read.open_table(RULES)?;
+                }
+                RouterDBKind::Country => {
+                    let mut count = 0;
+                    for table in read.list_tables()? {
+                        if table.name().starts_with("country_v4_") {
+                            read.open_table(CountryV4Table::new(table.name()))?;
+                            count += 1;
+                        } else if table.name().starts_with("country_v6_") {
+                            read.open_table(CountryV6Table::new(table.name()))?;
+                            count += 1;
+                        }
+                    }
+                    if count == 0 {
+                        return Err("country database contains no country tables".into());
+                    }
+                }
+            }
         }
         Ok(Self {
             db,
@@ -111,17 +149,16 @@ impl RedbDatabase {
             .create(temporary.path())?;
         let write = db.begin_write()?;
         {
-            let mut rules = write.open_table(RULES)?;
             match cfg.kind() {
-                RouterDBKind::Geosite => import_geosite(source, &mut rules)?,
-                RouterDBKind::Country => import_country(source, &mut rules)?,
+                RouterDBKind::Geosite => import_geosite(source, &mut write.open_table(RULES)?)?,
+                RouterDBKind::Country => import_country(source, &write)?,
             }
             let mut hash = Sha256::new();
             std::io::copy(&mut std::fs::File::open(source)?, &mut hash)?;
             let digest = format!("{:x}", hash.finalize());
             let mut meta = write.open_table(META)?;
             for (name, value) in [
-                ("schema", SCHEMA),
+                ("schema", schema(cfg.kind())),
                 ("version", env!("CARGO_PKG_VERSION")),
                 ("sha256", digest.as_str()),
                 ("type", kind_name(cfg.kind())),
@@ -145,14 +182,19 @@ impl RouterDB for RedbDatabase {
             "geosite does not support IP lookup"
         );
         let read = self.db.begin_read()?;
-        let rules = read.open_table(RULES)?;
-        let bits = if ip.is_ipv4() { 32 } else { 128 };
-        for prefix in (0..=bits).rev() {
-            if rules.get(ip_key(list, ip, prefix).as_str())?.is_some() {
-                return Ok(true);
-            }
+        match ip {
+            // Interpret network-order octets independently of host endianness.
+            IpAddr::V4(ip) => find_range(
+                &read,
+                &country_table_name(list, 4),
+                u32::from_be_bytes(ip.octets()),
+            ),
+            IpAddr::V6(ip) => find_range(
+                &read,
+                &country_table_name(list, 6),
+                u128::from_be_bytes(ip.octets()),
+            ),
         }
-        Ok(false)
     }
     fn find_domain(&self, list: &str, domain: &str) -> Result<bool> {
         assert_eq!(
@@ -241,7 +283,7 @@ fn import_geosite(source: &Path, table: &mut redb::Table<&str, ()>) -> Result<()
     }
     Ok(())
 }
-fn import_country(source: &Path, table: &mut redb::Table<&str, ()>) -> Result<()> {
+fn import_country(source: &Path, write: &redb::WriteTransaction) -> Result<()> {
     let reader = maxminddb::Reader::open_readfile(source)?;
     let mut count = 0;
     for entry in reader.networks(Default::default())? {
@@ -249,14 +291,30 @@ fn import_country(source: &Path, table: &mut redb::Table<&str, ()>) -> Result<()
         let Some(record) = entry.decode::<maxminddb::geoip2::Country>()? else {
             continue;
         };
+        let Some(code) = record.country.iso_code else {
+            continue;
+        };
         let network = entry.network()?;
-        for name in [record.country.iso_code, record.country.names.english]
-            .into_iter()
-            .flatten()
-        {
-            table.insert(ip_key(name, network.ip(), network.prefix()).as_str(), ())?;
-            count += 1;
+        let v4_name = country_table_name(code, 4);
+        let v6_name = country_table_name(code, 6);
+        let mut v4 = write.open_table(CountryV4Table::new(&v4_name))?;
+        let mut v6 = write.open_table(CountryV6Table::new(&v6_name))?;
+        match (network.network(), network.broadcast()) {
+            (IpAddr::V4(start), IpAddr::V4(end)) => {
+                v4.insert(
+                    u32::from_be_bytes(start.octets()),
+                    u32::from_be_bytes(end.octets()),
+                )?;
+            }
+            (IpAddr::V6(start), IpAddr::V6(end)) => {
+                v6.insert(
+                    u128::from_be_bytes(start.octets()),
+                    u128::from_be_bytes(end.octets()),
+                )?;
+            }
+            _ => unreachable!("network endpoints have the same address family"),
         }
+        count += 1;
     }
     if count == 0 {
         return Err("MMDB contains no country networks".into());
