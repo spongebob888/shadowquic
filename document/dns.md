@@ -27,8 +27,10 @@ Each DNS service listens for ordinary DNS over **both UDP and TCP** on
 
 Each service type has its own configuration struct and rejects fields belonging
 to other DNS types. UDP/TCP/TLS require `upstream`; TLS also requires
-`server-name`. System and fake-IP configurations contain only `tag` and
-`bind-addr`.
+`server-name`. All types except `dns-fakeip` accept `bypass-cache` (default:
+`false`). Set it to `true` to skip shared DNS cache reads and writes for that
+service. This does not disable caching performed by the operating system or
+upstream DNS server. Fake-IP configurations contain only `tag` and `bind-addr`.
 
 `upstream` is a literal socket address, such as `1.1.1.1:853` or
 `[2606:4700:4700::1111]:853`, so bootstrap resolution cannot recurse into DNS.
@@ -86,7 +88,9 @@ server's own `addr`. Fake-IP services cannot be selected for outbound
 destination resolution.
 
 The positive DNS cache is owned by the manager and holds up to 4,096
-responses shared by all non-fake-IP resolvers in that manager. Fake-IP services
+responses shared by non-fake-IP resolvers in that manager unless
+`bypass-cache: true` is set on a service. Bypassing leaves existing shared
+entries untouched. Fake-IP services
 bypass cache reads and writes and maintain their own stable address mappings.
 Entries are keyed by the query without its transaction ID, so non-fake-IP
 resolvers can reuse matching responses from each other. The cache

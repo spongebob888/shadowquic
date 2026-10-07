@@ -158,6 +158,7 @@ impl QuicClient for EndClient {
         let resolver = Arc::new(crate::dns::Resolver {});
         #[cfg(feature = "dns-server")]
         let resolver = Arc::new(crate::dns::Resolver {
+            bypass_cache: false,
             tag: "".to_string(),
             backend: crate::dns::Backend::System,
             requests: tokio::sync::mpsc::channel(1).0,

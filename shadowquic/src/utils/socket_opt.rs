@@ -236,6 +236,7 @@ mod tests {
     fn test_resolver() -> Arc<dyn crate::dns::DnsService> {
         #[cfg(feature = "dns-server")]
         let resolver = Arc::new(crate::dns::Resolver {
+            bypass_cache: false,
             tag: String::new(),
             backend: crate::dns::Backend::System,
             requests: tokio::sync::mpsc::channel(1).0,
