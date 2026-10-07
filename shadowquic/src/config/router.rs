@@ -10,6 +10,46 @@ use std::sync::Arc;
 
 /// Request routing through a default outbound or a restricted Lua script.
 ///
+/// Traffic flow (arrows show requests; replies return through the same sessions):
+///
+/// ```mermaid
+/// flowchart TD
+///     inbound["Inbound listeners"]
+///     downloader["Database downloader"]
+///     router["Router / dispatcher"]
+///     outbound["Selected outbound: direct / proxy"]
+///     destination["Destination"]
+///     listener["DNS listener queries"]
+///     dns["DNS service / cache"]
+///     upstream["DNS upstream requests"]
+///
+///     inbound -->|"TCP/UDP; inbound_tag = listener tag"| router
+///     downloader -->|"HTTP(S) over TCP; inbound_tag = database tag"| router
+///     router -->|"Outbound tag"| outbound
+///     outbound --> destination
+///
+///     listener --> dns
+///     router -->|"DNS service tag: UDP DNS hijacking"| dns
+///     router -.->|"Lua lookup / reverse_lookup"| dns
+///     outbound -.->|"Configured DNS resolution"| dns
+///     dns -->|"Upstream exchange needed"| upstream
+///     upstream -->|"UDP/TCP, including TLS; inbound_tag = DNS service tag; dns_query metadata"| router
+/// ```
+///
+/// All three request sources use the same router. Returning an outbound tag
+/// sends the session to that outbound. Returning a DNS service tag sends a UDP
+/// DNS session back into that service, which answers locally or creates a new
+/// upstream request that passes through the router again. Cache hits, fake-IP
+/// answers, and system DNS resolution do not create routed upstream requests.
+///
+/// Lua `lookup` / `reverse_lookup` and outbound resolution using a configured
+/// DNS service follow the same DNS path. The original request waits for the
+/// lookup to finish; outbound destination resolution then continues through the
+/// already selected outbound. Route DNS upstream traffic by its `inbound_tag`
+/// before performing lookups or DNS hijacking to avoid recursive routing. A DNS
+/// service rejects hijacking its own upstream traffic. Similarly, route database
+/// downloads before calling helpers that depend on the database being ready.
+///
 /// Without a script, requests use `router.default-outbound`, or the first
 /// configured outbound if omitted. This works without the `plugin` feature.
 /// Omit `router` or use `router: {}` to use the first outbound directly.
@@ -100,7 +140,7 @@ use std::sync::Arc;
 /// Cache lookups use the shared DNS cache, ignore expired entries, and perform
 /// no network I/O or asynchronous suspension. They do not take a DNS service tag.
 /// `lookup` and `reverse_lookup` suspend the routing function and raise Lua errors
-/// on failure. Route DNS upstream requests
+/// on failure. Their upstream requests pass through the router as shown above.
 ///
 /// Database membership helpers require `router.database` entries (see
 /// [`super::RouterDatabaseCfg`]). All three helpers return booleans.

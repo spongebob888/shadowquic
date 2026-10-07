@@ -26,7 +26,7 @@ dns:
 outbounds:
 - tag: proxy
   type: shadowquic
-  addr: "192.199.199:443"
+  addr: "192.199.199.199:443"
   username: "87654321"
   password: "12345678"
   server-name: "cdn.shopify.com" # must be the same as jls_upstream in server
