@@ -9,6 +9,7 @@ dns:
     bind-addr: 127.0.0.1:1053
     upstream: 1.1.1.1:853
     server-name: cloudflare-dns.com
+    bypass-cache: false # Set true to skip shared DNS cache reads and writes.
   - tag: fake
     type: dns-fakeip
     bind-addr: 127.0.0.1:1054

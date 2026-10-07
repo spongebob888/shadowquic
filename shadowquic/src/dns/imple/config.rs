@@ -13,6 +13,9 @@ pub struct DnsUdpServerCfg {
     pub bind_addr: SocketAddr,
     /// Literal upstream address avoids recursive bootstrap resolution.
     pub upstream: SocketAddr,
+    /// Skip shared DNS cache reads and writes. Defaults to false.
+    #[serde(default)]
+    pub bypass_cache: bool,
 }
 
 impl DnsUdpServerCfg {
@@ -21,7 +24,14 @@ impl DnsUdpServerCfg {
     }
 
     pub(crate) async fn build_with_cache(self, cache: Arc<DnsCache>) -> Result<DnsServer, SError> {
-        DnsServer::new(self.tag, self.bind_addr, Backend::Udp(self.upstream), cache).await
+        DnsServer::new(
+            self.tag,
+            self.bind_addr,
+            Backend::Udp(self.upstream),
+            cache,
+            self.bypass_cache,
+        )
+        .await
     }
 }
 
@@ -32,6 +42,9 @@ pub struct DnsTcpServerCfg {
     pub tag: String,
     pub bind_addr: SocketAddr,
     pub upstream: SocketAddr,
+    /// Skip shared DNS cache reads and writes. Defaults to false.
+    #[serde(default)]
+    pub bypass_cache: bool,
 }
 
 impl DnsTcpServerCfg {
@@ -40,7 +53,14 @@ impl DnsTcpServerCfg {
     }
 
     pub(crate) async fn build_with_cache(self, cache: Arc<DnsCache>) -> Result<DnsServer, SError> {
-        DnsServer::new(self.tag, self.bind_addr, Backend::Tcp(self.upstream), cache).await
+        DnsServer::new(
+            self.tag,
+            self.bind_addr,
+            Backend::Tcp(self.upstream),
+            cache,
+            self.bypass_cache,
+        )
+        .await
     }
 }
 
@@ -53,6 +73,9 @@ pub struct DnsTlsServerCfg {
     pub upstream: SocketAddr,
     /// TLS identity verified against the public root store.
     pub server_name: String,
+    /// Skip shared DNS cache reads and writes. Defaults to false.
+    #[serde(default)]
+    pub bypass_cache: bool,
 }
 
 impl DnsTlsServerCfg {
@@ -74,7 +97,7 @@ impl DnsTlsServerCfg {
             server_name,
             connector: tls_connector()?,
         };
-        DnsServer::new(self.tag, self.bind_addr, backend, cache).await
+        DnsServer::new(self.tag, self.bind_addr, backend, cache, self.bypass_cache).await
     }
 }
 
@@ -92,7 +115,7 @@ impl DnsFakeIpServerCfg {
     }
 
     pub(crate) async fn build_with_cache(self, cache: Arc<DnsCache>) -> Result<DnsServer, SError> {
-        DnsServer::new(self.tag, self.bind_addr, Backend::FakeIp, cache).await
+        DnsServer::new(self.tag, self.bind_addr, Backend::FakeIp, cache, true).await
     }
 }
 
@@ -102,6 +125,9 @@ impl DnsFakeIpServerCfg {
 pub struct DnsSystemServerCfg {
     pub tag: String,
     pub bind_addr: SocketAddr,
+    /// Skip shared DNS cache reads and writes. Defaults to false.
+    #[serde(default)]
+    pub bypass_cache: bool,
 }
 
 impl DnsSystemServerCfg {
@@ -110,7 +136,14 @@ impl DnsSystemServerCfg {
     }
 
     pub(crate) async fn build_with_cache(self, cache: Arc<DnsCache>) -> Result<DnsServer, SError> {
-        DnsServer::new(self.tag, self.bind_addr, Backend::System, cache).await
+        DnsServer::new(
+            self.tag,
+            self.bind_addr,
+            Backend::System,
+            cache,
+            self.bypass_cache,
+        )
+        .await
     }
 }
 

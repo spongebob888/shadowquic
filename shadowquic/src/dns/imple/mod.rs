@@ -203,6 +203,7 @@ pub struct Resolver {
     pub(crate) requests: mpsc::Sender<ProxyRequest>,
     pub fake_ip: Option<Arc<FakeIp>>,
     pub(crate) cache: Arc<DnsCache>,
+    pub(crate) bypass_cache: bool,
 }
 
 /// Local UDP and TCP listeners plus a queue of routable upstream sessions.
@@ -259,6 +260,7 @@ impl DnsServer {
         bind_addr: std::net::SocketAddr,
         backend: Backend,
         cache: Arc<DnsCache>,
+        bypass_cache: bool,
     ) -> Result<Self> {
         let tcp = TcpListener::bind(bind_addr).await?;
         let local_addr = tcp.local_addr()?;
@@ -270,6 +272,7 @@ impl DnsServer {
             backend,
             requests: tx,
             cache,
+            bypass_cache,
         });
         let service = resolver.clone();
         let udp_task = tokio::spawn(async move {
@@ -517,11 +520,9 @@ impl Resolver {
 impl DnsService for Resolver {
     async fn exchange(&self, query: &[u8]) -> Result<Vec<u8>> {
         let packet = parse_query(query)?;
-        // Fake addresses belong only to this resolver's mapping, never the shared cache.
-        if matches!(self.backend, Backend::FakeIp) {
-            return self.local(packet).await;
-        }
-        if let Some(cached) = self.cache.get(query)? {
+        if !self.bypass_cache
+            && let Some(cached) = self.cache.get(query)?
+        {
             return Ok(cached);
         }
         let reply = tokio::time::timeout(TIMEOUT, async {
@@ -544,7 +545,9 @@ impl DnsService for Resolver {
         .await
         .map_err(|_| dns_error("query timed out"))??;
         let packet = validate_response(query, &reply)?;
-        self.cache.insert(query, packet);
+        if !self.bypass_cache {
+            self.cache.insert(query, packet);
+        }
         Ok(reply)
     }
 }
@@ -642,6 +645,7 @@ impl ResolverManager {
                 requests: mpsc::channel(1).0,
                 fake_ip: None,
                 cache: cache.clone(),
+                bypass_cache: false,
             }),
         );
         Self {

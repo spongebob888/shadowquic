@@ -17,6 +17,7 @@ use tokio::{net::UdpSocket, sync::oneshot, time::timeout};
 #[ignore = "requires Internet access to AliDNS over TCP port 853"]
 async fn resolves_through_alidns_over_tls() -> Result<(), Box<dyn Error>> {
     let server = DnsTlsServerCfg {
+        bypass_cache: false,
         tag: "alidns".into(),
         bind_addr: "127.0.0.1:0".parse()?,
         upstream: "223.5.5.5:853".parse()?,

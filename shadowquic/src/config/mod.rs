@@ -1227,6 +1227,7 @@ outbounds:
         let mut cfg = multi_config();
         cfg.dns.push(crate::dns::config::DnsCfg::System(
             crate::dns::config::DnsSystemServerCfg {
+                bypass_cache: false,
                 tag: crate::dns::DEFAULT_SYSTEM_DNS_TAG.to_string(),
                 bind_addr: "127.0.0.1:0".parse().unwrap(),
             },
