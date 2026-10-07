@@ -1835,6 +1835,40 @@
 
 <h1 id="router">Router<a class="headerlink" href="#router" title="Permanent link">&para;</a></h1>
 <p>Request routing through a default outbound or a restricted Lua script.</p>
+<p>Traffic flow (arrows show requests; replies return through the same sessions):</p>
+<pre class="mermaid"><code>flowchart TD
+    inbound["Inbound listeners"]
+    downloader["Database downloader"]
+    router["Router / dispatcher"]
+    outbound["Selected outbound: direct / proxy"]
+    destination["Destination"]
+    listener["DNS listener queries"]
+    dns["DNS service / cache"]
+    upstream["DNS upstream requests"]
+
+    inbound --&gt;|"TCP/UDP; inbound_tag = listener tag"| router
+    downloader --&gt;|"HTTP(S) over TCP; inbound_tag = database tag"| router
+    router --&gt;|"Outbound tag"| outbound
+    outbound --&gt; destination
+
+    listener --&gt; dns
+    router --&gt;|"DNS service tag: UDP DNS hijacking"| dns
+    router -.-&gt;|"Lua lookup / reverse_lookup"| dns
+    outbound -.-&gt;|"Configured DNS resolution"| dns
+    dns --&gt;|"Upstream exchange needed"| upstream
+    upstream --&gt;|"UDP/TCP, including TLS; inbound_tag = DNS service tag; dns_query metadata"| router</code></pre>
+<p>All three request sources use the same router. Returning an outbound tag
+sends the session to that outbound. Returning a DNS service tag sends a UDP
+DNS session back into that service, which answers locally or creates a new
+upstream request that passes through the router again. Cache hits, fake-IP
+answers, and system DNS resolution do not create routed upstream requests.</p>
+<p>Lua <code>lookup</code> / <code>reverse_lookup</code> and outbound resolution using a configured
+DNS service follow the same DNS path. The original request waits for the
+lookup to finish; outbound destination resolution then continues through the
+already selected outbound. Route DNS upstream traffic by its <code>inbound_tag</code>
+before performing lookups or DNS hijacking to avoid recursive routing. A DNS
+service rejects hijacking its own upstream traffic. Similarly, route database
+downloads before calling helpers that depend on the database being ready.</p>
 <p>Without a script, requests use <code>router.default-outbound</code>, or the first
 configured outbound if omitted. This works without the <code>plugin</code> feature.
 Omit <code>router</code> or use <code>router: {}</code> to use the first outbound directly.</p>
@@ -1987,7 +2021,7 @@ Filesystem, process, module loading, and dynamic code loading are unavailable.</
 <p>Cache lookups use the shared DNS cache, ignore expired entries, and perform
 no network I/O or asynchronous suspension. They do not take a DNS service tag.
 <code>lookup</code> and <code>reverse_lookup</code> suspend the routing function and raise Lua errors
-on failure. Route DNS upstream requests</p>
+on failure. Their upstream requests pass through the router as shown above.</p>
 <p>Database membership helpers require <code>router.database</code> entries (see
 <a href="../shared/routerdatabasecfg/"><code>super::RouterDatabaseCfg</code></a>). All three helpers return booleans.
 Missing databases download through an internal inbound with the database tag.
