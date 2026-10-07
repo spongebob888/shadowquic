@@ -1,0 +1,60 @@
+inbounds:
+- type: socks
+  tag: socks-in
+  bind-addr: "[::]:1089"
+- type: tproxy
+  tag: tproxy-in
+  bind-addr: "[::]:8900"
+dns:
+- type: dns-tls
+  tag: tls-dns
+  bind-addr: "[::]:5353"
+  upstream: "223.5.5.5:853"
+  server-name: "dns.alidns.com"
+- type: dns-udp
+  tag: lan-dns
+  bind-addr: "[::]:0"
+  upstream: "192.168.7.1:53"
+- type: dns-udp
+  tag: hijack-dns
+  bypass-cache: true
+  bind-addr: "[::]:0"
+  upstream: "192.168.7.1:53"
+- type: dns-fakeip
+  tag: fake-dns
+  bind-addr: "[::]:0"
+outbounds:
+- tag: proxy
+  type: shadowquic
+  addr: "192.129.252.150:443"
+  username: "87654321"
+  password: "123"
+  server-name: "cdn.shopify.com" # must be the same as jls_upstream in server
+  alpn: ["h3"]
+  initial-mtu: 1400
+  min-mtu: 1400
+  congestion-control: bbr
+  #bind-interface: eth1
+  zero-rtt: true
+  gso: true # Enable Quinn Generic Segmentation Offload (GSO)
+  over-stream: false  # true for udp over stream, false for udp over datagram
+  fw-mark: 0xff
+- tag: direct
+  type: direct
+  dns: tls-dns
+  fw-mark: 0xff
+router:
+  database:
+    # GeoLite2 Country (MMDB) for CN IP ranges. Downloaded on first start.
+    - tag: geoip-db
+      type: country
+      path: data/geolite2-country.redb
+    # v2fly domain-list-community for CN domains. Downloaded on first start.
+    - tag: geosite-db
+      type: geosite
+      path: data/geosite.redb
+
+  path: ./router_tproxy.lua
+
+log-level: "trace"
+
