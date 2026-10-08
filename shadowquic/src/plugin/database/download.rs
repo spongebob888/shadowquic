@@ -1,4 +1,4 @@
-use super::{RedbDatabase, Result, Slot};
+use super::{Result, Slot, import_database};
 use crate::{
     AnyTcp, Inbound, ProxyRequest, TcpSession, TcpTrait, UserContext, config::RouterDatabaseCfg,
     error::SError, msgs::socks5::SocksAddr,
@@ -74,14 +74,14 @@ impl Inbound for DownloadInbound {
                 };
                 let import_cfg = cfg.clone();
                 tokio::task::spawn_blocking(move || {
-                    RedbDatabase::import(&import_cfg, source.path())
+                    import_database(&import_cfg, source.path())
                 })
                 .await?
             }
             .await;
             match result {
                 Ok(db) => {
-                    *slot.value.write().unwrap() = Ok(Arc::new(db));
+                    *slot.value.write().unwrap() = Ok(db);
                     tracing::info!(tag = %cfg.tag(), "router database ready");
                 }
                 Err(error) => {
