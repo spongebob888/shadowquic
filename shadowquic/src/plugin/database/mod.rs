@@ -1,4 +1,4 @@
-//! Routing membership databases: direct in-memory MMDB country lookups or
+//! Routing membership databases: memory-mapped MMDB country lookups or
 //! indexed redb lookups with a bounded page cache.
 mod download;
 #[cfg(test)]
@@ -61,15 +61,21 @@ pub trait RouterDB: Send + Sync {
     fn find_domain(&self, list: &str, domain: &str) -> Result<bool>;
 }
 
-/// Country membership using the original MMDB bytes, loaded once at startup.
+/// Country membership using a read-only mapping of the original MMDB file.
 pub struct MmdbDatabase {
-    reader: maxminddb::Reader<Vec<u8>>,
+    reader: maxminddb::Reader<maxminddb::Mmap>,
 }
 
 impl MmdbDatabase {
-    pub fn open(path: &Path) -> Result<Self> {
+    /// Open a country MMDB without copying its contents into a heap buffer.
+    ///
+    /// # Safety
+    /// The mapped file must not be modified or truncated until this database
+    /// is dropped. Stop Shadowquic before updating a configured MMDB file.
+    pub unsafe fn open(path: &Path) -> Result<Self> {
         Ok(Self {
-            reader: maxminddb::Reader::open_readfile(path)?,
+            // SAFETY: the caller guarantees the mapped file remains unchanged.
+            reader: unsafe { maxminddb::Reader::open_mmap(path)? },
         })
     }
 }
@@ -95,7 +101,10 @@ impl RouterDB for MmdbDatabase {
 
 fn open_database(cfg: &RouterDatabaseCfg) -> Result<Arc<dyn RouterDB>> {
     if cfg.uses_mmdb() {
-        Ok(Arc::new(MmdbDatabase::open(cfg.path())?))
+        // SAFETY: configured MMDBs are read-only for the router's lifetime.
+        // Downloads never overwrite existing files; external updates require
+        // stopping Shadowquic, as documented for memory-mapped databases.
+        Ok(Arc::new(unsafe { MmdbDatabase::open(cfg.path())? }))
     } else {
         Ok(Arc::new(RedbDatabase::open(cfg)?))
     }
@@ -113,8 +122,9 @@ fn import_database(cfg: &RouterDatabaseCfg, source: &Path) -> Result<Arc<dyn Rou
     std::fs::create_dir_all(parent)?;
     let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
     std::io::copy(&mut std::fs::File::open(source)?, &mut temporary)?;
-    // Validate and load the exact bytes before atomically publishing them.
-    let db = MmdbDatabase::open(temporary.path())?;
+    // SAFETY: writing is complete. Publishing renames/links this same file;
+    // it does not change its bytes. The router never modifies published MMDBs.
+    let db = unsafe { MmdbDatabase::open(temporary.path())? };
     temporary.persist_noclobber(cfg.path())?;
     Ok(Arc::new(db))
 }

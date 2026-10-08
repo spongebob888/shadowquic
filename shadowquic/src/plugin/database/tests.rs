@@ -53,6 +53,37 @@ fn country_config(dir: &Path, filename: &str) -> RouterDatabaseCfg {
 }
 
 #[test]
+fn mmap_country_matches_in_memory_reader_at_all_fixture_range_boundaries() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = country_config(dir.path(), "country.mmdb");
+    std::fs::write(cfg.path(), country_fixture()).unwrap();
+    let db = open_database(&cfg).unwrap();
+    let reader = maxminddb::Reader::from_source(country_fixture()).unwrap();
+    for entry in reader
+        .networks(maxminddb::WithinOptions::default().include_aliased_networks())
+        .unwrap()
+    {
+        let network = entry.unwrap().network().unwrap();
+        for ip in [network.network(), network.broadcast()] {
+            let code = reader
+                .lookup(ip)
+                .unwrap()
+                .decode::<maxminddb::geoip2::Country>()
+                .unwrap()
+                .and_then(|record| record.country.iso_code);
+            let lowercase = code.unwrap_or("missing").to_ascii_lowercase();
+            for list in [lowercase.as_str(), "GB", "US", "CN", "JP", "missing"] {
+                assert_eq!(
+                    db.find_ip(list, ip).unwrap(),
+                    code.is_some_and(|code| code.eq_ignore_ascii_case(list)),
+                    "{ip} {list}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn country_backends_publish_reopen_and_work_through_lua() {
     for filename in ["country.mmdb", "country.MMDB", "country.redb", "legacy"] {
         let dir = tempfile::tempdir().unwrap();

@@ -54,7 +54,7 @@ router:
 ```
 
 The `.mmdb` suffix is case insensitive and selects the direct backend only for
-Country databases. It loads the file into memory once and performs MMDB lookups
+Country databases. It memory-maps the file read-only and performs MMDB lookups
 against `country.iso_code`, including IPv6 aliases present in the source.
 Use `data/country.redb` to retain the existing converted backend. Other suffixes
 also retain redb behavior for compatibility. Geosite always uses redb.
@@ -126,5 +126,9 @@ automatic refresh: stop
 Shadowquic and remove the database file to download again. Paths must be distinct
 and writable. To switch an existing redb configuration to direct MMDB, choose a
 new `.mmdb` path; renaming a redb file does not convert it into MMDB.
-Direct MMDB retains the entire file in memory. redb imports temporarily parse the
-source; redb lookups retain a bounded 8 MiB page cache per database.
+Direct MMDB uses a read-only memory mapping instead of copying the entire file
+into a heap buffer. Accessed pages still count toward resident memory (RSS).
+Do not modify or truncate an MMDB while Shadowquic is running: stop Shadowquic
+before updating the file. The mapping stays alive across Lua script reloads.
+redb imports temporarily parse the source; redb lookups retain a bounded 8 MiB
+page cache per database.
