@@ -273,7 +273,7 @@ fn geosite_indexed_and_sequential_rules_and_metadata_survive_reopen() {
     );
     assert_eq!(
         meta.get("sha256").unwrap().unwrap().value(),
-        format!("{:x}", Sha256::digest(YAML.as_bytes()))
+        "e3f5abe2173bad606b6732596670599099ba32b8fc5c4930f054642ae8615ece"
     );
     drop(meta);
     drop(read);
@@ -871,4 +871,20 @@ async fn failed_http_download_reports_error_without_publishing() {
     .unwrap();
     assert!(!cfg.path().exists());
     inbound.shutdown().await.unwrap();
+}
+
+#[test]
+fn import_hashes_sources_larger_than_the_read_buffer() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(dir.path(), RouterDBKind::Geosite);
+    let source = dir.path().join("source.yml");
+    let content = format!("{}\n{YAML}", "#".repeat(9000));
+    std::fs::write(&source, content).unwrap();
+    let db = RedbDatabase::import(&cfg, &source).unwrap();
+    let read = db.db.begin_read().unwrap();
+    let meta = read.open_table(META).unwrap();
+    assert_eq!(
+        meta.get("sha256").unwrap().unwrap().value(),
+        "0689a9e1ca1b3ea52b273fd3ba9d486f4c2252d34bd609d0ac4d792f69cb3bd2"
+    );
 }

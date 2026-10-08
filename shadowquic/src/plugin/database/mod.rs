@@ -14,6 +14,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
+    io::Read,
     net::IpAddr,
     path::Path,
     sync::{Arc, RwLock},
@@ -83,7 +84,7 @@ impl MmdbDatabase {
 impl RouterDB for MmdbDatabase {
     fn find_ip(&self, list: &str, ip: IpAddr) -> Result<bool> {
         // An IPv4-only database has no IPv6 members, like an empty redb v6 table.
-        if ip.is_ipv6() && self.reader.metadata.ip_version == 4 {
+        if ip.is_ipv6() && self.reader.metadata().ip_version == 4 {
             return Ok(false);
         }
         Ok(self
@@ -222,8 +223,21 @@ impl RedbDatabase {
                 RouterDBKind::Country => import_country(source, &write)?,
             }
             let mut hash = Sha256::new();
-            std::io::copy(&mut std::fs::File::open(source)?, &mut hash)?;
-            let digest = format!("{:x}", hash.finalize());
+            let mut source = std::fs::File::open(source)?;
+            let mut buffer = [0; 8192];
+            loop {
+                match source.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(len) => hash.update(&buffer[..len]),
+                    Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(err) => return Err(err.into()),
+                }
+            }
+            let digest: String = hash
+                .finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
             let mut meta = write.open_table(META)?;
             for (name, value) in [
                 ("schema", schema(cfg.kind())),
