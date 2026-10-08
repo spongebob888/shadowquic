@@ -148,3 +148,7 @@ rand = "0.10.1"
 
 [build-dependencies]
 cc = "1"
+
+[[example]]
+name = "ip_lookup_bench"
+required-features = ["router-db"]
