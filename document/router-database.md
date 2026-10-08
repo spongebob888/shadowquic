@@ -16,7 +16,7 @@ This requires the `plugin` feature. Each entry has four required fields:
 | `tag` | Unique name across databases, inbounds, outbounds, and DNS services |
 | `type` | `country` for Country MMDB, or `geosite` for the plain YAML export |
 | `url` | HTTP(S) download URL |
-| `path` | Converted redb file, relative to the working directory |
+| `path` | Persistent database file, relative to the working directory; Country `.mmdb` paths use direct MMDB lookups, other paths use redb |
 
 ```yaml
 router:
@@ -42,7 +42,23 @@ router:
 
 Configure the `direct` and `proxy` outbounds referenced by your script. A Country
 entry uses `type: country`, a URL serving an uncompressed Country MMDB, and a
-separate path such as `data/country.redb`.
+separate path. For direct MMDB lookups without conversion:
+
+```yaml
+router:
+  database:
+    - type: country
+      tag: country-db
+      path: data/country.mmdb
+      # url defaults to https://git.io/GeoLite2-Country.mmdb
+```
+
+The `.mmdb` suffix is case insensitive and selects the direct backend only for
+Country databases. It loads the file into memory once and performs MMDB lookups
+against `country.iso_code`, including IPv6 aliases present in the source.
+Use `data/country.redb` to retain the existing converted backend. Other suffixes
+also retain redb behavior for compatibility. Geosite always uses redb.
+Both country backends use the same Lua functions below.
 
 | Lua function | Membership query |
 | --- | --- |
@@ -62,13 +78,14 @@ rules are scanned within the requested list. Regular expressions use Rust's
 `regex` syntax and are validated during import. Attributes remain part of the
 base list as well as the corresponding `list@attribute` list.
 
-On startup, an existing redb is opened without downloading. When the file is
+On startup, an existing MMDB or redb is opened without downloading. When the file is
 missing, an internal inbound with the database tag sends download connections
 through the ordinary router and outbounds. HTTP redirects also pass through the
 router. HTTPS validates certificates using the bundled public root store.
 Downloads have a five-minute timeout, at most ten requests including redirects,
-and a 512 MiB source limit. The source is converted on a blocking worker and the
-completed redb is published atomically. Failed downloads/imports are logged;
+and a 512 MiB source limit. On a blocking worker, country `.mmdb` downloads are
+validated and saved unchanged; redb sources are converted. The completed file is
+published atomically without replacing an existing file. Failed downloads/imports are logged;
 lookups report the failure and a restart retries a missing database.
 
 Lookups before import finishes raise an error, including calls made while loading
@@ -83,7 +100,7 @@ independent: Country uses schema `2`, while Geosite continues to use schema `1`.
 Country schema `1` is unsupported; remove old converted Country files and restart
 to download and rebuild them. Existing Geosite schema `1` files remain supported.
 
-Country databases store inclusive IP ranges in two tables per lowercase ISO code:
+Converted Country redb databases store inclusive IP ranges in two tables per lowercase ISO code:
 `country_v4_us` and `country_v6_us`, for example. Records without a country ISO
 code are skipped. Existing files containing English-name tables must be rebuilt
 to reclaim that space.
@@ -98,8 +115,16 @@ for the query's address family and the greatest start key no larger than the
 query, then checks the inclusive end. Missing tables
 and gaps between ranges return false. Geosite retains its `rules` table layout.
 
-Incompatible, corrupt, or mismatched existing files fail startup. There is no
+Direct MMDB files contain no Shadowquic schema or source-URL metadata; changing
+`url` does not invalidate an existing MMDB. Invalid MMDB headers/metadata fail
+startup; record decoding errors are reported by the lookup. Direct MMDB uses the
+source's IPv6 alias behavior, while legacy redb conversion continues to skip
+aliased ranges.
+
+Incompatible, corrupt, or mismatched existing redb files fail startup. There is no
 automatic refresh: stop
-Shadowquic and remove the converted file to download again. Paths must be distinct
-and writable. Imports temporarily parse the source; lookups retain only redb's
-bounded 8 MiB page cache per database, not an in-memory copy of the source lists.
+Shadowquic and remove the database file to download again. Paths must be distinct
+and writable. To switch an existing redb configuration to direct MMDB, choose a
+new `.mmdb` path; renaming a redb file does not convert it into MMDB.
+Direct MMDB retains the entire file in memory. redb imports temporarily parse the
+source; redb lookups retain a bounded 8 MiB page cache per database.

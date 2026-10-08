@@ -48,7 +48,8 @@ router:
     # GeoLite2 Country (MMDB) for CN IP ranges. Downloaded on first start.
     - tag: geoip-db
       type: country
-      path: data/geolite2-country.redb
+      # Direct MMDB lookup; use .redb for the converted backend.
+      path: data/geolite2-country.mmdb
     # v2fly domain-list-community for CN domains. Downloaded on first start.
     - tag: geosite-db
       type: geosite

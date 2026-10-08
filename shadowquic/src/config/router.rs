@@ -146,8 +146,8 @@ use std::sync::Arc;
 /// [`super::RouterDatabaseCfg`]). All three helpers return booleans.
 /// Missing databases download through an internal inbound with the database tag.
 /// Route that traffic before calling helpers. Unavailable databases raise Lua
-/// errors; use `pcall` for an explicit fallback while downloading. Existing redb
-/// files are reused, including across script reloads.
+/// errors; use `pcall` for an explicit fallback while downloading. Existing MMDB
+/// and redb files are reused, including across script reloads.
 ///
 /// The exposed router context to script can be seen in [`crate::plugin::router::RouteContext`]
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]

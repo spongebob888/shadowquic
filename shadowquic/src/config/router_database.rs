@@ -8,7 +8,7 @@ pub fn default_geosite_url() -> String {
     "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat_plain.yml"
         .into()
 }
-/// A downloaded routing database, converted to an indexed redb file.
+/// A routing database stored as a country MMDB or an indexed redb file.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", tag = "type")]
 pub enum RouterDatabaseCfg {
@@ -27,7 +27,8 @@ pub struct CountryDbCfg {
     /// MMDB format.
     #[serde(default = "default_country_url")]
     pub url: String,
-    /// Persistent converted redb file, relative to the working directory.
+    /// Persistent file, relative to the working directory. A `.mmdb` suffix
+    /// selects direct MMDB lookups; other suffixes retain redb conversion.
     pub path: PathBuf,
 }
 
@@ -46,6 +47,14 @@ pub struct GeositeDbCfg {
 }
 
 impl RouterDatabaseCfg {
+    pub(crate) fn uses_mmdb(&self) -> bool {
+        self.kind() == RouterDBKind::Country
+            && self
+                .path()
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("mmdb"))
+    }
+
     pub fn tag(&self) -> &str {
         match self {
             Self::Country(cfg) => &cfg.tag,
@@ -85,6 +94,22 @@ pub enum RouterDBKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mmdb_suffix_selects_only_country_backend() {
+        for (kind, path, expected) in [
+            ("country", "data/country.mmdb", true),
+            ("country", "data/country.MMDB", true),
+            ("country", "data/country.redb", false),
+            ("country", "data/country", false),
+            ("country", "data/country.mmdb.redb", false),
+            ("geosite", "data/site.mmdb", false),
+        ] {
+            let cfg: RouterDatabaseCfg =
+                serde_saphyr::from_str(&format!("type: {kind}\ntag: db\npath: {path}\n")).unwrap();
+            assert_eq!(cfg.uses_mmdb(), expected, "{kind}: {path}");
+        }
+    }
 
     #[test]
     fn database_variants_preserve_yaml_format() {
