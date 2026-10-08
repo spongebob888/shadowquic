@@ -52,9 +52,9 @@ tproxy = ["dep:etherparse", "dep:libc"]
 
 [dependencies]
 tempfile = { version = "3", optional = true }
-redb = { version = "3", optional = true }
-maxminddb = { version = "0.28", features = ["mmap"], optional = true }
-sha2 = { version = "0.10", optional = true }
+redb = { version = "4", optional = true }
+maxminddb = { version = "0.32", features = ["mmap"], optional = true }
+sha2 = { version = "0.11", optional = true }
 regex = { version = "1", optional = true }
 hyper = { version = "1", features = ["client", "http1"], optional = true }
 hyper-util = { version = "0.1", features = ["tokio"], optional = true }
@@ -83,15 +83,16 @@ bytes = "1.11.0"
 async-trait = "0.1.89"
 webpki-roots = "1.0.7"
 shadowquic-macros = { path = "../shadowquic-macros", version = ">=0.3.11" }
-yaml-rust2 = "0.11.0"
+yaml-rust2 = "0.13.0"
 serde = { version = "1.0.228", features = ["derive"]}
 clap = { version = "4", features = ["derive"] }
-educe = "0.6.0"
+educe = "0.8.1"
 socket2 = "0.6.2"
 
 gm-quic = { version = "0.4", default-features = false, optional = true}
-qevent = { version = "0.5", default-features = false, optional = true}
-qbase = { version = "0.5", default-features = false, optional = true}
+# These types must match the versions used by gm-quic and qunreliable.
+qevent = { version = "0.4", default-features = false, optional = true}
+qbase = { version = "0.4", default-features = false, optional = true}
 qunreliable = { version = "0.4", default-features = false, optional = true}
 rustls = { version = "0.23", default-features = false, features = ["std"], optional = true}
 rustls-native-certs = {version = "0.8.3", optional = true}
@@ -110,13 +111,12 @@ console-subscriber = { version = "0.5.0", optional = true }
 serde-saphyr = "1.1.0"
 aws-lc-rs = { version = "1", optional = true, default-features = false }
 ring = { version = "0.17.14", optional = true }
-base64 = { version = "0.22.1", optional = true }
+base64 = { version = "0.23.1", optional = true }
 
-etherparse = { version = "0.14.3", optional = true }
 
 [target.'cfg(target_os="linux")'.dependencies]
 libc = { version = "0.2", optional = true }
-etherparse = { version = "0.14.3", optional = true }
+etherparse = { version = "0.21.0", optional = true }
 
 # LuaJIT has no RISC-V or LoongArch backend. Keep Lua 5.1 routing available
 # on those architectures with the portable interpreter.
@@ -133,7 +133,7 @@ portable-atomic = { version = "1", optional = true }
 sendfd = { version = "0.4.4", features = ["tokio"] }
 
 [target.'cfg(target_os="windows")'.dependencies]
-windows = { version = "0.56.0", features = [
+windows = { version = "0.62.2", features = [
     "Win32_Foundation",
     "Win32_Networking_WinSock",
     "Win32_NetworkManagement_IpHelper",
