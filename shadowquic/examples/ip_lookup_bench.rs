@@ -4,7 +4,7 @@ use maxminddb::{Reader, geoip2::Country};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use shadowquic::{
     config::{CountryDbCfg, RouterDatabaseCfg},
-    plugin::database::{RedbDatabase, Result, RouterDB},
+    plugin::database::{MmdbDatabase, RedbDatabase, Result, RouterDB},
 };
 use std::{
     fs,
@@ -23,6 +23,23 @@ enum Family {
     Mixed,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum Backend {
+    Mmdb,
+    Mmap,
+    Redb,
+}
+
+impl Backend {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Mmdb => "mmdb",
+            Self::Mmap => "mmap",
+            Self::Redb => "redb",
+        }
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(
     about = "Compare country membership lookup speed and process memory: MMDB vs ShadowQUIC redb"
@@ -31,6 +48,9 @@ struct Args {
     /// Local country MMDB source; never downloaded or modified.
     #[arg(long)]
     mmdb: PathBuf,
+    /// Backends in execution order: in-memory MMDB, mmap MMDB, or redb.
+    #[arg(long, value_enum, value_delimiter = ',', default_value = "mmdb,redb", num_args = 1..)]
+    backends: Vec<Backend>,
     #[arg(long, default_value = "CN")]
     country: String,
     /// Generated query count (ignored with --ips).
@@ -63,7 +83,7 @@ fn config(dir: &Path) -> RouterDatabaseCfg {
     })
 }
 
-fn mmdb_find(reader: &Reader<Vec<u8>>, country: &str, ip: IpAddr) -> Result<bool> {
+fn mmdb_find<S: AsRef<[u8]>>(reader: &Reader<S>, country: &str, ip: IpAddr) -> Result<bool> {
     Ok(reader
         .lookup(ip)?
         .decode::<Country>()?
@@ -269,13 +289,30 @@ fn worker(args: &Args) -> Result<()> {
                 fs::metadata(cfg.path())?.len(),
             )?;
         }
+        Some("mmap") => {
+            // SAFETY: the parent created this private snapshot and keeps its
+            // temporary directory alive until every worker has exited. Neither
+            // parent nor workers modify or truncate the snapshot while mapped.
+            let db = unsafe { MmdbDatabase::open(&args.mmdb)? };
+            let open_ms = start.elapsed().as_secs_f64() * 1000.0;
+            let (opened, _) = memory();
+            measure(
+                args,
+                &queries,
+                |ip| db.find_ip(&args.country, ip),
+                &baseline,
+                open_ms,
+                &opened,
+                fs::metadata(&args.mmdb)?.len(),
+            )?;
+        }
         _ => return Err("unknown worker".into()),
     }
     Ok(())
 }
 
 fn main() -> Result<()> {
-    let args = Args::parse();
+    let mut args = Args::parse();
     if args.country.len() != 2 || !args.country.bytes().all(|b| b.is_ascii_alphabetic()) {
         return Err("--country must be a two-letter ISO country code".into());
     }
@@ -289,14 +326,29 @@ fn main() -> Result<()> {
         Some(path) => tempfile::tempdir_in(path)?,
         None => tempfile::tempdir()?,
     };
+    // All workers use the same private, immutable bytes. In particular, mmap
+    // must not observe external modifications to the user's source file.
+    let snapshot = dir.path().join("source.mmdb");
+    fs::copy(&args.mmdb, &snapshot)?;
+    args.mmdb = snapshot;
     prepare(&args, dir.path())?;
     println!(
         "backend,round,lookups,hits,ns_per_lookup,lookups_per_sec,open_ms,file_bytes,baseline_rss_kib,opened_rss_kib,rss_kib,peak_rss_kib"
     );
     std::io::stdout().flush()?;
-    for backend in ["import", "mmdb", "redb"] {
+    let mut workers = Vec::new();
+    if args.backends.contains(&Backend::Redb) {
+        workers.push("import");
+    }
+    workers.extend(args.backends.iter().map(|backend| backend.name()));
+    for backend in workers {
         let status = Command::new(std::env::current_exe()?)
-            .args(std::env::args_os().skip(1))
+            .arg("--mmdb")
+            .arg(&args.mmdb)
+            .arg("--country")
+            .arg(&args.country)
+            .arg("--rounds")
+            .arg(args.rounds.to_string())
             .arg("--worker")
             .arg(backend)
             .arg("--work-dir")
