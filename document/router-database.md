@@ -1,5 +1,8 @@
 # Router databases
 
+Use the [IP lookup benchmark](ip-lookup-benchmark.md) to compare direct MMDB
+country lookups with ShadowQUIC's redb lookup speed and memory usage.
+
 Requires the `router-db` Cargo feature (enabled by default). This feature enables
 Lua routing and the database import, download, and lookup dependencies. For Lua
 routing without database support, build with `--no-default-features` and select
