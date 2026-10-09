@@ -304,6 +304,7 @@ fn geosite_indexed_and_sequential_rules_and_metadata_survive_reopen() {
 fn geosite_schema_two_tables_preserve_attributes_and_isolate_lists() {
     use super::geosite::GeositeTable;
     use redb::ReadableTableMetadata;
+    use regex_automata::dfa::Automaton;
 
     let dir = tempfile::tempdir().unwrap();
     let cfg = config(dir.path(), RouterDBKind::Geosite);
@@ -396,13 +397,22 @@ fn geosite_schema_two_tables_preserve_attributes_and_isolate_lists() {
             .value(),
         [0]
     );
-    let regex = table
-        .get((2u8, br"^rx\d+\.example$".as_slice()))
+    let (regex_key, regex_attribute) = table
+        .range((4u8, &b""[..])..(5u8, &b""[..]))
+        .unwrap()
+        .next()
         .unwrap()
         .unwrap();
-    assert_eq!(regex.value()[0], 3);
-    assert_eq!(regex.value()[1], 1, "regex DFA must be stored in redb");
-    assert!(regex.value().len() > 16);
+    assert_eq!(regex_attribute.value(), [3]);
+    let (_, dfa_bytes) = regex_key.value();
+    assert!(dfa_bytes.len() > 16);
+    let dfa = super::geosite::deserialize_dfa(dfa_bytes).unwrap();
+    assert!(
+        dfa.try_search_fwd(&regex_automata::Input::new("rx123.example"))
+            .unwrap()
+            .is_some(),
+        "compiled regex DFA must be stored under the CompiledRegex key type"
+    );
 }
 
 #[test]

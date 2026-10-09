@@ -133,7 +133,6 @@ fn import_database(cfg: &RouterDatabaseCfg, source: &Path) -> Result<Arc<dyn Rou
 pub struct RedbDatabase {
     db: Database,
     kind: RouterDBKind,
-    geosite_regexes: geosite::RegexCache,
 }
 
 fn kind_name(kind: RouterDBKind) -> &'static str {
@@ -148,7 +147,6 @@ impl RedbDatabase {
         let db = Database::builder()
             .set_cache_size(8 * 1024 * 1024)
             .open(cfg.path())?;
-        let mut geosite_regexes = geosite::RegexCache::new();
         {
             let read = db.begin_read()?;
             let meta = read.open_table(META)?;
@@ -182,10 +180,6 @@ impl RedbDatabase {
                     for table in read.list_tables()? {
                         if table.name().starts_with("geosite_") {
                             read.open_table(GeositeTable::new(table.name()))?;
-                            let regexes = geosite::compile_regexes(&read, table.name())?;
-                            if !regexes.is_empty() {
-                                geosite_regexes.insert(table.name().to_owned(), regexes);
-                            }
                             count += 1;
                         }
                     }
@@ -213,7 +207,6 @@ impl RedbDatabase {
         Ok(Self {
             db,
             kind: cfg.kind(),
-            geosite_regexes,
         })
     }
 
@@ -297,7 +290,7 @@ impl RouterDB for RedbDatabase {
             RouterDBKind::Geosite,
             "country does not support domain lookup"
         );
-        geosite::find_domain(&self.db.begin_read()?, &self.geosite_regexes, list, domain)
+        geosite::find_domain(&self.db.begin_read()?, list, domain)
     }
 }
 

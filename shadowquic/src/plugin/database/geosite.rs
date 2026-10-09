@@ -5,9 +5,9 @@ use regex_automata::{
     dfa::{Automaton, StartKind, dense},
 };
 use serde::Deserialize;
-use std::{collections::HashMap, path::Path};
+use std::path::Path;
 
-// Schema 2 uses byte-slice keys/values and stores serialized regex DFAs.
+// Schema 2 uses byte-slice keys and values; compiled regexes are DFA keys.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 enum SiteMatchType {
@@ -15,6 +15,7 @@ enum SiteMatchType {
     Domain = 1,
     Regex = 2,
     Keyword = 3,
+    CompiledRegex = 4,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -39,83 +40,26 @@ impl AttrType {
 
 pub(super) type GeositeTable<'a> = TableDefinition<'a, (u8, &'static [u8]), &'static [u8]>;
 
-const REGEX_SOURCE: u8 = 0;
-const REGEX_DFA: u8 = 1;
-
-pub(super) struct RegexEntry {
-    attribute: u8,
-    regex: CachedRegex,
-}
-
-enum CachedRegex {
-    Dfa(Box<dense::DFA<Vec<u32>>>),
-    Source(Box<regex::Regex>),
-}
-
-impl CachedRegex {
-    fn is_match(&self, domain: &str) -> Result<bool> {
-        match self {
-            Self::Dfa(dfa) => Ok(dfa.try_search_fwd(&Input::new(domain))?.is_some()),
-            Self::Source(regex) => Ok(regex.is_match(domain)),
-        }
-    }
-}
-
-pub(super) type RegexCache = HashMap<String, Vec<RegexEntry>>;
-
 pub(super) fn geosite_table_name(list: &str) -> String {
     format!("geosite_{}", list.to_ascii_lowercase())
 }
 
-pub(super) fn compile_regexes(
-    read: &redb::ReadTransaction,
-    table_name: &str,
-) -> Result<Vec<RegexEntry>> {
-    let table = read.open_table(GeositeTable::new(table_name))?;
-    table
-        .range(
-            (SiteMatchType::Regex as u8, &b""[..])..((SiteMatchType::Regex as u8 + 1), &b""[..]),
-        )?
-        .map(|entry| {
-            let (key, attribute) = entry?;
-            let (_, pattern) = key.value();
-            let pattern = std::str::from_utf8(pattern)?;
-            let stored = attribute.value();
-            let (&stored_attribute, regex_value) =
-                stored.split_first().ok_or("empty stored geosite value")?;
-            let (kind, payload) = regex_value
-                .split_first()
-                .ok_or("empty stored geosite regex value")?;
-            let regex = match *kind {
-                REGEX_DFA => {
-                    match dense::DFA::from_bytes(payload) {
-                        Ok((dfa, _)) => CachedRegex::Dfa(Box::new(dfa.to_owned())),
-                        // The key retains the source so persisted DFAs remain
-                        // recoverable after a format/compiler incompatibility.
-                        Err(_) => CachedRegex::Source(Box::new(regex::Regex::new(pattern)?)),
-                    }
-                }
-                REGEX_SOURCE => {
-                    // Validate the persisted fallback source before storing it in
-                    // the runtime cache.
-                    CachedRegex::Source(Box::new(regex::Regex::new(pattern)?))
-                }
-                _ => return Err("unknown stored geosite regex encoding".into()),
-            };
-            Ok(RegexEntry {
-                attribute: stored_attribute,
-                regex,
-            })
-        })
-        .collect()
+pub(super) fn deserialize_dfa(bytes: &[u8]) -> Result<dense::DFA<Vec<u32>>> {
+    // redb does not guarantee alignment for byte-slice keys. Rebuild the
+    // serialized buffer with padding for this allocation before deserializing.
+    let serialized_padding = bytes.iter().take(7).take_while(|byte| **byte == 0).count();
+    let serialized = &bytes[serialized_padding..];
+    let alignment = std::mem::align_of::<u32>();
+    let mut aligned = Vec::with_capacity(serialized.len() + alignment - 1);
+    aligned.resize(alignment - 1, 0);
+    let padding = (alignment - (aligned.as_ptr() as usize % alignment)) % alignment;
+    aligned.truncate(padding);
+    aligned.extend_from_slice(serialized);
+    let (dfa, _) = dense::DFA::from_bytes(&aligned)?;
+    Ok(dfa.to_owned())
 }
 
-pub(super) fn find_domain(
-    read: &redb::ReadTransaction,
-    regex_cache: &RegexCache,
-    list: &str,
-    domain: &str,
-) -> Result<bool> {
+pub(super) fn find_domain(read: &redb::ReadTransaction, list: &str, domain: &str) -> Result<bool> {
     let list = list.to_ascii_lowercase();
     let (list, attribute) = match list.split_once('@') {
         Some((list, attribute)) => match AttrType::parse(attribute) {
@@ -169,13 +113,35 @@ pub(super) fn find_domain(
             return Ok(true);
         }
     }
-    if let Some(regexes) = regex_cache.get(&name) {
-        for entry in regexes {
-            if (attribute == AttrType::Nil || entry.attribute == attribute as u8)
-                && entry.regex.is_match(&domain)?
-            {
-                return Ok(true);
-            }
+    for entry in table.range(
+        (SiteMatchType::CompiledRegex as u8, &b""[..])
+            ..((SiteMatchType::CompiledRegex as u8 + 1), &b""[..]),
+    )? {
+        let (key, stored_attribute) = entry?;
+        if attribute != AttrType::Nil
+            && stored_attribute.value().first() != Some(&(attribute as u8))
+        {
+            continue;
+        }
+        let (_, dfa_bytes) = key.value();
+        let dfa = deserialize_dfa(dfa_bytes)?;
+        if dfa.try_search_fwd(&Input::new(&domain))?.is_some() {
+            return Ok(true);
+        }
+    }
+    for entry in table.range(
+        (SiteMatchType::Regex as u8, &b""[..])..((SiteMatchType::Regex as u8 + 1), &b""[..]),
+    )? {
+        let (key, stored_attribute) = entry?;
+        if attribute != AttrType::Nil
+            && stored_attribute.value().first() != Some(&(attribute as u8))
+        {
+            continue;
+        }
+        let (_, pattern) = key.value();
+        let pattern = std::str::from_utf8(pattern)?;
+        if regex::Regex::new(pattern)?.is_match(&domain) {
+            return Ok(true);
         }
     }
     Ok(false)
@@ -218,34 +184,27 @@ pub(super) fn import_geosite(source: &Path, write: &redb::WriteTransaction) -> R
                 "keyword" => SiteMatchType::Keyword,
                 _ => return Err(format!("unsupported geosite rule type: {kind}").into()),
             };
-            let value = if kind == SiteMatchType::Regex {
-                value.to_owned()
-            } else {
-                value.to_ascii_lowercase()
-            };
             assert!(!attribute.contains("@"));
             let attribute =
                 AttrType::parse(&attribute.to_ascii_lowercase()).unwrap_or(AttrType::Nil);
-            let mut stored_value = vec![attribute as u8];
-            if kind == SiteMatchType::Regex {
-                regex::Regex::new(&value)?;
+            let (kind, key_value) = if kind == SiteMatchType::Regex {
                 match dense::Builder::new()
                     .configure(dense::Config::new().start_kind(StartKind::Unanchored))
-                    .build(&value)
+                    .build(value)
                 {
-                    Ok(dfa) => {
-                        stored_value.push(REGEX_DFA);
-                        stored_value.extend(dfa.to_bytes_little_endian().0);
-                    }
-                    // Some regex syntax supported by `regex` has no DFA
-                    // implementation. Preserve its source for a compiled
-                    // runtime fallback while storing DFAs for supported rules.
+                    Ok(dfa) => (SiteMatchType::CompiledRegex, dfa.to_bytes_little_endian().0),
                     Err(_) => {
-                        stored_value.push(REGEX_SOURCE);
+                        regex::Regex::new(value)?;
+                        (SiteMatchType::Regex, value.as_bytes().to_vec())
                     }
                 }
-            }
-            table.insert((kind as u8, value.as_bytes()), stored_value.as_slice())?;
+            } else {
+                (kind, value.to_ascii_lowercase().into_bytes())
+            };
+            table.insert(
+                (kind as u8, key_value.as_slice()),
+                [attribute as u8].as_slice(),
+            )?;
         }
     }
     Ok(())

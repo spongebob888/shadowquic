@@ -11,12 +11,12 @@ cargo run --release -p shadowquic --example geosite_lookup_bench -- \
 The benchmark compares production `RedbDatabase::find_domain` against a
 precompiled in-memory scan of the selected list's rules. Both use the same
 `full`, `domain`, `keyword`, and `regexp` matching semantics, including list
-attributes. Regexes are compiled once for the in-memory scan and cached when
-redb opens. The geosite importer stores serialized DFAs in redb values when a
-pattern supports DFA compilation; redb loads those DFAs into memory on open.
-Patterns unsupported by the DFA engine retain a source-pattern fallback. This
-compares indexed lookups against a linear scan, with DFA loading reflected in
-redb's open time and memory use.
+attributes. Regexes are compiled once for the in-memory scan. The geosite
+importer stores serialized DFA bytes under the `CompiledRegex` key type.
+Patterns unsupported by DFA compilation use the `Regex` key type and retain
+their source pattern. Lookups deserialize compiled DFAs or compile fallback
+regexes on demand; the runtime does not cache regexes. This compares indexed
+lookups against a linear scan.
 
 The source is imported into a temporary redb before the timed runs; conversion
 time is printed on stderr and excluded from lookup timings. The original source

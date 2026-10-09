@@ -77,9 +77,8 @@ Geosite `full` rules match exactly. `domain` rules match the domain and its
 subdomains on label boundaries. Both use redb indexes. `keyword` and `regexp`
 rules are scanned within the requested list. Regular expressions use Rust's
 `regex` syntax and are validated during import. Attributes remain part of the
-base list. Regex patterns are compiled and cached when the redb database opens,
-then reused for lookups. This reduces lookup work at the cost of startup time
-and memory proportional to the compiled patterns. The supported attribute filters are `list@ads`, `list@!cn`, and
+base list. Regexes are compiled to DFAs during import and stored in redb values.
+The supported attribute filters are `list@ads`, `list@!cn`, and
 `list@cn`; other attribute filters return false. Rules carrying only unsupported
 attributes remain in the base list.
 
@@ -121,16 +120,18 @@ query, then checks the inclusive end. Missing tables
 and gaps between ranges return false.
 
 Geosite schema `2` stores each base list in a table named `geosite_<lowercase-name>`,
-including empty lists. Keys are `(SiteMatchType, Vec<u8>)`, with domains and
-patterns encoded as UTF-8. Values are `Vec<u8>`: the first byte stores the
+including empty lists. Keys are `(SiteMatchType, Vec<u8>)`; domains and regex
+patterns use UTF-8 bytes. Values are `Vec<u8>`: the first byte stores the
 attribute enum. Both enums use `u8`: match types are
-`Full = 0`, `Domain = 1`, `Regex = 2`, `Keyword = 3`; attributes are
+`Full = 0`, `Domain = 1`, `Regex = 2`, `Keyword = 3`, `CompiledRegex = 4`;
+attributes are
 `Nil = 0`, `Ads = 1`, `NotCn = 2`, `Cn = 3`. Each rule has one row and at most
-one attribute. Rules with no supported
-attributes use `Nil`. Regex values store a serialized little-endian DFA when
-supported, or a fallback marker; the UTF-8 pattern stays in the key. DFA bytes
-are validated and loaded once when redb opens, then reused by searches. If a
-stored DFA cannot be read, Shadowquic recompiles the key's pattern as a fallback.
+one attribute. Rules with no supported attributes use `Nil`. `CompiledRegex = 4`
+keys store serialized little-endian DFA bytes; their values store the attribute.
+Patterns that cannot compile to a DFA use the existing `Regex = 2` key with the
+UTF-8 source pattern. Compiled DFAs are decoded directly from keys during
+lookup, and fallback regexes are compiled during lookup; there is no runtime
+regex cache.
 Unfiltered queries match any
 attribute. Full and domain lookups use the tuple index, while keyword and regex
 lookups scan only the corresponding match type in the requested list table.
