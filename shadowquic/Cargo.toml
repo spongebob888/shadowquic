@@ -13,7 +13,7 @@ default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", 
 # cost 1.4 mb
 dns-server = ["dep:simple-dns", "dep:tokio-rustls-jls", "dep:rustls_jls"]
 # cost 200k
-statistics = ["dep:portable-atomic"]
+statistics = []
 # cost 200k
 mixed = ["dep:base64"]
 # cost about 2.4m
@@ -126,9 +126,10 @@ mlua = { version = "0.12", default-features = false, features = ["lua52"], optio
 [target.'cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))'.dependencies]
 mlua = { version = "0.12", default-features = false, features = ["luajit"], optional = true }
 
-# 64-bit atomics via ll/sc CAS loop on targets without native AtomicU64 (e.g. 32-bit MIPS)
+# 64-bit atomics via ll/sc CAS loop on targets without native AtomicU64 (e.g. 32-bit MIPS).
+# Not optional: relay activity tracking needs AtomicU64 under every feature combination.
 [target.'cfg(not(target_has_atomic = "64"))'.dependencies]
-portable-atomic = { version = "1", optional = true }
+portable-atomic = "1"
 [target.'cfg(target_os="android")'.dependencies]
 sendfd = { version = "0.4.4", features = ["tokio"] }
 
@@ -143,6 +144,10 @@ windows = { version = "0.62.2", features = [
 libc = "0.2"
 
 [dev-dependencies]
+# `test-util` is what makes `#[tokio::test(start_paused = true)]` and the paused
+# clock available to the relay watchdog tests; keeping it out of [dependencies]
+# avoids shipping it.
+tokio = {version = "1.52.3", features = ["test-util"]}
 fast-socks5 = "1.0.0"
 rand = "0.10.1"
 

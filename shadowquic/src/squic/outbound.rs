@@ -18,6 +18,7 @@ use crate::{
     msgs::{SDecode, SEncode, socks5::SocksAddr, squic::SQReq},
     quic::QuicConnection,
     squic::{handle_udp_recv_ctrl, handle_udp_send},
+    utils::activity_stream::{Activity, ActivityGuard, half_close_watchdog},
 };
 
 use super::{SQConn, SQConnStats, inbound::Unsplit};
@@ -45,6 +46,14 @@ pub enum Dispatch {
     StillActive,
 }
 
+/// The relay watchdog's deadline for a configured half-close timeout in seconds.
+///
+/// Zero disables the watchdog: a zero deadline would fire immediately, ending
+/// every session as soon as its first direction finished.
+pub fn half_close_grace(secs: u64) -> Option<Duration> {
+    (secs > 0).then(|| Duration::from_secs(secs))
+}
+
 /// Dispatches `req` under [`HANDLE_TIMEOUT`] and starts its relay.
 ///
 /// [`handle_request`] spawns the relay and returns before it runs, so this bound
@@ -65,11 +74,12 @@ pub async fn dispatch<C: QuicConnection>(
     req: ProxyRequest,
     conn: SQConn<C>,
     over_stream: bool,
+    half_close_timeout: Option<Duration>,
 ) -> Result<Dispatch, SError> {
     let progress_before = conn.data_progress();
     match tokio::time::timeout(
         HANDLE_TIMEOUT,
-        handle_request(req, conn.clone(), over_stream),
+        handle_request(req, conn.clone(), over_stream, half_close_timeout),
     )
     .await
     {
@@ -98,6 +108,7 @@ pub async fn handle_request<C: QuicConnection>(
     req: ProxyRequest,
     conn: SQConn<C>,
     over_stream: bool,
+    half_close_timeout: Option<Duration>,
 ) -> Result<(), SError> {
     let (mut send, recv, id) = QuicConnection::open_bi(&conn.conn).await?;
     let _span = span!(Level::INFO, "bistream", id = id);
@@ -116,11 +127,35 @@ pub async fn handle_request<C: QuicConnection>(
                 req.encode(&mut send).await?;
                 trace!(dst = %tcp_session.dst, "tcp connect req header sent");
 
-                let u = tokio::io::copy_bidirectional(
-                    &mut Unsplit { s: send, r: recv },
-                    &mut tcp_session.stream,
-                )
-                .await?;
+                let activity = Activity::new();
+                let mut quic_side =
+                    ActivityGuard::new(Unsplit { s: send, r: recv }, activity.clone());
+                let mut local_side = ActivityGuard::new(&mut tcp_session.stream, activity.clone());
+                let copy = tokio::io::copy_bidirectional(&mut quic_side, &mut local_side);
+                tokio::pin!(copy);
+
+                // Only the half-closed case is bounded: a session that is merely
+                // idle with both directions still open is a healthy one, and
+                // ending it would drop interactive logins that are simply
+                // sitting unused. The watchdog measures silence across both ends
+                // together and cannot fire before a half-close, so a peer that is
+                // merely slow to answer is never cut off; once one direction has
+                // finished, only the surviving direction can still carry bytes,
+                // and any byte it moves restarts the countdown.
+                let u = match half_close_timeout {
+                    Some(grace) => tokio::select! {
+                        res = &mut copy => res?,
+                        _ = half_close_watchdog(&activity, grace) => {
+                            error!(
+                                dst = %tcp_session.dst,
+                                "relay half-closed and silent for {}s, closing the session",
+                                grace.as_secs()
+                            );
+                            return Ok(());
+                        }
+                    },
+                    None => copy.await?,
+                };
 
                 info!(
                     "request:{} finished, upload:{}bytes,download:{}bytes",
