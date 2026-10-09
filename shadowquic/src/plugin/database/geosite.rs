@@ -44,40 +44,9 @@ pub(super) fn geosite_table_name(list: &str) -> String {
     format!("geosite_{}", list.to_ascii_lowercase())
 }
 
-const SPARSE_DFA_MARKER: &[u8] = b"SQSPARSE\x01";
-
-pub(super) enum StoredDfa {
-    Sparse(sparse::DFA<Vec<u8>>),
-    LegacyDense(dense::DFA<Vec<u32>>),
-}
-
-impl StoredDfa {
-    pub(super) fn is_match(&self, domain: &str) -> Result<bool> {
-        let input = Input::new(domain);
-        match self {
-            Self::Sparse(dfa) => Ok(dfa.try_search_fwd(&input)?.is_some()),
-            Self::LegacyDense(dfa) => Ok(dfa.try_search_fwd(&input)?.is_some()),
-        }
-    }
-}
-
-pub(super) fn deserialize_dfa(bytes: &[u8]) -> Result<StoredDfa> {
-    if let Some(bytes) = bytes.strip_prefix(SPARSE_DFA_MARKER) {
-        let (dfa, _) = sparse::DFA::from_bytes(bytes)?;
-        return Ok(StoredDfa::Sparse(dfa.to_owned()));
-    }
-    // redb does not guarantee alignment for byte-slice keys. Rebuild the
-    // legacy dense DFA buffer with padding before deserializing.
-    let serialized_padding = bytes.iter().take(7).take_while(|byte| **byte == 0).count();
-    let serialized = &bytes[serialized_padding..];
-    let alignment = std::mem::align_of::<u32>();
-    let mut aligned = Vec::with_capacity(serialized.len() + alignment - 1);
-    aligned.resize(alignment - 1, 0);
-    let padding = (alignment - (aligned.as_ptr() as usize % alignment)) % alignment;
-    aligned.truncate(padding);
-    aligned.extend_from_slice(serialized);
-    let (dfa, _) = dense::DFA::from_bytes(&aligned)?;
-    Ok(StoredDfa::LegacyDense(dfa.to_owned()))
+pub(super) fn deserialize_dfa(bytes: &[u8]) -> Result<sparse::DFA<&[u8]>> {
+    let (dfa, _) = sparse::DFA::from_bytes(bytes)?;
+    Ok(dfa)
 }
 
 pub(super) fn find_domain(read: &redb::ReadTransaction, list: &str, domain: &str) -> Result<bool> {
@@ -146,7 +115,7 @@ pub(super) fn find_domain(read: &redb::ReadTransaction, list: &str, domain: &str
         }
         let (_, dfa_bytes) = key.value();
         let dfa = deserialize_dfa(dfa_bytes)?;
-        if dfa.is_match(&domain)? {
+        if dfa.try_search_fwd(&Input::new(&domain))?.is_some() {
             return Ok(true);
         }
     }
@@ -215,11 +184,7 @@ pub(super) fn import_geosite(source: &Path, write: &redb::WriteTransaction) -> R
                     .ok()
                     .and_then(|dfa| dfa.to_sparse().ok());
                 match compiled {
-                    Some(dfa) => {
-                        let mut key = SPARSE_DFA_MARKER.to_vec();
-                        key.extend(dfa.to_bytes_little_endian());
-                        (SiteMatchType::CompiledRegex, key)
-                    }
+                    Some(dfa) => (SiteMatchType::CompiledRegex, dfa.to_bytes_little_endian()),
                     None => {
                         regex::Regex::new(value)?;
                         (SiteMatchType::Regex, value.as_bytes().to_vec())

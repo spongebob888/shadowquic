@@ -127,12 +127,12 @@ attribute enum. Both enums use `u8`: match types are
 attributes are
 `Nil = 0`, `Ads = 1`, `NotCn = 2`, `Cn = 3`. Each rule has one row and at most
 one attribute. Rules with no supported attributes use `Nil`. `CompiledRegex = 4`
-keys store marked serialized little-endian sparse DFA bytes; their values store
-the attribute. Unmarked legacy `CompiledRegex` keys remain readable as dense
-DFAs. Patterns that cannot compile to a sparse DFA use the existing `Regex = 2`
-key with the UTF-8 source pattern. Compiled DFAs are decoded directly from keys
-during lookup, and fallback regexes are compiled during lookup; there is no
-runtime regex cache.
+keys store serialized little-endian sparse DFA bytes; their values store the
+attribute. Existing dense `CompiledRegex` records must be rebuilt. Patterns
+that cannot compile to a sparse DFA use the existing `Regex = 2` key with the
+UTF-8 source pattern. Compiled DFAs are decoded directly from keys during
+lookup, and fallback regexes are compiled during lookup; there is no runtime
+regex cache.
 Unfiltered queries match any
 attribute. Full and domain lookups use the tuple index, while keyword and regex
 lookups scan only the corresponding match type in the requested list table.
