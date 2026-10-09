@@ -1,6 +1,7 @@
 //! Routing membership databases: memory-mapped MMDB country lookups or
 //! indexed redb lookups with a bounded page cache.
 mod download;
+mod geosite;
 #[cfg(test)]
 mod tests;
 
@@ -9,8 +10,8 @@ use crate::{
     config::{RouterDBKind, RouterDatabaseCfg},
     error::SError,
 };
+use geosite::{GeositeTable, import_geosite};
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition, TableHandle};
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
@@ -22,9 +23,8 @@ use std::{
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 const META: TableDefinition<&str, &str> = TableDefinition::new("metadata");
-const RULES: TableDefinition<&str, ()> = TableDefinition::new("rules");
 const COUNTRY_SCHEMA: &str = "2";
-const GEOSITE_SCHEMA: &str = "1";
+const GEOSITE_SCHEMA: &str = "2";
 
 fn schema(kind: RouterDBKind) -> &'static str {
     match kind {
@@ -133,6 +133,7 @@ fn import_database(cfg: &RouterDatabaseCfg, source: &Path) -> Result<Arc<dyn Rou
 pub struct RedbDatabase {
     db: Database,
     kind: RouterDBKind,
+    geosite_regexes: geosite::RegexCache,
 }
 
 fn kind_name(kind: RouterDBKind) -> &'static str {
@@ -141,15 +142,13 @@ fn kind_name(kind: RouterDBKind) -> &'static str {
         RouterDBKind::Geosite => "geosite",
     }
 }
-fn key(list: &str, kind: &str, value: &str) -> String {
-    format!("{}\0{kind}\0{value}", list.to_ascii_lowercase())
-}
 impl RedbDatabase {
     /// Open a converted database, checking format and source identity.
     pub fn open(cfg: &RouterDatabaseCfg) -> Result<Self> {
         let db = Database::builder()
             .set_cache_size(8 * 1024 * 1024)
             .open(cfg.path())?;
+        let mut geosite_regexes = geosite::RegexCache::new();
         {
             let read = db.begin_read()?;
             let meta = read.open_table(META)?;
@@ -179,7 +178,20 @@ impl RedbDatabase {
             }
             match cfg.kind() {
                 RouterDBKind::Geosite => {
-                    read.open_table(RULES)?;
+                    let mut count = 0;
+                    for table in read.list_tables()? {
+                        if table.name().starts_with("geosite_") {
+                            read.open_table(GeositeTable::new(table.name()))?;
+                            let regexes = geosite::compile_regexes(&read, table.name())?;
+                            if !regexes.is_empty() {
+                                geosite_regexes.insert(table.name().to_owned(), regexes);
+                            }
+                            count += 1;
+                        }
+                    }
+                    if count == 0 {
+                        return Err("geosite database contains no list tables".into());
+                    }
                 }
                 RouterDBKind::Country => {
                     let mut count = 0;
@@ -201,6 +213,7 @@ impl RedbDatabase {
         Ok(Self {
             db,
             kind: cfg.kind(),
+            geosite_regexes,
         })
     }
 
@@ -219,7 +232,7 @@ impl RedbDatabase {
         let write = db.begin_write()?;
         {
             match cfg.kind() {
-                RouterDBKind::Geosite => import_geosite(source, &mut write.open_table(RULES)?)?,
+                RouterDBKind::Geosite => import_geosite(source, &write)?,
                 RouterDBKind::Country => import_country(source, &write)?,
             }
             let mut hash = Sha256::new();
@@ -284,87 +297,10 @@ impl RouterDB for RedbDatabase {
             RouterDBKind::Geosite,
             "country does not support domain lookup"
         );
-        let domain = domain.trim_end_matches('.').to_ascii_lowercase();
-        let read = self.db.begin_read()?;
-        let rules = read.open_table(RULES)?;
-        if rules.get(key(list, "full", &domain).as_str())?.is_some() {
-            return Ok(true);
-        }
-        let mut suffix = domain.as_str();
-        loop {
-            if rules.get(key(list, "domain", suffix).as_str())?.is_some() {
-                return Ok(true);
-            }
-            match suffix.split_once('.') {
-                Some((_, rest)) => suffix = rest,
-                None => break,
-            }
-        }
-        for kind in ["keyword", "regexp"] {
-            let start = key(list, kind, "");
-            for entry in rules.range(start.as_str()..)? {
-                let (entry, _) = entry?;
-                let Some(pattern) = entry.value().strip_prefix(&start) else {
-                    break;
-                };
-                let found = if kind == "keyword" {
-                    domain.contains(pattern)
-                } else {
-                    regex::Regex::new(pattern)?.is_match(&domain)
-                };
-                if found {
-                    return Ok(true);
-                }
-            }
-        }
-        Ok(false)
+        geosite::find_domain(&self.db.begin_read()?, &self.geosite_regexes, list, domain)
     }
 }
 
-#[derive(Deserialize)]
-struct Geosite {
-    lists: Vec<SiteList>,
-}
-#[derive(Deserialize)]
-struct SiteList {
-    name: String,
-    rules: Vec<String>,
-}
-fn import_geosite(source: &Path, table: &mut redb::Table<&str, ()>) -> Result<()> {
-    let source = std::fs::read_to_string(source)?;
-    let data: Geosite = serde_saphyr::from_str(&source)?;
-    if data.lists.is_empty() {
-        return Err("geosite contains no lists".into());
-    }
-    for list in data.lists {
-        if list.name.is_empty() || list.name.contains('\0') {
-            return Err("invalid geosite list name".into());
-        }
-        for rule in list.rules {
-            let (kind, value) = rule.split_once(':').ok_or("geosite rule has no type")?;
-            let (value, attributes) = value.split_once(":@").unwrap_or((value, ""));
-            if value.is_empty() || value.contains('\0') {
-                return Err("empty or invalid geosite rule".into());
-            }
-            let value = match kind {
-                "regexp" => {
-                    regex::Regex::new(value)?;
-                    value.to_owned()
-                }
-                "full" | "domain" | "keyword" => value.to_ascii_lowercase(),
-                _ => return Err(format!("unsupported geosite rule type: {kind}").into()),
-            };
-            table.insert(key(&list.name, kind, &value).as_str(), ())?;
-            for attribute in attributes.split(",@").filter(|s| !s.is_empty()) {
-                table.insert(
-                    key(&format!("{}@{attribute}", list.name), kind, &value).as_str(),
-                    (),
-                )?;
-            }
-        }
-    }
-    Ok(())
-}
 /// Insert a disjoint MMDB range, joining adjacent ranges in either direction.
 fn insert_country_range<T>(table: &mut redb::Table<T, T>, mut start: T, mut end: T) -> Result<()>
 where

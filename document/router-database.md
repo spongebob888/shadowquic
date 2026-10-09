@@ -1,7 +1,8 @@
 # Router databases
 
-Use the [IP lookup benchmark](ip-lookup-benchmark.md) to compare direct MMDB
-country lookups with ShadowQUIC's redb lookup speed and memory usage.
+Use the [IP lookup benchmark](ip-lookup-benchmark.md) to compare country lookup
+backends, and the [geosite lookup benchmark](geosite-lookup-benchmark.md) to
+measure domain search speed and memory usage.
 
 Requires the `router-db` Cargo feature (enabled by default). This feature enables
 Lua routing and the database import, download, and lookup dependencies. For Lua
@@ -76,7 +77,11 @@ Geosite `full` rules match exactly. `domain` rules match the domain and its
 subdomains on label boundaries. Both use redb indexes. `keyword` and `regexp`
 rules are scanned within the requested list. Regular expressions use Rust's
 `regex` syntax and are validated during import. Attributes remain part of the
-base list as well as the corresponding `list@attribute` list.
+base list. Regex patterns are compiled and cached when the redb database opens,
+then reused for lookups. This reduces lookup work at the cost of startup time
+and memory proportional to the compiled patterns. The supported attribute filters are `list@ads`, `list@!cn`, and
+`list@cn`; other attribute filters return false. Rules carrying only unsupported
+attributes remain in the base list.
 
 On startup, an existing MMDB or redb is opened without downloading. When the file is
 missing, an internal inbound with the database tag sends download connections
@@ -96,9 +101,9 @@ Lua script reloads retain the same database handles.
 
 Each redb stores a format version, the creating Shadowquic version, source URL,
 database type, and SHA-256 of the downloaded source bytes. Schema versions are
-independent: Country uses schema `2`, while Geosite continues to use schema `1`.
-Country schema `1` is unsupported; remove old converted Country files and restart
-to download and rebuild them. Existing Geosite schema `1` files remain supported.
+independent: Country and Geosite both use schema `2`. Country schema `1` and
+Geosite schema `1` are unsupported; remove old converted files and restart to
+download and rebuild them.
 
 Converted Country redb databases store inclusive IP ranges in two tables per lowercase ISO code:
 `country_v4_us` and `country_v6_us`, for example. Records without a country ISO
@@ -113,7 +118,22 @@ Addresses use their numeric network-order values, computed with
 `from_be_bytes(ip.octets())` independently of host endianness. A lookup selects the table
 for the query's address family and the greatest start key no larger than the
 query, then checks the inclusive end. Missing tables
-and gaps between ranges return false. Geosite retains its `rules` table layout.
+and gaps between ranges return false.
+
+Geosite schema `2` stores each base list in a table named `geosite_<lowercase-name>`,
+including empty lists. Keys are `(SiteMatchType, Vec<u8>)`, with domains and
+patterns encoded as UTF-8. Values are `Vec<u8>`: the first byte stores the
+attribute enum. Both enums use `u8`: match types are
+`Full = 0`, `Domain = 1`, `Regex = 2`, `Keyword = 3`; attributes are
+`Nil = 0`, `Ads = 1`, `NotCn = 2`, `Cn = 3`. Each rule has one row and at most
+one attribute. Rules with no supported
+attributes use `Nil`. Regex values store a serialized little-endian DFA when
+supported, or a fallback marker; the UTF-8 pattern stays in the key. DFA bytes
+are validated and loaded once when redb opens, then reused by searches. If a
+stored DFA cannot be read, Shadowquic recompiles the key's pattern as a fallback.
+Unfiltered queries match any
+attribute. Full and domain lookups use the tuple index, while keyword and regex
+lookups scan only the corresponding match type in the requested list table.
 
 Direct MMDB files contain no Shadowquic schema or source-URL metadata; changing
 `url` does not invalidate an existing MMDB. Invalid MMDB headers/metadata fail

@@ -5,6 +5,8 @@ use crate::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+const RULES: TableDefinition<&str, ()> = TableDefinition::new("rules");
+
 const YAML: &str = r#"lists:
   - name: test
     length: 5
@@ -13,7 +15,7 @@ const YAML: &str = r#"lists:
       - 'domain:tree.example:@ads'
       - 'keyword:needle'
       - 'regexp:^rx[0-9]+\.example$'
-      - 'domain:second.example:@ads,@test'
+      - 'domain:second.example:@ads'
   - name: other
     rules:
       - 'full:other.example'
@@ -262,18 +264,18 @@ fn geosite_indexed_and_sequential_rules_and_metadata_survive_reopen() {
     }
     assert!(db.find_domain("test@ads", "tree.example").unwrap());
     assert!(!db.find_domain("test@test", "tree.example").unwrap());
-    assert!(db.find_domain("test@test", "second.example").unwrap());
+    assert!(!db.find_domain("test@test", "second.example").unwrap());
     assert!(!db.find_domain("missing", "exact.example").unwrap());
     let read = db.db.begin_read().unwrap();
     let meta = read.open_table(META).unwrap();
-    assert_eq!(meta.get("schema").unwrap().unwrap().value(), "1");
+    assert_eq!(meta.get("schema").unwrap().unwrap().value(), "2");
     assert_eq!(
         meta.get("version").unwrap().unwrap().value(),
         env!("CARGO_PKG_VERSION")
     );
     assert_eq!(
         meta.get("sha256").unwrap().unwrap().value(),
-        "e3f5abe2173bad606b6732596670599099ba32b8fc5c4930f054642ae8615ece"
+        "00dc0abfd79ca20764d98754688fc9d59e922dedfaf81a17c983c90b3f74c581"
     );
     drop(meta);
     drop(read);
@@ -298,6 +300,142 @@ fn geosite_indexed_and_sequential_rules_and_metadata_survive_reopen() {
     assert!(error.contains(&format!("Remove the database file {:?}", changed.path())));
     assert!(error.contains("restart Shadowquic to download and rebuild it"));
 }
+#[test]
+fn geosite_schema_two_tables_preserve_attributes_and_isolate_lists() {
+    use super::geosite::GeositeTable;
+    use redb::ReadableTableMetadata;
+
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(dir.path(), RouterDBKind::Geosite);
+    let source = dir.path().join("source.yml");
+    std::fs::write(
+        &source,
+        r#"lists:
+  - name: Test
+    rules:
+      - 'full:EXACT.example:@ads'
+      - 'full:exact.example:@ads'
+      - 'domain:tree.example:@cn'
+      - 'keyword:NEEDLE:@!cn'
+      - 'regexp:^rx\d+\.example$:@cn'
+      - 'full:plain.example'
+      - 'full:unknown.example:@other'
+  - name: TEST
+    rules:
+      - 'full:merged.example'
+  - name: empty
+    rules: []
+  - name: metadata
+    rules:
+      - 'full:other.example'
+"#,
+    )
+    .unwrap();
+    drop(RedbDatabase::import(&cfg, &source).unwrap());
+    let db = RedbDatabase::open(&cfg).unwrap();
+    for (domain, attrs) in [
+        ("EXACT.example.", [true, false, false]),
+        ("a.b.tree.example", [false, false, true]),
+        ("hasneedle.example", [false, true, false]),
+        ("rx123.example", [false, false, true]),
+        ("plain.example", [false, false, false]),
+        ("unknown.example", [false, false, false]),
+        ("merged.example", [false, false, false]),
+    ] {
+        assert!(db.find_domain("TEST", domain).unwrap(), "{domain}");
+        for (attr, expected) in ["ADS", "!CN", "CN"].into_iter().zip(attrs) {
+            assert_eq!(
+                db.find_domain(&format!("TeSt@{attr}"), domain).unwrap(),
+                expected,
+                "{domain}@{attr}"
+            );
+        }
+        for list in ["empty", "missing", "metadata", "test@other", "test@"] {
+            assert!(!db.find_domain(list, domain).unwrap(), "{list}: {domain}");
+        }
+    }
+    for domain in [
+        "sub.exact.example",
+        "nottree.example",
+        "rxabc.example",
+        "other.example",
+    ] {
+        assert!(!db.find_domain("test", domain).unwrap(), "{domain}");
+    }
+    assert!(db.find_domain("metadata", "other.example").unwrap());
+    let read = db.db.begin_read().unwrap();
+    let names: Vec<_> = read
+        .list_tables()
+        .unwrap()
+        .map(|table| table.name().to_owned())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "geosite_empty",
+            "geosite_metadata",
+            "geosite_test",
+            "metadata"
+        ]
+    );
+    let table = read.open_table(GeositeTable::new("geosite_test")).unwrap();
+    assert_eq!(table.len().unwrap(), 7);
+    assert_eq!(
+        table
+            .get((0u8, b"exact.example".as_slice()))
+            .unwrap()
+            .unwrap()
+            .value(),
+        [1]
+    );
+    assert_eq!(
+        table
+            .get((0u8, b"unknown.example".as_slice()))
+            .unwrap()
+            .unwrap()
+            .value(),
+        [0]
+    );
+    let regex = table
+        .get((2u8, br"^rx\d+\.example$".as_slice()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(regex.value()[0], 3);
+    assert_eq!(regex.value()[1], 1, "regex DFA must be stored in redb");
+    assert!(regex.value().len() > 16);
+}
+
+#[test]
+fn geosite_schema_two_requires_list_tables_with_byte_tuple_keys() {
+    for wrong_type in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path(), RouterDBKind::Geosite);
+        let db = Database::create(cfg.path()).unwrap();
+        let write = db.begin_write().unwrap();
+        {
+            let mut meta = write.open_table(META).unwrap();
+            for (key, value) in [
+                ("schema", "2"),
+                ("type", "geosite"),
+                ("url", cfg.url()),
+                ("sha256", "test"),
+            ] {
+                meta.insert(key, value).unwrap();
+            }
+            if wrong_type {
+                write
+                    .open_table(TableDefinition::<&str, ()>::new("geosite_test"))
+                    .unwrap();
+            } else {
+                write.open_table(RULES).unwrap();
+            }
+        }
+        write.commit().unwrap();
+        drop(db);
+        assert!(RedbDatabase::open(&cfg).is_err());
+    }
+}
+
 #[test]
 fn database_opens_with_missing_or_different_application_version() {
     let dir = tempfile::tempdir().unwrap();
@@ -597,7 +735,7 @@ fn country_ranges_match_boundaries_gaps_and_separate_families() {
 fn incompatible_schema_is_rejected_for_each_database_type() {
     for (kind, stored, expected) in [
         (RouterDBKind::Country, "1", "2"),
-        (RouterDBKind::Geosite, "2", "1"),
+        (RouterDBKind::Geosite, "1", "2"),
     ] {
         let dir = tempfile::tempdir().unwrap();
         let cfg = config(dir.path(), kind);
@@ -885,6 +1023,6 @@ fn import_hashes_sources_larger_than_the_read_buffer() {
     let meta = read.open_table(META).unwrap();
     assert_eq!(
         meta.get("sha256").unwrap().unwrap().value(),
-        "0689a9e1ca1b3ea52b273fd3ba9d486f4c2252d34bd609d0ac4d792f69cb3bd2"
+        "bc781155d1a56d96fdcf0adfdb7a81ad2960820aff2730a9dc7e57aa32e0467c"
     );
 }

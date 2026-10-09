@@ -21,7 +21,7 @@ We use redb as underlying database for each router db.
 
 Each redb should has a version string noting which shadowquic version created it and a sha256 of its downloading source file(Not itself ).
 
-Schema versions are independent for each database type: Country uses schema `2`, and Geosite uses schema `1`.
+Schema versions are independent for each database type: Country and Geosite use schema `2`. Country schema `1` and Geosite schema `1` are unsupported.
 
 
 ## Supported RouterDB
@@ -45,11 +45,41 @@ Disk usage is about 129mb
 
 The `geosite` database classifies domains into named lists. It performs no DNS
 resolution and does not choose an outbound; the Lua script uses membership
-results to choose one. This section defines a proposed API, not functionality
-already implemented.
+results to choose one. The Lua membership API is implemented by the router database backend.
 
 Use `dlc.dat_plain.yml` from
 [domain-list-community](https://github.com/v2fly/domain-list-community#download-links).
 The [published YAML export](https://raw.githubusercontent.com/v2fly/domain-list-community/release/dlc.dat_plain.yml).
 
 Full search should use indexed based fast searching, domain type searching like a.b.c should search a.b.c/b.c/c one by one.  The keyword/regex type should search one by one.
+
+Each name corresponds to a table. The key of each table is (SiteMatchType, Vec<u8>), The value is AttrType
+enum SiteMatchType {
+    Full,
+    Domain,
+    Regex,
+    Keyword,
+}
+enum AttrType {
+    Nil,
+    Ads,
+    NotCn,
+    Cn,
+}
+
+Schema `2` names each table `geosite_<lowercase-name>`, including empty lists.
+The tuple key uses `(u8, Vec<u8>)` and each value uses `Vec<u8>`. Domain and
+pattern keys are UTF-8 bytes. Match
+types are encoded in declaration order, starting at zero. Attribute values are
+`Nil = 0`, `Ads = 1`, `NotCn = 2`, and `Cn = 3`. `Ads`, `NotCn`, and `Cn`
+correspond to source attributes `ads`, `!cn`, and `cn`. Each rule has one row
+and at most one attribute. Regex values store a serialized little-endian DFA
+when supported, or a fallback marker; the UTF-8 pattern remains in the key.
+DFAs are validated and loaded once when the redb opens. If a DFA cannot be
+loaded, the source pattern is recompiled as a fallback.
+A rule with no supported attributes has a `Nil` value. Unknown
+attributes preserve base-list membership but cannot be queried as filters.
+Unfiltered lookup accepts any attribute; `list@attribute` selects only that
+attribute in the same table. Full and domain lookups use the tuple index, and
+keyword/regex lookups scan only their match-type range. Old schema `1` files
+must be removed and rebuilt.
