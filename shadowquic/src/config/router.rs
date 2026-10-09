@@ -137,6 +137,7 @@ use std::sync::Arc;
 /// | `find_ip_v6(tag, list, ip)` | Returns whether an IPv6 address belongs to a country list in the tagged database | Script loading and routing; requires `router-db` |
 /// | `find_domain(tag, list, domain)` | Returns whether a domain matches a Geosite list in the tagged database | Script loading and routing; requires `router-db` |
 ///
+/// DHCP lease files are supported for determine device hostname and mac address(`router-dhcp-lease` feature required).
 /// Cache lookups use the shared DNS cache, ignore expired entries, and perform
 /// no network I/O or asynchronous suspension. They do not take a DNS service tag.
 /// `lookup` and `reverse_lookup` suspend the routing function and raise Lua errors
@@ -160,6 +161,9 @@ pub struct RouterCfg {
     /// Persistent databases available to Lua membership helpers.
     #[serde(default)]
     pub database: Vec<super::RouterDatabaseCfg>,
+    /// Local DHCP lease files available to Lua helpers; requires `router-dhcp-lease`.
+    #[serde(default)]
+    pub dhcp_lease: Vec<super::DhcpLeaseCfg>,
     /// Inline Lua source returning a routing function. Mutually exclusive with `path`.
     #[serde(default)]
     pub src: Option<String>,
@@ -174,6 +178,23 @@ impl RouterCfg {
             return Err(SError::InvalidConfig(
                 "configure either `router.src` or `router.path`, not both".into(),
             ));
+        }
+        #[cfg(not(feature = "router-dhcp-lease"))]
+        if !self.dhcp_lease.is_empty() {
+            return Err(SError::InvalidConfig(
+                "router.dhcp-lease requires building with the `router-dhcp-lease` feature".into(),
+            ));
+        }
+        let mut lease_tags = std::collections::HashSet::new();
+        for lease in &self.dhcp_lease {
+            if lease.tag().trim().is_empty()
+                || !lease_tags.insert(lease.tag())
+                || lease.path().as_os_str().is_empty()
+            {
+                return Err(SError::InvalidConfig(
+                    "DHCP lease tags must be nonempty and unique, and paths nonempty".into(),
+                ));
+            }
         }
         #[cfg(not(feature = "router-db"))]
         if !self.database.is_empty() {
@@ -207,12 +228,16 @@ impl RouterCfg {
         #[cfg(feature = "router-db")] databases: Arc<crate::plugin::database::Databases>,
     ) -> Result<Option<Router>, SError> {
         self.validate()?;
+        #[cfg(feature = "router-dhcp-lease")]
+        let leases = crate::plugin::dhcp_lease::LeaseStore::build(&self.dhcp_lease)?;
         match (self.src.as_deref(), self.path.as_deref()) {
             (Some(source), None) => Router::from_source_with_databases(
                 source,
                 resolver_manager,
                 #[cfg(feature = "router-db")]
                 databases,
+                #[cfg(feature = "router-dhcp-lease")]
+                leases,
             )
             .map(Some)
             .map_err(|error| {
@@ -223,6 +248,8 @@ impl RouterCfg {
                 resolver_manager,
                 #[cfg(feature = "router-db")]
                 databases,
+                #[cfg(feature = "router-dhcp-lease")]
+                leases,
             )
             .map(Some),
             (None, None) => Ok(None),

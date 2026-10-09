@@ -35,6 +35,8 @@ mod sunnyquic;
 pub use crate::config::serde_utils::*;
 pub use crate::config::shadowquic::*;
 pub use crate::config::sunnyquic::*;
+mod dhcp_lease;
+pub use dhcp_lease::{DhcpLeaseCfg, DnsmasqLeaseCfg, OdhcpLeaseCfg};
 mod router;
 mod router_database;
 pub use router::RouterCfg;
