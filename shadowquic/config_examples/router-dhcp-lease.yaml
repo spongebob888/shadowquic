@@ -1,0 +1,29 @@
+# Build with --features router-dhcp-lease. Adjust paths and the hostname policy.
+inbounds:
+  - type: socks
+    tag: socks-in
+    bind-addr: 127.0.0.1:1080
+outbounds:
+  - type: direct
+    tag: direct
+  - type: drop
+    tag: block
+router:
+  dhcp-lease:
+    - type: dnsmasq
+      tag: lan-v4
+      path: /tmp/dhcp.leases
+    - type: odhcp
+      tag: lan-v6
+      path: /tmp/odhcpd.leases
+  src: |
+    return function(ctx)
+      local host
+      if ctx.src_ip_v4 then
+        host = find_dhcp_host_v4("lan-v4", ctx.src_ip_v4)
+      elseif ctx.src_ip_v6 then
+        host = find_dhcp_host_v6("lan-v6", ctx.src_ip_v6)
+      end
+      if host == "blocked-device" then return "block" end
+      return "direct"
+    end

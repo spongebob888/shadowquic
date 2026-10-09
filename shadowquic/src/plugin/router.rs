@@ -243,6 +243,8 @@ pub struct Router {
 struct RouterInner {
     #[cfg(feature = "router-db")]
     databases: Arc<Databases>,
+    #[cfg(feature = "router-dhcp-lease")]
+    leases: Arc<super::dhcp_lease::LeaseStore>,
     source: String,
     lua: Lua,
     route: Function,
@@ -256,6 +258,8 @@ impl Router {
             Arc::new(ResolverManager::new()),
             #[cfg(feature = "router-db")]
             Arc::default(),
+            #[cfg(feature = "router-dhcp-lease")]
+            Arc::default(),
         )
     }
 
@@ -263,6 +267,7 @@ impl Router {
         path: &Path,
         resolver_manager: Arc<ResolverManager>,
         #[cfg(feature = "router-db")] databases: Arc<Databases>,
+        #[cfg(feature = "router-dhcp-lease")] leases: Arc<super::dhcp_lease::LeaseStore>,
     ) -> Result<Self, SError> {
         let path = watched_script_path(path)?;
         let script = read_script(&path)?;
@@ -271,6 +276,8 @@ impl Router {
             resolver_manager.clone(),
             #[cfg(feature = "router-db")]
             databases,
+            #[cfg(feature = "router-dhcp-lease")]
+            leases,
         )
         .map_err(|error| {
             SError::InvalidConfig(format!(
@@ -329,6 +336,8 @@ impl Router {
             Arc::new(ResolverManager::new()),
             #[cfg(feature = "router-db")]
             Arc::default(),
+            #[cfg(feature = "router-dhcp-lease")]
+            Arc::default(),
         )
     }
 
@@ -342,6 +351,8 @@ impl Router {
             resolver_manager,
             #[cfg(feature = "router-db")]
             Arc::default(),
+            #[cfg(feature = "router-dhcp-lease")]
+            Arc::default(),
         )
     }
 
@@ -349,6 +360,7 @@ impl Router {
         source: &str,
         resolver_manager: Arc<ResolverManager>,
         #[cfg(feature = "router-db")] databases: Arc<Databases>,
+        #[cfg(feature = "router-dhcp-lease")] leases: Arc<super::dhcp_lease::LeaseStore>,
     ) -> mlua::Result<Self> {
         Ok(Self {
             _watcher: None,
@@ -357,6 +369,8 @@ impl Router {
                 resolver_manager,
                 #[cfg(feature = "router-db")]
                 databases,
+                #[cfg(feature = "router-dhcp-lease")]
+                leases,
             )?)),
         })
     }
@@ -365,6 +379,7 @@ impl Router {
         source: &str,
         resolver_manager: Arc<ResolverManager>,
         #[cfg(feature = "router-db")] databases: Arc<Databases>,
+        #[cfg(feature = "router-dhcp-lease")] leases: Arc<super::dhcp_lease::LeaseStore>,
     ) -> mlua::Result<RouterInner> {
         #[cfg(not(feature = "dns-server"))]
         let _ = resolver_manager;
@@ -433,11 +448,15 @@ impl Router {
         }
         #[cfg(feature = "router-db")]
         databases.install(&lua)?;
+        #[cfg(feature = "router-dhcp-lease")]
+        leases.install(&lua)?;
         Self::compile_common(
             source,
             lua,
             #[cfg(feature = "router-db")]
             databases,
+            #[cfg(feature = "router-dhcp-lease")]
+            leases,
         )
     }
 
@@ -445,6 +464,7 @@ impl Router {
         source: &str,
         lua: Lua,
         #[cfg(feature = "router-db")] databases: Arc<Databases>,
+        #[cfg(feature = "router-dhcp-lease")] leases: Arc<super::dhcp_lease::LeaseStore>,
     ) -> mlua::Result<RouterInner> {
         // The base library is always loaded, including file and code loaders.
         // Remove these before evaluating any user-provided source.
@@ -471,6 +491,8 @@ impl Router {
         Ok(RouterInner {
             #[cfg(feature = "router-db")]
             databases,
+            #[cfg(feature = "router-dhcp-lease")]
+            leases,
             source: source.to_owned(),
             lua,
             route,
@@ -567,6 +589,8 @@ fn reload_script(inner: &Mutex<RouterInner>, path: &Path, resolver_manager: Arc<
             resolver_manager,
             #[cfg(feature = "router-db")]
             inner.databases.clone(),
+            #[cfg(feature = "router-dhcp-lease")]
+            inner.leases.clone(),
         )
         .map_err(|error| SError::RouterError(error.to_string()))?;
         *inner = replacement;
@@ -1142,11 +1166,69 @@ mod tests {
         let resolver = Arc::new(ResolverManager::new());
         let path = dir.path().join("router.lua");
         std::fs::write(&path, "assert(find_domain('site', 'test', 'api.example')); return function(ctx) return 'old' end").unwrap();
-        let router = Router::load_with_databases(&path, resolver.clone(), databases).unwrap();
+        let router = Router::load_with_databases(
+            &path,
+            resolver.clone(),
+            databases,
+            #[cfg(feature = "router-dhcp-lease")]
+            Arc::default(),
+        )
+        .unwrap();
         assert_eq!(router.route(&mut context()).await.unwrap(), "old");
         std::fs::write(&path, "return function(ctx) if find_domain('site', 'test', ctx.dst_domain) then return 'new' end end").unwrap();
         reload_script(&router.inner, &path, resolver);
         assert_eq!(router.route(&mut context()).await.unwrap(), "new");
+    }
+
+    #[cfg(not(feature = "router-dhcp-lease"))]
+    #[tokio::test]
+    async fn dhcp_helpers_are_absent_without_feature() {
+        let router = Router::from_source(
+            r#"
+            assert(find_dhcp_mac_v4 == nil and find_dhcp_host_v4 == nil)
+            assert(find_dhcp_mac_v6 == nil and find_dhcp_host_v6 == nil)
+            assert(find_dhcp_duid_v6 == nil and find_dhcp_iaid_v6 == nil)
+            return function(_) return "direct" end
+        "#,
+        )
+        .unwrap();
+        assert_eq!(router.route(&mut context()).await.unwrap(), "direct");
+    }
+
+    #[cfg(feature = "router-dhcp-lease")]
+    #[tokio::test]
+    async fn dhcp_store_survives_script_reload() {
+        use crate::config::{DhcpLeaseCfg, DnsmasqLeaseCfg};
+        let dir = tempfile::tempdir().unwrap();
+        let leases_path = dir.path().join("leases");
+        std::fs::write(&leases_path, "0 02:00:00:00:00:01 192.0.2.1 known *").unwrap();
+        let leases = super::super::dhcp_lease::LeaseStore::build(&[DhcpLeaseCfg::Dnsmasq(
+            DnsmasqLeaseCfg {
+                tag: "lan".into(),
+                path: leases_path,
+            },
+        )])
+        .unwrap();
+        let resolver = Arc::new(ResolverManager::new());
+        let path = dir.path().join("router.lua");
+        std::fs::write(&path, "assert(find_dhcp_host_v4('lan', '192.0.2.1') == 'known'); return function(_) return 'old' end").unwrap();
+        let router = Router::load_with_databases(
+            &path,
+            resolver.clone(),
+            #[cfg(feature = "router-db")]
+            Arc::default(),
+            leases.clone(),
+        )
+        .unwrap();
+        assert_eq!(router.route(&mut context()).await.unwrap(), "old");
+        std::fs::write(
+            &path,
+            "return function(_) return find_dhcp_host_v4('lan', '192.0.2.1') end",
+        )
+        .unwrap();
+        reload_script(&router.inner, &path, resolver);
+        assert_eq!(router.route(&mut context()).await.unwrap(), "known");
+        assert!(Arc::ptr_eq(&router.inner.lock().unwrap().leases, &leases));
     }
 
     #[tokio::test]

@@ -9,7 +9,7 @@ description = { workspace = true }
 license = { workspace = true}
 readme = { workspace = true}
 [features]
-default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", "mixed", "plugin-vendored", "router-db", "dns-server"]
+default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", "mixed", "plugin-vendored", "router-db", "dns-server", "router-dhcp-lease"]
 # cost 1.4 mb
 dns-server = ["dep:simple-dns", "dep:tokio-rustls-jls", "dep:rustls_jls"]
 # cost 200k
@@ -22,6 +22,7 @@ plugin-system = ["plugin"] # use system package provided luajit lib.
 plugin = ["dep:mlua", "mlua/send", "mlua/async", "dep:notify"]
 # cost about 2mb, requires plugin enabled
 router-db = ["plugin", "dep:redb", "dep:maxminddb", "dep:sha2", "dep:regex", "dep:regex-automata", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:tokio-rustls-jls", "dep:rustls_jls", "tokio-rustls-jls/tls12", "dep:url", "dep:tempfile"]
+router-dhcp-lease = ["plugin"]
 ring = [
     "dep:ring",
     "quinn?/rustls-ring",
@@ -145,6 +146,7 @@ libc = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1.52.3", features = ["test-util"] }
+tempfile = "3"
 fast-socks5 = "1.0.0"
 rand = "0.10.1"
 
