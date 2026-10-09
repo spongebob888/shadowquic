@@ -205,7 +205,13 @@ impl Outbound for ShadowQuicClient {
         let conn = self.prepare_conn().await?;
 
         let over_stream = self.config.over_stream;
-        outbound::handle_request(req, conn, over_stream).await?;
-        Ok(())
+        match outbound::dispatch(req, conn, over_stream).await? {
+            outbound::Dispatch::Sent => Ok(()),
+            outbound::Dispatch::Wedged => {
+                *self.quic_conn.lock().await = None;
+                Err(SError::OutboundUnavailable)
+            }
+            outbound::Dispatch::StillActive => Err(SError::OutboundUnavailable),
+        }
     }
 }
