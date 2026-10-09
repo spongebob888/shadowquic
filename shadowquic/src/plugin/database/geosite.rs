@@ -38,7 +38,7 @@ impl AttrType {
     }
 }
 
-pub(super) type GeositeTable<'a> = TableDefinition<'a, (u8, &'static [u8]), &'static [u8]>;
+pub(super) type GeositeTable<'a> = TableDefinition<'a, (u8, &'static [u8]), u8>;
 
 pub(super) fn geosite_table_name(list: &str) -> String {
     format!("geosite_{}", list.to_ascii_lowercase())
@@ -67,9 +67,7 @@ pub(super) fn find_domain(read: &redb::ReadTransaction, list: &str, domain: &str
     let indexed = |kind: SiteMatchType, value: &str| -> Result<bool> {
         Ok(table
             .get((kind as u8, value.as_bytes()))?
-            .is_some_and(|stored| {
-                attribute == AttrType::Nil || stored.value().first() == Some(&(attribute as u8))
-            }))
+            .is_some_and(|stored| attribute == AttrType::Nil || stored.value() == attribute as u8))
     };
     let domain = domain.trim_end_matches('.').to_ascii_lowercase();
     if indexed(SiteMatchType::Full, &domain)? {
@@ -89,9 +87,7 @@ pub(super) fn find_domain(read: &redb::ReadTransaction, list: &str, domain: &str
         (SiteMatchType::Keyword as u8, &b""[..])..((SiteMatchType::Keyword as u8 + 1), &b""[..]),
     )? {
         let (key, stored_attribute) = entry?;
-        if attribute != AttrType::Nil
-            && stored_attribute.value().first() != Some(&(attribute as u8))
-        {
+        if attribute != AttrType::Nil && stored_attribute.value() != attribute as u8 {
             continue;
         }
         let (_, pattern) = key.value();
@@ -108,9 +104,7 @@ pub(super) fn find_domain(read: &redb::ReadTransaction, list: &str, domain: &str
             ..((SiteMatchType::CompiledRegex as u8 + 1), &b""[..]),
     )? {
         let (key, stored_attribute) = entry?;
-        if attribute != AttrType::Nil
-            && stored_attribute.value().first() != Some(&(attribute as u8))
-        {
+        if attribute != AttrType::Nil && stored_attribute.value() != attribute as u8 {
             continue;
         }
         let (_, dfa_bytes) = key.value();
@@ -123,9 +117,7 @@ pub(super) fn find_domain(read: &redb::ReadTransaction, list: &str, domain: &str
         (SiteMatchType::Regex as u8, &b""[..])..((SiteMatchType::Regex as u8 + 1), &b""[..]),
     )? {
         let (key, stored_attribute) = entry?;
-        if attribute != AttrType::Nil
-            && stored_attribute.value().first() != Some(&(attribute as u8))
-        {
+        if attribute != AttrType::Nil && stored_attribute.value() != attribute as u8 {
             continue;
         }
         let (_, pattern) = key.value();
@@ -193,10 +185,7 @@ pub(super) fn import_geosite(source: &Path, write: &redb::WriteTransaction) -> R
             } else {
                 (kind, value.to_ascii_lowercase().into_bytes())
             };
-            table.insert(
-                (kind as u8, key_value.as_slice()),
-                [attribute as u8].as_slice(),
-            )?;
+            table.insert((kind as u8, key_value.as_slice()), attribute as u8)?;
         }
     }
     Ok(())

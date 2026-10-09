@@ -121,18 +121,18 @@ and gaps between ranges return false.
 
 Geosite schema `2` stores each base list in a table named `geosite_<lowercase-name>`,
 including empty lists. Keys are `(SiteMatchType, Vec<u8>)`; domains and
-fallback regex patterns use UTF-8 bytes. Values are `Vec<u8>`: the first byte stores the
-attribute enum. Both enums use `u8`: match types are
+fallback regex patterns use UTF-8 bytes. Values are `u8` attribute enums.
+Match types are
 `Full = 0`, `Domain = 1`, `Regex = 2`, `Keyword = 3`, `CompiledRegex = 4`;
 attributes are
 `Nil = 0`, `Ads = 1`, `NotCn = 2`, `Cn = 3`. Each rule has one row and at most
 one attribute. Rules with no supported attributes use `Nil`. `CompiledRegex = 4`
 keys store serialized little-endian sparse DFA bytes; their values store the
-attribute. Existing dense `CompiledRegex` records must be rebuilt. Patterns
-that cannot compile to a sparse DFA use the existing `Regex = 2` key with the
-UTF-8 source pattern. Compiled DFAs are decoded directly from keys during
-lookup, and fallback regexes are compiled during lookup; there is no runtime
-regex cache.
+attribute enum directly. Existing schema `2` files with byte-slice values or
+dense `CompiledRegex` records must be rebuilt. Patterns that cannot compile to
+a sparse DFA use the existing `Regex = 2` key with the UTF-8 source pattern.
+Compiled DFAs are decoded directly from keys during lookup, and fallback
+regexes are compiled during lookup; there is no runtime regex cache.
 Unfiltered queries match any
 attribute. Full and domain lookups use the tuple index, while keyword and regex
 lookups scan only the corresponding match type in the requested list table.

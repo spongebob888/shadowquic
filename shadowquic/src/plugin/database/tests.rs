@@ -387,7 +387,7 @@ fn geosite_schema_two_tables_preserve_attributes_and_isolate_lists() {
             .unwrap()
             .unwrap()
             .value(),
-        [1]
+        1
     );
     assert_eq!(
         table
@@ -395,7 +395,7 @@ fn geosite_schema_two_tables_preserve_attributes_and_isolate_lists() {
             .unwrap()
             .unwrap()
             .value(),
-        [0]
+        0
     );
     let (regex_key, regex_attribute) = table
         .range((4u8, &b""[..])..(5u8, &b""[..]))
@@ -403,7 +403,7 @@ fn geosite_schema_two_tables_preserve_attributes_and_isolate_lists() {
         .next()
         .unwrap()
         .unwrap();
-    assert_eq!(regex_attribute.value(), [3]);
+    assert_eq!(regex_attribute.value(), 3);
     let (_, dfa_bytes) = regex_key.value();
     assert!(dfa_bytes.len() > 16);
     let dfa = super::geosite::deserialize_dfa(dfa_bytes).unwrap();

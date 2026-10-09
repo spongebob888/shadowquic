@@ -69,15 +69,15 @@ enum AttrType {
 }
 
 Schema `2` names each table `geosite_<lowercase-name>`, including empty lists.
-The tuple key uses `(u8, Vec<u8>)` and each value uses `Vec<u8>`. Domain and
+The tuple key uses `(u8, Vec<u8>)` and each value uses `u8`. Domain and
 pattern keys are UTF-8 bytes. Match
 types are encoded in declaration order, starting at zero. Attribute values are
 `Nil = 0`, `Ads = 1`, `NotCn = 2`, and `Cn = 3`. `Ads`, `NotCn`, and `Cn`
 correspond to source attributes `ads`, `!cn`, and `cn`. Each rule has one row
 and at most one attribute. `CompiledRegex = 4` keys store serialized
-little-endian sparse DFA bytes; values store the attribute. Existing dense
-`CompiledRegex` records must be rebuilt. Patterns that cannot compile to a
-sparse DFA use the existing `Regex = 2` key with the UTF-8 source pattern.
+little-endian sparse DFA bytes; values store the attribute. Existing schema `2`
+files with byte-slice values or dense `CompiledRegex` records must be rebuilt.
+Patterns that cannot compile to a sparse DFA use the existing `Regex = 2` key with the UTF-8 source pattern.
 Lookups deserialize compiled DFAs from keys or compile fallback source regexes.
 There is no runtime regex cache.
 A rule with no supported attributes has a `Nil` value. Unknown
