@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs},
     sync::Arc,
+    time::Duration,
 };
 
 use bytes::BytesMut;
@@ -12,12 +13,13 @@ use tokio::{
 use tracing::{Instrument, error, info_span, trace};
 
 use crate::{
-    Outbound, UdpSession,
+    Outbound, TcpSession, UdpSession,
     config::{DirectOutCfg, DnsStrategy, Interface},
     dns::{DnsService, ResolverManager},
     error::SError,
     msgs::socks5::{AddrOrDomain, SocksAddr},
     utils::{
+        activity_stream::{Activity, ActivityGuard, half_close_grace, half_close_watchdog},
         dual_socket::DualSocket,
         socket_opt::{SocketFactory, TcpSocketFactory, UdpSocketFactory},
     },
@@ -46,26 +48,21 @@ impl Default for DirectOut {
 impl Outbound for DirectOut {
     async fn handle(&self, req: crate::ProxyRequest) -> Result<(), crate::error::SError> {
         let dns_strategy = self.cfg.dns_strategy.clone();
+        let half_close_timeout = half_close_grace(self.cfg.half_close_timeout);
         let self_clone = self.clone();
 
         let fut = async move {
             match req {
-                crate::ProxyRequest::Tcp(mut tcp_session) => {
+                crate::ProxyRequest::Tcp(tcp_session) => {
                     trace!("direct tcp to {}", tcp_session.dst);
                     let dst = tcp_session.dst.to_socket_addrs()?;
                     let dst = apply_dns_strategy(dst, &dns_strategy)
                         .ok_or(SError::DomainResolveFailed(tcp_session.dst.to_string()))?;
                     trace!("resolved to {}", dst);
 
-                    let mut upstream = self_clone.connect_tcp(dst).await?;
+                    let upstream = self_clone.connect_tcp(dst).await?;
                     let _ = upstream.set_nodelay(true);
-                    let (_, _) = tokio::io::copy_bidirectional_with_sizes(
-                        &mut tcp_session.stream,
-                        &mut upstream,
-                        1024 * 16,
-                        1024 * 16,
-                    )
-                    .await?;
+                    relay_tcp(tcp_session, upstream, half_close_timeout).await?;
                 }
 
                 crate::ProxyRequest::Udp(udp_session) => {
@@ -85,6 +82,55 @@ impl Outbound for DirectOut {
 
         Ok(())
     }
+}
+
+/// Relays one TCP session between the QUIC side and the real upstream.
+///
+/// Returns once the relay is over: either both directions reached EOF, or the
+/// watchdog gave the session up after a half-close followed by silence.
+///
+/// This is the server half of the same bound the clients apply, and it is the
+/// half that decides whether the client gets its stream credit back. quinn
+/// returns a bi-stream's credit only once **both** ends of the relay have
+/// dropped their stream halves (`quinn-proto-jls`, `StreamsState::stream_freed`),
+/// and a peer's RESET_STREAM or STOP_SENDING does not free it. This end is the
+/// one waiting on the real upstream, so an upstream that answers and then never
+/// closes keeps the relay — and the client's credit — alive indefinitely, even
+/// after the client has already given its own half up.
+async fn relay_tcp(
+    mut tcp_session: TcpSession,
+    mut upstream: TcpStream,
+    half_close_timeout: Option<Duration>,
+) -> Result<(), SError> {
+    let activity = Activity::new();
+    let mut quic_side = ActivityGuard::new(&mut tcp_session.stream, activity.clone());
+    let mut upstream_side = ActivityGuard::new(&mut upstream, activity.clone());
+    let copy = tokio::io::copy_bidirectional_with_sizes(
+        &mut quic_side,
+        &mut upstream_side,
+        1024 * 16,
+        1024 * 16,
+    );
+    tokio::pin!(copy);
+
+    match half_close_timeout {
+        Some(grace) => tokio::select! {
+            res = &mut copy => {
+                res?;
+            }
+            _ = half_close_watchdog(&activity, grace) => {
+                error!(
+                    dst = %tcp_session.dst,
+                    "relay half-closed and silent for {}s, closing the session",
+                    grace.as_secs()
+                );
+            }
+        },
+        None => {
+            copy.await?;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Default, Clone)]
@@ -413,5 +459,117 @@ mod test {
         let addrs: Vec<SocketAddr> = vec![];
         let result = apply_dns_strategy(addrs.into_iter(), &DnsStrategy::PreferIpv4);
         assert_eq!(result, None);
+    }
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::task::JoinHandle;
+
+    const RESPONSE: &[u8] = b"ok";
+
+    /// A connected loopback pair: the first end stands in for the QUIC side of
+    /// the session (what `DirectOut` is handed), the second for the client.
+    ///
+    /// `TcpTrait` is implemented for `TcpStream` only (`src/lib.rs:78`), so a
+    /// `tokio::io::duplex` pair cannot be used here.
+    async fn tcp_pair() -> (TcpStream, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = TcpStream::connect(addr).await.unwrap();
+        let (session, _) = listener.accept().await.unwrap();
+        (session, client)
+    }
+
+    /// An upstream that reads one request, answers it, closes its own write half
+    /// and then holds the connection open without ever speaking again. That is
+    /// the shape the watchdog exists for: one direction has finished, and the
+    /// surviving one is waiting on a peer that never closes.
+    async fn spawn_half_closing_upstream() -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut upstream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 64];
+            let _ = upstream.read(&mut buf).await.unwrap();
+            let _ = upstream.write_all(RESPONSE).await;
+            let _ = upstream.shutdown().await;
+            std::future::pending::<()>().await;
+        });
+        addr
+    }
+
+    /// Starts a relay against the half-closing upstream and drives one exchange
+    /// through it, so the session is a real relayed request rather than just an
+    /// open socket. Returns the relay task and the client end.
+    async fn started_relay(half_close_timeout: u64) -> (JoinHandle<Result<(), SError>>, TcpStream) {
+        let upstream_addr = spawn_half_closing_upstream().await;
+        let (session, mut client) = tcp_pair().await;
+        let upstream = TcpStream::connect(upstream_addr).await.unwrap();
+        let tcp_session = TcpSession {
+            stream: Box::new(session) as Box<dyn crate::TcpTrait>,
+            dst: SocksAddr::from(upstream_addr),
+            src_addr: None,
+            user_context: Default::default(),
+        };
+
+        // Spawned, not merely constructed: an unpolled future would relay
+        // nothing, and the exchange below would block forever.
+        let relay = tokio::spawn(relay_tcp(
+            tcp_session,
+            upstream,
+            half_close_grace(half_close_timeout),
+        ));
+
+        client.write_all(b"req").await.unwrap();
+        let mut answer = [0u8; RESPONSE.len()];
+        client.read_exact(&mut answer).await.unwrap();
+        assert_eq!(&answer, RESPONSE);
+
+        // The upstream's write half is now closed, so one relay direction has
+        // finished and the surviving one is silent from here on.
+        (relay, client)
+    }
+
+    /// The watchdog must give the session up. Ending the relay is what drops the
+    /// session's stream halves, and only that returns the bi-stream's credit to
+    /// the peer's stream limit.
+    ///
+    /// The relay future is awaited directly rather than observed through the
+    /// sockets: the relay shuts down the session's *write* half as soon as the
+    /// upstream half-closes, so a peer reading the session sees EOF whether or
+    /// not the relay ever ends. Reading the socket cannot tell the two apart.
+    #[tokio::test]
+    async fn relay_ends_when_peer_half_closes_and_stays_silent() {
+        let (relay, _client) = started_relay(1).await;
+
+        tokio::time::timeout(Duration::from_secs(5), relay)
+            .await
+            .expect("relay never ended: the watchdog did not close the session")
+            .expect("relay task panicked")
+            .expect("relay returned an error");
+    }
+
+    /// Control for the test above: with the watchdog disabled the same workload
+    /// must keep the relay alive. Otherwise "the relay ended" could be blamed on
+    /// something else ending it rather than on the watchdog.
+    #[tokio::test]
+    async fn relay_outlives_a_silent_peer_when_the_watchdog_is_disabled() {
+        let (relay, _client) = started_relay(0).await;
+
+        let result = tokio::time::timeout(Duration::from_secs(3), relay).await;
+        assert!(
+            result.is_err(),
+            "relay ended with the watchdog disabled: {result:?}"
+        );
+    }
+
+    /// `DirectOutCfg` has a hand-written `Default`; it must agree with the serde
+    /// default, or a config loaded from YAML and one built in Rust would
+    /// disagree about whether the watchdog is even on.
+    #[test]
+    fn direct_out_cfg_default_enables_the_watchdog() {
+        assert_eq!(DirectOutCfg::default().half_close_timeout, 600);
+        assert!(half_close_grace(DirectOutCfg::default().half_close_timeout).is_some());
+        assert!(half_close_grace(0).is_none());
     }
 }

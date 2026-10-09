@@ -188,6 +188,14 @@ pub async fn half_close_watchdog(activity: &Activity, quiet: Duration) {
     }
 }
 
+/// The relay watchdog's deadline for a configured half-close timeout in seconds.
+///
+/// Zero disables the watchdog: a zero deadline would fire immediately, ending
+/// every session as soon as its first direction finished.
+pub fn half_close_grace(secs: u64) -> Option<Duration> {
+    (secs > 0).then(|| Duration::from_secs(secs))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

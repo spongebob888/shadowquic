@@ -150,6 +150,10 @@ libc = "0.2"
 tokio = {version = "1.52.3", features = ["test-util"]}
 fast-socks5 = "1.0.0"
 rand = "0.10.1"
+# The relay tests drive ~1200 sessions whose peer never closes, so they hold one
+# socket per session for the run; they raise the soft RLIMIT_NOFILE to the hard
+# limit, which needs setrlimit.
+libc = "0.2"
 
 [build-dependencies]
 cc = "1"

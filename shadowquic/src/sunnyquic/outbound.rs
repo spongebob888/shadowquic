@@ -15,7 +15,10 @@ use crate::{
     quic::{QuicClient, QuicConnection},
     squic::{auth_sunny, inbound::UserManager, outbound},
     sunnyquic::gen_sunny_user_hash,
-    utils::socket_opt::{SocketFactory, UdpSocketFactory},
+    utils::{
+        activity_stream,
+        socket_opt::{SocketFactory, UdpSocketFactory},
+    },
 };
 
 use crate::squic::{IDStore, SQConn, handle_udp_packet_recv};
@@ -215,7 +218,7 @@ impl Outbound for SunnyQuicClient {
         let conn = self.prepare_conn().await?;
 
         let over_stream = self.config.over_stream;
-        let half_close_timeout = outbound::half_close_grace(self.config.half_close_timeout);
+        let half_close_timeout = activity_stream::half_close_grace(self.config.half_close_timeout);
         match outbound::dispatch(req, conn, over_stream, half_close_timeout).await? {
             outbound::Dispatch::Sent => Ok(()),
             outbound::Dispatch::Wedged => {
