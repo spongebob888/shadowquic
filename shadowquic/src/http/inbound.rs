@@ -8,7 +8,7 @@ use crate::{
     ProxyRequest, TcpSession, TcpTrait,
     error::SError,
     msgs::socks5::{AddrOrDomain, SocksAddr},
-    utils::replay_stream::ReplayStream,
+    utils::{dual_socket::to_ipv4_mapped, replay_stream::ReplayStream},
 };
 
 #[derive(Clone, Debug)]
@@ -39,7 +39,7 @@ impl HttpProxyServer {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static + TcpTrait,
     {
-        let src_addr = stream.peer_addr();
+        let src_addr = stream.peer_addr().map(to_ipv4_mapped);
         let (header, remain) = Self::read_header(&mut stream).await?;
         let text = str::from_utf8(&header)
             .map_err(|_| SError::SocksError("invalid http request".into()))?;
@@ -438,5 +438,7 @@ fn make_socks_addr(host: &str, port: u16) -> Result<SocksAddr, SError> {
         AddrOrDomain::Domain(host.as_bytes().to_vec().into())
     };
 
-    Ok(SocksAddr { addr, port })
+    let mut dst = SocksAddr { addr, port };
+    dst.canonicalize_ip();
+    Ok(dst)
 }
