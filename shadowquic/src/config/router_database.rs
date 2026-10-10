@@ -42,6 +42,9 @@ pub struct GeositeDbCfg {
     /// Defaults to the v2fly domain-list-community database in YAML format.
     #[serde(default = "default_geosite_url")]
     pub url: String,
+    /// Base domain sets to import, matched case insensitively. Empty imports all sets.
+    #[serde(default)]
+    pub list: Vec<String>,
     /// Persistent converted redb file, relative to the working directory.
     pub path: PathBuf,
 }
@@ -94,6 +97,30 @@ pub enum RouterDBKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn geosite_list_defaults_and_round_trips() {
+        for (field, expected) in [
+            ("", vec![]),
+            ("list: []", vec![]),
+            (
+                "list: [google, geolocation-cn]",
+                vec!["google", "geolocation-cn"],
+            ),
+        ] {
+            let cfg: RouterDatabaseCfg = serde_saphyr::from_str(&format!(
+                "type: geosite\ntag: db\npath: db.redb\n{field}\n"
+            ))
+            .unwrap();
+            let encoded = serde_saphyr::to_string(&cfg).unwrap();
+            let RouterDatabaseCfg::Geosite(decoded) =
+                serde_saphyr::from_str::<RouterDatabaseCfg>(&encoded).unwrap()
+            else {
+                unreachable!()
+            };
+            assert_eq!(decoded.list, expected);
+        }
+    }
 
     #[test]
     fn mmdb_suffix_selects_only_country_backend() {

@@ -168,6 +168,17 @@ impl RedbDatabase {
                     .into());
                 }
             }
+            if let RouterDatabaseCfg::Geosite(site) = cfg {
+                let expected = geosite::selection_key(&site.list);
+                let stored = meta.get("list")?;
+                let stored = stored.as_ref().map(|value| value.value()).unwrap_or("");
+                if stored != expected {
+                    return Err(format!(
+                        "database {:?} at {:?} has incompatible list selection. Remove the database file {:?} and restart Shadowquic to download and rebuild it",
+                        cfg.tag(), cfg.path(), cfg.path()
+                    ).into());
+                }
+            }
             if meta.get("sha256")?.is_none() {
                 return Err(format!(
                     "database {:?} at {:?} has incomplete metadata (missing sha256). Remove the database file {:?} and restart Shadowquic to download and rebuild it from {:?}",
@@ -224,9 +235,9 @@ impl RedbDatabase {
             .create(temporary.path())?;
         let write = db.begin_write()?;
         {
-            match cfg.kind() {
-                RouterDBKind::Geosite => import_geosite(source, &write)?,
-                RouterDBKind::Country => import_country(source, &write)?,
+            match cfg {
+                RouterDatabaseCfg::Geosite(site) => import_geosite(source, &write, &site.list)?,
+                RouterDatabaseCfg::Country(_) => import_country(source, &write)?,
             }
             let mut hash = Sha256::new();
             let mut source = std::fs::File::open(source)?;
@@ -245,6 +256,9 @@ impl RedbDatabase {
                 .map(|byte| format!("{byte:02x}"))
                 .collect();
             let mut meta = write.open_table(META)?;
+            if let RouterDatabaseCfg::Geosite(site) = cfg {
+                meta.insert("list", geosite::selection_key(&site.list).as_str())?;
+            }
             for (name, value) in [
                 ("schema", schema(cfg.kind())),
                 ("version", env!("CARGO_PKG_VERSION")),
