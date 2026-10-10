@@ -120,6 +120,19 @@ pub struct SocksAddr {
     pub port: u16,
 }
 impl SocksAddr {
+    /// Normalize IP literals, including IPv4-mapped IPv6, without resolving domains.
+    pub(crate) fn canonicalize_ip(&mut self) {
+        let ip = match &self.addr {
+            AddrOrDomain::V4(_) => return,
+            AddrOrDomain::V6(bytes) => IpAddr::from(*bytes),
+            AddrOrDomain::Domain(_domain) => return,
+        };
+        self.addr = match ip.to_canonical() {
+            IpAddr::V4(ip) => AddrOrDomain::V4(ip.octets()),
+            IpAddr::V6(ip) => AddrOrDomain::V6(ip.octets()),
+        };
+    }
+
     pub fn from_domain(name: String, port: u16) -> Self {
         SocksAddr {
             addr: AddrOrDomain::Domain(VarVec {

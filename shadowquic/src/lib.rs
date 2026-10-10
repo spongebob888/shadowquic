@@ -39,6 +39,8 @@ pub mod utils;
 
 pub use msgs::SDecode;
 pub use msgs::SEncode;
+
+use crate::utils::dual_socket::to_ipv4_mapped;
 #[cfg(test)]
 mod manager_tests;
 pub enum ProxyRequest<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend> {
@@ -193,7 +195,7 @@ pub trait TcpTrait: AsyncRead + AsyncWrite + Unpin + Send + Sync {
 }
 impl TcpTrait for TcpStream {
     fn peer_addr(&self) -> Option<SocketAddr> {
-        TcpStream::peer_addr(self).ok()
+        TcpStream::peer_addr(self).ok().map(to_ipv4_mapped)
     }
 }
 

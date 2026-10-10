@@ -49,7 +49,7 @@ impl SocksServer {
     {
         let users_arc = Arc::new(users.to_vec());
         let (s, req, socket) = handle_socks(users_arc, stream, local_addr).await?;
-        let src_addr = s.peer_addr();
+        let src_addr = s.peer_addr().map(to_ipv4_mapped);
         match req.cmd {
             SOCKS5_CMD_TCP_CONNECT => Ok(ProxyRequest::Tcp(TcpSession {
                 stream: Box::new(s),
@@ -138,6 +138,7 @@ where
     let mut s = authenticate(users, s).await?;
     let mut req = socks5::CmdReq::decode(&mut s).await?;
     normalize_ip_domain(&mut req.dst);
+    req.dst.canonicalize_ip();
 
     let addr = match req.dst.addr {
         AddrOrDomain::V4(_) | AddrOrDomain::Domain(_) => AddrOrDomain::V4([0u8, 0u8, 0u8, 0u8]),
@@ -171,8 +172,7 @@ where
     reply.encode(&mut s).await?;
     Ok((s, req, socket))
 }
-
-/// SOCKS clients sometimes encode an IP literal using the domain address type.
+/// SOCKS clients(like firefox) sometimes encode an IP literal using the domain address type.
 /// Store it as the corresponding IP type so downstream protocols can use it
 /// without performing DNS resolution.
 fn normalize_ip_domain(addr: &mut socks5::SocksAddr) {
@@ -190,7 +190,6 @@ fn normalize_ip_domain(addr: &mut socks5::SocksAddr) {
         std::net::IpAddr::V6(ip) => socks5::AddrOrDomain::V6(ip.octets()),
     };
 }
-
 // Handle a single TCP connection task (upstream style)
 async fn handle_tcp(
     users: Arc<Vec<AuthUser>>,
@@ -205,7 +204,7 @@ async fn handle_tcp(
     let req = match req.cmd {
         SOCKS5_CMD_TCP_CONNECT => {
             info!(dst = %req.dst, "tcp connect request accepted");
-            let src_addr = s.peer_addr().ok();
+            let src_addr = s.peer_addr().ok().map(to_ipv4_mapped);
             ProxyRequest::Tcp(TcpSession {
                 stream: Box::new(s) as Box<dyn crate::TcpTrait>,
                 dst: req.dst,
@@ -216,16 +215,15 @@ async fn handle_tcp(
         SOCKS5_CMD_UDP_ASSOCIATE => {
             info!(bind_dst = %req.dst, "udp associate request accepted");
             let socket = Arc::new(socket.unwrap());
-            ProxyRequest::Udp(
-                UdpSession::from_recv(
-                    Arc::new(UdpSocksWrap(socket.clone(), Default::default())),
-                    Box::new(UdpSocksWrap(socket, Default::default())),
-                    Some(Box::new(s)),
-                    req.dst,
-                    Default::default(),
-                )
-                .await?,
+            let session = UdpSession::from_recv(
+                Arc::new(UdpSocksWrap(socket.clone(), Default::default())),
+                Box::new(UdpSocksWrap(socket, Default::default())),
+                Some(Box::new(s)),
+                req.dst,
+                Default::default(),
             )
+            .await?;
+            ProxyRequest::Udp(session)
         }
         _ => {
             return Err(SError::ProtocolViolation);
