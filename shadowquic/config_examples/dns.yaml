@@ -22,7 +22,7 @@ router:
     return function(ctx)
       -- Resolver upstream traffic must use a transport outbound.
       if ctx.inbound_tag == "resolver" then return "direct" end
-      if ctx.network_type == "udp" and ctx.dst_port == 53 then
+      if ctx.dst_port == 53 then
         return "fake"
       end
       return "direct"

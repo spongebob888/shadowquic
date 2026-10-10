@@ -67,15 +67,16 @@ end
 The returned tags must refer to configured transport outbounds.
 
 Each DNS service automatically registers an outbound under the same tag. Route
-intercepted UDP DNS sessions directly to that tag (for example, `return "fake"`).
+intercepted UDP and TCP DNS sessions directly to that tag (for example, `return "fake"`).
 No explicit DNS outbound configuration is needed. DNS service tags must not
 collide with explicit outbound tags. `router.default-outbound` can also select a
 DNS service tag. Without an explicit default, the first configured outbound is
 used; if there are no explicit outbounds, the first DNS service is used. Local
 system/fake-IP services can therefore run without an `outbounds` section.
-Replies retain the original DNS destination as their source address.
+UDP replies retain the original DNS destination as their source address.
+TCP connections support multiple length-prefixed DNS queries and full-size replies.
 Route the DNS service's own upstream traffic to a transport outbound, before
-any UDP-port-53 hijacking rule, to avoid recursive DNS interception.
+any port-53 hijacking rule, to avoid recursive DNS interception.
 
 `direct`, `socks`, `shadowquic`, and `sunnyquic` outbounds accept an optional
 `dns: <service-tag>`. This resolves **requested destination domains after

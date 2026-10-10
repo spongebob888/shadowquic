@@ -195,7 +195,7 @@ pub(crate) enum Backend {
     System,
 }
 
-/// Shared resolver handle, also usable as a UDP DNS hijacking outbound.
+/// Shared resolver handle, also usable as a UDP and TCP DNS hijacking outbound.
 #[derive(Clone)]
 pub struct Resolver {
     pub(crate) tag: String,
@@ -306,10 +306,7 @@ impl DnsServer {
                         let Ok((mut stream, _)) = accepted else { break };
                         let service = service.clone();
                         tasks.spawn(async move {
-                            while let Ok(Ok(query)) = tokio::time::timeout(TIMEOUT, read_frame(&mut stream)).await {
-                                let Ok(reply) = service.answer(&query).await else { break };
-                                if !matches!(tokio::time::timeout(TIMEOUT, write_frame(&mut stream, &reply)).await, Ok(Ok(()))) { break; }
-                            }
+                            service.serve_tcp(&mut stream).await;
                         });
                     }
                 }
@@ -361,25 +358,30 @@ impl Outbound for DnsServer {
 #[async_trait]
 impl Outbound for Resolver {
     async fn handle(&self, req: ProxyRequest) -> Result<()> {
-        let ProxyRequest::Udp(mut session) = req else {
-            return Err(SError::ProtocolViolation);
-        };
-        if session.user_context.inbound_tag == self.tag {
+        if req.user_context().inbound_tag == self.tag {
             return Err(dns_error(
                 "DNS upstream traffic cannot be hijacked by its own resolver",
             ));
         }
         let resolver = self.clone();
         tokio::spawn(async move {
-            while let Ok(Ok((query, dst))) =
-                tokio::time::timeout(Duration::from_secs(60), session.recv.recv_from()).await
-            {
-                // Preserve the intercepted destination as the response source.
-                if let Ok(reply) = resolver.answer(&query).await
-                    && let Ok(reply) = udp_reply(&query, reply)
-                    && session.send.send_to(reply.into(), dst).await.is_err()
-                {
-                    break;
+            match req {
+                ProxyRequest::Tcp(mut session) => {
+                    resolver.serve_tcp(&mut session.stream).await;
+                }
+                ProxyRequest::Udp(mut session) => {
+                    while let Ok(Ok((query, dst))) =
+                        tokio::time::timeout(Duration::from_secs(60), session.recv.recv_from())
+                            .await
+                    {
+                        // Preserve the intercepted destination as the response source.
+                        if let Ok(reply) = resolver.answer(&query).await
+                            && let Ok(reply) = udp_reply(&query, reply)
+                            && session.send.send_to(reply.into(), dst).await.is_err()
+                        {
+                            break;
+                        }
+                    }
                 }
             }
         });
@@ -388,6 +390,20 @@ impl Outbound for Resolver {
 }
 
 impl Resolver {
+    async fn serve_tcp(&self, stream: &mut (impl AsyncRead + AsyncWrite + Unpin)) {
+        while let Ok(Ok(query)) = tokio::time::timeout(TIMEOUT, read_frame(stream)).await {
+            let Ok(reply) = self.answer(&query).await else {
+                break;
+            };
+            if !matches!(
+                tokio::time::timeout(TIMEOUT, write_frame(stream, &reply)).await,
+                Ok(Ok(()))
+            ) {
+                break;
+            }
+        }
+    }
+
     async fn answer(&self, query: &[u8]) -> Result<Vec<u8>> {
         match self.exchange(query).await {
             Ok(reply) => Ok(reply),
