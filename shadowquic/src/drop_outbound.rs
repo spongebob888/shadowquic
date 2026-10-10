@@ -14,7 +14,7 @@ impl Outbound for DropOutbound {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{UdpSession, UserContext};
+    use crate::{AnyUdpRecv, AnyUdpSend, UdpSession, UserContext};
     use bytes::Bytes;
     use std::{net::SocketAddr, sync::Arc};
 
@@ -23,13 +23,16 @@ mod tests {
         let (sender, receiver) = tokio::sync::mpsc::channel(2);
         let dst: SocketAddr = "127.0.0.1:53".parse().unwrap();
         sender.send((Bytes::new(), dst.into())).await.unwrap();
-        let session = UdpSession::from_recv(
-            Arc::new(sender.clone()),
-            Box::new(receiver),
-            None,
-            "127.0.0.1:0".parse::<SocketAddr>().unwrap().into(),
-            UserContext::default(),
-        )
+        let session = UdpSession::<AnyUdpRecv, AnyUdpSend> {
+            recv: Box::new(receiver),
+            send: Arc::new(sender.clone()),
+            stream: None,
+            bind_addr: "127.0.0.1:0".parse::<SocketAddr>().unwrap().into(),
+            dst: "127.0.0.1:0".parse::<SocketAddr>().unwrap().into(),
+            src_addr: None,
+            user_context: UserContext::default(),
+        }
+        .wait_first_packet()
         .await
         .unwrap();
 

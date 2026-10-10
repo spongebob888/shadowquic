@@ -74,6 +74,12 @@ impl ProxyRequest {
             ProxyRequest::Udp(session) => session.dst = dst,
         }
     }
+    pub fn src_addr(&self) -> &Option<SocketAddr> {
+        match self {
+            ProxyRequest::Tcp(TcpSession { src_addr, .. }) => src_addr,
+            ProxyRequest::Udp(UdpSession { src_addr, .. }) => src_addr,
+        }
+    }
 }
 /// Udp socket only use immutable reference to self
 /// So it can be safely wrapped by Arc and cloned to work in duplex way.
@@ -116,28 +122,19 @@ pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
 }
 impl UdpSession {
     /// Wait for the first datagram and retain it for the outbound receiver.
-    pub(crate) async fn from_recv(
-        send: AnyUdpSend,
-        mut recv: AnyUdpRecv,
-        stream: Option<AnyTcp>,
-        bind_addr: SocksAddr,
-        user_context: UserContext,
-    ) -> Result<Self, SError> {
-        let first = recv.recv_from().await?;
+    pub(crate) async fn wait_first_packet(mut self) -> Result<Self, SError> {
+        let first: (Bytes, SocksAddr) = self.recv.recv_from().await?;
         Ok(Self {
             dst: first.1.clone(),
-            src_addr: stream
-                .as_ref()
-                .and_then(|stream| stream.peer_addr())
-                .or(user_context.src_addr),
+            src_addr: self.src_addr,
             recv: Box::new(FirstPacketUdpRecv {
                 first: Some(first),
-                inner: recv,
+                inner: self.recv,
             }),
-            send,
-            stream,
-            bind_addr,
-            user_context,
+            send: self.send,
+            stream: self.stream,
+            bind_addr: self.bind_addr,
+            user_context: self.user_context,
         })
     }
 }
@@ -167,7 +164,6 @@ pub struct DnsQuery {
 /// Per-session context, present even when statistics are not tracked.
 #[derive(Clone, Default)]
 pub struct UserContext {
-    pub src_addr: Option<SocketAddr>,
     pub inbound_tag: String,
     /// Outbound preference stamped by the accepting inbound on every request.
     /// A router script may honor or override it; without one it selects the
@@ -372,12 +368,9 @@ impl Manager {
         let (stop, stopped) = tokio::sync::watch::channel(false);
         let mut tasks = tokio::task::JoinSet::new();
         for (tag, mut inbound) in self.inbounds {
-            let inbound_span = info_span!("inbound",
-             tag = %tag,
-             src = tracing::field::Empty,
-             user = tracing::field::Empty,
-             id = tracing::field::Empty, // mainly for quic id
-            );
+            // Only the tag: per-request and per-connection fields belong on the
+            // spans that end with them, or they accumulate here (see below).
+            let inbound_span = info_span!("inbound", tag = %tag);
             let dispatcher = dispatcher.clone();
             let mut stopped = stopped.clone();
             tasks.spawn(async move {
@@ -403,13 +396,47 @@ impl Manager {
                     match req {
                         Ok(req) => {
                             assert!(req.user_context().inbound_tag == tag);
-                            let span = tracing::Span::current();
-                            let _ = req.user_context().src_addr.map(|a| span.record("src", tracing::field::display(a)));
-                            let _ = req.user_context().stats.as_ref().map(|a| span.record("user", tracing::field::display(&a.username)));
+                            // A span's recorded fields are *appended* to the ones
+                            // it was created with (the fmt layer's
+                            // `FormattedFields::add_fields`), so recording the
+                            // request's address and user onto the listener span
+                            // would grow that span — and every line logged under
+                            // it — for as long as the listener lives. They belong
+                            // on a span that ends with the request.
+                            // Both fields are declared empty and only recorded
+                            // when they are known, so a request without them logs
+                            // without them — the local inbounds have no username,
+                            // and the dns and database download inbounds have no
+                            // peer address.
+                            let span = match &req {
+                                    ProxyRequest::Tcp(_) => {
+                                                          info_span!(
+                                "tcp_req",
+                                src = tracing::field::Empty,
+                                user = tracing::field::Empty,
+                                dst = %req.dst()
+                            )
+                                    }
+                                    ProxyRequest::Udp(_) => {
+                                                            info_span!(
+                                "udp_req",
+                                src = tracing::field::Empty,
+                                user = tracing::field::Empty,
+                                dst = %req.dst()
+                            )
+                                    }
+                                };
+
+                            if let Some(addr) = req.src_addr() {
+                                span.record("src", tracing::field::display(addr));
+                            }
+                            if let Some(stats) = req.user_context().stats.as_ref() {
+                                span.record("user", tracing::field::display(&stats.username));
+                            }
                             let dispatcher = dispatcher.clone();
                             requests.spawn(async move {
                                 dispatcher.dispatch(req).await;
-                            }.in_current_span());
+                            }.instrument(span));
                         }
                         Err(error) => {
                             error!(inbound = %tag, %error, "error accepting request");

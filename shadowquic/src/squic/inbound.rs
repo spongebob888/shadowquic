@@ -9,7 +9,8 @@ use tokio::{
 use tracing::{Instrument, info, info_span, trace};
 
 use crate::{
-    ProxyRequest, StatsContext, Stoppable, TcpSession, TcpTrait, UdpSession, UserContext,
+    AnyUdpRecv, AnyUdpSend, ProxyRequest, StatsContext, Stoppable, TcpSession, TcpTrait,
+    UdpSession, UserContext,
     config::AuthUser,
     error::{SError, SResult},
     msgs::{
@@ -102,7 +103,6 @@ impl<C: QuicConnection> SQServerConn<C> {
                     dst,
                     src_addr: Some(self.inner.conn.remote_address()),
                     user_context: UserContext {
-                        src_addr: Some(self.inner.conn.remote_address()),
                         inbound_tag: String::new(),
                         preferred_outbound: None,
                         dns_query: Vec::new(),
@@ -125,13 +125,14 @@ impl<C: QuicConnection> SQServerConn<C> {
                 let (local_send, udp_recv) = channel::<(Bytes, SocksAddr)>(10);
                 let (udp_send, local_recv) = channel::<(Bytes, SocksAddr)>(10);
                 let publish_request = async {
-                    let udp = UdpSession::from_recv(
-                        Arc::new(udp_send),
-                        Box::new(udp_recv),
-                        None,
-                        dst.clone(),
-                        UserContext {
-                            src_addr: Some(self.inner.conn.remote_address()),
+                    let udp = UdpSession::<AnyUdpRecv, AnyUdpSend> {
+                        recv: Box::new(udp_recv),
+                        send: Arc::new(udp_send),
+                        stream: None,
+                        bind_addr: dst.clone(),
+                        dst: dst.clone(),
+                        src_addr: Some(self.inner.conn.remote_address()),
+                        user_context: UserContext {
                             inbound_tag: String::new(),
                             preferred_outbound: None,
                             dns_query: Vec::new(),
@@ -141,7 +142,8 @@ impl<C: QuicConnection> SQServerConn<C> {
                                 conn_id: self.inner.conn.peer_id(),
                             }),
                         },
-                    )
+                    }
+                    .wait_first_packet()
                     .await?;
                     req_send
                         .send(ProxyRequest::Udp(udp))

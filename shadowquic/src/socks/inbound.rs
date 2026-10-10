@@ -2,7 +2,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 
-use crate::TcpTrait;
 use crate::config::{AuthUser, SocksServerCfg};
 use crate::error::{SError, SResult};
 use crate::msgs::socks5::{
@@ -12,6 +11,7 @@ use crate::msgs::socks5::{
 };
 use crate::msgs::{SDecode, SEncode};
 use crate::utils::dual_socket::to_ipv4_mapped;
+use crate::{AnyUdpRecv, AnyUdpSend, TcpTrait};
 use crate::{Inbound, ProxyRequest, TcpSession, UdpSession};
 use async_trait::async_trait;
 use socket2::{Domain, Protocol, Socket, Type};
@@ -59,13 +59,16 @@ impl SocksServer {
             })),
             SOCKS5_CMD_UDP_ASSOCIATE => {
                 let socket = Arc::new(socket.unwrap());
-                let session = UdpSession::from_recv(
-                    Arc::new(UdpSocksWrap(socket.clone(), Default::default())),
-                    Box::new(UdpSocksWrap(socket, Default::default())),
-                    Some(Box::new(s)),
-                    req.dst,
-                    Default::default(),
-                )
+                let session = UdpSession::<AnyUdpRecv, AnyUdpSend> {
+                    recv: Box::new(UdpSocksWrap(socket.clone(), Default::default())),
+                    send: Arc::new(UdpSocksWrap(socket, Default::default())),
+                    stream: Some(Box::new(s)),
+                    bind_addr: req.dst.clone(),
+                    dst: req.dst,
+                    src_addr,
+                    user_context: Default::default(),
+                }
+                .wait_first_packet()
                 .await?;
                 Ok(ProxyRequest::Udp(session))
             }
@@ -201,29 +204,33 @@ async fn handle_tcp(
     let (s, req, socket) = handle_socks(users, stream, local_addr)
         .in_current_span()
         .await?;
+    let stream_src_addr = s.peer_addr().ok().map(to_ipv4_mapped);
     let req = match req.cmd {
         SOCKS5_CMD_TCP_CONNECT => {
             info!(dst = %req.dst, "tcp connect request accepted");
-            let src_addr = s.peer_addr().ok().map(to_ipv4_mapped);
             ProxyRequest::Tcp(TcpSession {
                 stream: Box::new(s) as Box<dyn crate::TcpTrait>,
                 dst: req.dst,
-                src_addr,
+                src_addr: stream_src_addr,
                 user_context: Default::default(),
             })
         }
         SOCKS5_CMD_UDP_ASSOCIATE => {
             info!(bind_dst = %req.dst, "udp associate request accepted");
             let socket = Arc::new(socket.unwrap());
-            let session = UdpSession::from_recv(
-                Arc::new(UdpSocksWrap(socket.clone(), Default::default())),
-                Box::new(UdpSocksWrap(socket, Default::default())),
-                Some(Box::new(s)),
-                req.dst,
-                Default::default(),
+            ProxyRequest::Udp(
+                UdpSession::<AnyUdpRecv, AnyUdpSend> {
+                    recv: Box::new(UdpSocksWrap(socket.clone(), Default::default())),
+                    send: Arc::new(UdpSocksWrap(socket, Default::default())),
+                    stream: Some(Box::new(s)),
+                    bind_addr: req.dst.clone(),
+                    dst: req.dst, // rewrite later
+                    src_addr: stream_src_addr,
+                    user_context: Default::default(),
+                }
+                .wait_first_packet()
+                .await?,
             )
-            .await?;
-            ProxyRequest::Udp(session)
         }
         _ => {
             return Err(SError::ProtocolViolation);
