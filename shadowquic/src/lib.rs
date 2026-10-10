@@ -407,20 +407,31 @@ impl Manager {
                             // would grow that span — and every line logged under
                             // it — for as long as the listener lives. They belong
                             // on a span that ends with the request.
+                            // Both fields are declared empty and only recorded
+                            // when they are known, so a request without them logs
+                            // without them — the local inbounds have no username,
+                            // and the dns and database download inbounds have no
+                            // peer address.
                             let span = info_span!(
                                 "request",
-                                src = %req
-                                    .user_context()
-                                    .src_addr
-                                    .map(|addr| addr.to_string())
-                                    .unwrap_or_else(|| "-".into()),
-                                user = %req
-                                    .user_context()
-                                    .stats
-                                    .as_ref()
-                                    .map(|stats| stats.username.as_str())
-                                    .unwrap_or(""),
+                                src = tracing::field::Empty,
+                                user = tracing::field::Empty,
                             );
+                            // The address of whoever opened the connection: the
+                            // quic inbounds record it in the request's
+                            // `UserContext`, and the local inbounds only put the
+                            // peer they accepted on into the session, so fall back
+                            // to that before giving up.
+                            let src = req.user_context().src_addr.or(match &req {
+                                ProxyRequest::Tcp(session) => session.src_addr,
+                                ProxyRequest::Udp(session) => session.src_addr,
+                            });
+                            if let Some(addr) = src {
+                                span.record("src", tracing::field::display(addr));
+                            }
+                            if let Some(stats) = req.user_context().stats.as_ref() {
+                                span.record("user", tracing::field::display(&stats.username));
+                            }
                             let dispatcher = dispatcher.clone();
                             requests.spawn(async move {
                                 dispatcher.dispatch(req).await;
