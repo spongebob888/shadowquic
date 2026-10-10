@@ -873,6 +873,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#half-close-timeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>half-close-timeout</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#dns" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1976,6 +1987,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#half-close-timeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>half-close-timeout</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#dns" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -2267,6 +2289,14 @@
 <a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="nt">over-stream</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span><span class="w">  </span><span class="c1"># true for udp over stream, false for udp over datagram</span>
 </code></pre></div>
 <h2 id="fields">Fields<a class="headerlink" href="#fields" title="Permanent link">&para;</a></h2>
+<h3 id="half-close-timeout"><code>half-close-timeout</code><a class="headerlink" href="#half-close-timeout" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>u64</code></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <code>crate::config::default_half_close_timeout()</code></li>
+</ul>
+<p>Inactivity timeout after either TCP source reaches EOF, in milliseconds.
+Defaults to 60 seconds. Zero disables the timeout.</p>
 <h3 id="dns"><code>dns</code><a class="headerlink" href="#dns" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Type:</strong> <code>string</code> <em>(optional)</em></li>
