@@ -74,6 +74,12 @@ impl ProxyRequest {
             ProxyRequest::Udp(session) => session.dst = dst,
         }
     }
+    pub fn src_addr(&self) -> &Option<SocketAddr> {
+        match self {
+            ProxyRequest::Tcp(TcpSession { src_addr, .. }) => src_addr,
+            ProxyRequest::Udp(UdpSession { src_addr, .. }) => src_addr,
+        }
+    }
 }
 /// Udp socket only use immutable reference to self
 /// So it can be safely wrapped by Arc and cloned to work in duplex way.
@@ -116,28 +122,19 @@ pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
 }
 impl UdpSession {
     /// Wait for the first datagram and retain it for the outbound receiver.
-    pub(crate) async fn from_recv(
-        send: AnyUdpSend,
-        mut recv: AnyUdpRecv,
-        stream: Option<AnyTcp>,
-        bind_addr: SocksAddr,
-        user_context: UserContext,
-    ) -> Result<Self, SError> {
-        let first = recv.recv_from().await?;
+    pub(crate) async fn wait_first_packet(mut self) -> Result<Self, SError> {
+        let first: (Bytes, SocksAddr) = self.recv.recv_from().await?;
         Ok(Self {
             dst: first.1.clone(),
-            src_addr: stream
-                .as_ref()
-                .and_then(|stream| stream.peer_addr())
-                .or(user_context.src_addr),
+            src_addr: self.src_addr,
             recv: Box::new(FirstPacketUdpRecv {
                 first: Some(first),
-                inner: recv,
+                inner: self.recv,
             }),
-            send,
-            stream,
-            bind_addr,
-            user_context,
+            send: self.send,
+            stream: self.stream,
+            bind_addr: self.bind_addr,
+            user_context: self.user_context,
         })
     }
 }
@@ -167,7 +164,6 @@ pub struct DnsQuery {
 /// Per-session context, present even when statistics are not tracked.
 #[derive(Clone, Default)]
 pub struct UserContext {
-    pub src_addr: Option<SocketAddr>,
     pub inbound_tag: String,
     /// Outbound preference stamped by the accepting inbound on every request.
     /// A router script may honor or override it; without one it selects the
@@ -412,21 +408,26 @@ impl Manager {
                             // without them — the local inbounds have no username,
                             // and the dns and database download inbounds have no
                             // peer address.
-                            let span = info_span!(
-                                "request",
+                            let span = match &req {
+                                    ProxyRequest::Tcp(_) => {
+                                                          info_span!(
+                                "tcp_req",
                                 src = tracing::field::Empty,
                                 user = tracing::field::Empty,
-                            );
-                            // The address of whoever opened the connection: the
-                            // quic inbounds record it in the request's
-                            // `UserContext`, and the local inbounds only put the
-                            // peer they accepted on into the session, so fall back
-                            // to that before giving up.
-                            let src = req.user_context().src_addr.or(match &req {
-                                ProxyRequest::Tcp(session) => session.src_addr,
-                                ProxyRequest::Udp(session) => session.src_addr,
-                            });
-                            if let Some(addr) = src {
+                                dst = %req.dst()
+                            )
+                                    }
+                                    ProxyRequest::Udp(_) => {
+                                                            info_span!(
+                                "udp_req",
+                                src = tracing::field::Empty,
+                                user = tracing::field::Empty,
+                                dst = %req.dst()
+                            )
+                                    }
+                                };
+
+                            if let Some(addr) = req.src_addr() {
                                 span.record("src", tracing::field::display(addr));
                             }
                             if let Some(stats) = req.user_context().stats.as_ref() {

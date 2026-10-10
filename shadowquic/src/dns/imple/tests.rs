@@ -1,7 +1,7 @@
 use super::config::{DnsFakeIpServerCfg, DnsSystemServerCfg, DnsUdpServerCfg};
 use super::*;
 use crate::{
-    Manager, UdpRecv,
+    AnyUdpRecv, AnyUdpSend, Manager, UdpRecv,
     config::{Config, DirectOutCfg},
     direct::outbound::DirectOut,
     msgs::socks5::AddrOrDomain,
@@ -388,13 +388,16 @@ async fn hijacked_dns_keeps_original_reply_source() {
     send.send((query("hijacked.test", TYPE::A, 42).into(), dst.clone()))
         .await
         .unwrap();
-    let session = UdpSession::from_recv(
-        Arc::new(reply_send),
-        Box::new(recv),
-        None,
-        "0.0.0.0:0".parse::<SocketAddr>().unwrap().into(),
-        UserContext::default(),
-    )
+    let session = UdpSession::<AnyUdpRecv, AnyUdpSend> {
+        recv: Box::new(recv),
+        send: Arc::new(reply_send),
+        stream: None,
+        bind_addr: "0.0.0.0:0".parse::<SocketAddr>().unwrap().into(),
+        dst: "0.0.0.0:0".parse::<SocketAddr>().unwrap().into(),
+        src_addr: None,
+        user_context: UserContext::default(),
+    }
+    .wait_first_packet()
     .await
     .unwrap();
     manager.outbounds["fake"]
@@ -528,13 +531,16 @@ async fn fakeip_udp_is_restored_before_routing_and_replies_use_fake_source() {
     tx.send((Bytes::from_static(b"one"), dst.clone()))
         .await
         .unwrap();
-    let session = UdpSession::from_recv(
-        Arc::new(reply_tx),
-        Box::new(rx),
-        None,
-        "0.0.0.0:0".parse::<SocketAddr>().unwrap().into(),
-        UserContext::default(),
-    )
+    let session = UdpSession::<AnyUdpRecv, AnyUdpSend> {
+        recv: Box::new(rx),
+        send: Arc::new(reply_tx),
+        stream: None,
+        bind_addr: "0.0.0.0:0".parse::<SocketAddr>().unwrap().into(),
+        dst: "0.0.0.0:0".parse::<SocketAddr>().unwrap().into(),
+        src_addr: None,
+        user_context: UserContext::default(),
+    }
+    .wait_first_packet()
     .await
     .unwrap();
     let mut inbound = RestoringInbound {
@@ -683,13 +689,16 @@ async fn selected_resolver_handles_tcp_and_udp_destinations_and_preserves_ports(
     tx.send((Bytes::from_static(b"second"), second.clone()))
         .await
         .unwrap();
-    let session = UdpSession::from_recv(
-        Arc::new(send),
-        Box::new(recv),
-        None,
-        "0.0.0.0:0".parse::<SocketAddr>().unwrap().into(),
-        UserContext::default(),
-    )
+    let session = UdpSession::<AnyUdpRecv, AnyUdpSend> {
+        recv: Box::new(recv),
+        send: Arc::new(send),
+        stream: None,
+        bind_addr: "0.0.0.0:0".parse::<SocketAddr>().unwrap().into(),
+        dst: "0.0.0.0:0".parse::<SocketAddr>().unwrap().into(),
+        src_addr: None,
+        user_context: UserContext::default(),
+    }
+    .wait_first_packet()
     .await
     .unwrap();
     outbound.handle(ProxyRequest::Udp(session)).await.unwrap();
