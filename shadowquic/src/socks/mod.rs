@@ -25,8 +25,7 @@ impl UdpRecv for UdpSocksWrap {
 
         let (len, dst) = self.0.recv_from(&mut buf).await?;
         let mut cur = Cursor::new(buf);
-        let mut req = socks5::UdpReqHeader::decode(&mut cur).await?;
-        req.dst.canonicalize_ip();
+        let req = socks5::UdpReqHeader::decode(&mut cur).await?;
         if req.frag != 0 {
             warn!("dropping fragmented udp datagram ");
             return Err(SError::ProtocolUnimpl);
