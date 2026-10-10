@@ -15,6 +15,11 @@ repository = "https://github.com/spongebob888/shadowquic.git"
 description = "A 0-RTT QUIC Proxy with SNI camouflage"
 license = "MIT"
 readme = "README.md"
-
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "unwind"
+strip = true
 
 [workspace.dependencies]
