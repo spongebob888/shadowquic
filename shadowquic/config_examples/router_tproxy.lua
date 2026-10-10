@@ -5,14 +5,14 @@ return function(ctx)
     return "proxy"
   end
 
-  -- The DNS inbounds are UDP connections. Route them directly so the DNS can bootstrap itself.
+  -- The DNS inbounds use UDP or TCP connections. Route them directly so the DNS can bootstrap itself.
   if ctx.inbound_tag == "tls-dns" or ctx.inbound_tag == "lan-dns" then
     return "direct"
   end
   
   -- Hijack all DNS queries from the tproxy-inbound and route them to the hijack-dns inbound.
   -- The hijack-dns inbound will parse the DNS queries and fill dns_query in the context for the router to use.
-  if ctx.inbound_tag == "tproxy-in" and ctx.dst_port == 53 and ctx.network_type == "udp" then
+  if ctx.inbound_tag == "tproxy-in" and ctx.dst_port == 53 then
     return "hijack-dns"
   end
 
