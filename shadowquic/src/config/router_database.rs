@@ -29,6 +29,7 @@ pub struct CountryDbCfg {
     pub url: String,
     /// Persistent file, relative to the working directory. A `.mmdb` suffix
     /// selects direct MMDB lookups; other suffixes retain redb conversion.
+    /// Cost about 3mb for mmdb file. Redb format not recommended for country database, as it is slower and larger.
     pub path: PathBuf,
 }
 
@@ -46,6 +47,7 @@ pub struct GeositeDbCfg {
     #[serde(default)]
     pub list: Vec<String>,
     /// Persistent converted redb file, relative to the working directory.
+    /// Cost about 16m for full geosite db. 1Mb for only cn list.
     pub path: PathBuf,
 }
 
