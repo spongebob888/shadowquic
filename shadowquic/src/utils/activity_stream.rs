@@ -25,12 +25,57 @@ fn now_millis() -> u64 {
     EPOCH.get_or_init(Instant::now).elapsed().as_millis() as u64 + 1
 }
 
+/// Which peer a guarded stream talks to: in a client, `Downstream` is the local
+/// application and `Upstream` is the shadowquic server; in a server,
+/// `Downstream` is the QUIC peer and `Upstream` is the real destination. Naming
+/// the ends by role keeps one watchdog line readable on either side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    Downstream = 1,
+    Upstream = 2,
+}
+
+/// `Side` as stored in `ActivityState::finished_first`, where 0 means neither.
+const NO_SIDE: u64 = 0;
+
+impl Side {
+    /// The other end of the same relay.
+    pub fn opposite(self) -> Self {
+        match self {
+            Side::Downstream => Side::Upstream,
+            Side::Upstream => Side::Downstream,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Side::Downstream => "downstream",
+            Side::Upstream => "upstream",
+        }
+    }
+
+    fn code(self) -> u64 {
+        self as u64
+    }
+
+    fn from_code(code: u64) -> Option<Self> {
+        match code {
+            1 => Some(Side::Downstream),
+            2 => Some(Side::Upstream),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct ActivityState {
     /// Last time a byte moved through either guarded end.
     last_millis: AtomicU64,
     /// When the first of the two ends finished; 0 while both are still open.
     half_closed_millis: AtomicU64,
+    /// Which peer's send half ended first, as a `Side` code; 0 while both are
+    /// still open.
+    finished_first: AtomicU64,
 }
 
 /// Progress and half-close bookkeeping shared by the two ends of one relay.
@@ -55,6 +100,7 @@ impl Activity {
             state: Arc::new(ActivityState {
                 last_millis: AtomicU64::new(now_millis()),
                 half_closed_millis: AtomicU64::new(0),
+                finished_first: AtomicU64::new(NO_SIDE),
             }),
         }
     }
@@ -65,13 +111,35 @@ impl Activity {
             .store(now_millis(), Ordering::Relaxed);
     }
 
-    fn half_closed(&self) {
+    /// Records that `finished`'s send half ended, once, and arms the deadline.
+    ///
+    /// A completed write-half shutdown on the opposite stream is what establishes
+    /// it: `copy_bidirectional` only shuts a writer down once the reader of the
+    /// opposite direction has reached EOF.
+    fn half_closed(&self, finished: Side) {
+        let _ = self.state.finished_first.compare_exchange(
+            NO_SIDE,
+            finished.code(),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        );
         let _ = self.state.half_closed_millis.compare_exchange(
             0,
             now_millis(),
             Ordering::Relaxed,
             Ordering::Relaxed,
         );
+    }
+
+    /// The source peer of the first relay direction whose writer shutdown
+    /// completed, or `None` until such a completion has been recorded.
+    ///
+    /// In `copy_bidirectional`, that shutdown follows EOF from the source peer.
+    /// This does not identify which peer reached EOF first, establish that the
+    /// other peer's send half is still open, or distinguish a missing EOF from a
+    /// pending writer shutdown in the remaining direction.
+    pub fn half_closed_first(&self) -> Option<Side> {
+        Side::from_code(self.state.finished_first.load(Ordering::Relaxed))
     }
 
     /// How long the surviving direction has been silent since the first one
@@ -94,21 +162,27 @@ impl Default for Activity {
     }
 }
 
-/// Wraps a stream, recording every byte that moves through it and the moment
-/// its write half is shut down.
+/// Wraps a stream, recording every byte that moves through it, the moment its
+/// write half is shut down, and which peer it faces.
 ///
 /// Both ends of a relay are guarded: whichever end is shut down first tells us
-/// which direction finished, since `copy_bidirectional` shuts down the writer
-/// of the opposite direction once a reader reaches EOF.
+/// which direction finished, since `copy_bidirectional` shuts down the writer of
+/// the opposite direction once a reader reaches EOF. Tagging each end with its
+/// `Side` turns that into a name for the peer that stopped sending.
 #[derive(Debug)]
 pub struct ActivityGuard<S> {
     inner: S,
     activity: Activity,
+    side: Side,
 }
 
 impl<S> ActivityGuard<S> {
-    pub fn new(inner: S, activity: Activity) -> Self {
-        Self { inner, activity }
+    pub fn new(inner: S, activity: Activity, side: Side) -> Self {
+        Self {
+            inner,
+            activity,
+            side,
+        }
     }
 }
 
@@ -164,7 +238,10 @@ where
         let this = self.get_mut();
         let poll = Pin::new(&mut this.inner).poll_shutdown(cx);
         if let Poll::Ready(Ok(())) = &poll {
-            this.activity.half_closed();
+            // This writer goes down because the reader of the opposite direction
+            // reached EOF, so the peer that finished sending is the one this
+            // stream does not face.
+            this.activity.half_closed(this.side.opposite());
         }
         poll
     }
@@ -245,7 +322,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn the_deadline_restarts_on_every_byte_after_the_half_close() {
         let activity = Activity::new();
-        activity.half_closed();
+        activity.half_closed(Side::Downstream);
 
         tokio::time::advance(Duration::from_secs(10)).await;
         assert_still_quiet(&activity, Duration::from_secs(10), "ten seconds passed");
@@ -277,7 +354,7 @@ mod tests {
             "a session with both directions still open must never be given up on"
         );
 
-        activity.half_closed();
+        activity.half_closed(Side::Downstream);
         let armed_at = tokio::time::Instant::now();
         half_close_watchdog(&activity, grace).await;
         let waited = armed_at.elapsed();
@@ -293,9 +370,9 @@ mod tests {
     async fn an_eof_read_moves_no_bytes_and_does_not_restart_the_deadline() {
         let (mine, theirs) = tokio::io::duplex(64);
         let activity = Activity::new();
-        let mut guarded = ActivityGuard::new(mine, activity.clone());
+        let mut guarded = ActivityGuard::new(mine, activity.clone(), Side::Downstream);
 
-        activity.half_closed();
+        activity.half_closed(Side::Downstream);
         tokio::time::advance(Duration::from_secs(5)).await;
         drop(theirs);
 
@@ -314,8 +391,8 @@ mod tests {
     async fn the_guard_records_bytes_moving_in_either_direction() {
         let (mine, mut theirs) = tokio::io::duplex(64);
         let activity = Activity::new();
-        let mut guarded = ActivityGuard::new(mine, activity.clone());
-        activity.half_closed();
+        let mut guarded = ActivityGuard::new(mine, activity.clone(), Side::Downstream);
+        activity.half_closed(Side::Downstream);
 
         tokio::time::advance(Duration::from_secs(30)).await;
         guarded.write_all(b"hello").await.unwrap();
@@ -334,7 +411,7 @@ mod tests {
     async fn shutting_down_the_guarded_writer_arms_the_deadline_once() {
         let (mine, _theirs) = tokio::io::duplex(64);
         let activity = Activity::new();
-        let mut guarded = ActivityGuard::new(mine, activity.clone());
+        let mut guarded = ActivityGuard::new(mine, activity.clone(), Side::Downstream);
         assert_eq!(activity.quiet_since_half_close(), None);
 
         guarded.shutdown().await.unwrap();
@@ -342,6 +419,7 @@ mod tests {
             &activity,
             "shutting the write half down must arm the deadline",
         );
+        assert_eq!(activity.half_closed_first(), Some(Side::Upstream));
 
         tokio::time::advance(Duration::from_secs(10)).await;
         let _ = guarded.shutdown().await;
@@ -349,6 +427,55 @@ mod tests {
             &activity,
             Duration::from_secs(10),
             "the half-close is recorded once, not on every shutdown",
+        );
+        assert_eq!(
+            activity.half_closed_first(),
+            Some(Side::Upstream),
+            "the second half-close must not rename the first"
+        );
+    }
+
+    /// A writer is shut down because the reader of the opposite direction
+    /// reached EOF, so the peer recorded as half-closed is the one this stream
+    /// does not face. Getting that backwards would name the wrong end in the
+    /// watchdog line.
+    #[tokio::test(start_paused = true)]
+    async fn a_shutdown_names_the_peer_on_the_other_side_as_the_one_that_half_closed() {
+        let (mine, _theirs) = tokio::io::duplex(64);
+        let activity = Activity::new();
+        let mut guarded = ActivityGuard::new(mine, activity.clone(), Side::Upstream);
+        assert_eq!(activity.half_closed_first(), None);
+
+        guarded.shutdown().await.unwrap();
+
+        assert_eq!(
+            activity.half_closed_first(),
+            Some(Side::Downstream),
+            "this stream faces upstream, so the downstream peer is the one that half-closed"
+        );
+    }
+
+    /// The other side finishing later must not rename the peer already recorded,
+    /// which is what keeps the line reporting the first half-close rather than
+    /// whichever shutdown happens to complete last.
+    #[tokio::test(start_paused = true)]
+    async fn a_later_half_close_on_the_other_side_does_not_rename_the_first() {
+        let (upstream_stream, _upstream_peer) = tokio::io::duplex(64);
+        let (downstream_stream, _downstream_peer) = tokio::io::duplex(64);
+        let activity = Activity::new();
+        let mut upstream = ActivityGuard::new(upstream_stream, activity.clone(), Side::Upstream);
+        let mut downstream =
+            ActivityGuard::new(downstream_stream, activity.clone(), Side::Downstream);
+
+        // This stream faces upstream, so its shutdown records the downstream peer.
+        upstream.shutdown().await.unwrap();
+        assert_eq!(activity.half_closed_first(), Some(Side::Downstream));
+
+        downstream.shutdown().await.unwrap();
+        assert_eq!(
+            activity.half_closed_first(),
+            Some(Side::Downstream),
+            "the second half-close must not rename the peer already recorded"
         );
     }
 }

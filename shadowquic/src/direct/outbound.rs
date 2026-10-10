@@ -19,7 +19,7 @@ use crate::{
     error::SError,
     msgs::socks5::{AddrOrDomain, SocksAddr},
     utils::{
-        activity_stream::{Activity, ActivityGuard, half_close_grace, half_close_watchdog},
+        activity_stream::{Activity, ActivityGuard, Side, half_close_grace, half_close_watchdog},
         dual_socket::DualSocket,
         socket_opt::{SocketFactory, TcpSocketFactory, UdpSocketFactory},
     },
@@ -62,7 +62,10 @@ impl Outbound for DirectOut {
 
                     let upstream = self_clone.connect_tcp(dst).await?;
                     let _ = upstream.set_nodelay(true);
-                    relay_tcp(tcp_session, upstream, half_close_timeout).await?;
+                    // The activity record is what the relay test reads to pin
+                    // which end the watchdog line names; a session the watchdog
+                    // gave up on has already reported itself.
+                    let _ = relay_tcp(tcp_session, upstream, half_close_timeout).await?;
                 }
 
                 crate::ProxyRequest::Udp(udp_session) => {
@@ -86,8 +89,10 @@ impl Outbound for DirectOut {
 
 /// Relays one TCP session between the QUIC side and the real upstream.
 ///
-/// Returns once the relay is over: either both directions reached EOF, or the
-/// watchdog gave the session up after a half-close followed by silence.
+/// Returns the session's activity once the relay is over: either both directions
+/// reached EOF, or the watchdog gave the session up after a half-close followed
+/// by silence. That record is what the watchdog line names the peer that stopped
+/// sending from, and what the relay test asserts on.
 ///
 /// This is the server half of the same bound the clients apply, and it is the
 /// half that decides whether the client gets its stream credit back. quinn
@@ -101,10 +106,11 @@ async fn relay_tcp(
     mut tcp_session: TcpSession,
     mut upstream: TcpStream,
     half_close_timeout: Option<Duration>,
-) -> Result<(), SError> {
+) -> Result<Activity, SError> {
     let activity = Activity::new();
-    let mut quic_side = ActivityGuard::new(&mut tcp_session.stream, activity.clone());
-    let mut upstream_side = ActivityGuard::new(&mut upstream, activity.clone());
+    let mut quic_side =
+        ActivityGuard::new(&mut tcp_session.stream, activity.clone(), Side::Downstream);
+    let mut upstream_side = ActivityGuard::new(&mut upstream, activity.clone(), Side::Upstream);
     let copy = tokio::io::copy_bidirectional_with_sizes(
         &mut quic_side,
         &mut upstream_side,
@@ -121,6 +127,11 @@ async fn relay_tcp(
             _ = half_close_watchdog(&activity, grace) => {
                 error!(
                     dst = %tcp_session.dst,
+                    src = %tcp_session
+                        .src_addr
+                        .map(|addr| addr.to_string())
+                        .unwrap_or_else(|| "-".into()),
+                    half_closed = %activity.half_closed_first().map(Side::as_str).unwrap_or("unknown"),
                     "relay half-closed and silent for {}s, closing the session",
                     grace.as_secs()
                 );
@@ -130,7 +141,7 @@ async fn relay_tcp(
             copy.await?;
         }
     }
-    Ok(())
+    Ok(activity)
 }
 
 #[derive(Default, Clone)]
@@ -501,7 +512,9 @@ mod test {
     /// Starts a relay against the half-closing upstream and drives one exchange
     /// through it, so the session is a real relayed request rather than just an
     /// open socket. Returns the relay task and the client end.
-    async fn started_relay(half_close_timeout: u64) -> (JoinHandle<Result<(), SError>>, TcpStream) {
+    async fn started_relay(
+        half_close_timeout: u64,
+    ) -> (JoinHandle<Result<Activity, SError>>, TcpStream) {
         let upstream_addr = spawn_half_closing_upstream().await;
         let (session, mut client) = tcp_pair().await;
         let upstream = TcpStream::connect(upstream_addr).await.unwrap();
@@ -542,11 +555,17 @@ mod test {
     async fn relay_ends_when_peer_half_closes_and_stays_silent() {
         let (relay, _client) = started_relay(1).await;
 
-        tokio::time::timeout(Duration::from_secs(5), relay)
+        let activity = tokio::time::timeout(Duration::from_secs(5), relay)
             .await
             .expect("relay never ended: the watchdog did not close the session")
             .expect("relay task panicked")
             .expect("relay returned an error");
+
+        assert_eq!(
+            activity.half_closed_first(),
+            Some(Side::Upstream),
+            "the upstream ended its send half, so upstream is the peer that stopped sending"
+        );
     }
 
     /// Control for the test above: with the watchdog disabled the same workload

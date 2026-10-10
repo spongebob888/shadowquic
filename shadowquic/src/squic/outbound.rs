@@ -18,7 +18,7 @@ use crate::{
     msgs::{SDecode, SEncode, socks5::SocksAddr, squic::SQReq},
     quic::QuicConnection,
     squic::{handle_udp_recv_ctrl, handle_udp_send},
-    utils::activity_stream::{Activity, ActivityGuard, half_close_watchdog},
+    utils::activity_stream::{Activity, ActivityGuard, Side, half_close_watchdog},
 };
 
 use super::{SQConn, SQConnStats, inbound::Unsplit};
@@ -120,9 +120,13 @@ pub async fn handle_request<C: QuicConnection>(
                 trace!(dst = %tcp_session.dst, "tcp connect req header sent");
 
                 let activity = Activity::new();
-                let mut quic_side =
-                    ActivityGuard::new(Unsplit { s: send, r: recv }, activity.clone());
-                let mut local_side = ActivityGuard::new(&mut tcp_session.stream, activity.clone());
+                let mut quic_side = ActivityGuard::new(
+                    Unsplit { s: send, r: recv },
+                    activity.clone(),
+                    Side::Upstream,
+                );
+                let mut local_side =
+                    ActivityGuard::new(&mut tcp_session.stream, activity.clone(), Side::Downstream);
                 let copy = tokio::io::copy_bidirectional(&mut quic_side, &mut local_side);
                 tokio::pin!(copy);
 
@@ -140,6 +144,14 @@ pub async fn handle_request<C: QuicConnection>(
                         _ = half_close_watchdog(&activity, grace) => {
                             error!(
                                 dst = %tcp_session.dst,
+                                src = %tcp_session
+                                    .src_addr
+                                    .map(|addr| addr.to_string())
+                                    .unwrap_or_else(|| "-".into()),
+                                half_closed = %activity
+                                    .half_closed_first()
+                                    .map(Side::as_str)
+                                    .unwrap_or("unknown"),
                                 "relay half-closed and silent for {}s, closing the session",
                                 grace.as_secs()
                             );
