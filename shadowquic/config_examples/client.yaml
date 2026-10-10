@@ -5,6 +5,7 @@ inbounds:
 outbounds:
   - tag: shadowquic-outbound
     type: shadowquic
+    half-close-timeout: 60000 # TCP inactivity after either source reaches EOF, in ms; default 60000, 0 disables
     addr: "127.0.0.1:1443"
     username: "admin"
     password: "hello"

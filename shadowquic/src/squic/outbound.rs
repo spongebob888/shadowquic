@@ -27,6 +27,7 @@ pub async fn handle_request<C: QuicConnection>(
     req: ProxyRequest,
     conn: SQConn<C>,
     over_stream: bool,
+    half_close_timeout: u64,
 ) -> Result<(), SError> {
     let (mut send, recv, id) = QuicConnection::open_bi(&conn.conn).await?;
     let _span = span!(Level::INFO, "bistream", id = id);
@@ -45,9 +46,12 @@ pub async fn handle_request<C: QuicConnection>(
                 req.encode(&mut send).await?;
                 trace!(dst = %tcp_session.dst, "tcp connect req header sent");
 
-                let u = tokio::io::copy_bidirectional(
+                let u = crate::utils::copy::copy_bidirectional(
                     &mut Unsplit { s: send, r: recv },
                     &mut tcp_session.stream,
+                    8 * 1024,
+                    8 * 1024,
+                    half_close_timeout,
                 )
                 .await?;
 

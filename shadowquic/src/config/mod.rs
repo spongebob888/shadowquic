@@ -555,6 +555,10 @@ pub struct AuthUser {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SocksClientCfg {
+    /// Inactivity timeout after either TCP source reaches EOF, in milliseconds.
+    /// Defaults to 60 seconds. Zero disables the timeout.
+    #[serde(default = "crate::config::default_half_close_timeout")]
+    pub half_close_timeout: u64,
     /// DNS service used to resolve destination domains after routing.
     #[cfg(feature = "dns-server")]
     pub dns: Option<String>,
@@ -721,9 +725,13 @@ impl PartialEq for CongestionControl {
 /// bind-interface: "127.0.0.1" # optional, by IP address or interface name
 /// fw-mark: 1234 # optional, Linux fwmark
 /// ```
-#[derive(Deserialize, Clone, Debug, Default)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct DirectOutCfg {
+    /// Inactivity timeout after either TCP source reaches EOF, in milliseconds.
+    /// Defaults to 60 seconds. Zero disables the timeout.
+    #[serde(default = "crate::config::default_half_close_timeout")]
+    pub half_close_timeout: u64,
     /// DNS service used to resolve destination domains after routing.
     #[cfg(feature = "dns-server")]
     pub dns: Option<String>,
@@ -734,6 +742,23 @@ pub struct DirectOutCfg {
     /// Socket options like bind interface and fwmark
     #[serde(flatten)]
     pub socket_opt: SocketOpt,
+}
+
+pub fn default_half_close_timeout() -> u64 {
+    60_000
+}
+
+impl Default for DirectOutCfg {
+    fn default() -> Self {
+        Self {
+            half_close_timeout: default_half_close_timeout(),
+            #[cfg(feature = "dns-server")]
+            dns: None,
+            tag: String::new(),
+            dns_strategy: DnsStrategy::default(),
+            socket_opt: SocketOpt::default(),
+        }
+    }
 }
 
 /// Outbound that discards every request.
@@ -836,6 +861,49 @@ impl LogLevel {
 
 #[cfg(test)]
 mod test {
+    #[test]
+    fn outbound_half_close_timeout_parses_and_defaults_to_sixty_seconds() {
+        use super::OutboundCfg;
+        assert_eq!(super::DirectOutCfg::default().half_close_timeout, 60_000);
+        assert_eq!(
+            super::ShadowQuicClientCfg::default().half_close_timeout,
+            60_000
+        );
+        assert_eq!(
+            super::SunnyQuicClientCfg::default().half_close_timeout,
+            60_000
+        );
+        for yaml in [
+            "type: direct\n",
+            "type: socks\naddr: localhost:1080\n",
+            "type: shadowquic\naddr: localhost:443\nusername: test\npassword: test\nserver-name: localhost\n",
+            "type: sunnyquic\naddr: localhost:443\nusername: test\npassword: test\nserver-name: localhost\n",
+        ] {
+            for (field, expected) in [
+                ("", 60_000),
+                ("half-close-timeout: 0\n", 0),
+                ("half-close-timeout: 1500\n", 1500),
+            ] {
+                let cfg: OutboundCfg =
+                    serde_saphyr::from_str(&format!("{yaml}tag: test\n{field}")).unwrap();
+                let actual = match cfg {
+                    OutboundCfg::Direct(cfg) => cfg.half_close_timeout,
+                    OutboundCfg::Socks(cfg) => cfg.half_close_timeout,
+                    OutboundCfg::ShadowQuic(cfg) => cfg.half_close_timeout,
+                    OutboundCfg::SunnyQuic(cfg) => cfg.half_close_timeout,
+                    OutboundCfg::Drop(_) => unreachable!(),
+                };
+                assert_eq!(actual, expected);
+            }
+            assert!(
+                serde_saphyr::from_str::<OutboundCfg>(&format!(
+                    "{yaml}tag: test\nhalf-close-timeout: -1\n"
+                ))
+                .is_err()
+            );
+        }
+    }
+
     use crate::config::{CongestionControl, Interface, ShadowQuicClientCfg};
 
     use super::Config;

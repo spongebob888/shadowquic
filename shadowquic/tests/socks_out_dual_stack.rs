@@ -118,6 +118,7 @@ async fn spawn_socks() {
     .unwrap();
     let sq_client = SocksClient::new(
         SocksClientCfg {
+            half_close_timeout: 0,
             #[cfg(feature = "dns-server")]
             dns: None,
             #[cfg(feature = "dns-server")]

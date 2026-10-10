@@ -205,7 +205,7 @@ impl Outbound for ShadowQuicClient {
         let conn = self.prepare_conn().await?;
 
         let over_stream = self.config.over_stream;
-        outbound::handle_request(req, conn, over_stream).await?;
+        outbound::handle_request(req, conn, over_stream, self.config.half_close_timeout).await?;
         Ok(())
     }
 }

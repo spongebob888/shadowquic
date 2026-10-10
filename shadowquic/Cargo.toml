@@ -144,6 +144,7 @@ windows = { version = "0.62.2", features = [
 libc = "0.2"
 
 [dev-dependencies]
+tokio = { version = "1.52.3", features = ["test-util"] }
 fast-socks5 = "1.0.0"
 rand = "0.10.1"
 
