@@ -372,12 +372,9 @@ impl Manager {
         let (stop, stopped) = tokio::sync::watch::channel(false);
         let mut tasks = tokio::task::JoinSet::new();
         for (tag, mut inbound) in self.inbounds {
-            let inbound_span = info_span!("inbound",
-             tag = %tag,
-             src = tracing::field::Empty,
-             user = tracing::field::Empty,
-             id = tracing::field::Empty, // mainly for quic id
-            );
+            // Only the tag: per-request and per-connection fields belong on the
+            // spans that end with them, or they accumulate here (see below).
+            let inbound_span = info_span!("inbound", tag = %tag);
             let dispatcher = dispatcher.clone();
             let mut stopped = stopped.clone();
             tasks.spawn(async move {
@@ -403,13 +400,31 @@ impl Manager {
                     match req {
                         Ok(req) => {
                             assert!(req.user_context().inbound_tag == tag);
-                            let span = tracing::Span::current();
-                            let _ = req.user_context().src_addr.map(|a| span.record("src", tracing::field::display(a)));
-                            let _ = req.user_context().stats.as_ref().map(|a| span.record("user", tracing::field::display(&a.username)));
+                            // A span's recorded fields are *appended* to the ones
+                            // it was created with (the fmt layer's
+                            // `FormattedFields::add_fields`), so recording the
+                            // request's address and user onto the listener span
+                            // would grow that span — and every line logged under
+                            // it — for as long as the listener lives. They belong
+                            // on a span that ends with the request.
+                            let span = info_span!(
+                                "request",
+                                src = %req
+                                    .user_context()
+                                    .src_addr
+                                    .map(|addr| addr.to_string())
+                                    .unwrap_or_else(|| "-".into()),
+                                user = %req
+                                    .user_context()
+                                    .stats
+                                    .as_ref()
+                                    .map(|stats| stats.username.as_str())
+                                    .unwrap_or(""),
+                            );
                             let dispatcher = dispatcher.clone();
                             requests.spawn(async move {
                                 dispatcher.dispatch(req).await;
-                            }.in_current_span());
+                            }.instrument(span));
                         }
                         Err(error) => {
                             error!(inbound = %tag, %error, "error accepting request");
