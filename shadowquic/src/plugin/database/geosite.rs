@@ -140,13 +140,46 @@ struct SiteList {
     rules: Vec<String>,
 }
 
-pub(super) fn import_geosite(source: &Path, write: &redb::WriteTransaction) -> Result<()> {
+pub(super) fn selection_key(selected: &[String]) -> String {
+    let mut names: Vec<_> = selected
+        .iter()
+        .map(|name| name.to_ascii_lowercase())
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names.join("\0")
+}
+
+pub(super) fn import_geosite(
+    source: &Path,
+    write: &redb::WriteTransaction,
+    selected: &[String],
+) -> Result<()> {
     let source = std::fs::read_to_string(source)?;
     let data: Geosite = serde_saphyr::from_str(&source)?;
     if data.lists.is_empty() {
         return Err("geosite contains no lists".into());
     }
+    for name in selected {
+        if name.is_empty() || name.contains(['\0', '@']) {
+            return Err(format!("invalid geosite list name: {name:?}").into());
+        }
+        if !data
+            .lists
+            .iter()
+            .any(|list| list.name.eq_ignore_ascii_case(name))
+        {
+            return Err(format!("geosite list not found: {name}").into());
+        }
+    }
     for list in data.lists {
+        if !selected.is_empty()
+            && !selected
+                .iter()
+                .any(|name| list.name.eq_ignore_ascii_case(name))
+        {
+            continue;
+        }
         if list.name.is_empty() || list.name.contains(['\0', '@']) {
             return Err("invalid geosite list name".into());
         }

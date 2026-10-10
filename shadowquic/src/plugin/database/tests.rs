@@ -28,6 +28,7 @@ fn config(dir: &Path, kind: RouterDBKind) -> RouterDatabaseCfg {
             path: dir.join("db.redb"),
         }),
         RouterDBKind::Geosite => RouterDatabaseCfg::Geosite(GeositeDbCfg {
+            list: Vec::new(),
             tag: "db".into(),
             url: "https://example.test/db".into(),
             path: dir.join("db.redb"),
@@ -821,6 +822,7 @@ fn database_config_rejects_tag_collisions_and_bad_urls() {
         config.router.database = (0..count)
             .map(|i| {
                 RouterDatabaseCfg::Geosite(GeositeDbCfg {
+                    list: Vec::new(),
                     tag: tag.into(),
                     url: "https://example.test/db".into(),
                     path: format!("db{i}.redb").into(),
@@ -1035,4 +1037,90 @@ fn import_hashes_sources_larger_than_the_read_buffer() {
         meta.get("sha256").unwrap().unwrap().value(),
         "bc781155d1a56d96fdcf0adfdb7a81ad2960820aff2730a9dc7e57aa32e0467c"
     );
+}
+
+#[test]
+fn geosite_list_selection_filters_tables_and_preserves_attributes() {
+    for selected in [vec![], vec!["TEST", "test"], vec!["other", "TEST"]] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = config(dir.path(), RouterDBKind::Geosite);
+        let RouterDatabaseCfg::Geosite(site) = &mut cfg else {
+            unreachable!()
+        };
+        site.list = selected.iter().map(|name| (*name).into()).collect();
+        let source = dir.path().join("source.yml");
+        std::fs::write(&source, YAML).unwrap();
+        let db = RedbDatabase::import(&cfg, &source).unwrap();
+        assert!(db.find_domain("test", "exact.example").unwrap());
+        assert!(db.find_domain("test@ads", "tree.example").unwrap());
+        let includes_other = selected.is_empty() || selected.contains(&"other");
+        assert_eq!(
+            db.find_domain("other", "other.example").unwrap(),
+            includes_other
+        );
+        let read = db.db.begin_read().unwrap();
+        let tables: Vec<_> = read
+            .list_tables()
+            .unwrap()
+            .map(|table| table.name().to_owned())
+            .collect();
+        assert_eq!(
+            tables.iter().any(|name| name == "geosite_other"),
+            includes_other
+        );
+        drop(read);
+        drop(db);
+        let RouterDatabaseCfg::Geosite(site) = &mut cfg else {
+            unreachable!()
+        };
+        site.list = selected
+            .iter()
+            .rev()
+            .map(|name| name.to_ascii_lowercase())
+            .collect();
+        site.list.dedup();
+        let db = RedbDatabase::open(&cfg).unwrap();
+        assert!(db.find_domain("test@ads", "tree.example").unwrap());
+        drop(db);
+        let RouterDatabaseCfg::Geosite(site) = &mut cfg else {
+            unreachable!()
+        };
+        site.list = vec!["other".into()];
+        let error = RedbDatabase::open(&cfg).err().unwrap().to_string();
+        assert!(error.contains("incompatible list selection"));
+    }
+}
+
+#[test]
+fn geosite_list_selection_rejects_unknown_names_without_publishing() {
+    for selected in [
+        vec!["missing"],
+        vec!["test", "missing"],
+        vec!["test@ads"],
+        vec![""],
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = config(dir.path(), RouterDBKind::Geosite);
+        let RouterDatabaseCfg::Geosite(site) = &mut cfg else {
+            unreachable!()
+        };
+        site.list = selected.iter().map(|name| (*name).into()).collect();
+        let source = dir.path().join("source.yml");
+        std::fs::write(&source, YAML).unwrap();
+        assert!(RedbDatabase::import(&cfg, &source).is_err());
+        assert!(!cfg.path().exists());
+    }
+}
+
+#[test]
+fn geosite_legacy_unfiltered_metadata_remains_compatible() {
+    let dir = tempfile::tempdir().unwrap();
+    let (cfg, db) = geosite(dir.path());
+    let write = db.db.begin_write().unwrap();
+    write.open_table(META).unwrap().remove("list").unwrap();
+    write.commit().unwrap();
+    drop(db);
+    let db = RedbDatabase::open(&cfg).unwrap();
+    assert!(db.find_domain("test", "exact.example").unwrap());
+    assert!(db.find_domain("other", "other.example").unwrap());
 }

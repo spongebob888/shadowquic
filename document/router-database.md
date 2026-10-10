@@ -17,6 +17,7 @@ This requires the `plugin` feature. Each entry has four required fields:
 | `tag` | Unique name across databases, inbounds, outbounds, and DNS services |
 | `type` | `country` for Country MMDB, or `geosite` for the plain YAML export |
 | `url` | HTTP(S) download URL |
+| `list` | Optional, geosite only: base domain set names to import, matched case-insensitively. Omitted or `[]` imports all sets in the YAML source |
 | `path` | Persistent database file, relative to the working directory; Country `.mmdb` paths use direct MMDB lookups, other paths use redb |
 
 ```yaml
@@ -26,6 +27,7 @@ router:
       type: geosite
       url: https://raw.githubusercontent.com/v2fly/domain-list-community/release/dlc.dat_plain.yml
       path: data/geosite.redb
+      list: [google]
   src: |
     return function(ctx)
       -- Downloads must route without depending on the database being downloaded.
@@ -97,6 +99,12 @@ the script. Put lookups inside the returned routing function and handle startup
 availability with `pcall` if fallback routing is desired. Route database download
 traffic and any DNS upstream traffic needed by its outbound before these calls.
 Lua script reloads retain the same database handles.
+
+Geosite imports retain all rules and attributes within each selected base set.
+Unknown set names fail the import. Changing `list` requires removing the converted
+database file and restarting to rebuild it; selection order, case, and duplicates
+do not affect cache compatibility. Existing unfiltered databases remain compatible
+with an omitted or empty `list`.
 
 Each redb stores a format version, the creating Shadowquic version, source URL,
 database type, and SHA-256 of the downloaded source bytes. Schema versions are
