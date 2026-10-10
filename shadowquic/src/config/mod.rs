@@ -288,11 +288,9 @@ impl Config {
             #[cfg(not(feature = "dns-server"))]
             outbounds.insert(
                 tag,
-                Arc::from(
-                    cfg.build_outbound(resolver_manager.clone())
-                        .instrument(span)
-                        .await?,
-                ),
+                cfg.build_outbound(resolver_manager.clone())
+                    .instrument(span)
+                    .await?,
             );
         }
         for cfg in self.inbounds {

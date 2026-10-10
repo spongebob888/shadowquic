@@ -68,6 +68,13 @@ impl ProxyRequest {
         }
     }
 
+    /// Only the destination-rewriting paths need this: Lua routing and TPROXY
+    /// fake-IP restore.
+    #[cfg(any(
+        test,
+        feature = "plugin",
+        all(feature = "dns-server", feature = "tproxy", target_os = "linux")
+    ))]
     pub(crate) fn set_dst(&mut self, dst: SocksAddr) {
         match self {
             ProxyRequest::Tcp(session) => session.dst = dst,
