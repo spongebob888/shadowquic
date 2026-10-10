@@ -169,7 +169,7 @@ impl RedbDatabase {
                 }
             }
             if let RouterDatabaseCfg::Geosite(site) = cfg {
-                let expected = geosite::selection_key(&site.list);
+                let expected = geosite::selection_key(&site.list_include);
                 let stored = meta.get("list")?;
                 let stored = stored.as_ref().map(|value| value.value()).unwrap_or("");
                 if stored != expected {
@@ -236,7 +236,9 @@ impl RedbDatabase {
         let write = db.begin_write()?;
         {
             match cfg {
-                RouterDatabaseCfg::Geosite(site) => import_geosite(source, &write, &site.list)?,
+                RouterDatabaseCfg::Geosite(site) => {
+                    import_geosite(source, &write, &site.list_include)?
+                }
                 RouterDatabaseCfg::Country(_) => import_country(source, &write)?,
             }
             let mut hash = Sha256::new();
@@ -257,7 +259,7 @@ impl RedbDatabase {
                 .collect();
             let mut meta = write.open_table(META)?;
             if let RouterDatabaseCfg::Geosite(site) = cfg {
-                meta.insert("list", geosite::selection_key(&site.list).as_str())?;
+                meta.insert("list", geosite::selection_key(&site.list_include).as_str())?;
             }
             for (name, value) in [
                 ("schema", schema(cfg.kind())),

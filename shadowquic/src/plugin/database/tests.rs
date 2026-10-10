@@ -28,7 +28,7 @@ fn config(dir: &Path, kind: RouterDBKind) -> RouterDatabaseCfg {
             path: dir.join("db.redb"),
         }),
         RouterDBKind::Geosite => RouterDatabaseCfg::Geosite(GeositeDbCfg {
-            list: Vec::new(),
+            list_include: Vec::new(),
             tag: "db".into(),
             url: "https://example.test/db".into(),
             path: dir.join("db.redb"),
@@ -822,7 +822,7 @@ fn database_config_rejects_tag_collisions_and_bad_urls() {
         config.router.database = (0..count)
             .map(|i| {
                 RouterDatabaseCfg::Geosite(GeositeDbCfg {
-                    list: Vec::new(),
+                    list_include: Vec::new(),
                     tag: tag.into(),
                     url: "https://example.test/db".into(),
                     path: format!("db{i}.redb").into(),
@@ -1047,7 +1047,7 @@ fn geosite_list_selection_filters_tables_and_preserves_attributes() {
         let RouterDatabaseCfg::Geosite(site) = &mut cfg else {
             unreachable!()
         };
-        site.list = selected.iter().map(|name| (*name).into()).collect();
+        site.list_include = selected.iter().map(|name| (*name).into()).collect();
         let source = dir.path().join("source.yml");
         std::fs::write(&source, YAML).unwrap();
         let db = RedbDatabase::import(&cfg, &source).unwrap();
@@ -1073,19 +1073,19 @@ fn geosite_list_selection_filters_tables_and_preserves_attributes() {
         let RouterDatabaseCfg::Geosite(site) = &mut cfg else {
             unreachable!()
         };
-        site.list = selected
+        site.list_include = selected
             .iter()
             .rev()
             .map(|name| name.to_ascii_lowercase())
             .collect();
-        site.list.dedup();
+        site.list_include.dedup();
         let db = RedbDatabase::open(&cfg).unwrap();
         assert!(db.find_domain("test@ads", "tree.example").unwrap());
         drop(db);
         let RouterDatabaseCfg::Geosite(site) = &mut cfg else {
             unreachable!()
         };
-        site.list = vec!["other".into()];
+        site.list_include = vec!["other".into()];
         let error = RedbDatabase::open(&cfg).err().unwrap().to_string();
         assert!(error.contains("incompatible list selection"));
     }
@@ -1104,7 +1104,7 @@ fn geosite_list_selection_rejects_unknown_names_without_publishing() {
         let RouterDatabaseCfg::Geosite(site) = &mut cfg else {
             unreachable!()
         };
-        site.list = selected.iter().map(|name| (*name).into()).collect();
+        site.list_include = selected.iter().map(|name| (*name).into()).collect();
         let source = dir.path().join("source.yml");
         std::fs::write(&source, YAML).unwrap();
         assert!(RedbDatabase::import(&cfg, &source).is_err());

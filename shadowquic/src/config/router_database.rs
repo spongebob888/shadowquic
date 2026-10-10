@@ -45,7 +45,7 @@ pub struct GeositeDbCfg {
     pub url: String,
     /// Base domain sets to import, matched case insensitively. Empty imports all sets.
     #[serde(default)]
-    pub list: Vec<String>,
+    pub list_include: Vec<String>,
     /// Persistent converted redb file, relative to the working directory.
     /// Cost about 16m for full geosite db. 1Mb for only cn list.
     pub path: PathBuf,
@@ -104,9 +104,9 @@ mod tests {
     fn geosite_list_defaults_and_round_trips() {
         for (field, expected) in [
             ("", vec![]),
-            ("list: []", vec![]),
+            ("list-include: []", vec![]),
             (
-                "list: [google, geolocation-cn]",
+                "list-include: [google, geolocation-cn]",
                 vec!["google", "geolocation-cn"],
             ),
         ] {
@@ -120,7 +120,7 @@ mod tests {
             else {
                 unreachable!()
             };
-            assert_eq!(decoded.list, expected);
+            assert_eq!(decoded.list_include, expected);
         }
     }
 

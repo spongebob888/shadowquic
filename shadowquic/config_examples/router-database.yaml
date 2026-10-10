@@ -13,7 +13,7 @@ router:
       type: geosite
       url: https://raw.githubusercontent.com/v2fly/domain-list-community/release/dlc.dat_plain.yml
       path: data/geosite.redb
-      list: [category-ads-all] # Omit or use [] to import all domain sets.
+      list-include: [category-ads-all] # Omit or use [] to import all domain sets.
   src: |
     return function(ctx)
       if ctx.inbound_tag == "geosite-db" then return "direct" end
