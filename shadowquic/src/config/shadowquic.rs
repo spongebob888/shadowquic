@@ -155,6 +155,7 @@ impl Default for ShadowQuicServerCfg {
 impl Default for ShadowQuicClientCfg {
     fn default() -> Self {
         Self {
+            half_close_timeout: crate::config::default_half_close_timeout(),
             #[cfg(feature = "dns-server")]
             dns: None,
             #[cfg(feature = "dns-server")]
@@ -225,6 +226,10 @@ impl Default for BrutalParams {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ShadowQuicClientCfg {
+    /// Inactivity timeout after either TCP source reaches EOF, in milliseconds.
+    /// Defaults to 60 seconds. Zero disables the timeout.
+    #[serde(default = "crate::config::default_half_close_timeout")]
+    pub half_close_timeout: u64,
     /// DNS service used to resolve destination domains after routing.
     #[cfg(feature = "dns-server")]
     pub dns: Option<String>,

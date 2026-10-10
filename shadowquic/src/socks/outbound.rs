@@ -11,7 +11,7 @@ use crate::{
     utils::socket_opt::{SocketFactory, TcpSocketFactory, UdpSocketFactory},
 };
 use tokio::{
-    io::{AsyncReadExt, copy_bidirectional_with_sizes},
+    io::AsyncReadExt,
     net::{TcpStream, UdpSocket},
     sync::OnceCell,
 };
@@ -165,8 +165,14 @@ impl SocksClient {
         socksreq.encode(&mut tcp).await?;
         let _rep = CmdReply::decode(&mut tcp).await?;
         tracing::trace!("socks tcp connection established");
-        copy_bidirectional_with_sizes(&mut tcp, &mut tcp_session.stream, 16 * 1024, 16 * 1024)
-            .await?;
+        crate::utils::copy::copy_bidirectional(
+            &mut tcp,
+            &mut tcp_session.stream,
+            16 * 1024,
+            16 * 1024,
+            self.cfg.half_close_timeout,
+        )
+        .await?;
         Ok(())
     }
 

@@ -59,11 +59,12 @@ impl Outbound for DirectOut {
 
                     let mut upstream = self_clone.connect_tcp(dst).await?;
                     let _ = upstream.set_nodelay(true);
-                    let (_, _) = tokio::io::copy_bidirectional_with_sizes(
+                    let (_, _) = crate::utils::copy::copy_bidirectional(
                         &mut tcp_session.stream,
                         &mut upstream,
                         1024 * 16,
                         1024 * 16,
+                        self_clone.cfg.half_close_timeout,
                     )
                     .await?;
                 }
