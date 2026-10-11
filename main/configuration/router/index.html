@@ -1207,6 +1207,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#dhcp-lease" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>dhcp-lease</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#src" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1250,6 +1261,12 @@
   
     
     
+      
+        
+      
+        
+      
+        
       
         
       
@@ -1365,6 +1382,33 @@
     
   
   Router database
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shared/dhcpleasecfg/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Dhcp lease
 
     
   </span>
@@ -1627,6 +1671,60 @@
   
   
     <li class="md-nav__item">
+      <a href="../shared/dnsmasqleasecfg/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Dnsmasq lease
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shared/odhcpleasecfg/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Odhcp lease
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../shared/interface/" class="md-nav__link">
         
   
@@ -1782,6 +1880,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         <code>database</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dhcp-lease" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>dhcp-lease</code>
       </span>
     </span>
   </a>
@@ -2018,7 +2127,8 @@ Filesystem, process, module loading, and dynamic code loading are unavailable.</
 </tr>
 </tbody>
 </table>
-<p>Cache lookups use the shared DNS cache, ignore expired entries, and perform
+<p>DHCP lease files are supported for determine device hostname and mac address(<code>router-dhcp-lease</code> feature required).
+Cache lookups use the shared DNS cache, ignore expired entries, and perform
 no network I/O or asynchronous suspension. They do not take a DNS service tag.
 <code>lookup</code> and <code>reverse_lookup</code> suspend the routing function and raise Lua errors
 on failure. Their upstream requests pass through the router as shown above.</p>
@@ -2044,6 +2154,13 @@ first configured outbound. Does not require the <code>plugin</code> feature.</p>
 <li><strong>Default:</strong> <em>(type default)</em></li>
 </ul>
 <p>Persistent databases available to Lua membership helpers.</p>
+<h3 id="dhcp-lease"><code>dhcp-lease</code><a class="headerlink" href="#dhcp-lease" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> list of <a href="../shared/dhcpleasecfg/"><code>DhcpLeaseCfg</code></a></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <em>(type default)</em></li>
+</ul>
+<p>Local DHCP lease files available to Lua helpers; requires <code>router-dhcp-lease</code>.</p>
 <h3 id="src"><code>src</code><a class="headerlink" href="#src" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Type:</strong> <code>string</code> <em>(optional)</em></li>

@@ -10,36 +10,36 @@
       
       
       
-        <link rel="canonical" href="https://spongebob888.github.io/shadowquic/main/configuration/dns/">
+        <link rel="canonical" href="https://spongebob888.github.io/shadowquic/main/configuration/shared/dhcpleasecfg/">
       
       
-        <link rel="prev" href="../outbound/drop/">
+        <link rel="prev" href="../routerdatabasecfg/">
       
       
-        <link rel="next" href="./dns-udp/">
+        <link rel="next" href="../authuser/">
       
       
         
       
       
-      <link rel="icon" href="../../assets/images/favicon.png">
+      <link rel="icon" href="../../../assets/images/favicon.png">
       <meta name="generator" content="zensical-0.0.43">
     
     
       
-        <title>DNS - shadowquic</title>
+        <title>Dhcp lease - shadowquic</title>
       
     
     
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.fba56155.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/modern/main.fba56155.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../../assets/stylesheets/modern/palette.dfe2e883.min.css">
       
       
 
@@ -58,7 +58,7 @@
       
     
     
-    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    <script>__md_scope=new URL("../../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
     
       
 
@@ -83,7 +83,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#dns" class="md-skip">
+        <a href="#dhcp-lease" class="md-skip">
           Skip to content
         </a>
       
@@ -101,7 +101,7 @@
 
 <header class="md-header" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="shadowquic" class="md-header__button md-logo" aria-label="shadowquic" data-md-component="logo">
+    <a href="../../.." title="shadowquic" class="md-header__button md-logo" aria-label="shadowquic" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
@@ -121,7 +121,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              DNS
+              Dhcp lease
             
           </span>
         </div>
@@ -205,7 +205,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../.." class="md-tabs__link">
+      <a href="../../.." class="md-tabs__link">
         
   
   Home
@@ -244,7 +244,7 @@
     
     
       <li class="md-tabs__item md-tabs__item--active">
-        <a href="../" class="md-tabs__link">
+        <a href="../../" class="md-tabs__link">
           
   
   Configuration
@@ -261,7 +261,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../../api/" class="md-tabs__link">
+      <a href="../../../api/" class="md-tabs__link">
         
   
   API
@@ -277,7 +277,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../../protocol/" class="md-tabs__link">
+      <a href="../../../protocol/" class="md-tabs__link">
         
   
   Protocol
@@ -309,7 +309,7 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="shadowquic" class="md-nav__button md-logo" aria-label="shadowquic" data-md-component="logo">
+    <a href="../../.." title="shadowquic" class="md-nav__button md-logo" aria-label="shadowquic" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
@@ -339,7 +339,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href="../../.." class="md-nav__link">
         
   
   
@@ -403,7 +403,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../" class="md-nav__link ">
+            <a href="../../" class="md-nav__link ">
               
   
   
@@ -483,7 +483,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../inbound/" class="md-nav__link ">
+            <a href="../../inbound/" class="md-nav__link ">
               
   
   
@@ -525,7 +525,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../inbound/socks/" class="md-nav__link">
+      <a href="../../inbound/socks/" class="md-nav__link">
         
   
   
@@ -552,7 +552,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../inbound/mixed/" class="md-nav__link">
+      <a href="../../inbound/mixed/" class="md-nav__link">
         
   
   
@@ -579,7 +579,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../inbound/shadowquic/" class="md-nav__link">
+      <a href="../../inbound/shadowquic/" class="md-nav__link">
         
   
   
@@ -606,7 +606,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../inbound/sunnyquic/" class="md-nav__link">
+      <a href="../../inbound/sunnyquic/" class="md-nav__link">
         
   
   
@@ -633,7 +633,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../inbound/tproxy/" class="md-nav__link">
+      <a href="../../inbound/tproxy/" class="md-nav__link">
         
   
   
@@ -706,7 +706,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../outbound/" class="md-nav__link ">
+            <a href="../../outbound/" class="md-nav__link ">
               
   
   
@@ -748,7 +748,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../outbound/socks/" class="md-nav__link">
+      <a href="../../outbound/socks/" class="md-nav__link">
         
   
   
@@ -775,7 +775,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../outbound/shadowquic/" class="md-nav__link">
+      <a href="../../outbound/shadowquic/" class="md-nav__link">
         
   
   
@@ -802,7 +802,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../outbound/sunnyquic/" class="md-nav__link">
+      <a href="../../outbound/sunnyquic/" class="md-nav__link">
         
   
   
@@ -829,7 +829,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../outbound/direct/" class="md-nav__link">
+      <a href="../../outbound/direct/" class="md-nav__link">
         
   
   
@@ -856,7 +856,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../outbound/drop/" class="md-nav__link">
+      <a href="../../outbound/drop/" class="md-nav__link">
         
   
   
@@ -888,8 +888,6 @@
                 
   
   
-    
-  
   
   
     
@@ -921,15 +919,17 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_4" checked>
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_4" >
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="././" class="md-nav__link md-nav__link--active">
+            <a href="../../dns/" class="md-nav__link ">
               
   
   
@@ -946,13 +946,13 @@
             </a>
             
               
-              <label class="md-nav__link md-nav__link--active" for="__nav_2_4" id="__nav_2_4_label" tabindex="">
+              <label class="md-nav__link " for="__nav_2_4" id="__nav_2_4_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -971,7 +971,7 @@
   
   
     <li class="md-nav__item">
-      <a href="./dns-udp/" class="md-nav__link">
+      <a href="../../dns/dns-udp/" class="md-nav__link">
         
   
   
@@ -998,7 +998,7 @@
   
   
     <li class="md-nav__item">
-      <a href="./dns-tcp/" class="md-nav__link">
+      <a href="../../dns/dns-tcp/" class="md-nav__link">
         
   
   
@@ -1025,7 +1025,7 @@
   
   
     <li class="md-nav__item">
-      <a href="./dns-tls/" class="md-nav__link">
+      <a href="../../dns/dns-tls/" class="md-nav__link">
         
   
   
@@ -1052,7 +1052,7 @@
   
   
     <li class="md-nav__item">
-      <a href="./dns-fakeip/" class="md-nav__link">
+      <a href="../../dns/dns-fakeip/" class="md-nav__link">
         
   
   
@@ -1079,7 +1079,7 @@
   
   
     <li class="md-nav__item">
-      <a href="./dns-system/" class="md-nav__link">
+      <a href="../../dns/dns-system/" class="md-nav__link">
         
   
   
@@ -1114,7 +1114,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../router/" class="md-nav__link">
+      <a href="../../router/" class="md-nav__link">
         
   
   
@@ -1138,8 +1138,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -1185,13 +1187,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_6" checked>
         
           
           <label class="md-nav__link" for="__nav_2_6" id="__nav_2_6_label" tabindex="">
@@ -1211,7 +1211,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_6_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_6_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1228,7 +1228,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../shared/loglevel/" class="md-nav__link">
+      <a href="../loglevel/" class="md-nav__link">
         
   
   
@@ -1255,7 +1255,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../shared/routerdatabasecfg/" class="md-nav__link">
+      <a href="../routerdatabasecfg/" class="md-nav__link">
         
   
   
@@ -1279,10 +1279,36 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../shared/dhcpleasecfg/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Dhcp lease
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1297,6 +1323,38 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#variants" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Variants
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1309,7 +1367,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../shared/authuser/" class="md-nav__link">
+      <a href="../authuser/" class="md-nav__link">
         
   
   
@@ -1336,7 +1394,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../shared/jlsupstream/" class="md-nav__link">
+      <a href="../jlsupstream/" class="md-nav__link">
         
   
   
@@ -1363,7 +1421,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../shared/congestioncontrol/" class="md-nav__link">
+      <a href="../congestioncontrol/" class="md-nav__link">
         
   
   
@@ -1390,7 +1448,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../shared/brutalparams/" class="md-nav__link">
+      <a href="../brutalparams/" class="md-nav__link">
         
   
   
@@ -1417,7 +1475,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../shared/socketopt/" class="md-nav__link">
+      <a href="../socketopt/" class="md-nav__link">
         
   
   
@@ -1444,7 +1502,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../shared/ciphersuitepreference/" class="md-nav__link">
+      <a href="../ciphersuitepreference/" class="md-nav__link">
         
   
   
@@ -1471,7 +1529,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../shared/dnsstrategy/" class="md-nav__link">
+      <a href="../dnsstrategy/" class="md-nav__link">
         
   
   
@@ -1498,7 +1556,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../shared/countrydbcfg/" class="md-nav__link">
+      <a href="../countrydbcfg/" class="md-nav__link">
         
   
   
@@ -1525,7 +1583,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../shared/geositedbcfg/" class="md-nav__link">
+      <a href="../geositedbcfg/" class="md-nav__link">
         
   
   
@@ -1552,7 +1610,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../shared/dnsmasqleasecfg/" class="md-nav__link">
+      <a href="../dnsmasqleasecfg/" class="md-nav__link">
         
   
   
@@ -1579,7 +1637,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../shared/odhcpleasecfg/" class="md-nav__link">
+      <a href="../odhcpleasecfg/" class="md-nav__link">
         
   
   
@@ -1606,7 +1664,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../shared/interface/" class="md-nav__link">
+      <a href="../interface/" class="md-nav__link">
         
   
   
@@ -1648,7 +1706,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api/" class="md-nav__link">
+      <a href="../../../api/" class="md-nav__link">
         
   
   
@@ -1674,7 +1732,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../protocol/" class="md-nav__link">
+      <a href="../../../protocol/" class="md-nav__link">
         
   
   
@@ -1762,9 +1820,54 @@
   
 
 
-<h1 id="dns">DNS<a class="headerlink" href="#dns" title="Permanent link">&para;</a></h1>
-<p>Selects a standalone DNS service. Pick a variant via the <code>type</code> key.</p>
-<p>Standalone DNS service configuration, listed under the top-level <code>dns</code> key.</p>
+<h1 id="dhcp-lease">Dhcp lease<a class="headerlink" href="#dhcp-lease" title="Permanent link">&para;</a></h1>
+<p>Local DHCP lease files available to Lua routing helpers.</p>
+<p>DHCP lease helpers require <code>router-dhcp-lease</code> (enabled by default) and
+<code>router.dhcp-lease</code> entries with <code>type: dnsmasq</code> or <code>type: odhcp</code>, a unique
+lease <code>tag</code>, and an optional <code>path</code>. Default paths are <code>/tmp/dhcp.leases</code> and
+<code>/tmp/odhcpd.leases</code>. Both formats support IPv4 and IPv6 in the same file.</p>
+<table>
+<thead>
+<tr>
+<th>DHCP helper</th>
+<th>Return value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>find_dhcp_mac_v4(tag, ip)</code></td>
+<td>Lowercase colon-separated Ethernet MAC</td>
+</tr>
+<tr>
+<td><code>find_dhcp_host_v4(tag, ip)</code></td>
+<td>Hostname</td>
+</tr>
+<tr>
+<td><code>find_dhcp_duid_v6(tag, ip)</code></td>
+<td>Lowercase colon-separated client DUID</td>
+</tr>
+<tr>
+<td><code>find_dhcp_iaid_v6(tag, ip)</code></td>
+<td>Numeric unsigned 32-bit IAID</td>
+</tr>
+<tr>
+<td><code>find_dhcp_mac_v6(tag, ip)</code></td>
+<td>Ethernet MAC embedded in DUID-LL/LLT</td>
+</tr>
+<tr>
+<td><code>find_dhcp_host_v6(tag, ip)</code></td>
+<td>Hostname</td>
+</tr>
+</tbody>
+</table>
+<p>All DHCP helpers return nil for missing/expired leases or missing attributes.
+Unknown tags and invalid IPs (including the wrong family) raise Lua errors.
+They are available during script loading and routing without network or file
+I/O on the lookup path. IPv6 MAC extraction can return nil and does not
+necessarily identify the client's current interface. Delegated prefixes are
+ignored. Lease files reload automatically; failures retain the previous data
+with expiry still enforced. Missing initial files give empty results and are
+retried. Stores survive Lua reloads, and lease updates do not reset Lua state.</p>
 <h2 id="variants">Variants<a class="headerlink" href="#variants" title="Permanent link">&para;</a></h2>
 <p>This enum is serialized with the YAML key <strong><code>type</code></strong> selecting the variant.</p>
 <table>
@@ -1777,28 +1880,13 @@
 </thead>
 <tbody>
 <tr>
-<td><code>dns-udp</code></td>
-<td><a href="dns-udp/"><code>DnsUdpServerCfg</code></a></td>
+<td><code>dnsmasq</code></td>
+<td><a href="../dnsmasqleasecfg/"><code>DnsmasqLeaseCfg</code></a></td>
 <td>—</td>
 </tr>
 <tr>
-<td><code>dns-tcp</code></td>
-<td><a href="dns-tcp/"><code>DnsTcpServerCfg</code></a></td>
-<td>—</td>
-</tr>
-<tr>
-<td><code>dns-tls</code></td>
-<td><a href="dns-tls/"><code>DnsTlsServerCfg</code></a></td>
-<td>—</td>
-</tr>
-<tr>
-<td><code>dns-fakeip</code></td>
-<td><a href="dns-fakeip/"><code>DnsFakeIpServerCfg</code></a></td>
-<td>—</td>
-</tr>
-<tr>
-<td><code>dns-system</code></td>
-<td><a href="dns-system/"><code>DnsSystemServerCfg</code></a></td>
+<td><code>odhcp</code></td>
+<td><a href="../odhcpleasecfg/"><code>OdhcpLeaseCfg</code></a></td>
 <td>—</td>
 </tr>
 </tbody>
@@ -1860,10 +1948,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["navigation.tabs","navigation.sections","navigation.expand","navigation.top","navigation.indexes","content.code.copy","content.code.annotate","search.suggest","search.highlight","toc.follow"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../../..","features":["navigation.tabs","navigation.sections","navigation.expand","navigation.top","navigation.indexes","content.code.copy","content.code.annotate","search.suggest","search.highlight","toc.follow"],"search":"../../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.6e5f0216.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.6e5f0216.min.js"></script>
       
     
   </body>
