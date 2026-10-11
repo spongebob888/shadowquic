@@ -36,10 +36,7 @@ use crate::{
         maybe_warn_cipher_suite_on_weak_arch, normalize_cipher_suite_preference,
     },
     error::{SError, SResult},
-    quic::{
-        MAX_DATAGRAM_WINDOW, MAX_SEND_WINDOW, MAX_STREAM_WINDOW, QuicClient, QuicConnection,
-        QuicErrorRepr, QuicServer,
-    },
+    quic::{MAX_DATAGRAM_WINDOW, QuicClient, QuicConnection, QuicErrorRepr, QuicServer},
     sunnyquic::dynamic_cert::DynamicCertResolver,
     utils::socket_opt::SocketFactory,
 };
@@ -298,6 +295,11 @@ fn to_rustls_cipher_suite(suite: &CipherSuitePreference) -> rustls::SupportedCip
     }
 }
 
+/// Clamp a configured byte count into the range a QUIC varint can carry.
+fn var_int(value: u64) -> noq::VarInt {
+    noq::VarInt::from_u64(value).unwrap_or(noq::VarInt::MAX)
+}
+
 pub fn gen_client_cfg(cfg: &SunnyQuicClientCfg) -> noq::ClientConfig {
     maybe_warn_cipher_suite_on_weak_arch(cfg);
 
@@ -345,15 +347,21 @@ pub fn gen_client_cfg(cfg: &SunnyQuicClientCfg) -> noq::ClientConfig {
     };
 
     tp_cfg
-        .max_concurrent_bidi_streams(500u32.into())
-        .max_concurrent_uni_streams(500u32.into())
+        .max_concurrent_bidi_streams(cfg.max_concurrent_bidi_streams.into())
+        .max_concurrent_uni_streams(cfg.max_concurrent_uni_streams.into())
         .mtu_discovery_config(mtudis)
         .min_mtu(cfg.min_mtu)
         .enable_segmentation_offload(cfg.gso)
         .initial_mtu(cfg.initial_mtu);
 
     // Only increase receive window to maximize download speed
-    tp_cfg.stream_receive_window(MAX_STREAM_WINDOW.try_into().unwrap());
+    tp_cfg.stream_receive_window(var_int(cfg.stream_receive_window));
+    if let Some(window) = cfg.receive_window {
+        tp_cfg.receive_window(var_int(window));
+    }
+    if let Some(window) = cfg.send_window {
+        tp_cfg.send_window(window);
+    }
     tp_cfg.datagram_receive_buffer_size(Some(MAX_DATAGRAM_WINDOW as usize));
     tp_cfg.keep_alive_interval(if cfg.keep_alive_interval > 0 {
         Some(Duration::from_millis(cfg.keep_alive_interval as u64))
@@ -496,8 +504,8 @@ fn gen_server_config(
     };
 
     tp_cfg
-        .max_concurrent_bidi_streams(1000u32.into())
-        .max_concurrent_uni_streams(1000u32.into())
+        .max_concurrent_bidi_streams(cfg.max_concurrent_bidi_streams.into())
+        .max_concurrent_uni_streams(cfg.max_concurrent_uni_streams.into())
         .mtu_discovery_config(mtudis)
         .min_mtu(cfg.min_mtu)
         .enable_segmentation_offload(cfg.gso)
@@ -534,8 +542,13 @@ fn gen_server_config(
     let mut config = noq::ServerConfig::with_crypto(Arc::new(
         QuicServerConfig::try_from(crypto.clone()).expect("rustls config can't created"),
     ));
-    tp_cfg.send_window(MAX_SEND_WINDOW);
-    tp_cfg.stream_receive_window(MAX_STREAM_WINDOW.try_into().unwrap());
+    if let Some(window) = cfg.send_window {
+        tp_cfg.send_window(window);
+    }
+    tp_cfg.stream_receive_window(var_int(cfg.stream_receive_window));
+    if let Some(window) = cfg.receive_window {
+        tp_cfg.receive_window(var_int(window));
+    }
     tp_cfg.datagram_send_buffer_size(MAX_DATAGRAM_WINDOW.try_into().unwrap());
     tp_cfg.datagram_receive_buffer_size(Some(MAX_DATAGRAM_WINDOW as usize));
     tp_cfg.max_concurrent_multipath_paths(cfg.max_path_num);

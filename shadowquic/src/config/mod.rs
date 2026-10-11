@@ -750,6 +750,30 @@ pub fn default_half_close_timeout() -> u64 {
     60_000
 }
 
+/// Default concurrent stream limit for an outbound (client) config: each proxied
+/// request and each UDP association holds one stream for its whole lifetime.
+pub fn default_outbound_max_streams() -> u32 {
+    500
+}
+
+/// Default concurrent stream limit for an inbound (server) config.
+pub fn default_inbound_max_streams() -> u32 {
+    1000
+}
+
+/// Default per-stream receive window in bytes: a bandwidth-delay product of
+/// 400 Mbit/s over a 100 ms path, so that flow control does not become the
+/// bottleneck on long, fast links and neither does this side's own buffering.
+pub fn default_stream_receive_window() -> u64 {
+    crate::quic::MAX_STREAM_WINDOW
+}
+
+/// Default inbound send window in bytes, keeping the 8x factor the transport
+/// applies around its own per-stream window by default.
+pub fn default_inbound_send_window() -> Option<u64> {
+    Some(crate::quic::MAX_SEND_WINDOW)
+}
+
 impl Default for DirectOutCfg {
     fn default() -> Self {
         Self {
@@ -903,6 +927,104 @@ mod test {
                 ))
                 .is_err()
             );
+        }
+    }
+
+    /// The defaults have to reproduce what was hard-coded before these were
+    /// configurable, or making them configurable would silently change every
+    /// existing deployment.
+    #[test]
+    fn transport_limits_default_to_the_previous_constants() {
+        use crate::quic::{MAX_SEND_WINDOW, MAX_STREAM_WINDOW};
+
+        let client = super::ShadowQuicClientCfg::default();
+        assert_eq!(client.max_concurrent_bidi_streams, 500);
+        assert_eq!(client.max_concurrent_uni_streams, 500);
+        assert_eq!(client.stream_receive_window, MAX_STREAM_WINDOW);
+        assert_eq!(client.receive_window, None);
+        assert_eq!(client.send_window, None);
+
+        let sunny_client = super::SunnyQuicClientCfg::default();
+        assert_eq!(sunny_client.max_concurrent_bidi_streams, 500);
+        assert_eq!(sunny_client.max_concurrent_uni_streams, 500);
+        assert_eq!(sunny_client.stream_receive_window, MAX_STREAM_WINDOW);
+        assert_eq!(sunny_client.receive_window, None);
+        assert_eq!(sunny_client.send_window, None);
+
+        let server = super::ShadowQuicServerCfg::default();
+        assert_eq!(server.max_concurrent_bidi_streams, 1000);
+        assert_eq!(server.max_concurrent_uni_streams, 1000);
+        assert_eq!(server.stream_receive_window, MAX_STREAM_WINDOW);
+        assert_eq!(server.receive_window, None);
+        assert_eq!(server.send_window, Some(MAX_SEND_WINDOW));
+
+        let sunny_server = super::SunnyQuicServerCfg::default();
+        assert_eq!(sunny_server.max_concurrent_bidi_streams, 1000);
+        assert_eq!(sunny_server.max_concurrent_uni_streams, 1000);
+        assert_eq!(sunny_server.stream_receive_window, MAX_STREAM_WINDOW);
+        assert_eq!(sunny_server.receive_window, None);
+        assert_eq!(sunny_server.send_window, Some(MAX_SEND_WINDOW));
+    }
+
+    #[test]
+    fn transport_limits_parse_on_outbound_and_inbound_configs() {
+        use super::{InboundCfg, OutboundCfg};
+        use crate::quic::MAX_SEND_WINDOW;
+
+        for yaml in [
+            "type: shadowquic\naddr: localhost:443\nusername: test\npassword: test\nserver-name: localhost\n",
+            "type: sunnyquic\naddr: localhost:443\nusername: test\npassword: test\nserver-name: localhost\n",
+        ] {
+            let cfg: OutboundCfg = serde_saphyr::from_str(&format!(
+                "{yaml}tag: test\nmax-concurrent-bidi-streams: 7\nmax-concurrent-uni-streams: 8\n\
+                 stream-receive-window: 1000\nreceive-window: 2000\nsend-window: 3000\n"
+            ))
+            .unwrap();
+            let actual = match cfg {
+                OutboundCfg::ShadowQuic(cfg) => (
+                    cfg.max_concurrent_bidi_streams,
+                    cfg.max_concurrent_uni_streams,
+                    cfg.stream_receive_window,
+                    cfg.receive_window,
+                    cfg.send_window,
+                ),
+                OutboundCfg::SunnyQuic(cfg) => (
+                    cfg.max_concurrent_bidi_streams,
+                    cfg.max_concurrent_uni_streams,
+                    cfg.stream_receive_window,
+                    cfg.receive_window,
+                    cfg.send_window,
+                ),
+                _ => panic!("unexpected outbound in fixture"),
+            };
+            assert_eq!(actual, (7, 8, 1000, Some(2000), Some(3000)));
+        }
+
+        // On the inbound side the two windows that default to the transport's own
+        // values have to actually stay unset when they are omitted, and the send
+        // window has to keep its 8x default.
+        for yaml in [
+            "type: shadowquic\ntag: server\nbind-addr: 0.0.0.0:1443\nusers:\n  - username: u\n    password: p\njls-upstream:\n  addr: cloudflare.com:443\n",
+            "type: sunnyquic\ntag: server\nbind-addr: 0.0.0.0:1443\nusers:\n  - username: u\n    password: p\nserver-name: localhost\ncert-path: ./cert.pem\nkey-path: ./key.pem\n",
+        ] {
+            let cfg: InboundCfg =
+                serde_saphyr::from_str(&format!("{yaml}max-concurrent-bidi-streams: 7\n")).unwrap();
+            let actual = match cfg {
+                InboundCfg::ShadowQuic(cfg) => (
+                    cfg.max_concurrent_bidi_streams,
+                    cfg.max_concurrent_uni_streams,
+                    cfg.receive_window,
+                    cfg.send_window,
+                ),
+                InboundCfg::SunnyQuic(cfg) => (
+                    cfg.max_concurrent_bidi_streams,
+                    cfg.max_concurrent_uni_streams,
+                    cfg.receive_window,
+                    cfg.send_window,
+                ),
+                _ => panic!("unexpected inbound in fixture"),
+            };
+            assert_eq!(actual, (7, 1000, None, Some(MAX_SEND_WINDOW)));
         }
     }
 
