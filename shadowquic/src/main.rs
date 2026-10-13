@@ -11,6 +11,10 @@ use shadowquic::{
 use tracing::{Level, info};
 use tracing_subscriber::{fmt::time::LocalTime, layer::SubscriberExt, util::SubscriberInitExt};
 
+#[cfg(feature = "jemallocator")]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 #[derive(Parser)]
 #[clap(author, about, long_about = None, version)]
 struct Cli {

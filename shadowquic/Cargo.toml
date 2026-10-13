@@ -9,7 +9,13 @@ description = { workspace = true }
 license = { workspace = true}
 readme = { workspace = true}
 [features]
-default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", "mixed", "plugin-vendored", "router-db", "dns-server", "router-dhcp-lease"]
+default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", "mixed", "plugin-vendored", "router-db", "dns-server", "router-dhcp-lease", "jemallocator"]
+# Use jemalloc for the shadowquic executable. Library users retain control of
+# their process-wide allocator because the global allocator is declared in main.
+jemallocator = ["dep:tikv-jemallocator"]
+# Compile jemalloc's heap profiler for allocation backtraces. Profiling remains
+# disabled at runtime unless _RJEM_MALLOC_CONF enables it.
+jemalloc-profiling = ["jemallocator", "tikv-jemallocator/profiling"]
 # cost 1.4 mb
 dns-server = ["dep:simple-dns", "dep:tokio-rustls-jls", "dep:rustls_jls"]
 # cost 200k
@@ -114,6 +120,7 @@ serde-saphyr = "1.1.0"
 aws-lc-rs = { version = "1", optional = true, default-features = false }
 ring = { version = "0.17.14", optional = true }
 base64 = { version = "0.23.1", optional = true }
+tikv-jemallocator = { version = "0.6", features = ["stats"], optional = true }
 
 
 [target.'cfg(target_os="linux")'.dependencies]

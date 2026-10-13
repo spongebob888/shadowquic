@@ -31,7 +31,7 @@
             src = craneLib.cleanCargoSource ./.;
             pname = "shadowquic";
             doCheck = false;
-            cargoExtraArgs = "--no-default-features --features shadowquic-quinn,sunnyquic-noq,ring,statistics,tproxy,mixed,plugin-system,router-db,dns-server";
+            cargoExtraArgs = "--no-default-features --features shadowquic-quinn,sunnyquic-noq,ring,statistics,tproxy,mixed,plugin-system,router-db,dns-server,jemallocator";
             nativeBuildInputs = [ targetPkgs.buildPackages.pkg-config ];
             buildInputs = [ targetPkgs.luajit ];
           };
