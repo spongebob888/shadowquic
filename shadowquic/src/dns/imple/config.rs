@@ -107,15 +107,41 @@ impl DnsTlsServerCfg {
 pub struct DnsFakeIpServerCfg {
     pub tag: String,
     pub bind_addr: SocketAddr,
+    /// IPv4 CIDR used for synthetic A records.
+    #[serde(default = "default_ipv4_range")]
+    pub ipv4_range: String,
+    /// IPv6 CIDR used for synthetic AAAA records.
+    #[serde(default = "default_ipv6_range")]
+    pub ipv6_range: String,
+}
+
+pub(super) fn default_ipv4_range() -> String {
+    "198.18.0.0/15".into()
+}
+
+pub(super) fn default_ipv6_range() -> String {
+    "2001:0002::/48".into()
 }
 
 impl DnsFakeIpServerCfg {
+    pub fn validate(&self) -> Result<(), SError> {
+        super::FakeIp::new(&self.ipv4_range, &self.ipv6_range).map(|_| ())
+    }
+
     pub async fn build(self) -> Result<DnsServer, SError> {
         self.build_with_cache(Arc::new(DnsCache::default())).await
     }
 
     pub(crate) async fn build_with_cache(self, cache: Arc<DnsCache>) -> Result<DnsServer, SError> {
-        DnsServer::new(self.tag, self.bind_addr, Backend::FakeIp, cache, true).await
+        let fake_ip = Arc::new(super::FakeIp::new(&self.ipv4_range, &self.ipv6_range)?);
+        DnsServer::new(
+            self.tag,
+            self.bind_addr,
+            Backend::FakeIp(fake_ip),
+            cache,
+            true,
+        )
+        .await
     }
 }
 
@@ -180,8 +206,10 @@ impl DnsCfg {
     }
 
     pub fn validate(&self) -> Result<(), SError> {
-        if let Self::Tls(cfg) = self {
-            cfg.validate()?;
+        match self {
+            Self::Tls(cfg) => cfg.validate()?,
+            Self::FakeIp(cfg) => cfg.validate()?,
+            _ => {}
         }
         Ok(())
     }

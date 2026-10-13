@@ -243,7 +243,7 @@ async fn fakeip_bypasses_shared_cache() {
     let resolver = Resolver {
         bypass_cache: true,
         tag: "fake".into(),
-        backend: Backend::FakeIp,
+        backend: Backend::FakeIp(fake.clone()),
         requests: mpsc::channel(1).0,
         fake_ip: Some(fake.clone()),
         cache: cache.clone(),
@@ -305,6 +305,8 @@ async fn fakeip_is_stable_dual_stack_and_restores_ports() {
     let server = DnsFakeIpServerCfg {
         tag: "dns".into(),
         bind_addr: "127.0.0.1:0".parse().unwrap(),
+        ipv4_range: config::default_ipv4_range(),
+        ipv6_range: config::default_ipv6_range(),
     }
     .build()
     .await
@@ -326,6 +328,59 @@ async fn fakeip_is_stable_dual_stack_and_restores_ports() {
         .await
         .unwrap();
     assert!(Packet::parse(&bytes).unwrap().answers.is_empty());
+}
+
+#[test]
+fn fakeip_supports_custom_ranges() {
+    let fake = FakeIp::new("192.0.2.0/29", "2001:db8:1234::/125").unwrap();
+    let ipv4 = fake.allocate("example.test", false).unwrap();
+    let ipv6 = fake.allocate("example.test", true).unwrap();
+    assert_eq!(ipv4, "192.0.2.1".parse::<IpAddr>().unwrap());
+    assert_eq!(ipv6, "2001:db8:1234::1".parse::<IpAddr>().unwrap());
+
+    for ip in [ipv4, ipv6] {
+        let restored = fake.restore(&SocketAddr::new(ip, 8443).into()).unwrap();
+        assert_eq!(
+            restored,
+            SocksAddr::from_domain("example.test".into(), 8443)
+        );
+    }
+    assert_eq!(
+        fake.restore(&"198.18.0.1:443".parse::<SocketAddr>().unwrap().into())
+            .unwrap(),
+        "198.18.0.1:443".parse::<SocketAddr>().unwrap().into()
+    );
+}
+
+#[test]
+fn fakeip_rejects_invalid_custom_ranges() {
+    assert!(FakeIp::new("192.0.2.1/24", &config::default_ipv6_range()).is_err());
+    assert!(FakeIp::new("192.0.2.0/31", &config::default_ipv6_range()).is_err());
+    assert!(FakeIp::new(&config::default_ipv4_range(), "192.0.2.0/24").is_err());
+}
+
+#[test]
+fn fakeip_evicts_the_least_recently_used_mapping() {
+    let fake = FakeIp::new("192.0.2.0/29", "2001:db8:1234::/125").unwrap();
+    let addresses = (0..6)
+        .map(|index| fake.allocate(&format!("{index}.test"), false).unwrap())
+        .collect::<Vec<_>>();
+
+    // Refresh the first mapping, making the second one the eviction candidate.
+    assert_eq!(fake.allocate("0.test", false).unwrap(), addresses[0]);
+    let recycled = fake.allocate("new.test", false).unwrap();
+    assert_eq!(recycled, addresses[1]);
+    assert_eq!(fake.allocate("0.test", false).unwrap(), addresses[0]);
+    assert_eq!(
+        fake.restore(&SocketAddr::new(recycled, 443).into())
+            .unwrap(),
+        SocksAddr::from_domain("new.test".into(), 443)
+    );
+}
+
+#[test]
+fn fakeip_mapping_limit_is_two_to_the_sixteenth() {
+    assert_eq!(FakeIp::MAX_MAPPINGS, 65_536);
 }
 
 #[tokio::test]
