@@ -92,12 +92,15 @@ The positive DNS cache is owned by the manager and holds up to 4,096
 responses shared by non-fake-IP resolvers in that manager unless
 `bypass-cache: true` is set on a service. Bypassing leaves existing shared
 entries untouched. Fake-IP services
-bypass cache reads and writes and maintain their own stable address mappings.
+bypass cache reads and writes and maintain their own bounded address mappings.
 Entries are keyed by the query without its transaction ID, so non-fake-IP
 resolvers can reuse matching responses from each other. The cache
 adjusts TTLs on hits and expires entries at the
 shortest record TTL. Zero-TTL, failed, empty, and truncated answers are not
-cached. Lua routing scripts can call:
+cached. Capacity eviction uses `quick_cache`'s native policy (modified Clock-PRO,
+not strict LRU). Every read checks expiry; expired entries are also removed by a
+scan at most once every 60 seconds, triggered by cache reads or inserts. There is
+no background cleanup while idle. Lua routing scripts can call:
 
 ```lua
 local addresses = lookup_cache("example.com") -- array of IP strings; empty on miss
@@ -150,9 +153,21 @@ empty lookups return an error. System and fake-IP services do not provide PTR
 records, so use a UDP/TCP/TLS service for this method.
 
 Only one `dns-fakeip` service is allowed per configuration. It allocates from
-`198.18.0.0/15` and `fd00::/96`, with at most 131,070 domain mappings. Mappings
-are stable and are never recycled while the manager runs; exhaustion fails
-instead of reassigning an active IP. They are not persisted across restarts.
+`198.18.0.0/15` and `fd00::/96`, with at most 65,536 resident domain mappings.
+Each domain's IPv4 and IPv6 addresses count as one mapping. Mappings use
+`quick_cache`'s native eviction policy; DNS allocation and successful traffic
+restoration both record use. Addresses stay stable while their mapping remains
+resident. Mappings have no time-based expiry; their 60-second DNS answer TTL does
+not control eviction or address reuse.
+
+Evicted addresses fail restoration. Clients retaining an evicted DNS answer may
+fail to connect, and subsequent packets of an existing UDP flow may fail because
+each packet is restored separately. Already restored destinations are unaffected.
+A new query for an evicted domain receives a fresh allocation index. Indices are
+never reused within a manager's lifetime: eviction frees mapping storage but does
+not reclaim indices. After 131,070 indices have been issued, new allocations fail;
+resident domains still resolve. Mappings are not persisted, and this no-reuse
+guarantee does not extend across manager replacement or process restart.
 With Linux TPROXY, fake destinations are restored to domain names **before
 routing**, and every UDP packet is translated as well. UDP replies retain the
 fake source IP expected by the application. Unmapped addresses in these pools

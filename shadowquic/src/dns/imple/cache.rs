@@ -1,16 +1,19 @@
 use std::{
-    collections::HashMap,
     net::IpAddr,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+
+use quick_cache::sync::Cache;
 
 use simple_dns::{CLASS, Packet, PacketFlag, QTYPE, RCODE, TYPE, rdata::RData};
 
 use super::{Result, dns_error, ptr_names, reverse_name};
 
 const CAPACITY: usize = 4096;
+const CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
 
+#[derive(Clone)]
 struct Entry {
     packet: Vec<u8>,
     inserted: Instant,
@@ -18,9 +21,15 @@ struct Entry {
 }
 
 /// Shared by non-fake-IP DNS services, keyed by the query with its transaction ID cleared.
-#[derive(Default)]
 pub struct DnsCache {
-    entries: Mutex<HashMap<Vec<u8>, Entry>>,
+    entries: Cache<Vec<u8>, Arc<Entry>>,
+    last_cleanup: Mutex<Instant>,
+}
+
+impl Default for DnsCache {
+    fn default() -> Self {
+        Self::with_capacity(CAPACITY)
+    }
 }
 
 fn key(query: &[u8]) -> Vec<u8> {
@@ -62,11 +71,30 @@ pub(super) fn addresses(packet: &Packet<'_>) -> Vec<IpAddr> {
 }
 
 impl DnsCache {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            entries: Cache::new(capacity),
+            last_cleanup: Mutex::new(Instant::now()),
+        }
+    }
+
+    fn cleanup(&self, now: Instant) {
+        let Ok(mut last_cleanup) = self.last_cleanup.try_lock() else {
+            return;
+        };
+        if now.saturating_duration_since(*last_cleanup) < CLEANUP_INTERVAL {
+            return;
+        }
+        // retain checks and removes under each shard's write lock, so a
+        // concurrent replacement cannot be removed based on an old snapshot.
+        self.entries.retain(|_, entry| entry.expires > now);
+        *last_cleanup = now;
+    }
+
     pub(super) fn get(&self, query: &[u8]) -> Result<Option<Vec<u8>>> {
         let now = Instant::now();
-        let mut entries = self.entries.lock().unwrap();
-        entries.retain(|_, e| e.expires > now);
-        let Some(entry) = entries.get(&key(query)) else {
+        self.cleanup(now);
+        let Some(entry) = self.entries.get(&key(query)).filter(|e| e.expires > now) else {
             return Ok(None);
         };
         let mut packet = Packet::parse(&entry.packet).map_err(dns_error)?;
@@ -84,6 +112,8 @@ impl DnsCache {
     }
 
     pub(super) fn insert(&self, query: &[u8], packet: Packet<'_>) {
+        let now = Instant::now();
+        self.cleanup(now);
         if packet.rcode() != RCODE::NoError
             || packet.has_flags(PacketFlag::TRUNCATION)
             || packet.answers.is_empty()
@@ -101,27 +131,16 @@ impl DnsCache {
         if ttl == 0 {
             return;
         }
-        let now = Instant::now();
-        let mut entries = self.entries.lock().unwrap();
-        entries.retain(|_, e| e.expires > now);
-        if entries.len() >= CAPACITY
-            && let Some(oldest) = entries
-                .iter()
-                .min_by_key(|(_, e)| e.inserted)
-                .map(|(k, _)| k.clone())
-        {
-            entries.remove(&oldest);
-        }
         let Ok(packet) = packet.build_bytes_vec() else {
             return;
         };
-        entries.insert(
+        self.entries.insert(
             key(query),
-            Entry {
+            Arc::new(Entry {
                 packet,
                 inserted: now,
                 expires: now + Duration::from_secs(ttl.into()),
-            },
+            }),
         );
     }
 
@@ -129,9 +148,9 @@ impl DnsCache {
     pub fn lookup_cache(&self, domain: &str) -> Vec<IpAddr> {
         let domain = domain.trim_end_matches('.');
         let now = Instant::now();
-        let entries = self.entries.lock().unwrap();
+        self.cleanup(now);
         let mut result = Vec::new();
-        for entry in entries.values().filter(|e| e.expires > now) {
+        for (_, entry) in self.entries.iter().filter(|(_, e)| e.expires > now) {
             let Ok(packet) = Packet::parse(&entry.packet) else {
                 continue;
             };
@@ -155,13 +174,12 @@ impl DnsCache {
     /// Follows CNAME chains, ignores expired entries, and never performs I/O.
     pub fn reverse_lookup_cache(&self, ip: IpAddr) -> Option<String> {
         let now = Instant::now();
+        self.cleanup(now);
         let reverse_name = reverse_name(ip);
         self.entries
-            .lock()
-            .unwrap()
-            .values()
-            .filter(|e| e.expires > now)
-            .filter_map(|e| {
+            .iter()
+            .filter(|(_, e)| e.expires > now)
+            .filter_map(|(_, e)| {
                 let packet = Packet::parse(&e.packet).ok()?;
                 let question = packet.questions.first()?;
                 if question.qclass != CLASS::IN.into() {
@@ -191,9 +209,150 @@ impl DnsCache {
 #[cfg(test)]
 impl DnsCache {
     pub(super) fn age_for_test(&self, duration: Duration) {
-        for entry in self.entries.lock().unwrap().values_mut() {
+        let entries: Vec<_> = self.entries.iter().collect();
+        for (key, entry) in entries {
+            let mut entry = (*entry).clone();
             entry.inserted -= duration;
             entry.expires -= duration;
+            self.entries.insert(key, Arc::new(entry));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use simple_dns::{Name, Question, ResourceRecord};
+    use std::{net::Ipv4Addr, sync::Barrier};
+
+    fn query(name: &str, id: u16) -> Vec<u8> {
+        let mut packet = Packet::new_query(id);
+        packet.questions.push(Question::new(
+            Name::new(name).unwrap(),
+            TYPE::A.into(),
+            CLASS::IN.into(),
+            false,
+        ));
+        packet.build_bytes_vec().unwrap()
+    }
+
+    fn insert(cache: &DnsCache, query: &[u8], ttl: u32) {
+        let mut packet = super::super::reply_for(Packet::parse(query).unwrap());
+        packet.answers.push(ResourceRecord::new(
+            packet.questions[0].qname.clone(),
+            CLASS::IN,
+            ttl,
+            RData::A(Ipv4Addr::LOCALHOST.into()),
+        ));
+        cache.insert(query, packet);
+    }
+
+    #[test]
+    fn expiry_is_enforced_between_scans_and_cleanup_is_throttled() {
+        let cache = DnsCache::default();
+        let query = query("expiry.test", 7);
+        insert(&cache, &query, 60);
+        cache.age_for_test(Duration::from_secs(10));
+        let mut other_id = query.clone();
+        other_id[..2].copy_from_slice(&42u16.to_be_bytes());
+        let reply = cache.get(&other_id).unwrap().unwrap();
+        let reply = Packet::parse(&reply).unwrap();
+        assert_eq!(reply.id(), 42);
+        assert_eq!(reply.answers[0].ttl, 50);
+        cache.age_for_test(Duration::from_secs(51));
+        assert!(cache.get(&query).unwrap().is_none());
+        assert!(cache.lookup_cache("expiry.test").is_empty());
+        assert!(
+            cache
+                .reverse_lookup_cache(Ipv4Addr::LOCALHOST.into())
+                .is_none()
+        );
+        // Reads reject the expired response without running an early scan.
+        assert_eq!(cache.entries.len(), 1);
+        let last = *cache.last_cleanup.lock().unwrap();
+        cache.cleanup(last + CLEANUP_INTERVAL - Duration::from_nanos(1));
+        assert_eq!(cache.entries.len(), 1);
+        cache.cleanup(last + CLEANUP_INTERVAL);
+        assert_eq!(cache.entries.len(), 0);
+    }
+
+    #[test]
+    fn cleanup_triggers_on_every_public_operation() {
+        for operation in 0..4 {
+            let cache = DnsCache::default();
+            let query = query("cleanup.test", 1);
+            insert(&cache, &query, 1);
+            cache.age_for_test(Duration::from_secs(2));
+            *cache.last_cleanup.lock().unwrap() -= CLEANUP_INTERVAL;
+            match operation {
+                0 => {
+                    cache.get(&query).unwrap();
+                }
+                // Even an inadmissible response can trigger cleanup.
+                1 => insert(&cache, &query, 0),
+                2 => {
+                    cache.lookup_cache("cleanup.test");
+                }
+                _ => {
+                    cache.reverse_lookup_cache(Ipv4Addr::LOCALHOST.into());
+                }
+            }
+            assert_eq!(cache.entries.len(), 0);
+        }
+    }
+
+    #[test]
+    fn concurrent_cleanup_preserves_a_refreshed_response() {
+        let cache = DnsCache::default();
+        let query = query("refresh.test", 1);
+        for _ in 0..32 {
+            insert(&cache, &query, 1);
+            cache.age_for_test(Duration::from_secs(2));
+            *cache.last_cleanup.lock().unwrap() -= CLEANUP_INTERVAL;
+            let barrier = Barrier::new(2);
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    cache.cleanup(Instant::now());
+                });
+                barrier.wait();
+                insert(&cache, &query, 300);
+            });
+            assert!(cache.get(&query).unwrap().is_some());
+        }
+    }
+
+    #[test]
+    fn a_busy_cleanup_does_not_prevent_reads() {
+        let cache = DnsCache::default();
+        let query = query("busy.test", 1);
+        insert(&cache, &query, 60);
+        let _cleanup = cache.last_cleanup.lock().unwrap();
+        assert!(cache.get(&query).unwrap().is_some());
+    }
+
+    #[test]
+    fn capacity_is_bounded_and_replacement_does_not_evict_another_entry() {
+        let cache = DnsCache::with_capacity(4);
+        for i in 0..4 {
+            insert(&cache, &query(&format!("{i}.test"), 1), 60);
+        }
+        let first = query("0.test", 1);
+        insert(&cache, &first, 300);
+        assert_eq!(cache.entries.len(), 4);
+        for i in 0..4 {
+            assert!(
+                cache
+                    .get(&query(&format!("{i}.test"), 2))
+                    .unwrap()
+                    .is_some()
+            );
+        }
+        let reply = cache.get(&first).unwrap().unwrap();
+        assert_eq!(Packet::parse(&reply).unwrap().answers[0].ttl, 300);
+        for i in 4..32 {
+            insert(&cache, &query(&format!("{i}.test"), 1), 60);
+            assert!(cache.entries.len() <= 4);
         }
     }
 }
