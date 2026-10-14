@@ -305,8 +305,8 @@ async fn fakeip_is_stable_dual_stack_and_restores_ports() {
     let server = DnsFakeIpServerCfg {
         tag: "dns".into(),
         bind_addr: "127.0.0.1:0".parse().unwrap(),
-        ipv4_range: fakeip::default_ipv4_range(),
-        ipv6_range: fakeip::default_ipv6_range(),
+        ipv4_range: config::default_ipv4_range(),
+        ipv6_range: config::default_ipv6_range(),
     }
     .build()
     .await

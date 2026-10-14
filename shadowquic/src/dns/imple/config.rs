@@ -3,11 +3,7 @@ use std::{net::SocketAddr, sync::Arc};
 use ipnet::{Ipv4Net, Ipv6Net};
 use serde::Deserialize;
 
-use super::{
-    Backend, DnsCache, DnsServer, FakeIp,
-    fakeip::{default_ipv4_range, default_ipv6_range},
-    tls_connector,
-};
+use super::{Backend, DnsCache, DnsServer, FakeIp, tls_connector};
 use crate::error::SError;
 
 /// Local UDP/TCP DNS listener using a UDP upstream, with TCP fallback.
@@ -104,6 +100,14 @@ impl DnsTlsServerCfg {
         };
         DnsServer::new(self.tag, self.bind_addr, backend, cache, self.bypass_cache).await
     }
+}
+
+pub(super) fn default_ipv4_range() -> Ipv4Net {
+    "198.18.0.0/15".parse().unwrap()
+}
+
+pub(super) fn default_ipv6_range() -> Ipv6Net {
+    "2001:0002::/48".parse().unwrap()
 }
 
 /// Local UDP/TCP DNS listener allocating stable synthetic addresses.

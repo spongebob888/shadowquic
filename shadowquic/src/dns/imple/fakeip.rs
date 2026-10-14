@@ -7,20 +7,16 @@ use std::{
 use ipnet::{Ipv4Net, Ipv6Net};
 use quick_cache::{DefaultHashBuilder, Lifecycle, UnitWeighter, unsync::Cache};
 
-use super::Result;
+use super::{
+    Result,
+    config::{default_ipv4_range, default_ipv6_range},
+};
 use crate::{
     error::SError,
     msgs::socks5::{AddrOrDomain, SocksAddr},
 };
 
 const CAPACITY: usize = 1 << 16;
-pub(super) fn default_ipv4_range() -> Ipv4Net {
-    "198.18.0.0/15".parse().unwrap()
-}
-
-pub(super) fn default_ipv6_range() -> Ipv6Net {
-    "2001:0002::/48".parse().unwrap()
-}
 
 /// Mappings are stable while resident. Allocation wraps through the pool,
 /// reusing only indices whose mappings have been evicted.
