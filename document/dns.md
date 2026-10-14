@@ -160,14 +160,14 @@ restoration both record use. Addresses stay stable while their mapping remains
 resident. Mappings have no time-based expiry; their 60-second DNS answer TTL does
 not control eviction or address reuse.
 
-Evicted addresses fail restoration. Clients retaining an evicted DNS answer may
-fail to connect, and subsequent packets of an existing UDP flow may fail because
+Allocation advances through 131,070 usable indices and wraps back to index 1,
+skipping indices that still have resident mappings. An evicted domain receives
+the next available index when queried again. Evicted addresses fail restoration
+until their index is reused; after reuse, old DNS answers restore to the new
+domain. Clients retaining evicted answers can therefore fail to connect or reach
+the new domain, including subsequent packets of an existing UDP flow because
 each packet is restored separately. Already restored destinations are unaffected.
-A new query for an evicted domain receives a fresh allocation index. Indices are
-never reused within a manager's lifetime: eviction frees mapping storage but does
-not reclaim indices. After 131,070 indices have been issued, new allocations fail;
-resident domains still resolve. Mappings are not persisted, and this no-reuse
-guarantee does not extend across manager replacement or process restart.
+Mappings are not persisted across manager replacement or process restart.
 With Linux TPROXY, fake destinations are restored to domain names **before
 routing**, and every UDP packet is translated as well. UDP replies retain the
 fake source IP expected by the application. Unmapped addresses in these pools

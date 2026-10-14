@@ -60,21 +60,21 @@ a corresponding reverse mapping when allocation completes.
 
 ### Eviction and address reuse
 
-Never assign an allocation index to a different domain during the lifetime of a
-manager. Continue allocating monotonically from the existing pool, independently
-of cache occupancy. If an evicted domain is queried again, allocate a fresh index.
-After all 131,070 usable indices have been issued, allocation of a nonresident
-domain fails with the existing pool-exhaustion error; resident domains continue
-to resolve. Eviction does not replenish the address pool.
+Allocate sequentially through the 131,070 usable indices, wrapping from the last
+index back to index 1. Skip any index with a resident mapping; never replace a
+resident domain solely to reuse its index. The mapping capacity is smaller than
+the pool, so an available index always exists. If an evicted domain is queried
+again, assign the next available index rather than remembering its old mapping.
 
-An evicted fake address must fail restoration as an unknown fake IP, never be
-forwarded as a real destination or restored to a different domain. Preserve the
-destination port on successful restoration. This deliberately changes stability
-from the manager's lifetime to cache residency: clients retaining evicted DNS
-answers can fail, and subsequent packets of an existing UDP flow can fail because
-each packet is restored separately. Already restored destinations are unaffected.
-Mappings remain unpersisted, so the no-reuse guarantee does not extend across
-manager replacement or process restart.
+An evicted fake address must fail restoration as an unknown fake IP until its
+index is reused; never forward an unmapped fake address as a real destination.
+Once an index is reused after wrapping, old DNS answers for that index restore
+to the new domain. Address stability is guaranteed only while a mapping remains
+resident. Clients retaining evicted answers, including subsequent packets of an
+existing UDP flow, can therefore fail or target the new domain after reuse.
+Already restored destinations are unaffected. Preserve the destination port on
+successful restoration. Mappings remain unpersisted across manager replacement
+or process restart.
 
 ## Validation and documentation
 
@@ -89,12 +89,12 @@ stability. Add regression coverage for:
 - Fake-IP capacity measured in domains, dual-stack consistency, normalization,
   and concurrent allocation of the same domain.
 - Consistent eviction of forward and reverse mappings, rejection of evicted
-  addresses, fresh allocation after eviction, and pool exhaustion without reuse.
+  addresses before reuse, wrapping at the last index, skipping resident indices,
+  and consistent dual-stack restoration after an evicted index is reused.
 
 Use small injectable capacities and controllable time in tests where useful;
 tests must not depend on sleeps or a strict LRU victim order.
 
 Update `document/dns.md` to describe the eviction policy, cleanup behavior,
-65,536-domain mapping limit, residency-based stability, and the fact that
-fake-IP eviction does not reclaim allocation indices. Keep the implementation
-behind the existing DNS feature gates.
+65,536-domain mapping limit, residency-based stability, and index reuse after
+wrapping. Keep the implementation behind the existing DNS feature gates.

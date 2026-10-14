@@ -15,8 +15,8 @@ use crate::{
 const CAPACITY: usize = 1 << 16;
 const MAX_INDEX: u32 = 131070;
 
-/// Mappings are stable while resident. Allocation indices are never reused
-/// during this manager's lifetime, including after eviction.
+/// Mappings are stable while resident. Allocation wraps through the pool,
+/// reusing only indices whose mappings have been evicted.
 #[derive(Default)]
 pub struct FakeIp {
     mappings: Mutex<Mappings>,
@@ -67,11 +67,15 @@ impl FakeIp {
         let index = if let Some(index) = mappings.by_name.get(&domain) {
             *index
         } else {
-            let index = mappings.next_index;
-            if index > MAX_INDEX {
-                return Err(SError::DnsError("fake IP pool exhausted".into()));
-            }
-            mappings.next_index += 1;
+            // The mapping capacity is smaller than the pool, so a free index
+            // always exists. Keep resident IPv4/IPv6 pairs intact across wraps.
+            let index = loop {
+                let index = mappings.next_index;
+                mappings.next_index = if index == MAX_INDEX { 1 } else { index + 1 };
+                if !mappings.by_index.contains_key(&index) {
+                    break index;
+                }
+            };
             let mut evicted = Vec::new();
             mappings
                 .by_name
@@ -133,7 +137,7 @@ mod tests {
     }
 
     #[test]
-    fn eviction_removes_both_families_and_never_reuses_indices() {
+    fn eviction_removes_both_families_and_uses_fresh_indices_before_wrap() {
         let fake = fake(4);
         let mut allocated = Vec::new();
         for i in 0..12 {
@@ -177,23 +181,65 @@ mod tests {
     }
 
     #[test]
-    fn exhaustion_preserves_residents_and_does_not_reclaim_evicted_indices() {
-        let fake = fake(1);
-        let old = fake.allocate("old.test", false).unwrap();
+    fn wrapping_skips_resident_indices_and_preserves_dual_stack_mappings() {
+        let fake = fake(4);
+        let first = fake.allocate("first.test", false).unwrap();
+        let second = fake.allocate("second.test", false).unwrap();
         fake.mappings.lock().unwrap().next_index = MAX_INDEX;
         let last = fake.allocate("last.test", false).unwrap();
-        assert!(fake.restore(&address(old)).is_err());
-        assert!(fake.allocate("old.test", false).is_err());
-        assert!(fake.allocate("new.test", true).is_err());
-        assert_eq!(fake.allocate("LAST.TEST.", false).unwrap(), last);
-        let v6 = fake.allocate("last.test", true).unwrap();
-        assert!(fake.restore(&address(v6)).is_ok());
-        assert_eq!(fake.mappings.lock().unwrap().by_index.len(), 1);
+        assert_eq!(last, IpAddr::V4(Ipv4Addr::new(198, 19, 255, 254)));
+        assert_eq!(fake.mappings.lock().unwrap().next_index, 1);
+
+        let wrapped = fake.allocate("wrapped.test", false).unwrap();
+        assert_eq!(wrapped, IpAddr::V4(Ipv4Addr::new(198, 18, 0, 3)));
+        for (name, ip) in [
+            ("first.test", first),
+            ("second.test", second),
+            ("last.test", last),
+            ("wrapped.test", wrapped),
+        ] {
+            assert_eq!(fake.allocate(name, false).unwrap(), ip);
+            let v6 = fake.allocate(name, true).unwrap();
+            assert_eq!(
+                fake.restore(&address(ip)).unwrap().addr,
+                fake.restore(&address(v6)).unwrap().addr
+            );
+        }
+        let mappings = fake.mappings.lock().unwrap();
+        assert_eq!(mappings.by_name.len(), 4);
+        assert_eq!(mappings.by_index.len(), 4);
+        assert_eq!(mappings.next_index, 4);
     }
 
     #[test]
-    fn concurrent_allocations_share_one_dual_stack_mapping() {
+    fn wrapping_reuses_evicted_indices_for_both_address_families() {
+        let fake = fake(1);
+        let old = fake.allocate("old.test", false).unwrap();
+        let old_v6 = fake.allocate("old.test", true).unwrap();
+        fake.mappings.lock().unwrap().next_index = MAX_INDEX;
+        let last = fake.allocate("last.test", false).unwrap();
+        let last_v6 = fake.allocate("last.test", true).unwrap();
+        assert!(fake.restore(&address(old)).is_err());
+        assert!(fake.restore(&address(old_v6)).is_err());
+        assert_eq!(fake.allocate("LAST.TEST.", false).unwrap(), last);
+
+        assert_eq!(fake.allocate("new.test", false).unwrap(), old);
+        assert_eq!(fake.allocate("new.test", true).unwrap(), old_v6);
+        assert!(fake.restore(&address(last)).is_err());
+        assert!(fake.restore(&address(last_v6)).is_err());
+        let new_domain = AddrOrDomain::Domain(b"new.test".to_vec().into());
+        assert_eq!(fake.restore(&address(old)).unwrap().addr, new_domain);
+        assert_eq!(fake.restore(&address(old_v6)).unwrap().addr, new_domain);
+        let mappings = fake.mappings.lock().unwrap();
+        assert_eq!(mappings.by_name.len(), 1);
+        assert_eq!(mappings.by_index.len(), 1);
+        assert_eq!(mappings.next_index, 2);
+    }
+
+    #[test]
+    fn concurrent_allocations_share_one_dual_stack_mapping_at_wrap() {
         let fake = fake(4);
+        fake.mappings.lock().unwrap().next_index = MAX_INDEX;
         let barrier = Barrier::new(8);
         std::thread::scope(|scope| {
             let handles: Vec<_> = (0..8)
@@ -227,6 +273,6 @@ mod tests {
         let mappings = fake.mappings.lock().unwrap();
         assert_eq!(mappings.by_name.len(), 1);
         assert_eq!(mappings.by_index.len(), 1);
-        assert_eq!(mappings.next_index, 2);
+        assert_eq!(mappings.next_index, 1);
     }
 }
