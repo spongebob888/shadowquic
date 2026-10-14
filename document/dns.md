@@ -30,7 +30,20 @@ to other DNS types. UDP/TCP/TLS require `upstream`; TLS also requires
 `server-name`. All types except `dns-fakeip` accept `bypass-cache` (default:
 `false`). Set it to `true` to skip shared DNS cache reads and writes for that
 service. This does not disable caching performed by the operating system or
-upstream DNS server. Fake-IP configurations contain only `tag` and `bind-addr`.
+upstream DNS server. Fake-IP configurations accept `tag`, `bind-addr`, and optional
+`ipv4-range` and `ipv6-range` CIDRs. Each omitted range uses its default:
+
+```yaml
+dns:
+  - tag: fake
+    type: dns-fakeip
+    bind-addr: 127.0.0.1:1054
+    ipv4-range: 198.18.16.0/20
+    ipv6-range: fd00:1234::/112
+```
+
+Ranges must have zero host bits and contain at least four addresses: IPv4 /30 or
+larger, IPv6 /126 or larger. The first and last address of each range are reserved.
 
 `upstream` is a literal socket address, such as `1.1.1.1:853` or
 `[2606:4700:4700::1111]:853`, so bootstrap resolution cannot recurse into DNS.
@@ -152,15 +165,22 @@ through the selected service. It supports IPv4 (`in-addr.arpa`) and IPv6
 empty lookups return an error. System and fake-IP services do not provide PTR
 records, so use a UDP/TCP/TLS service for this method.
 
-Only one `dns-fakeip` service is allowed per configuration. It allocates from
-`198.18.0.0/15` and `fd00::/96`, with at most 65,536 resident domain mappings.
+Only one `dns-fakeip` service is allowed per configuration. By default it allocates
+from `198.18.0.0/15` and `2001:0002::/48`, with at most 65,536 resident domain mappings.
 Each domain's IPv4 and IPv6 addresses count as one mapping. Mappings use
 `quick_cache`'s native eviction policy; DNS allocation and successful traffic
 restoration both record use. Addresses stay stable while their mapping remains
 resident. Mappings have no time-based expiry; their 60-second DNS answer TTL does
 not control eviction or address reuse.
 
-Allocation advances through 131,070 usable indices and wraps back to index 1,
+Both address families share an offset from their configured network address.
+The smaller range determines the usable index count (its address count minus
+two); the defaults provide 131,070 indices. For small ranges, the mapping limit
+is reduced to one less than the usable index count, leaving a free index for
+allocation before eviction. For example, an IPv4 /24 with the default IPv6 range
+provides 254 indices and holds at most 253 resident domain mappings.
+
+Allocation advances through the usable indices and wraps back to index 1,
 skipping indices that still have resident mappings. An evicted domain receives
 the next available index when queried again. Evicted addresses fail restoration
 until their index is reused; after reuse, old DNS answers restore to the new
@@ -171,7 +191,8 @@ Mappings are not persisted across manager replacement or process restart.
 With Linux TPROXY, fake destinations are restored to domain names **before
 routing**, and every UDP packet is translated as well. UDP replies retain the
 fake source IP expected by the application. Unmapped addresses in these pools
-are rejected. Configure your OS routes and TPROXY interception for these ranges
+are rejected. Addresses outside the configured ranges pass through unchanged.
+Configure your OS routes and TPROXY interception for the configured ranges
 when using this mode. Fake addresses must not be used as real outbound targets.
 
 See [`config_examples/dns.yaml`](../shadowquic/config_examples/dns.yaml) for a
