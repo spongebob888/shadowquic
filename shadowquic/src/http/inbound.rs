@@ -359,6 +359,22 @@ fn parse_absolute_http_uri(target: &str) -> Result<ParsedHttpUri, SError> {
     })
 }
 
+fn make_socks_addr(host: &str, port: u16) -> Result<SocksAddr, SError> {
+    let addr = if let Ok(v4) = host.parse::<std::net::Ipv4Addr>() {
+        AddrOrDomain::V4(v4.octets())
+    } else if let Ok(v6) = host.parse::<std::net::Ipv6Addr>() {
+        match v6.to_ipv4_mapped() {
+            Some(v4) => AddrOrDomain::V4(v4.octets()),
+            None => AddrOrDomain::V6(v6.octets()),
+        }
+    } else {
+        AddrOrDomain::Domain(host.as_bytes().to_vec().into())
+    };
+
+    let dst = SocksAddr { addr, port };
+    Ok(dst)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -427,20 +443,4 @@ mod tests {
         let req = make_request(&format!("Proxy-Authorization: Bearer {}", creds));
         assert!(!check_proxy_basic_auth(&req, &make_users()));
     }
-}
-
-fn make_socks_addr(host: &str, port: u16) -> Result<SocksAddr, SError> {
-    let addr = if let Ok(v4) = host.parse::<std::net::Ipv4Addr>() {
-        AddrOrDomain::V4(v4.octets())
-    } else if let Ok(v6) = host.parse::<std::net::Ipv6Addr>() {
-        match v6.to_ipv4_mapped() {
-            Some(v4) => AddrOrDomain::V4(v4.octets()),
-            None => AddrOrDomain::V6(v6.octets()),
-        }
-    } else {
-        AddrOrDomain::Domain(host.as_bytes().to_vec().into())
-    };
-
-    let dst = SocksAddr { addr, port };
-    Ok(dst)
 }

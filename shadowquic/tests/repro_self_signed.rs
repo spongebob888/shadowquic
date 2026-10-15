@@ -11,14 +11,8 @@ use tokio::{net::TcpListener, time::Duration};
 
 use shadowquic::{Manager, direct::outbound::DirectOut, socks::inbound::SocksServer};
 
-use std::path::PathBuf;
-use std::sync::Arc;
-use tracing::info;
-use tracing::{Level, level_filters::LevelFilter, trace};
+use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-const CHUNK_LEN: usize = 1024;
-const ROUND: usize = 10;
 
 fn to_pem(tag: &str, body: &[u8]) -> String {
     use std::fmt::Write;
@@ -40,7 +34,7 @@ fn base64_encode(input: &[u8]) -> String {
         let chunk_len = std::cmp::min(3, input.len() - i);
         let chunk = &input[i..i + chunk_len];
         let b = match chunk_len {
-            1 => ((chunk[0] as u32) << 16),
+            1 => (chunk[0] as u32) << 16,
             2 => ((chunk[0] as u32) << 16) | ((chunk[1] as u32) << 8),
             3 => ((chunk[0] as u32) << 16) | ((chunk[1] as u32) << 8) | (chunk[2] as u32),
             _ => unreachable!(),
@@ -69,7 +63,7 @@ fn base64_encode(input: &[u8]) -> String {
 
 fn generate_self_signed_cert() -> (String, String) {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
-    let cert_pem = to_pem("CERTIFICATE", &cert.cert.der());
+    let cert_pem = to_pem("CERTIFICATE", cert.cert.der());
     let key_pem = to_pem("PRIVATE KEY", &cert.signing_key.serialize_der());
     (cert_pem, key_pem)
 }

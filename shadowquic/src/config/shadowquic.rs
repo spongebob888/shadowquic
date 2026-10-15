@@ -8,9 +8,9 @@ use crate::config::{
     default_alpn, default_blackhole_detection, default_brutal_ack_compensate,
     default_brutal_bandwidth, default_brutal_cwnd_gain, default_brutal_min_ack_rate,
     default_brutal_min_sample_count, default_brutal_min_window, default_congestion_control,
-    default_gso, default_initial_mtu, default_keep_alive_interval, default_min_mtu,
-    default_mtu_discovery, default_over_stream, default_store_flush_interval, default_zero_rtt,
-    default_half_close_timeout,
+    default_gso, default_half_close_timeout, default_initial_mtu, default_keep_alive_interval,
+    default_min_mtu, default_mtu_discovery, default_over_stream, default_store_flush_interval,
+    default_zero_rtt,
 };
 
 pub fn default_rate_limit() -> u64 {

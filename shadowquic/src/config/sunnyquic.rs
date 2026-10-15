@@ -4,9 +4,9 @@ use serde::Deserialize;
 
 use crate::config::{
     AuthUser, BrutalParams, CipherSuitePreference, CongestionControl, HasCipherSuitePreference,
-    SocketOpt, default_alpn, default_congestion_control, default_gso, default_initial_mtu,
-    default_keep_alive_interval, default_min_mtu, default_mtu_discovery, default_over_stream,
-    default_store_flush_interval, default_zero_rtt, default_half_close_timeout
+    SocketOpt, default_alpn, default_congestion_control, default_gso, default_half_close_timeout,
+    default_initial_mtu, default_keep_alive_interval, default_min_mtu, default_mtu_discovery,
+    default_over_stream, default_store_flush_interval, default_zero_rtt,
 };
 
 pub(crate) fn default_multipath_num() -> u32 {

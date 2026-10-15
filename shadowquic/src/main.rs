@@ -116,60 +116,6 @@ fn select_api_outbound(cfg: Config, tag: Option<&str>) -> Result<OutboundCfg, St
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn api_selects_legacy_outbound_without_tag() {
-        let cfg: Config =
-            serde_saphyr::from_str(include_str!("../tests/fixtures/main_config/client.yaml"))
-                .unwrap();
-        let outbound = select_api_outbound(cfg, None).unwrap();
-        assert_eq!(outbound.tag(), "outbound");
-        assert!(matches!(outbound, OutboundCfg::ShadowQuic(_)));
-    }
-
-    #[test]
-    fn api_selects_outbound_by_tag() {
-        let cfg: Config = serde_saphyr::from_str(
-            r#"
-inbounds:
-  - {tag: local, type: socks, bind-addr: "127.0.0.1:0"}
-outbounds:
-  - {tag: first, type: direct}
-  - {tag: second, type: direct}
-"#,
-        )
-        .unwrap();
-        assert_eq!(
-            select_api_outbound(cfg.clone(), Some("second"))
-                .unwrap()
-                .tag(),
-            "second"
-        );
-        assert!(
-            select_api_outbound(cfg.clone(), Some("missing"))
-                .unwrap_err()
-                .contains("unknown outbound")
-        );
-        assert!(
-            select_api_outbound(cfg.clone(), None)
-                .unwrap_err()
-                .contains("--outbound")
-        );
-        let mut single = cfg;
-        single.outbounds.truncate(1);
-        assert_eq!(select_api_outbound(single, None).unwrap().tag(), "first");
-
-        let cli = Cli::try_parse_from(["shadowquic", "api", "--outbound", "second", "list-users"])
-            .unwrap();
-        assert!(
-            matches!(cli.command, Some(Command::Api { outbound: Some(tag), .. }) if tag == "second")
-        );
-    }
-}
-
 async fn call_api(outbound: OutboundCfg, command: ApiCommand) -> Result<(), String> {
     match outbound {
         OutboundCfg::ShadowQuic(cfg) => {
@@ -316,4 +262,58 @@ fn setup_log(level: LogLevel) {
     #[cfg(feature = "tokio-console")]
     let sub = sub.with(console_layer);
     sub.init();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_selects_legacy_outbound_without_tag() {
+        let cfg: Config =
+            serde_saphyr::from_str(include_str!("../tests/fixtures/main_config/client.yaml"))
+                .unwrap();
+        let outbound = select_api_outbound(cfg, None).unwrap();
+        assert_eq!(outbound.tag(), "outbound");
+        assert!(matches!(outbound, OutboundCfg::ShadowQuic(_)));
+    }
+
+    #[test]
+    fn api_selects_outbound_by_tag() {
+        let cfg: Config = serde_saphyr::from_str(
+            r#"
+inbounds:
+  - {tag: local, type: socks, bind-addr: "127.0.0.1:0"}
+outbounds:
+  - {tag: first, type: direct}
+  - {tag: second, type: direct}
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            select_api_outbound(cfg.clone(), Some("second"))
+                .unwrap()
+                .tag(),
+            "second"
+        );
+        assert!(
+            select_api_outbound(cfg.clone(), Some("missing"))
+                .unwrap_err()
+                .contains("unknown outbound")
+        );
+        assert!(
+            select_api_outbound(cfg.clone(), None)
+                .unwrap_err()
+                .contains("--outbound")
+        );
+        let mut single = cfg;
+        single.outbounds.truncate(1);
+        assert_eq!(select_api_outbound(single, None).unwrap().tag(), "first");
+
+        let cli = Cli::try_parse_from(["shadowquic", "api", "--outbound", "second", "list-users"])
+            .unwrap();
+        assert!(
+            matches!(cli.command, Some(Command::Api { outbound: Some(tag), .. }) if tag == "second")
+        );
+    }
 }

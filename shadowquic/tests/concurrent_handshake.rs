@@ -37,7 +37,7 @@ async fn bad_password_client_does_not_block_valid_client_handshake() {
 
     // Build a new subscriber with the `fmt` layer using the `Targets`
     // filter we constructed above.
-    let _ = tracing_subscriber::registry()
+    tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
         .with(filter)
         .init();
