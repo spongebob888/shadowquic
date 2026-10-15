@@ -9,7 +9,14 @@ mod tests;
 pub use cache::DnsCache;
 pub use fakeip::FakeIp;
 pub(crate) use integration::ResolvingOutbound;
-#[cfg(any(test, all(feature = "tproxy", target_os = "linux")))]
+#[cfg(any(
+    test,
+    all(feature = "tproxy", target_os = "linux"),
+    all(
+        feature = "tun",
+        any(target_os = "linux", target_os = "macos", target_os = "windows")
+    )
+))]
 pub(crate) use integration::RestoringInbound;
 
 use async_trait::async_trait;

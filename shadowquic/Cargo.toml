@@ -50,6 +50,7 @@ sunnyquic-gm-quic = ["dep:gm-quic","dep:qevent","dep:qbase","dep:qunreliable", "
 sunnyquic-noq = ["dep:noq", "dep:rustls", "dep:rustls-native-certs","dep:notify", "dep:noq-proto"]
 # cost 200k
 tproxy = ["dep:etherparse", "dep:libc"]
+tun = ["dep:tun-rs", "dep:smoltcp", "dep:ipnet"]
 
 [dependencies]
 tempfile = { version = "3", optional = true }
@@ -116,7 +117,11 @@ ring = { version = "0.17.14", optional = true }
 base64 = { version = "0.23.1", optional = true }
 quick_cache = { version = "0.7", optional = true }
 ipnet = { version = "2", features = ["serde"], optional = true }
+smoltcp = { version = "0.12", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-tcp"], optional = true }
 
+
+[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))'.dependencies]
+tun-rs = { version = "2", features = ["async_tokio"], optional = true }
 
 [target.'cfg(target_os="linux")'.dependencies]
 libc = { version = "0.2", optional = true }

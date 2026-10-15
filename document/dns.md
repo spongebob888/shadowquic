@@ -188,12 +188,12 @@ domain. Clients retaining evicted answers can therefore fail to connect or reach
 the new domain, including subsequent packets of an existing UDP flow because
 each packet is restored separately. Already restored destinations are unaffected.
 Mappings are not persisted across manager replacement or process restart.
-With Linux TPROXY, fake destinations are restored to domain names **before
-routing**, and every UDP packet is translated as well. UDP replies retain the
+With Linux TPROXY or the [TUN inbound](tun.md), fake destinations are restored to
+domain names **before routing**, and every UDP packet is translated as well. UDP replies retain the
 fake source IP expected by the application. Unmapped addresses in these pools
 are rejected. Addresses outside the configured ranges pass through unchanged.
-Configure your OS routes and TPROXY interception for the configured ranges
-when using this mode. Fake addresses must not be used as real outbound targets.
+Configure your OS routes and TPROXY interception or TUN capture for the configured
+ranges when using this mode. Fake addresses must not be used as real outbound targets.
 
 See [`config_examples/dns.yaml`](../shadowquic/config_examples/dns.yaml) for a
 complete configuration with TLS resolution and DNS hijacking.

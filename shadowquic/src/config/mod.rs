@@ -29,6 +29,11 @@ pub use crate::dns::config::{
 };
 #[cfg(all(feature = "tproxy", target_os = "linux"))]
 use crate::tproxy::inbound::TproxyServer;
+#[cfg(all(
+    feature = "tun",
+    any(target_os = "linux", target_os = "macos", target_os = "windows")
+))]
+pub use crate::tun::TunServerCfg;
 
 mod shadowquic;
 mod sunnyquic;
@@ -171,6 +176,13 @@ impl Config {
             )));
         }
         for inbound in &self.inbounds {
+            #[cfg(all(
+                feature = "tun",
+                any(target_os = "linux", target_os = "macos", target_os = "windows")
+            ))]
+            if let InboundCfg::Tun(cfg) = inbound {
+                cfg.validate()?;
+            }
             if let Some(tag) = inbound.default_outbound()
                 && !self.outbound_tags().any(|outbound| outbound == tag)
             {
@@ -235,13 +247,28 @@ impl Config {
         let mut resolver_manager = Arc::new(ResolverManager::new());
         #[cfg(not(feature = "dns-server"))]
         let resolver_manager = Arc::new(ResolverManager::new());
-        #[cfg(all(feature = "dns-server", feature = "tproxy", target_os = "linux"))]
+        #[cfg(all(
+            feature = "dns-server",
+            any(
+                all(feature = "tproxy", target_os = "linux"),
+                all(
+                    feature = "tun",
+                    any(target_os = "linux", target_os = "macos", target_os = "windows")
+                )
+            )
+        ))]
         let mut fake_ip = None;
         #[cfg(feature = "dns-server")]
         for cfg in self.dns {
             let tag = cfg.tag().to_owned();
             let server = cfg.build_with_cache(resolver_manager.cache()).await?;
-            #[cfg(all(feature = "tproxy", target_os = "linux"))]
+            #[cfg(any(
+                all(feature = "tproxy", target_os = "linux"),
+                all(
+                    feature = "tun",
+                    any(target_os = "linux", target_os = "macos", target_os = "windows")
+                )
+            ))]
             if server.resolver.fake_ip.is_some() {
                 fake_ip = server.resolver.fake_ip.clone();
             }
@@ -300,10 +327,28 @@ impl Config {
         for cfg in self.inbounds {
             let tag = cfg.tag().to_owned();
             let span = info_span!("inbound", tag = %tag);
-            #[cfg(all(feature = "dns-server", feature = "tproxy", target_os = "linux"))]
-            let restore_fake = matches!(&cfg, InboundCfg::Tproxy(_));
+            #[cfg(all(
+                feature = "dns-server",
+                any(
+                    all(feature = "tproxy", target_os = "linux"),
+                    all(
+                        feature = "tun",
+                        any(target_os = "linux", target_os = "macos", target_os = "windows")
+                    )
+                )
+            ))]
+            let restore_fake = cfg.restores_fake_ip();
             let inbound = cfg.build_inbound().instrument(span).await?;
-            #[cfg(all(feature = "dns-server", feature = "tproxy", target_os = "linux"))]
+            #[cfg(all(
+                feature = "dns-server",
+                any(
+                    all(feature = "tproxy", target_os = "linux"),
+                    all(
+                        feature = "tun",
+                        any(target_os = "linux", target_os = "macos", target_os = "windows")
+                    )
+                )
+            ))]
             let inbound = if restore_fake && let Some(fake) = fake_ip.clone() {
                 Box::new(crate::dns::RestoringInbound {
                     inner: inbound,
@@ -339,6 +384,11 @@ impl Config {
 #[serde(rename_all = "kebab-case")]
 #[serde(tag = "type")]
 pub enum InboundCfg {
+    #[cfg(all(
+        feature = "tun",
+        any(target_os = "linux", target_os = "macos", target_os = "windows")
+    ))]
+    Tun(TunServerCfg),
     Socks(SocksServerCfg),
     #[cfg(feature = "mixed")]
     Mixed(MixedServerCfg),
@@ -351,9 +401,36 @@ pub enum InboundCfg {
     Tproxy(TproxyServerCfg),
 }
 impl InboundCfg {
+    #[cfg(all(
+        feature = "dns-server",
+        any(
+            all(feature = "tproxy", target_os = "linux"),
+            all(
+                feature = "tun",
+                any(target_os = "linux", target_os = "macos", target_os = "windows")
+            )
+        )
+    ))]
+    fn restores_fake_ip(&self) -> bool {
+        match self {
+            #[cfg(all(feature = "tproxy", target_os = "linux"))]
+            Self::Tproxy(_) => true,
+            #[cfg(all(
+                feature = "tun",
+                any(target_os = "linux", target_os = "macos", target_os = "windows")
+            ))]
+            Self::Tun(_) => true,
+            _ => false,
+        }
+    }
     /// Returns the endpoint label.
     pub fn tag(&self) -> &str {
         match self {
+            #[cfg(all(
+                feature = "tun",
+                any(target_os = "linux", target_os = "macos", target_os = "windows")
+            ))]
+            Self::Tun(cfg) => &cfg.tag,
             Self::Socks(cfg) => &cfg.tag,
             #[cfg(feature = "mixed")]
             Self::Mixed(cfg) => &cfg.tag,
@@ -368,6 +445,11 @@ impl InboundCfg {
     /// configured. `None` means the global default outbound.
     pub fn default_outbound(&self) -> Option<&str> {
         match self {
+            #[cfg(all(
+                feature = "tun",
+                any(target_os = "linux", target_os = "macos", target_os = "windows")
+            ))]
+            Self::Tun(cfg) => cfg.default_outbound.as_deref(),
             Self::Socks(cfg) => cfg.default_outbound.as_deref(),
             #[cfg(feature = "mixed")]
             Self::Mixed(cfg) => cfg.default_outbound.as_deref(),
@@ -380,6 +462,11 @@ impl InboundCfg {
 
     async fn build_inbound(self) -> Result<Box<dyn Inbound>, SError> {
         let r: Box<dyn Inbound> = match self {
+            #[cfg(all(
+                feature = "tun",
+                any(target_os = "linux", target_os = "macos", target_os = "windows")
+            ))]
+            Self::Tun(cfg) => Box::new(crate::tun::TunServer::new(cfg).await?),
             InboundCfg::Socks(cfg) => Box::new(SocksServer::new(cfg).await?),
             #[cfg(feature = "mixed")]
             InboundCfg::Mixed(cfg) => Box::new(MixedServer::new(cfg).await?),
@@ -1514,5 +1601,11 @@ outbounds:
                 CipherSuitePreference::Aes128Gcm,
             ]
         );
+    }
+
+    #[cfg(not(feature = "tun"))]
+    #[test]
+    fn tun_inbound_requires_the_tun_feature() {
+        assert!(serde_saphyr::from_str::<super::InboundCfg>("type: tun\ntag: tun-in\n").is_err());
     }
 }
