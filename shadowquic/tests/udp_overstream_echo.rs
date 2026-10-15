@@ -54,10 +54,7 @@ async fn main() {
                  } => {
                     r.unwrap();
                     ii += 1;
-                    #[warn(clippy::modulo_one)]
-                    if ii % 1 == 0 {
-                        tokio::time::sleep(Duration::from_millis(2)).await;
-                    }
+                    tokio::time::sleep(Duration::from_millis(2)).await;
                 }
                 r = socks.recv_from(&mut recvbuf[jj*CHUNK_LEN..(jj+1)*CHUNK_LEN]) => {
                     let (len, _addr) = r.unwrap();

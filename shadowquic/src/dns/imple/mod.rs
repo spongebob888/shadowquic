@@ -191,7 +191,7 @@ pub(crate) enum Backend {
         server_name: rustls_jls::pki_types::ServerName<'static>,
         connector: tokio_rustls_jls::TlsConnector,
     },
-    FakeIp,
+    FakeIp(Arc<FakeIp>),
     System,
 }
 
@@ -268,7 +268,10 @@ impl DnsServer {
         let (tx, rx) = mpsc::channel(256);
         let resolver = Arc::new(Resolver {
             tag,
-            fake_ip: matches!(backend, Backend::FakeIp).then(|| Arc::new(FakeIp::default())),
+            fake_ip: match &backend {
+                Backend::FakeIp(fake) => Some(fake.clone()),
+                _ => None,
+            },
             backend,
             requests: tx,
             cache,
@@ -422,7 +425,7 @@ impl Resolver {
             Backend::Udp(upstream) | Backend::Tcp(upstream) | Backend::Tls { upstream, .. } => {
                 *upstream
             }
-            Backend::FakeIp | Backend::System => {
+            Backend::FakeIp(_) | Backend::System => {
                 return Err(dns_error("local resolver has no upstream"));
             }
         };
@@ -543,7 +546,7 @@ impl DnsService for Resolver {
         }
         let reply = tokio::time::timeout(TIMEOUT, async {
             match &self.backend {
-                Backend::System | Backend::FakeIp => self.local(packet).await,
+                Backend::System | Backend::FakeIp(_) => self.local(packet).await,
                 Backend::Tcp(_) | Backend::Tls { .. } => self.upstream(query, true).await,
                 Backend::Udp(_) => {
                     let reply = self.upstream(query, false).await?;

@@ -559,7 +559,7 @@ pub struct AuthUser {
 pub struct SocksClientCfg {
     /// Inactivity timeout after either TCP source reaches EOF, in milliseconds.
     /// Defaults to 60 seconds. Zero disables the timeout.
-    #[serde(default = "crate::config::default_half_close_timeout")]
+    #[serde(default = "default_half_close_timeout")]
     pub half_close_timeout: u64,
     /// DNS service used to resolve destination domains after routing.
     #[cfg(feature = "dns-server")]
@@ -732,7 +732,7 @@ impl PartialEq for CongestionControl {
 pub struct DirectOutCfg {
     /// Inactivity timeout after either TCP source reaches EOF, in milliseconds.
     /// Defaults to 60 seconds. Zero disables the timeout.
-    #[serde(default = "crate::config::default_half_close_timeout")]
+    #[serde(default = "default_half_close_timeout")]
     pub half_close_timeout: u64,
     /// DNS service used to resolve destination domains after routing.
     #[cfg(feature = "dns-server")]

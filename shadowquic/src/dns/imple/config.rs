@@ -1,8 +1,9 @@
 use std::{net::SocketAddr, sync::Arc};
 
+use ipnet::{Ipv4Net, Ipv6Net};
 use serde::Deserialize;
 
-use super::{Backend, DnsCache, DnsServer, tls_connector};
+use super::{Backend, DnsCache, DnsServer, FakeIp, tls_connector};
 use crate::error::SError;
 
 /// Local UDP/TCP DNS listener using a UDP upstream, with TCP fallback.
@@ -101,21 +102,40 @@ impl DnsTlsServerCfg {
     }
 }
 
+pub(super) fn default_ipv4_range() -> Ipv4Net {
+    "198.18.0.0/15".parse().unwrap()
+}
+
+pub(super) fn default_ipv6_range() -> Ipv6Net {
+    "2001:0002::/48".parse().unwrap()
+}
+
 /// Local UDP/TCP DNS listener allocating stable synthetic addresses.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct DnsFakeIpServerCfg {
     pub tag: String,
     pub bind_addr: SocketAddr,
+    /// IPv4 CIDR pool. Defaults to 198.18.0.0/15.
+    #[serde(default = "default_ipv4_range")]
+    pub ipv4_range: Ipv4Net,
+    /// IPv6 CIDR pool. Defaults to 2001:0002::/48.
+    #[serde(default = "default_ipv6_range")]
+    pub ipv6_range: Ipv6Net,
 }
 
 impl DnsFakeIpServerCfg {
+    pub fn validate(&self) -> Result<(), SError> {
+        FakeIp::validate_ranges(self.ipv4_range, self.ipv6_range).map(|_| ())
+    }
+
     pub async fn build(self) -> Result<DnsServer, SError> {
         self.build_with_cache(Arc::new(DnsCache::default())).await
     }
 
     pub(crate) async fn build_with_cache(self, cache: Arc<DnsCache>) -> Result<DnsServer, SError> {
-        DnsServer::new(self.tag, self.bind_addr, Backend::FakeIp, cache, true).await
+        let fake = Arc::new(FakeIp::new(self.ipv4_range, self.ipv6_range)?);
+        DnsServer::new(self.tag, self.bind_addr, Backend::FakeIp(fake), cache, true).await
     }
 }
 
@@ -180,8 +200,10 @@ impl DnsCfg {
     }
 
     pub fn validate(&self) -> Result<(), SError> {
-        if let Self::Tls(cfg) = self {
-            cfg.validate()?;
+        match self {
+            Self::Tls(cfg) => cfg.validate()?,
+            Self::FakeIp(cfg) => cfg.validate()?,
+            _ => {}
         }
         Ok(())
     }

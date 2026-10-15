@@ -4,9 +4,9 @@ use serde::Deserialize;
 
 use crate::config::{
     AuthUser, BrutalParams, CipherSuitePreference, CongestionControl, HasCipherSuitePreference,
-    SocketOpt, default_alpn, default_congestion_control, default_gso, default_initial_mtu,
-    default_keep_alive_interval, default_min_mtu, default_mtu_discovery, default_over_stream,
-    default_store_flush_interval, default_zero_rtt,
+    SocketOpt, default_alpn, default_congestion_control, default_gso, default_half_close_timeout,
+    default_initial_mtu, default_keep_alive_interval, default_min_mtu, default_mtu_discovery,
+    default_over_stream, default_store_flush_interval, default_zero_rtt,
 };
 
 pub(crate) fn default_multipath_num() -> u32 {
@@ -180,7 +180,7 @@ impl Default for SunnyQuicClientCfg {
 pub struct SunnyQuicClientCfg {
     /// Inactivity timeout after either TCP source reaches EOF, in milliseconds.
     /// Defaults to 60 seconds. Zero disables the timeout.
-    #[serde(default = "crate::config::default_half_close_timeout")]
+    #[serde(default = "default_half_close_timeout")]
     pub half_close_timeout: u64,
     /// DNS service used to resolve destination domains after routing.
     #[cfg(feature = "dns-server")]

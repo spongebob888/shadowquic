@@ -243,7 +243,7 @@ async fn fakeip_bypasses_shared_cache() {
     let resolver = Resolver {
         bypass_cache: true,
         tag: "fake".into(),
-        backend: Backend::FakeIp,
+        backend: Backend::FakeIp(fake.clone()),
         requests: mpsc::channel(1).0,
         fake_ip: Some(fake.clone()),
         cache: cache.clone(),
@@ -305,6 +305,8 @@ async fn fakeip_is_stable_dual_stack_and_restores_ports() {
     let server = DnsFakeIpServerCfg {
         tag: "dns".into(),
         bind_addr: "127.0.0.1:0".parse().unwrap(),
+        ipv4_range: config::default_ipv4_range(),
+        ipv6_range: config::default_ipv6_range(),
     }
     .build()
     .await
@@ -312,6 +314,8 @@ async fn fakeip_is_stable_dual_stack_and_restores_ports() {
     let fake = server.resolver.fake_ip.as_ref().unwrap();
     let ips = server.resolve("Example.Test").await.unwrap();
     assert_eq!(ips.len(), 2);
+    assert!(ips.contains(&"198.18.0.1".parse().unwrap()));
+    assert!(ips.contains(&"2001:2::1".parse().unwrap()));
     for ip in ips {
         let restored = fake.restore(&SocketAddr::new(ip, 443).into()).unwrap();
         assert_eq!(restored, SocksAddr::from_domain("example.test".into(), 443));
@@ -326,6 +330,100 @@ async fn fakeip_is_stable_dual_stack_and_restores_ports() {
         .await
         .unwrap();
     assert!(Packet::parse(&bytes).unwrap().answers.is_empty());
+}
+
+#[tokio::test]
+async fn fakeip_configured_ranges_are_used_for_dns_answers_and_restoration() {
+    let config: DnsFakeIpServerCfg = serde_saphyr::from_str(
+        "tag: fake\nbind-addr: '127.0.0.1:0'\nipv4-range: '198.18.16.0/20'\nipv6-range: 'fd00:1234::/112'",
+    ).unwrap();
+    config.validate().unwrap();
+    let server = config.build().await.unwrap();
+    let fake = server.resolver.fake_ip.as_ref().unwrap();
+    for (ty, expected) in [(TYPE::A, "198.18.16.1"), (TYPE::AAAA, "fd00:1234::1")] {
+        let bytes = exchange_udp(server.local_addr, &query("custom.test", ty, 42)).await;
+        let reply = Packet::parse(&bytes).unwrap();
+        assert_eq!(reply.id(), 42);
+        assert_eq!(reply.answers[0].ttl, 60);
+        assert_eq!(
+            cache::addresses(&reply),
+            vec![expected.parse::<IpAddr>().unwrap()]
+        );
+        assert_eq!(
+            fake.restore(&SocketAddr::new(expected.parse().unwrap(), 443).into())
+                .unwrap(),
+            SocksAddr::from_domain("custom.test".into(), 443)
+        );
+    }
+}
+
+#[test]
+fn fakeip_range_defaults_and_independent_overrides() {
+    for (fields, v4, v6) in [
+        ("", "198.18.0.0/15", "2001:0002::/48"),
+        (
+            ", ipv4-range: '198.18.16.0/20'",
+            "198.18.16.0/20",
+            "2001:0002::/48",
+        ),
+        (
+            ", ipv6-range: 'fd00:1234::/112'",
+            "198.18.0.0/15",
+            "fd00:1234::/112",
+        ),
+    ] {
+        let cfg: crate::config::DnsCfg = serde_saphyr::from_str(&format!(
+            "{{type: dns-fakeip, tag: fake, bind-addr: '127.0.0.1:0'{fields}}}"
+        ))
+        .unwrap();
+        cfg.validate().unwrap();
+        let crate::config::DnsCfg::FakeIp(cfg) = cfg else {
+            panic!()
+        };
+        assert_eq!(cfg.ipv4_range, v4.parse().unwrap());
+        assert_eq!(cfg.ipv6_range, v6.parse().unwrap());
+    }
+}
+
+#[tokio::test]
+async fn fakeip_invalid_ranges_are_rejected_before_building() {
+    for fields in [
+        ", ipv4-range: '198.18.0.0/31'",
+        ", ipv4-range: '198.18.0.1/32'",
+        ", ipv6-range: 'fd00::/127'",
+        ", ipv6-range: 'fd00::1/128'",
+        ", ipv4-range: '198.18.16.1/20'",
+        ", ipv6-range: 'fd00:1234::1/112'",
+    ] {
+        let cfg: crate::config::DnsCfg = serde_saphyr::from_str(&format!(
+            "{{type: dns-fakeip, tag: fake, bind-addr: '127.0.0.1:0'{fields}}}"
+        ))
+        .unwrap();
+        assert!(
+            matches!(cfg.validate(), Err(SError::InvalidConfig(_))),
+            "{fields}"
+        );
+        assert!(
+            matches!(cfg.build().await, Err(SError::InvalidConfig(_))),
+            "{fields}"
+        );
+    }
+    for fields in [
+        ", ipv4-range: 'fd00::/96'",
+        ", ipv6-range: '198.18.0.0/15'",
+        ", ipv4-range: '198.18.0.0/33'",
+        ", ipv6-range: 'fd00::/129'",
+        ", ipv4-range: invalid",
+        ", ipv6-range: invalid",
+    ] {
+        assert!(
+            serde_saphyr::from_str::<crate::config::DnsCfg>(&format!(
+                "{{type: dns-fakeip, tag: fake, bind-addr: '127.0.0.1:0'{fields}}}"
+            ))
+            .is_err(),
+            "{fields}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -523,7 +621,13 @@ impl Inbound for OneRequest {
 }
 #[tokio::test]
 async fn fakeip_udp_is_restored_before_routing_and_replies_use_fake_source() {
-    let fake = Arc::new(FakeIp::default());
+    let fake = Arc::new(
+        FakeIp::new(
+            "198.18.16.0/20".parse().unwrap(),
+            "fd00:1234::/112".parse().unwrap(),
+        )
+        .unwrap(),
+    );
     let ip = fake.allocate("transparent.test", false).unwrap();
     let dst: SocksAddr = SocketAddr::new(ip, 8080).into();
     let (tx, rx) = mpsc::channel(2);
@@ -948,7 +1052,13 @@ fn dns_example_is_valid() {
 #[cfg(feature = "plugin")]
 #[tokio::test]
 async fn fakeip_tcp_is_restored_before_lua_routing() {
-    let fake = Arc::new(FakeIp::default());
+    let fake = Arc::new(
+        FakeIp::new(
+            "198.18.16.0/20".parse().unwrap(),
+            "fd00:1234::/112".parse().unwrap(),
+        )
+        .unwrap(),
+    );
     let ip = fake.allocate("transparent-tcp.test", true).unwrap();
     let (stream, _peer) = tokio::io::duplex(64);
     let session = TcpSession {
