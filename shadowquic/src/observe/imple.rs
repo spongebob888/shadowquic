@@ -4,13 +4,7 @@ use portable_atomic::{AtomicU64, Ordering};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use std::{
-    collections::HashMap,
-    io::{self, IoSlice},
-    net::SocketAddr,
-    pin::Pin,
-    sync::{Arc, RwLock, Weak},
-    task::{Context, Poll},
-    time::{Duration, Instant},
+    collections::HashMap, io::{self, IoSlice}, net::SocketAddr, pin::Pin, sync::{Arc, OnceLock, RwLock, Weak}, task::{Context, Poll}, time::{Duration, Instant},
 };
 
 use async_trait::async_trait;
@@ -259,11 +253,8 @@ pub struct TrackedSendStats {
     pub dst: RwLock<SocksAddr>,
     /// Filled once the dispatcher has selected an outbound.
     pub outbound: String,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "metadata retained for scoreboard consumers")
-    )]
-    pub created: Instant,
+
+    pub first_send: OnceLock<Instant>,
 }
 
 impl TrackedSendStats {
@@ -272,7 +263,7 @@ impl TrackedSendStats {
             bytes_send: AtomicU64::new(0),
             dst: RwLock::new(dst),
             outbound,
-            created: Instant::now(),
+            first_send: OnceLock::new()
         }
     }
 }
@@ -284,6 +275,7 @@ pub struct TrackedRecvStats {
         expect(dead_code, reason = "metadata retained for scoreboard consumers")
     )]
     pub src_addr: Option<SocketAddr>,
+    pub created: Instant,
 }
 
 impl TrackedRecvStats {
@@ -291,6 +283,7 @@ impl TrackedRecvStats {
         Self {
             bytes_recv: AtomicU64::new(0),
             src_addr,
+            created: Instant::now(),
         }
     }
 }
@@ -369,6 +362,7 @@ impl AsyncWrite for TrackedTcp {
             self.tracked_send_local
                 .bytes_send
                 .fetch_add(*n as u64, Ordering::Relaxed);
+            self.tracked_send_local.first_send.get_or_init(||Instant::now());
         }
 
         poll
@@ -452,6 +446,7 @@ impl UdpSend for TrackedUdpSend {
         self.tracked_send_local
             .bytes_send
             .fetch_add(len as u64, Ordering::Relaxed);
+        self.tracked_send_local.first_send.get_or_init(||Instant::now());
         Ok(len)
     }
 }
