@@ -10,6 +10,7 @@ use bytes::Bytes;
 pub use config::TunServerCfg;
 use std::{io, sync::Mutex};
 use tokio::{sync::mpsc, task::JoinHandle};
+use tracing::Instrument;
 #[cfg(not(target_os = "android"))]
 use tun_rs::DeviceBuilder;
 
@@ -60,35 +61,38 @@ impl TunServer {
         let (request_tx, requests) = mpsc::channel(stack::QUEUE_CAPACITY);
         let (input_tx, input_rx) = mpsc::channel(stack::QUEUE_CAPACITY);
         let (output_tx, mut output_rx) = mpsc::channel::<Vec<u8>>(stack::QUEUE_CAPACITY);
-        let task = tokio::spawn(async move {
-            let read = async {
-                let mut buffer = vec![0; 65535];
-                loop {
-                    let len = device.recv(&mut buffer).await?;
-                    if len == 0 {
-                        return Err(SError::Io(io::Error::from(io::ErrorKind::UnexpectedEof)));
+        let task = tokio::spawn(
+            async move {
+                let read = async {
+                    let mut buffer = vec![0; 65535];
+                    loop {
+                        let len = device.recv(&mut buffer).await?;
+                        if len == 0 {
+                            return Err(SError::Io(io::Error::from(io::ErrorKind::UnexpectedEof)));
+                        }
+                        input_tx
+                            .send(Bytes::copy_from_slice(&buffer[..len]))
+                            .await
+                            .map_err(|_| SError::InboundUnavailable)?;
                     }
-                    input_tx
-                        .send(Bytes::copy_from_slice(&buffer[..len]))
-                        .await
-                        .map_err(|_| SError::InboundUnavailable)?;
-                }
-            };
-            let write = async {
-                while let Some(packet) = output_rx.recv().await {
-                    if device.send(&packet).await? != packet.len() {
-                        return Err(SError::Io(io::Error::from(io::ErrorKind::WriteZero)));
+                };
+                let write = async {
+                    while let Some(packet) = output_rx.recv().await {
+                        if device.send(&packet).await? != packet.len() {
+                            return Err(SError::Io(io::Error::from(io::ErrorKind::WriteZero)));
+                        }
                     }
+                    Err(SError::InboundUnavailable)
+                };
+                let stack = stack::run(cfg, input_rx, output_tx, request_tx);
+                let result: Result<((), (), ()), SError> = tokio::try_join!(read, write, stack);
+                if let Err(error) = &result {
+                    tracing::error!(%error, "TUN packet loop stopped");
                 }
-                Err(SError::InboundUnavailable)
-            };
-            let stack = stack::run(cfg, input_rx, output_tx, request_tx);
-            let result: Result<((), (), ()), SError> = tokio::try_join!(read, write, stack);
-            if let Err(error) = &result {
-                tracing::error!(%error, "TUN packet loop stopped");
+                result.map(|_| ())
             }
-            result.map(|_| ())
-        });
+            .in_current_span(),
+        );
         Ok(Self {
             name,
             requests,
@@ -112,6 +116,7 @@ impl Inbound for TunServer {
                 Err(error) if error.is_cancelled() => {}
                 Err(error) => return Err(SError::Io(io::Error::other(error))),
             }
+            tracing::info!(name = %self.name, "TUN inbound stopped");
         }
         Ok(())
     }

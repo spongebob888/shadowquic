@@ -343,6 +343,7 @@ impl Stack {
                     if self.requests.try_send(request).is_err() {
                         return;
                     }
+                    tracing::info!(src = %client, dst = %destination, "accepted TUN UDP session");
                     self.udp.insert(
                         client,
                         UdpFlow {
@@ -381,7 +382,7 @@ impl Stack {
 
     fn bridges(&mut self, cx: &mut Context<'_>) -> Poll<()> {
         let mut progress = false;
-        for flow in self.tcp.values_mut() {
+        for (key, flow) in &mut self.tcp {
             let socket = self.sockets.get_mut::<tcp::Socket>(flow.handle);
             if matches!(
                 socket.state(),
@@ -390,6 +391,12 @@ impl Stack {
             {
                 if self.requests.try_send(request).is_err() {
                     socket.abort();
+                } else {
+                    tracing::info!(
+                        src = %key.client,
+                        dst = %key.destination,
+                        "accepted TUN TCP session"
+                    );
                 }
                 progress = true;
             }

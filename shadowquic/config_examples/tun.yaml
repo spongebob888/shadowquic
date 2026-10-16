@@ -27,3 +27,4 @@ router:
       end
       return ctx.preferred_outbound or "direct"
     end
+log-level: trace
