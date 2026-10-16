@@ -1,4 +1,6 @@
-use std::{net::SocketAddr, time::Duration};
+mod common;
+
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use shadowquic::{
@@ -99,7 +101,7 @@ async fn shadowquic_user_api_add_remove_and_permissions() {
 
 #[tokio::test]
 async fn shadowquic_user_api_get_stats_and_kill_user_conns() {
-    let mut server = ShadowQuicServer::new(ShadowQuicServerCfg {
+    let server = ShadowQuicServer::new(ShadowQuicServerCfg {
         tag: "inbound".into(),
         bind_addr: STATS_SERVER_ADDR.parse().unwrap(),
         users: vec![
@@ -126,8 +128,15 @@ async fn shadowquic_user_api_get_stats_and_kill_user_conns() {
     .await
     .unwrap();
 
-    server.init().await.expect("server init failed");
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let (request_sender, mut requests) = tokio::sync::mpsc::channel(1);
+    let manager = Manager::single(
+        Box::new(server),
+        Arc::new(common::CaptureOutbound(request_sender)),
+    );
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let manager_task = tokio::spawn(manager.run_until(async {
+        let _ = stopped.await;
+    }));
 
     let admin = client_at(STATS_SERVER_ADDR, "admin", "admin-pass");
     let bob = client_at(STATS_SERVER_ADDR, "bob", "bob-pass");
@@ -138,10 +147,10 @@ async fn shadowquic_user_api_get_stats_and_kill_user_conns() {
     )
     .await
     .expect("tcp request should open");
-    let accepted_req = tokio::time::timeout(Duration::from_secs(2), server.accept())
+    let accepted_req = tokio::time::timeout(Duration::from_secs(2), requests.recv())
         .await
-        .expect("server should observe tcp request")
-        .expect("server accept should succeed");
+        .expect("manager should dispatch tcp request")
+        .expect("request channel should stay open");
 
     let stats = admin
         .get_user_stats("bob")
@@ -194,6 +203,13 @@ async fn shadowquic_user_api_get_stats_and_kill_user_conns() {
         .expect("admin should get bob stats after killing conns");
     assert_eq!(stats.tcp_conns, 0);
     assert_eq!(stats.udp_conns, 0);
+
+    stop.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(2), manager_task)
+        .await
+        .expect("manager should shut down")
+        .expect("manager task should succeed")
+        .expect("manager should succeed");
 }
 
 #[tokio::test]

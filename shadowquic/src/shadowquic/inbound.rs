@@ -275,8 +275,9 @@ impl Inbound for ShadowQuicServer {
             let context = req.user_context_mut();
             context.inbound_tag = config.tag.clone();
             context.preferred_outbound = config.default_outbound.clone();
+            context.observer = Arc::downgrade(&self.observer);
         }
-        Ok(self.observer.wrap_request(req).await)
+        Ok(req)
     }
     /// Init background job for accepting connection
     async fn init(&self) -> Result<(), SError> {

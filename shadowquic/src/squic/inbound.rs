@@ -111,6 +111,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                             conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),
                             conn_id: self.inner.conn.peer_id(),
                         }),
+                        ..Default::default()
                     },
                 };
                 req_send
@@ -141,6 +142,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                                 conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),
                                 conn_id: self.inner.conn.peer_id(),
                             }),
+                            ..Default::default()
                         },
                     }
                     .wait_first_packet()
