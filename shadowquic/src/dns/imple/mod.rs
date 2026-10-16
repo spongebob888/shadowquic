@@ -9,7 +9,19 @@ mod tests;
 pub use cache::DnsCache;
 pub use fakeip::FakeIp;
 pub(crate) use integration::ResolvingOutbound;
-#[cfg(any(test, all(feature = "tproxy", target_os = "linux")))]
+#[cfg(any(
+    test,
+    all(feature = "tproxy", target_os = "linux"),
+    all(
+        feature = "tun",
+        any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "android"
+        )
+    )
+))]
 pub(crate) use integration::RestoringInbound;
 
 use async_trait::async_trait;
@@ -25,6 +37,7 @@ use tokio::{
     sync::mpsc,
     task::JoinHandle,
 };
+use tracing::instrument;
 
 use crate::{
     AnyTcp, DnsQuery, Inbound, Outbound, ProxyRequest, TcpSession, TcpTrait, UdpSession,
@@ -410,8 +423,7 @@ impl Resolver {
     async fn answer(&self, query: &[u8]) -> Result<Vec<u8>> {
         match self.exchange(query).await {
             Ok(reply) => Ok(reply),
-            Err(error) => {
-                tracing::debug!(%error, "DNS exchange failed");
+            Err(_) => {
                 let query = parse_query(query)?;
                 let mut reply = reply_for(query);
                 *reply.rcode_mut() = RCODE::ServerFailure;
@@ -429,6 +441,7 @@ impl Resolver {
                 return Err(dns_error("local resolver has no upstream"));
             }
         };
+        tracing::debug!(%dst, tcp, "sending DNS query upstream");
         let dst: SocksAddr = dst.into();
         let user_context = UserContext {
             dns_query: parse_query(query)?
@@ -537,11 +550,21 @@ impl Resolver {
 
 #[async_trait]
 impl DnsService for Resolver {
+    #[instrument(
+        name = "dns",
+        skip_all,
+        fields(tag = %self.tag, domain = tracing::field::Empty),
+        err(level = "debug")
+    )]
     async fn exchange(&self, query: &[u8]) -> Result<Vec<u8>> {
         let packet = parse_query(query)?;
+        let question = &packet.questions[0];
+        tracing::Span::current().record("domain", tracing::field::display(&question.qname));
+        tracing::info!(record_type = ?question.qtype, "received DNS query");
         if !self.bypass_cache
             && let Some(cached) = self.cache.get(query)?
         {
+            tracing::trace!("DNS cache hit");
             return Ok(cached);
         }
         let reply = tokio::time::timeout(TIMEOUT, async {
@@ -554,6 +577,7 @@ impl DnsService for Resolver {
                         .map_err(dns_error)?
                         .has_flags(PacketFlag::TRUNCATION)
                     {
+                        tracing::debug!("truncated DNS response, retrying over TCP");
                         self.upstream(query, true).await
                     } else {
                         Ok(reply)
@@ -564,6 +588,7 @@ impl DnsService for Resolver {
         .await
         .map_err(|_| dns_error("query timed out"))??;
         let packet = validate_response(query, &reply)?;
+        tracing::debug!(rcode = ?packet.rcode(), answers = packet.answers.len(), "received DNS response");
         if !self.bypass_cache {
             self.cache.insert(query, packet);
         }

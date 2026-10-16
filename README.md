@@ -7,6 +7,7 @@
  - QUIC based 0-RTT
  - [User Management](./document/api.md)
  - [DNS services](./document/dns.md)
+ - [TUN inbound](./document/tun.md)
  - SNI camouflage with any domain (powered by [JLS](https://github.com/JimmyHuang454/JLS))
     - Anti-hijack
     - Resisting active detection

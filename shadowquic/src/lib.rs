@@ -35,6 +35,16 @@ pub mod squic;
 pub mod sunnyquic;
 #[cfg(all(feature = "tproxy", target_os = "linux"))]
 pub mod tproxy;
+#[cfg(all(
+    feature = "tun",
+    any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "windows",
+        target_os = "android"
+    )
+))]
+pub mod tun;
 pub mod utils;
 
 pub use msgs::SDecode;

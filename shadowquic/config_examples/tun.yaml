@@ -1,0 +1,30 @@
+# cargo run --features tun -- -c shadowquic/config_examples/tun.yaml
+# Create routes into this device separately; see document/tun.md.
+inbounds:
+  - tag: tun-in
+    type: tun
+    # name: sq-tun0 # Linux/Windows; on macOS leave unset or use utunN.
+    ipv4: 172.19.0.1/30
+    ipv6: fdfe:dcba:9876::1/126
+    mtu: 1500
+    max-sessions: 1024
+    idle-timeout: 300
+    default-outbound: direct
+dns:
+  - tag: fake
+    type: dns-fakeip
+    bind-addr: 127.0.0.1:1053
+    ipv4-range: 198.18.0.0/15
+    ipv6-range: 2001:0002::/48
+outbounds:
+  - tag: direct
+    type: direct
+router:
+  src: |
+    return function(ctx)
+      if ctx.inbound_tag == "tun-in" and ctx.dst_port == 53 then
+        return "fake"
+      end
+      return ctx.preferred_outbound or "direct"
+    end
+log-level: trace

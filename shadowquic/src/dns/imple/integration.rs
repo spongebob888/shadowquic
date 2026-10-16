@@ -1,7 +1,31 @@
-#[cfg(any(test, all(feature = "tproxy", target_os = "linux")))]
+#[cfg(any(
+    test,
+    all(feature = "tproxy", target_os = "linux"),
+    all(
+        feature = "tun",
+        any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "android"
+        )
+    )
+))]
 use super::FakeIp;
 use super::{DnsService, Result, dns_error};
-#[cfg(any(test, all(feature = "tproxy", target_os = "linux")))]
+#[cfg(any(
+    test,
+    all(feature = "tproxy", target_os = "linux"),
+    all(
+        feature = "tun",
+        any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "android"
+        )
+    )
+))]
 use crate::Inbound;
 use crate::{
     AnyUdpRecv, AnyUdpSend, Outbound, ProxyRequest, UdpRecv, UdpSend,
@@ -124,14 +148,38 @@ impl UdpSend for MappedSend {
     }
 }
 
-/// Wrap only TPROXY inbounds. Both the first routing destination and all later
+/// Wrap transparent TPROXY and TUN inbounds. Both the first routing destination and all later
 /// UDP datagrams become domain names; replies retain their synthetic source IP.
-#[cfg(any(test, all(feature = "tproxy", target_os = "linux")))]
+#[cfg(any(
+    test,
+    all(feature = "tproxy", target_os = "linux"),
+    all(
+        feature = "tun",
+        any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "android"
+        )
+    )
+))]
 pub(crate) struct RestoringInbound {
     pub inner: Box<dyn Inbound>,
     pub fake: Arc<FakeIp>,
 }
-#[cfg(any(test, all(feature = "tproxy", target_os = "linux")))]
+#[cfg(any(
+    test,
+    all(feature = "tproxy", target_os = "linux"),
+    all(
+        feature = "tun",
+        any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "android"
+        )
+    )
+))]
 #[async_trait]
 impl Inbound for RestoringInbound {
     async fn init(&self) -> Result<()> {
@@ -163,13 +211,37 @@ impl Inbound for RestoringInbound {
         Ok(req)
     }
 }
-#[cfg(any(test, all(feature = "tproxy", target_os = "linux")))]
+#[cfg(any(
+    test,
+    all(feature = "tproxy", target_os = "linux"),
+    all(
+        feature = "tun",
+        any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "android"
+        )
+    )
+))]
 struct RestoringRecv {
     inner: AnyUdpRecv,
     fake: Arc<FakeIp>,
     mapping: Mapping,
 }
-#[cfg(any(test, all(feature = "tproxy", target_os = "linux")))]
+#[cfg(any(
+    test,
+    all(feature = "tproxy", target_os = "linux"),
+    all(
+        feature = "tun",
+        any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "android"
+        )
+    )
+))]
 #[async_trait]
 impl UdpRecv for RestoringRecv {
     async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr)> {

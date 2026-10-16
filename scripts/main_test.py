@@ -7,3 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "test_suite"))
 import basic_test
 import test_detection
 import test_tproxy
+
+import test_tun
+
+test_tun.main()
