@@ -128,3 +128,22 @@ the TUN device; its test routes and firewall rules are confined to that containe
 To reuse a static Linux binary already built with these features, set
 `SHADOWQUIC_TUN_TEST_BINARY` to its host path. The runner also participates in
 `scripts/main_test.py`, alongside the TPROXY integration test.
+
+To measure throughput, run the opt-in TUN-to-direct echo benchmark:
+
+```sh
+python3 scripts/test_suite/test_tun.py --throughput --duration 5 --udp-mbps 100
+```
+
+This uses the same isolated Docker runner and binary override. It measures IPv4
+and IPv6 TCP and UDP through kernel sockets, TUN, the direct outbound, and local
+streaming echo servers. Proxy-only DNAT prevents outbound routing loops. TCP
+sends and receives concurrently, verifies the payload, and requires every byte
+to return after a half-close. UDP uses sequence numbers and verifies each reply;
+`--udp-size` sets its payload size (default 1200 bytes, maximum 1452 for the IPv6
+MTU). Results include received payload Mbps, byte counts, and UDP packet loss,
+followed by JSON output. Rates count echoed bytes once, although echo traffic
+traverses the proxy in both directions. UDP's idle drain grace is excluded from
+the measurement. There is no speed threshold; compare runs on the same machine.
+The Python client and echo servers also consume CPU and can limit measured rates.
+The benchmark runs separately from the default correctness suite.
