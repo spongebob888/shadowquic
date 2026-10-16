@@ -37,7 +37,12 @@ pub mod sunnyquic;
 pub mod tproxy;
 #[cfg(all(
     feature = "tun",
-    any(target_os = "linux", target_os = "macos", target_os = "windows")
+    any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "windows",
+        target_os = "android"
+    )
 ))]
 pub mod tun;
 pub mod utils;

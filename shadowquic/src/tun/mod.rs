@@ -10,6 +10,7 @@ use bytes::Bytes;
 pub use config::TunServerCfg;
 use std::{io, sync::Mutex};
 use tokio::{sync::mpsc, task::JoinHandle};
+#[cfg(not(target_os = "android"))]
 use tun_rs::DeviceBuilder;
 
 use crate::{Inbound, ProxyRequest, error::SError};
@@ -23,21 +24,39 @@ pub struct TunServer {
 impl TunServer {
     pub async fn new(cfg: TunServerCfg) -> Result<Self, SError> {
         cfg.validate()?;
-        let mut builder = DeviceBuilder::new()
-            .ipv4(cfg.ipv4.addr(), cfg.ipv4.prefix_len(), None)
-            .ipv6(cfg.ipv6.addr(), cfg.ipv6.prefix_len())
-            .mtu(cfg.mtu);
-        if let Some(name) = &cfg.name {
-            builder = builder.name(name);
-        }
-        // Routes belong to the user; creating the adapter must not redirect the
-        // process's own upstream traffic into itself.
-        #[cfg(target_os = "macos")]
-        {
-            builder = builder.associate_route(false);
-        }
-        let device = builder.build_async()?;
-        let name = device.name()?;
+        #[cfg(not(target_os = "android"))]
+        let (device, name) = {
+            let mut builder = DeviceBuilder::new()
+                .ipv4(cfg.ipv4.addr(), cfg.ipv4.prefix_len(), None)
+                .ipv6(cfg.ipv6.addr(), cfg.ipv6.prefix_len())
+                .mtu(cfg.mtu);
+            if let Some(name) = &cfg.name {
+                builder = builder.name(name);
+            }
+            // Routes belong to the user; creating the adapter must not redirect the
+            // process's own upstream traffic into itself.
+            #[cfg(target_os = "macos")]
+            {
+                builder = builder.associate_route(false);
+            }
+            let device = builder.build_async()?;
+            let name = device.name()?;
+            (device, name)
+        };
+        #[cfg(target_os = "android")]
+        let (device, name) = {
+            use std::os::fd::IntoRawFd;
+            let fd = cfg
+                .android_fd
+                .as_ref()
+                .ok_or_else(|| {
+                    SError::InvalidConfig("Android TUN requires a VpnService descriptor".into())
+                })?
+                .try_clone()?;
+            // from_fd owns this independent duplicate, even on setup failure.
+            let device = unsafe { tun_rs::AsyncDevice::from_fd(fd.into_raw_fd())? };
+            (device, "android-vpn".to_owned())
+        };
         let (request_tx, requests) = mpsc::channel(stack::QUEUE_CAPACITY);
         let (input_tx, input_rx) = mpsc::channel(stack::QUEUE_CAPACITY);
         let (output_tx, mut output_rx) = mpsc::channel::<Vec<u8>>(stack::QUEUE_CAPACITY);

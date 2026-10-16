@@ -552,6 +552,46 @@ async fn unmapped_fake_destinations_are_rejected_before_routing() {
     assert!(matches!(result, Err(SError::DnsError(_))));
 }
 
+#[cfg(target_os = "android")]
+#[tokio::test]
+async fn android_tun_requires_a_descriptor_from_the_embedding_application() {
+    let cfg = config();
+    assert!(cfg.android_fd.is_none());
+    let error = super::TunServer::new(cfg).await.err().unwrap();
+    assert!(error.to_string().contains("VpnService descriptor"));
+    assert!(serde_saphyr::from_str::<TunServerCfg>("tag: tun\nandroid-fd: 123\n").is_err());
+}
+
+#[cfg(target_os = "android")]
+#[tokio::test]
+async fn android_tun_preserves_the_callers_descriptor_on_shutdown() {
+    use std::{os::fd::OwnedFd, os::unix::net::UnixDatagram, sync::Arc};
+
+    let (application, device) = UnixDatagram::pair().unwrap();
+    let fd = Arc::new(OwnedFd::from(device));
+    let mut cfg = config();
+    cfg.android_fd = Some(fd.clone());
+    let mut server = super::TunServer::new(cfg).await.unwrap();
+    let src: SocketAddr = "172.19.0.2:45000".parse().unwrap();
+    let dst: SocketAddr = "203.0.113.1:443".parse().unwrap();
+    application
+        .send(&udp_packet(src, dst, b"android", 1500).unwrap())
+        .unwrap();
+    let request = tokio::time::timeout(Duration::from_secs(2), server.accept())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(&request, ProxyRequest::Udp(_)));
+    assert_eq!(*request.dst(), dst.into());
+    assert_eq!(*request.src_addr(), Some(src));
+    server.shutdown().await.unwrap();
+    server.shutdown().await.unwrap();
+    drop(server);
+    assert_eq!(Arc::strong_count(&fd), 1);
+    assert!(fd.try_clone().is_ok());
+}
+
+#[cfg(not(target_os = "android"))]
 #[tokio::test]
 #[ignore = "requires permission to create a kernel TUN adapter (Linux CAP_NET_ADMIN/root; administrator on other platforms)"]
 async fn kernel_tun_device_can_start_and_shutdown() {

@@ -14,7 +14,12 @@ pub(crate) use integration::ResolvingOutbound;
     all(feature = "tproxy", target_os = "linux"),
     all(
         feature = "tun",
-        any(target_os = "linux", target_os = "macos", target_os = "windows")
+        any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "android"
+        )
     )
 ))]
 pub(crate) use integration::RestoringInbound;

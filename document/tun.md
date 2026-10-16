@@ -4,9 +4,10 @@ The `tun` inbound receives IPv4 and IPv6 TCP/UDP packets through a layer-3 TUN
 adapter, using [tun-rs](https://docs.rs/tun-rs/2/tun_rs/) for device I/O and
 [smoltcp](https://docs.rs/smoltcp/0.12/smoltcp/) for the TCP stack and IP/UDP packet
 handling. It is enabled by the opt-in `tun` Cargo feature and available on Linux,
-macOS, and Windows. Build with `cargo build --features tun`. Creating an adapter requires the
-platform's network administration permissions. Windows also needs the Wintun
-runtime required by tun-rs.
+macOS, Windows, and Android. Build with `cargo build --features tun`. Creating a
+desktop adapter requires the platform's network administration permissions.
+Windows also needs the Wintun runtime required by tun-rs. Android uses an
+interface established by an embedding application's `VpnService`.
 
 ```yaml
 inbounds:
@@ -38,6 +39,24 @@ Requests carry `tag`, `default-outbound`, the client's source address, and the
 original destination into the normal router and outbound path. `default-outbound`
 is optional and behaves like that setting on other inbounds. Outbound protocols
 can carry TUN requests without special configuration.
+
+## Android embedding
+
+Configure addresses, MTU, routes, DNS, and upstream exclusions through Android's
+`VpnService.Builder`, then establish the interface after obtaining VPN consent.
+Before calling `Config::build_manager()` or `TunServer::new()`, set the TUN
+configuration's Android-only `android_fd` field to `Some(Arc<OwnedFd>)` holding
+the interface descriptor. This field is skipped by YAML deserialization; a file
+cannot supply a process-local descriptor. Starting without it returns a config
+error. The desktop `name` setting is ignored on Android.
+
+The inbound duplicates the supplied descriptor and owns that duplicate until
+shutdown; the caller retains ownership of its original descriptor. Android
+does not require root access for this path. The embedding application must
+keep its upstream traffic outside the VPN, for example by calling
+`addDisallowedApplication(packageName)` before `establish()`. The library does
+not request VPN consent or configure Android routes itself. Fake-IP restoration
+works on Android when `dns-server` is enabled.
 
 ## Fake IP and DNS interception
 

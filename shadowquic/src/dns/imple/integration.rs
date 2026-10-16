@@ -3,7 +3,12 @@
     all(feature = "tproxy", target_os = "linux"),
     all(
         feature = "tun",
-        any(target_os = "linux", target_os = "macos", target_os = "windows")
+        any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "android"
+        )
     )
 ))]
 use super::FakeIp;
@@ -13,7 +18,12 @@ use super::{DnsService, Result, dns_error};
     all(feature = "tproxy", target_os = "linux"),
     all(
         feature = "tun",
-        any(target_os = "linux", target_os = "macos", target_os = "windows")
+        any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "android"
+        )
     )
 ))]
 use crate::Inbound;
@@ -145,7 +155,12 @@ impl UdpSend for MappedSend {
     all(feature = "tproxy", target_os = "linux"),
     all(
         feature = "tun",
-        any(target_os = "linux", target_os = "macos", target_os = "windows")
+        any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "android"
+        )
     )
 ))]
 pub(crate) struct RestoringInbound {
@@ -157,7 +172,12 @@ pub(crate) struct RestoringInbound {
     all(feature = "tproxy", target_os = "linux"),
     all(
         feature = "tun",
-        any(target_os = "linux", target_os = "macos", target_os = "windows")
+        any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "android"
+        )
     )
 ))]
 #[async_trait]
@@ -196,7 +216,12 @@ impl Inbound for RestoringInbound {
     all(feature = "tproxy", target_os = "linux"),
     all(
         feature = "tun",
-        any(target_os = "linux", target_os = "macos", target_os = "windows")
+        any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "android"
+        )
     )
 ))]
 struct RestoringRecv {
@@ -209,7 +234,12 @@ struct RestoringRecv {
     all(feature = "tproxy", target_os = "linux"),
     all(
         feature = "tun",
-        any(target_os = "linux", target_os = "macos", target_os = "windows")
+        any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "android"
+        )
     )
 ))]
 #[async_trait]

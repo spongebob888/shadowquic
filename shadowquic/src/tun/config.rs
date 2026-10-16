@@ -24,6 +24,10 @@ fn default_idle_timeout() -> u64 {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct TunServerCfg {
     pub tag: String,
+    /// Android VPN descriptor, supplied by the embedding application, never YAML.
+    #[cfg(target_os = "android")]
+    #[serde(skip)]
+    pub android_fd: Option<std::sync::Arc<std::os::fd::OwnedFd>>,
     #[serde(default)]
     pub default_outbound: Option<String>,
     /// Leave unset to let the OS choose a name (utunN on macOS).

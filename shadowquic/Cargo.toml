@@ -120,7 +120,7 @@ ipnet = { version = "2", features = ["serde"], optional = true }
 smoltcp = { version = "0.12", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-tcp"], optional = true }
 
 
-[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", target_os = "android"))'.dependencies]
 tun-rs = { version = "2", features = ["async_tokio"], optional = true }
 
 [target.'cfg(target_os="linux")'.dependencies]

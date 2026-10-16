@@ -31,7 +31,12 @@ pub use crate::dns::config::{
 use crate::tproxy::inbound::TproxyServer;
 #[cfg(all(
     feature = "tun",
-    any(target_os = "linux", target_os = "macos", target_os = "windows")
+    any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "windows",
+        target_os = "android"
+    )
 ))]
 pub use crate::tun::TunServerCfg;
 
@@ -178,7 +183,12 @@ impl Config {
         for inbound in &self.inbounds {
             #[cfg(all(
                 feature = "tun",
-                any(target_os = "linux", target_os = "macos", target_os = "windows")
+                any(
+                    target_os = "linux",
+                    target_os = "macos",
+                    target_os = "windows",
+                    target_os = "android"
+                )
             ))]
             if let InboundCfg::Tun(cfg) = inbound {
                 cfg.validate()?;
@@ -253,7 +263,12 @@ impl Config {
                 all(feature = "tproxy", target_os = "linux"),
                 all(
                     feature = "tun",
-                    any(target_os = "linux", target_os = "macos", target_os = "windows")
+                    any(
+                        target_os = "linux",
+                        target_os = "macos",
+                        target_os = "windows",
+                        target_os = "android"
+                    )
                 )
             )
         ))]
@@ -266,7 +281,12 @@ impl Config {
                 all(feature = "tproxy", target_os = "linux"),
                 all(
                     feature = "tun",
-                    any(target_os = "linux", target_os = "macos", target_os = "windows")
+                    any(
+                        target_os = "linux",
+                        target_os = "macos",
+                        target_os = "windows",
+                        target_os = "android"
+                    )
                 )
             ))]
             if server.resolver.fake_ip.is_some() {
@@ -333,7 +353,12 @@ impl Config {
                     all(feature = "tproxy", target_os = "linux"),
                     all(
                         feature = "tun",
-                        any(target_os = "linux", target_os = "macos", target_os = "windows")
+                        any(
+                            target_os = "linux",
+                            target_os = "macos",
+                            target_os = "windows",
+                            target_os = "android"
+                        )
                     )
                 )
             ))]
@@ -345,7 +370,12 @@ impl Config {
                     all(feature = "tproxy", target_os = "linux"),
                     all(
                         feature = "tun",
-                        any(target_os = "linux", target_os = "macos", target_os = "windows")
+                        any(
+                            target_os = "linux",
+                            target_os = "macos",
+                            target_os = "windows",
+                            target_os = "android"
+                        )
                     )
                 )
             ))]
@@ -386,7 +416,12 @@ impl Config {
 pub enum InboundCfg {
     #[cfg(all(
         feature = "tun",
-        any(target_os = "linux", target_os = "macos", target_os = "windows")
+        any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "android"
+        )
     ))]
     Tun(TunServerCfg),
     Socks(SocksServerCfg),
@@ -407,7 +442,12 @@ impl InboundCfg {
             all(feature = "tproxy", target_os = "linux"),
             all(
                 feature = "tun",
-                any(target_os = "linux", target_os = "macos", target_os = "windows")
+                any(
+                    target_os = "linux",
+                    target_os = "macos",
+                    target_os = "windows",
+                    target_os = "android"
+                )
             )
         )
     ))]
@@ -417,7 +457,12 @@ impl InboundCfg {
             Self::Tproxy(_) => true,
             #[cfg(all(
                 feature = "tun",
-                any(target_os = "linux", target_os = "macos", target_os = "windows")
+                any(
+                    target_os = "linux",
+                    target_os = "macos",
+                    target_os = "windows",
+                    target_os = "android"
+                )
             ))]
             Self::Tun(_) => true,
             _ => false,
@@ -428,7 +473,12 @@ impl InboundCfg {
         match self {
             #[cfg(all(
                 feature = "tun",
-                any(target_os = "linux", target_os = "macos", target_os = "windows")
+                any(
+                    target_os = "linux",
+                    target_os = "macos",
+                    target_os = "windows",
+                    target_os = "android"
+                )
             ))]
             Self::Tun(cfg) => &cfg.tag,
             Self::Socks(cfg) => &cfg.tag,
@@ -447,7 +497,12 @@ impl InboundCfg {
         match self {
             #[cfg(all(
                 feature = "tun",
-                any(target_os = "linux", target_os = "macos", target_os = "windows")
+                any(
+                    target_os = "linux",
+                    target_os = "macos",
+                    target_os = "windows",
+                    target_os = "android"
+                )
             ))]
             Self::Tun(cfg) => cfg.default_outbound.as_deref(),
             Self::Socks(cfg) => cfg.default_outbound.as_deref(),
@@ -464,7 +519,12 @@ impl InboundCfg {
         let r: Box<dyn Inbound> = match self {
             #[cfg(all(
                 feature = "tun",
-                any(target_os = "linux", target_os = "macos", target_os = "windows")
+                any(
+                    target_os = "linux",
+                    target_os = "macos",
+                    target_os = "windows",
+                    target_os = "android"
+                )
             ))]
             Self::Tun(cfg) => Box::new(crate::tun::TunServer::new(cfg).await?),
             InboundCfg::Socks(cfg) => Box::new(SocksServer::new(cfg).await?),
