@@ -857,6 +857,61 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#max-concurrent-bidi-streams" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>max-concurrent-bidi-streams</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#max-concurrent-uni-streams" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>max-concurrent-uni-streams</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stream-receive-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>stream-receive-window</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#receive-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>receive-window</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#send-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>send-window</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#dns" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -2074,6 +2129,61 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#max-concurrent-bidi-streams" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>max-concurrent-bidi-streams</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#max-concurrent-uni-streams" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>max-concurrent-uni-streams</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stream-receive-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>stream-receive-window</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#receive-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>receive-window</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#send-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>send-window</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#dns" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -2362,6 +2472,51 @@
 </ul>
 <p>Inactivity timeout after either TCP source reaches EOF, in milliseconds.
 Defaults to 60 seconds. Zero disables the timeout.</p>
+<h3 id="max-concurrent-bidi-streams"><code>max-concurrent-bidi-streams</code><a class="headerlink" href="#max-concurrent-bidi-streams" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>u32</code></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <code>crate::config::default_outbound_max_streams()</code></li>
+</ul>
+<p>Streams the peer may hold open concurrently. Each proxied request and
+each UDP association holds one for its whole lifetime, so this is also
+the ceiling on concurrent sessions over a single connection; a peer that
+reaches it waits in <code>open_bi</code> until this side frees a stream. Worst-case
+buffering is this multiplied by <code>stream-receive-window</code>. Default 500.</p>
+<h3 id="max-concurrent-uni-streams"><code>max-concurrent-uni-streams</code><a class="headerlink" href="#max-concurrent-uni-streams" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>u32</code></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <code>crate::config::default_outbound_max_streams()</code></li>
+</ul>
+<p>Unidirectional streams the peer may hold open concurrently. With
+<code>over-stream</code> on, the peer's UDP replies travel over these. Default 500.</p>
+<h3 id="stream-receive-window"><code>stream-receive-window</code><a class="headerlink" href="#stream-receive-window" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>u64</code></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <code>crate::config::default_stream_receive_window()</code></li>
+</ul>
+<p>Bytes the peer may have in flight on one stream, and therefore the most
+this side can be made to buffer for it. The default is a 400 Mbit/s
+bandwidth-delay product over a 100 ms path. Default 5000000.</p>
+<h3 id="receive-window"><code>receive-window</code><a class="headerlink" href="#receive-window" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>u64</code> <em>(optional)</em></li>
+<li><strong>Required:</strong> no</li>
+</ul>
+<p>Bytes the peer may have in flight across every stream at once. Left out,
+the transport's own default is kept, which is unlimited — so the only
+bound on buffering is <code>max-concurrent-bidi-streams</code> multiplied by
+<code>stream-receive-window</code>. Setting it caps that independently of the
+stream count.</p>
+<h3 id="send-window"><code>send-window</code><a class="headerlink" href="#send-window" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>u64</code> <em>(optional)</em></li>
+<li><strong>Required:</strong> no</li>
+</ul>
+<p>Bytes this side may have in flight before it stalls waiting for
+acknowledgement. Left out, the transport's own default is kept.</p>
 <h3 id="dns"><code>dns</code><a class="headerlink" href="#dns" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Type:</strong> <code>string</code> <em>(optional)</em></li>
