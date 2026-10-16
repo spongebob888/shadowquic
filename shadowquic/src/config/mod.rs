@@ -593,7 +593,7 @@ pub struct SocketOpt {
     /// Example:
     /// ```yaml
     /// # by ip address
-    /// bind-interface: "127.0.0.1"
+    /// bind-interface: "127.0.0.1:0"
     /// # by interface name
     /// bind-interface: "eth0"
     /// ```
@@ -724,7 +724,7 @@ impl PartialEq for CongestionControl {
 /// ```yaml
 /// tag: proxy
 /// dns-strategy: prefer-ipv4 # or prefer-ipv6, ipv4-only, ipv6-only
-/// bind-interface: "127.0.0.1" # optional, by IP address or interface name
+/// bind-interface: "127.0.0.1:0" # optional, by IP address or interface name
 /// fw-mark: 1234 # optional, Linux fwmark
 /// ```
 #[derive(Deserialize, Clone, Debug)]
