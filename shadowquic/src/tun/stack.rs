@@ -36,8 +36,8 @@ use crate::{
     msgs::socks5::SocksAddr,
 };
 
-pub(super) const QUEUE_CAPACITY: usize = 256;
-const TCP_BUFFER_SIZE: usize = 65536;
+pub(super) const QUEUE_CAPACITY: usize = 64;
+const TCP_BUFFER_SIZE: usize = 5000;
 
 #[derive(Default)]
 pub(super) struct PacketDevice {
