@@ -16,11 +16,12 @@ use std::{
 
 use bytes::{BufMut, Bytes, BytesMut};
 use tokio::{
-    io::{AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::{
         Mutex, RwLock, SetOnce,
         watch::{Receiver, Sender, channel},
     },
+    task::JoinSet,
 };
 use tracing::{Instrument, Level, debug, error, event, info, trace};
 
@@ -95,6 +96,10 @@ impl<T: QuicConnection> Deref for SQConn<T> {
 pub(crate) struct NotifyBuffer {
     pub(crate) notify: Sender<()>,
     pub(crate) buffer: Vec<Bytes>,
+    /// Set when the entry was created by a datagram whose control header had
+    /// not arrived yet. Once it expires and nothing waits for it, the receive
+    /// loop releases it.
+    pub(crate) expires_at: Option<tokio::time::Instant>,
 }
 
 // Use watch channel here. Notify is not suitable here
@@ -130,6 +135,7 @@ where
                     vacant_entry.insert(Err(NotifyBuffer {
                         notify: s,
                         buffer: Vec::new(),
+                        expires_at: None,
                     }));
                     Err(r)
                 }
@@ -162,6 +168,42 @@ where
                 Ok(ret)
             }
         }
+    }
+    /// Drop a pending id that nobody waits for and whose datagrams are already
+    /// buffered, without waiting for the store lock. Returns false when the
+    /// lock was busy, so the caller can arrange the cleanup elsewhere.
+    fn try_remove_unwatched_pending(&self, id: u16) -> bool {
+        let Ok(mut inner) = self.inner.try_write() else {
+            return false;
+        };
+        remove_unwatched_pending_locked(&mut inner, id);
+        true
+    }
+
+    /// Release pending entries whose control header never arrived, so a peer
+    /// that sends one datagram per id and registers none of them cannot hold
+    /// the id budget for the life of the connection. Entries a stream waits on
+    /// are left alone: that waiter has its own deadline.
+    fn remove_expired_pending(&self, now: tokio::time::Instant) {
+        let Ok(mut inner) = self.inner.try_write() else {
+            // A busy store is fine: the next sweep picks these up.
+            return;
+        };
+        inner.retain(|_, val| match val {
+            Ok(_) => true,
+            Err(pending) => {
+                !pending.expires_at.is_some_and(|deadline| now >= deadline)
+                    || pending.notify.receiver_count() > 0
+            }
+        });
+    }
+
+    /// The same cleanup, waiting for the store lock if it has to. Only used as
+    /// the fallback of [`Self::try_remove_unwatched_pending`], so a busy store
+    /// cannot leave an orphan behind for the life of the connection.
+    async fn remove_unwatched_pending(&self, id: u16) {
+        let mut inner = self.inner.write().await;
+        remove_unwatched_pending_locked(&mut inner, id);
     }
     #[allow(dead_code)]
     async fn store_socket(&self, id: u16, val: T) -> Option<Vec<Bytes>> {
@@ -212,34 +254,98 @@ where
     }
 }
 
+/// Hand one datagram to the association's local socket without waiting for the
+/// consumer to make room.
+///
+/// The consumer is another task and can stop draining, and waiting for it —
+/// however briefly — parks the connection's receive loop on this one
+/// association. A datagram that cannot be taken right now is dropped instead,
+/// which is what UDP does under pressure anyway. The send is polled once: an
+/// mpsc sender completes immediately when it has room.
+async fn deliver(socket: AnyUdpSend, packet: Bytes, addr: SocksAddr) -> SResult<()> {
+    match tokio::time::timeout(Duration::ZERO, socket.send_to(packet, addr)).await {
+        Ok(result) => {
+            result?;
+            Ok(())
+        }
+        Err(_) => Err(SError::ChannelError(
+            "local udp consumer is not draining".into(),
+        )),
+    }
+}
+
+/// How long a datagram-created pending entry waits for its control header
+/// before the receive loop releases it. The header is written just before the
+/// payload, so this only has to cover a reordering window — but it has to
+/// expire, or a peer that never sends the header would hold the id budget for
+/// the life of the connection.
+const PENDING_DATAGRAM_TTL: Duration = Duration::from_secs(10);
+
+/// How often the receive loop releases expired pending entries.
+const PENDING_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Budget checked when the datagram path would start tracking a new id. It
+/// counts every id in the store, registered ones included, so it is
+/// conservative; it is not a cap on how many ids a connection may register,
+/// because refusing a registration would break the association that owns it.
+const MAX_TRACKED_IDS: usize = 4096;
+
+/// Datagrams a single id may buffer before its control header arrives. These
+/// exist to bridge a reordering window, not to store traffic: a peer that keeps
+/// sending for an id it never registers must not grow this without bound.
+const MAX_PENDING_DATAGRAMS_PER_ID: usize = 8;
+
+/// Drop a pending entry for `id` when nothing waits for it. A registered socket
+/// and an entry that still has a subscriber are both left alone.
+fn remove_unwatched_pending_locked<T>(inner: &mut HashMap<u16, IDStoreVal<T>>, id: u16) {
+    if let Entry::Occupied(entry) = inner.entry(id)
+        && let Err(pending) = entry.get()
+        && pending.notify.receiver_count() == 0
+    {
+        let _ = entry.remove();
+    }
+}
+
 impl IDStore {
     async fn feed_datagram(&self, id: u16, packet: Bytes) -> SResult<()> {
-        if let Some(Ok((socket, addr))) = self.inner.read().await.get(&id) {
-            socket.send_to(packet, addr.clone()).await?;
-            Ok(())
-        } else {
-            // Need to recheck
-            // During change from read lock to write lock, hashmap may be modified
-            match self.inner.write().await.entry(id) {
+        // Resolve the target under the lock, then release it before sending:
+        // the send talks to the local consumer, another task that can be slow,
+        // so holding `inner` across it would stall every other id here.
+        let target = {
+            let mut inner = self.inner.write().await;
+            // Read the size before borrowing an entry: a new id may only be
+            // tracked while the connection is under its budget.
+            let has_room = inner.len() < MAX_TRACKED_IDS;
+            match inner.entry(id) {
                 Entry::Occupied(mut entry) => match entry.get_mut() {
-                    Ok((socket, addr)) => {
-                        socket.send_to(packet, addr.clone()).await?;
-                        Ok(())
-                    }
+                    Ok((socket, addr)) => Some((socket.clone(), addr.clone())),
                     Err(notify) => {
-                        notify.buffer.push(packet);
-                        Ok(())
+                        if notify.buffer.len() < MAX_PENDING_DATAGRAMS_PER_ID {
+                            notify.buffer.push(packet.clone());
+                        } else {
+                            debug!("dropping udp datagram for id {}: too many buffered", id);
+                        }
+                        None
                     }
                 },
                 Entry::Vacant(vacant_entry) => {
-                    let (s, _r) = channel(());
-                    vacant_entry.insert(Err(NotifyBuffer {
-                        notify: s,
-                        buffer: vec![packet],
-                    }));
-                    Ok(())
+                    if has_room {
+                        let (s, _r) = channel(());
+                        vacant_entry.insert(Err(NotifyBuffer {
+                            notify: s,
+                            buffer: vec![packet.clone()],
+                            expires_at: Some(tokio::time::Instant::now() + PENDING_DATAGRAM_TTL),
+                        }));
+                    } else {
+                        debug!("dropping udp datagram for id {}: too many tracked ids", id);
+                    }
+                    None
                 }
             }
+        };
+        match target {
+            Some((socket, addr)) => deliver(socket, packet, addr).await,
+            None => Ok(()),
         }
     }
     async fn store_socket_with_prelude(
@@ -247,37 +353,51 @@ impl IDStore {
         id: u16,
         val: (Arc<dyn UdpSend>, SocksAddr),
     ) -> SResult<()> {
-        let mut h = self.inner.write().await;
-        trace!("receiving side alive socket number: {}", h.len());
-        let r = h.get_mut(&id);
-        if let Some(s) = r {
-            match s {
-                Ok(_) => {
-                    error!("id:{} already exists", id);
-                }
-                Err(_) => {
-                    let (socket, addr) = val.clone();
-                    let notify = replace(s, Ok(val));
-                    //let _ = notify.map_err(|x| x.notify_one());
-                    match notify {
-                        Ok(_) => {
-                            panic!("should be notify"); // should never happen
-                        }
-                        Err(n) => {
-                            for bytes in n.buffer {
-                                socket.send_to(bytes, addr.clone()).await?;
+        let (socket, addr) = (val.0.clone(), val.1.clone());
+        // The datagrams that arrived before this header are flushed after the
+        // lock is released: the flush talks to the local consumer, another task
+        // that can be slow, so holding `inner` across it would stall every
+        // other id here.
+        let prelude = {
+            let mut h = self.inner.write().await;
+            trace!("receiving side alive socket number: {}", h.len());
+            match h.get_mut(&id) {
+                Some(s) => match s {
+                    Ok(_) => {
+                        error!("id:{} already exists", id);
+                        Vec::new()
+                    }
+                    Err(_) => {
+                        let notify = replace(s, Ok(val));
+                        //let _ = notify.map_err(|x| x.notify_one());
+                        match notify {
+                            Ok(_) => {
+                                panic!("should be notify"); // should never happen
                             }
-
-                            n.notify.send(()).unwrap_or_else(|_| {
-                                debug!("id:{} notifier without subscriber", id)
-                            });
-                            event!(Level::TRACE, "notify socket id:{}", id);
+                            Err(n) => {
+                                n.notify.send(()).unwrap_or_else(|_| {
+                                    debug!("id:{} notifier without subscriber", id)
+                                });
+                                event!(Level::TRACE, "notify socket id:{}", id);
+                                n.buffer
+                            }
                         }
                     }
+                },
+                None => {
+                    h.insert(id, Ok(val));
+                    Vec::new()
                 }
             }
-        } else {
-            h.insert(id, Ok(val));
+        };
+        for bytes in prelude {
+            // A datagram that cannot be handed over right now is lost, which is
+            // what UDP does under pressure. Failing here instead would leave
+            // the id registered in the store but unknown to the association, so
+            // its teardown would never remove it.
+            if let Err(e) = deliver(socket.clone(), bytes, addr.clone()).await {
+                debug!("dropping buffered udp datagram for id {}: {}", id, e);
+            }
         }
         Ok(())
     }
@@ -474,53 +594,821 @@ pub async fn handle_udp_recv_ctrl<C: QuicConnection>(
 pub async fn handle_udp_packet_recv<C: QuicConnection>(conn: SQConn<C>) -> Result<(), SError> {
     let id_store = conn.recv_id_store.clone();
     wait_sunny_auth(&conn).await?;
+    let mut datagram_retry_after = tokio::time::Instant::now();
+    // Every accepted unistream is served by its own task and the set owns
+    // them: leaving this loop drops the set, so tokio aborts whatever is still
+    // parked instead of letting those tasks outlive their connection.
+    let mut streams: JoinSet<()> = JoinSet::new();
+    let mut pending_sweep_at = tokio::time::Instant::now() + PENDING_SWEEP_INTERVAL;
     loop {
+        // Reap finished streams so the set tracks live ones only.
+        while streams.try_join_next().is_some() {}
         tokio::select! {
-            b = conn.read_datagram() => {
-                let b = b?;
-                let b = BytesMut::from(b);
-                let mut cur = Cursor::new(b);
-                let SQPacketDatagramHeader{id} = SQPacketDatagramHeader::decode(&mut cur).await?;
-                let pos = cur.position() as usize;
-                id_store.feed_datagram(id, cur.into_inner().split_off(pos).freeze()).await?;
-            }
-
-            r = async {
-                let (mut uni_stream, _id) = conn.accept_uni().await?;
-                trace!("unistream accepted");
-                let SQPacketDatagramHeader{id} = SQPacketDatagramHeader::decode(&mut uni_stream).await?;
-                trace!(context_id = id, "resolving datagram id");
-
-                let (udp,addr) = id_store.get_socket_or_wait(id).await?;
-
-                info!(context_id = id, peer_addr = %conn.remote_address(), dst = %addr, "udp over stream");
-                Ok((uni_stream,udp.clone(),addr.clone())) as Result<(C::RecvStream,AnyUdpSend,SocksAddr),SError>
+            b = async {
+                tokio::time::sleep_until(datagram_retry_after).await;
+                conn.read_datagram().await
             } => {
-
-                let  (mut uni_stream,udp,addr) = match r {
-                    Ok(r) => r,
-                    Err(SError::UDPSessionClosed(_)) => {
+                let b = match b {
+                    Ok(b) => b,
+                    Err(e) if conn.close_reason().is_some() => return Err(e.into()),
+                    Err(e) => {
+                        // No backend exposes a typed unsupported-datagrams
+                        // read error. Retry a nonterminal error with a delay
+                        // rather than permanently disabling the branch.
+                        error!("udp datagram receive failed: {}", e);
+                        datagram_retry_after = tokio::time::Instant::now() + Duration::from_millis(100);
                         continue;
                     }
+                };
+                let b = BytesMut::from(b);
+                let mut cur = Cursor::new(b);
+                let SQPacketDatagramHeader{id} = match SQPacketDatagramHeader::decode(&mut cur).await {
+                    Ok(header) => header,
                     Err(e) => {
-                        return Err(e);
+                        error!("dropping malformed udp datagram: {}", e);
+                        continue;
                     }
                 };
-
-                tokio::spawn(async move {
-                    loop {
-                        let l: usize = u16::decode(&mut uni_stream).await? as usize;
-                        let mut b = BytesMut::with_capacity(l);
-                        b.resize(l,0);
-                        uni_stream.read_exact(&mut b).await?;
-                        udp.send_to(b.freeze(), addr.clone()).await?;
+                let pos = cur.position() as usize;
+                if let Err(e) = id_store.feed_datagram(id, cur.into_inner().split_off(pos).freeze()).await {
+                    // One lost datagram is not a reason to stop serving the
+                    // whole connection. A consumer that could not take it in
+                    // time is ordinary loss under pressure; anything else (no
+                    // live socket for the id, or a failing local socket) is
+                    // worth an error.
+                    if matches!(e, SError::ChannelError(_)) {
+                        debug!("dropping udp datagram for id {}: {}", id, e);
+                    } else {
+                        error!("dropping udp datagram for id {}: {}", id, e);
                     }
-                    #[allow(unreachable_code)]
-                    (Ok(()) as Result<(), SError>)
-                }.in_current_span());
+                }
+            }
+
+            // Only the accept is polled here: once the stream is taken from
+            // the queue the rest runs in its own task, so a cancellation — or
+            // a failure while resolving its id — can neither lose the stream
+            // nor stop the loop.
+            uni = conn.accept_uni() => {
+                let (uni_stream, _id) = uni?;
+                trace!("unistream accepted");
+                let id_store = id_store.clone();
+                let conn = conn.clone();
+                streams.spawn(
+                    async move {
+                        match serve_uni_stream(uni_stream, id_store, conn).await {
+                            // A parked stream losing its association is
+                            // ordinary teardown, not a failure.
+                            Err(SError::UDPSessionClosed(msg)) => {
+                                debug!("udp over stream ended: {}", msg)
+                            }
+                            Err(e) => error!("udp over stream ended: {}", e),
+                            Ok(()) => {}
+                        }
+                    }
+                    .in_current_span(),
+                );
+            }
+
+            // Pending entries created by datagrams expire on their own; nothing
+            // else sweeps ids that never got a control header.
+            _ = tokio::time::sleep_until(pending_sweep_at) => {
+                id_store.remove_expired_pending(tokio::time::Instant::now());
+                pending_sweep_at = tokio::time::Instant::now() + PENDING_SWEEP_INTERVAL;
             }
         }
     }
     #[allow(unreachable_code)]
     Ok(())
+}
+
+/// Bound how long an unmatched stream can hold resources. This fixed budget
+/// covers both the stream header and its control header; it is not the QUIC
+/// connection idle timeout. Remove the orphaned pending id when it expires.
+const UDP_SESSION_RESOLVE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Serve one udp-over-stream unistream: resolve the session id it carries to
+/// the socket that receives the payload, then relay the length-prefixed
+/// packets until the stream ends.
+async fn serve_uni_stream<C: QuicConnection>(
+    mut uni_stream: C::RecvStream,
+    id_store: IDStore,
+    conn: SQConn<C>,
+) -> Result<(), SError> {
+    let deadline = tokio::time::Instant::now() + UDP_SESSION_RESOLVE_TIMEOUT;
+    let SQPacketDatagramHeader { id } =
+        tokio::time::timeout_at(deadline, SQPacketDatagramHeader::decode(&mut uni_stream))
+            .await
+            .map_err(|_| SError::UDPSessionClosed("udp stream header timed out".into()))??;
+    trace!(context_id = id, "resolving datagram id");
+
+    let (udp, addr) = resolve_udp_session(&id_store, id, deadline).await?;
+
+    info!(context_id = id, peer_addr = %conn.remote_address(), dst = %addr, "udp over stream");
+
+    relay_uni_stream(&mut uni_stream, udp.as_ref(), &addr).await
+}
+
+/// Relay the length-prefixed packets of one udp-over-stream unistream to the
+/// socket its association registered.
+///
+/// The peer decides whether a payload is ever completed, and a QUIC connection
+/// can outlive its associations by hours, so the relay also ends as soon as the
+/// association's receiver is gone.
+async fn relay_uni_stream<R: AsyncRead + Unpin + Send>(
+    uni_stream: &mut R,
+    udp: &dyn UdpSend,
+    addr: &SocksAddr,
+) -> Result<(), SError> {
+    loop {
+        let packet = tokio::select! {
+            packet = read_packet(uni_stream) => packet?,
+            _ = udp.closed() => {
+                return Err(SError::UDPSessionClosed("udp association ended".into()));
+            }
+        };
+        udp.send_to(packet, addr.clone()).await?;
+    }
+}
+
+async fn read_packet<R: AsyncRead + Unpin + Send>(uni_stream: &mut R) -> Result<Bytes, SError> {
+    let l: usize = u16::decode(uni_stream).await? as usize;
+    let mut b = BytesMut::with_capacity(l);
+    b.resize(l, 0);
+    uni_stream.read_exact(&mut b).await?;
+    Ok(b.freeze())
+}
+
+async fn resolve_udp_session(
+    id_store: &IDStore,
+    id: u16,
+    deadline: tokio::time::Instant,
+) -> Result<(AnyUdpSend, SocksAddr), SError> {
+    match tokio::time::timeout_at(deadline, id_store.get_socket_or_wait(id)).await {
+        Ok(result) => result,
+        Err(_) => {
+            // The deadline is what bounds this task, so the cleanup does not
+            // wait for the store lock here. Every critical section in the store
+            // is synchronous, so this helper finishes promptly and cannot be
+            // held up by a peer.
+            if !id_store.try_remove_unwatched_pending(id) {
+                let id_store = id_store.clone();
+                tokio::spawn(async move { id_store.remove_unwatched_pending(id).await });
+            }
+            Err(SError::UDPSessionClosed(format!(
+                "udp session id {id} not resolved in time"
+            )))
+        }
+    }
+}
+
+#[cfg(test)]
+mod udp_receive_tests {
+    use super::*;
+    use crate::quic::QuicErrorRepr;
+    use std::collections::VecDeque;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tokio::io::AsyncRead;
+    use tokio::sync::{Mutex, mpsc};
+
+    fn store() -> IDStore {
+        IDStore {
+            id_counter: Default::default(),
+            inner: Default::default(),
+        }
+    }
+
+    /// A sender whose receiver is alive, so deliveries are recorded.
+    struct LiveSend(mpsc::UnboundedSender<Bytes>);
+
+    #[async_trait::async_trait]
+    impl UdpSend for LiveSend {
+        async fn send_to(&self, buf: Bytes, _addr: SocksAddr) -> Result<usize, SError> {
+            let len = buf.len();
+            let _ = self.0.send(buf);
+            Ok(len)
+        }
+    }
+
+    fn test_addr() -> SocksAddr {
+        SocksAddr::from("127.0.0.1:9000".parse::<std::net::SocketAddr>().unwrap())
+    }
+
+    /// A stream that never yields a byte, and reports when it is dropped.
+    struct ParkedStream {
+        dropped: Arc<AtomicBool>,
+    }
+
+    impl Drop for ParkedStream {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    impl AsyncRead for ParkedStream {
+        fn poll_read(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            _buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Pending
+        }
+    }
+
+    /// A connection that hands out one parked unistream and then reports
+    /// itself gone, so the receive loop leaves while that stream is parked.
+    #[derive(Clone)]
+    struct OneStreamConn {
+        stream: Arc<Mutex<Option<ParkedStream>>>,
+        accepted: Arc<AtomicBool>,
+        /// Set once the receive loop polls this connection.
+        polled: Arc<AtomicBool>,
+        datagrams: Arc<Mutex<VecDeque<Bytes>>>,
+        /// Report the connection as closed once the stream is taken, or just
+        /// have nothing more to offer.
+        stay_open: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl QuicConnection for OneStreamConn {
+        type SendStream = tokio::io::Sink;
+        type RecvStream = ParkedStream;
+
+        async fn open_bi(
+            &self,
+        ) -> Result<(Self::SendStream, Self::RecvStream, u64), QuicErrorRepr> {
+            Err(QuicErrorRepr::QuicConnection("unused".into()))
+        }
+        async fn accept_bi(
+            &self,
+        ) -> Result<(Self::SendStream, Self::RecvStream, u64), QuicErrorRepr> {
+            Err(QuicErrorRepr::QuicConnection("unused".into()))
+        }
+        async fn open_uni(&self) -> Result<(Self::SendStream, u64), QuicErrorRepr> {
+            Err(QuicErrorRepr::QuicConnection("unused".into()))
+        }
+        async fn accept_uni(&self) -> Result<(Self::RecvStream, u64), QuicErrorRepr> {
+            self.polled.store(true, Ordering::SeqCst);
+            // Only hand out the stream once a queued datagram has been taken,
+            // so a test can measure what the datagram branch costs acceptance.
+            loop {
+                let taken = self.datagrams.lock().await.is_empty();
+                if taken {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            match self.stream.lock().await.take() {
+                Some(stream) => {
+                    self.accepted.store(true, Ordering::SeqCst);
+                    Ok((stream, 0))
+                }
+                None if self.stay_open => std::future::pending().await,
+                // What a closed connection reports, and what ends the loop.
+                None => Err(QuicErrorRepr::QuicConnection("closed".into())),
+            }
+        }
+        async fn read_datagram(&self) -> Result<Bytes, QuicErrorRepr> {
+            // Bind the pop before matching: a `match` scrutinee keeps its
+            // temporaries alive for the whole match, which would hold this lock
+            // across the pending branch below.
+            let next = self.datagrams.lock().await.pop_front();
+            match next {
+                Some(datagram) => Ok(datagram),
+                None => std::future::pending().await,
+            }
+        }
+        async fn send_datagram(&self, _bytes: Bytes) -> Result<(), QuicErrorRepr> {
+            Ok(())
+        }
+        fn close(&self, _error_code: u64, _reason: &[u8]) {}
+        fn close_reason(&self) -> Option<QuicErrorRepr> {
+            None
+        }
+        fn remote_address(&self) -> std::net::SocketAddr {
+            "127.0.0.1:1".parse().unwrap()
+        }
+        fn peer_id(&self) -> u64 {
+            0
+        }
+    }
+
+    /// A sender whose send never completes, i.e. a consumer that stopped
+    /// draining while its receiver is still alive.
+    struct StuckSend {
+        entered: mpsc::UnboundedSender<()>,
+    }
+
+    #[async_trait::async_trait]
+    impl UdpSend for StuckSend {
+        async fn send_to(&self, _buf: Bytes, _addr: SocksAddr) -> Result<usize, SError> {
+            let _ = self.entered.send(());
+            std::future::pending().await
+        }
+    }
+
+    #[tokio::test]
+    async fn datagram_delivery_does_not_wait_for_a_stalled_consumer() {
+        let store = store();
+        let (entered, _entered_rx) = mpsc::unbounded_channel();
+        store
+            .store_socket_with_prelude(7, (Arc::new(StuckSend { entered }), test_addr()))
+            .await
+            .unwrap();
+
+        let started = tokio::time::Instant::now();
+        let delivered = store.feed_datagram(7, Bytes::from_static(b"payload")).await;
+        let waited = started.elapsed();
+
+        // A consumer that stopped draining must cost a drop, not a wait: the
+        // receive loop that awaits this has other associations to serve.
+        assert!(delivered.is_err(), "the datagram should have been dropped");
+        assert!(
+            waited < Duration::from_millis(500),
+            "delivery waited {waited:?} for a stalled consumer"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stalled_consumer_does_not_stop_accepting_streams() {
+        let store = store();
+        let (entered, _entered_rx) = mpsc::unbounded_channel();
+        store
+            .store_socket_with_prelude(7, (Arc::new(StuckSend { entered }), test_addr()))
+            .await
+            .unwrap();
+
+        let accepted = Arc::new(AtomicBool::new(false));
+        let conn = SQConn {
+            conn: OneStreamConn {
+                stream: Arc::new(Mutex::new(Some(ParkedStream {
+                    dropped: Arc::new(AtomicBool::new(false)),
+                }))),
+                accepted: accepted.clone(),
+                polled: Arc::new(AtomicBool::new(false)),
+                datagrams: Arc::new(Mutex::new(VecDeque::from([datagram_for(7).await]))),
+                stay_open: false,
+            },
+            authed: Arc::new(SetOnce::new_with(Some(Ok("user".to_string())))),
+            send_id_store: Default::default(),
+            recv_id_store: store,
+            stats: Default::default(),
+        };
+        let receiving = tokio::spawn(handle_udp_packet_recv(conn));
+
+        // The datagram's consumer never drains, and the fake only offers the
+        // stream after that datagram was taken, so acceptance is measured
+        // across the delivery.
+        tokio::time::timeout(Duration::from_millis(500), async {
+            while !accepted.load(Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("a stalled consumer must not stop the loop from accepting streams");
+        receiving.abort();
+    }
+
+    async fn datagram_for(id: u16) -> Bytes {
+        let mut cursor = std::io::Cursor::new(vec![0u8; 2]);
+        SQPacketDatagramHeader { id }
+            .encode(&mut cursor)
+            .await
+            .unwrap();
+        Bytes::from(cursor.into_inner())
+    }
+
+    #[tokio::test]
+    async fn a_malformed_datagram_does_not_stop_the_loop() {
+        let store = store();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        store
+            .store_socket_with_prelude(7, (Arc::new(LiveSend(tx)), test_addr()))
+            .await
+            .unwrap();
+
+        let conn = SQConn {
+            conn: OneStreamConn {
+                stream: Arc::new(Mutex::new(None)),
+                accepted: Arc::new(AtomicBool::new(false)),
+                polled: Arc::new(AtomicBool::new(false)),
+                datagrams: Arc::new(Mutex::new(VecDeque::from([
+                    // Truncated header: decoding this fails.
+                    Bytes::from_static(&[0x00]),
+                    datagram_for(7).await,
+                ]))),
+                stay_open: true,
+            },
+            authed: Arc::new(SetOnce::new_with(Some(Ok("user".to_string())))),
+            send_id_store: Default::default(),
+            recv_id_store: store.clone(),
+            stats: Default::default(),
+        };
+        let receiving = tokio::spawn(handle_udp_packet_recv(conn));
+
+        // The malformed datagram must not end the connection's reception: the
+        // valid one queued behind it still arrives.
+        let delivered = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("a malformed datagram must not stop the loop");
+        assert!(delivered.is_some(), "the valid datagram should arrive");
+        receiving.abort();
+    }
+
+    #[tokio::test]
+    async fn datagram_delivery_does_not_hold_the_store_lock() {
+        let store = store();
+        let (entered, mut entered_rx) = mpsc::unbounded_channel();
+        store
+            .store_socket_with_prelude(7, (Arc::new(StuckSend { entered }), test_addr()))
+            .await
+            .unwrap();
+
+        let feeding = {
+            let store = store.clone();
+            tokio::spawn(
+                async move { store.feed_datagram(7, Bytes::from_static(b"payload")).await },
+            )
+        };
+        // Wait until the send is in flight, so the lookup is over and only the
+        // delivery is left.
+        entered_rx
+            .recv()
+            .await
+            .expect("delivery should have started");
+
+        // Any other id on this connection must still be able to use the store.
+        assert!(
+            store.inner.try_write().is_ok(),
+            "the store lock must not be held across the delivery"
+        );
+        feeding.abort();
+    }
+
+    #[tokio::test]
+    async fn a_failed_prelude_still_registers_the_socket() {
+        let store = store();
+        // A datagram arrived before its control header, so the id is pending
+        // with one buffered packet.
+        store
+            .feed_datagram(7, Bytes::from_static(b"early"))
+            .await
+            .unwrap();
+
+        // The consumer is stuck, so flushing that prelude cannot succeed.
+        let (entered, _entered_rx) = mpsc::unbounded_channel();
+        let mut session = AssociateRecvSession {
+            id_store: store.clone(),
+            id_map: Default::default(),
+        };
+        session
+            .store_socket(7, test_addr(), Arc::new(StuckSend { entered }))
+            .await
+            .expect("a lost prelude datagram must not fail the registration");
+        assert!(
+            matches!(store.inner.read().await.get(&7), Some(Ok(_))),
+            "the id should be registered"
+        );
+
+        // The association ends, and it must take its id with it.
+        drop(session);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while store.inner.read().await.contains_key(&7) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the association teardown must remove its registered id");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn delayed_control_header_still_resolves_stream() {
+        let store = store();
+        let lookup = resolve_udp_session(
+            &store,
+            7,
+            tokio::time::Instant::now() + UDP_SESSION_RESOLVE_TIMEOUT,
+        );
+        tokio::pin!(lookup);
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(6)) => {}
+            result = &mut lookup => panic!("lookup ended early: {:?}", result.err()),
+        }
+        let (tx, _rx) = mpsc::channel(1);
+        let addr = SocksAddr::from("127.0.0.1:9000".parse::<std::net::SocketAddr>().unwrap());
+        store
+            .store_socket_with_prelude(7, (Arc::new(tx), addr.clone()))
+            .await
+            .unwrap();
+        assert_eq!(lookup.await.unwrap().1, addr);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn expired_stream_cleans_its_pending_id() {
+        let store = store();
+        // A datagram can arrive before the control header and be buffered in
+        // the same pending entry as the stream waiter.
+        store
+            .feed_datagram(7, Bytes::from_static(b"orphan"))
+            .await
+            .unwrap();
+        assert!(matches!(
+            resolve_udp_session(
+                &store,
+                7,
+                tokio::time::Instant::now() + UDP_SESSION_RESOLVE_TIMEOUT,
+            )
+            .await,
+            Err(SError::UDPSessionClosed(_))
+        ));
+        assert!(!store.inner.read().await.contains_key(&7));
+    }
+
+    #[tokio::test]
+    async fn timeout_cleanup_does_not_remove_registered_socket() {
+        let store = store();
+        let (tx, _rx) = mpsc::channel(1);
+        let addr = SocksAddr::from("127.0.0.1:9000".parse::<std::net::SocketAddr>().unwrap());
+        store
+            .store_socket_with_prelude(7, (Arc::new(tx), addr))
+            .await
+            .unwrap();
+        assert!(store.try_remove_unwatched_pending(7));
+        assert!(matches!(store.inner.read().await.get(&7), Some(Ok(_))));
+    }
+
+    #[tokio::test]
+    async fn timed_out_waiter_does_not_remove_another_waiter() {
+        let store = store();
+        let first = match store.get_socket_or_notify(7).await {
+            Err(waiter) => waiter,
+            Ok(_) => panic!("expected pending id"),
+        };
+        let second = match store.get_socket_or_notify(7).await {
+            Err(waiter) => waiter,
+            Ok(_) => panic!("expected pending id"),
+        };
+        drop(first);
+        assert!(store.try_remove_unwatched_pending(7));
+        assert!(store.inner.read().await.contains_key(&7));
+        drop(second);
+        assert!(store.try_remove_unwatched_pending(7));
+        assert!(!store.inner.read().await.contains_key(&7));
+    }
+
+    /// A sender that is already gone, i.e. its association ended.
+    struct GoneSend(mpsc::UnboundedSender<Bytes>);
+
+    #[async_trait::async_trait]
+    impl UdpSend for GoneSend {
+        async fn send_to(&self, buf: Bytes, _addr: SocksAddr) -> Result<usize, SError> {
+            let len = buf.len();
+            let _ = self.0.send(buf);
+            Ok(len)
+        }
+        async fn closed(&self) {}
+    }
+
+    #[tokio::test]
+    async fn relay_forwards_packets_while_the_association_lives() {
+        let (mut reader, mut writer) = tokio::io::duplex(64);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let addr = test_addr();
+        let relay =
+            tokio::spawn(async move { relay_uni_stream(&mut reader, &LiveSend(tx), &addr).await });
+
+        (5u16).encode(&mut writer).await.unwrap();
+        writer.write_all(b"hello").await.unwrap();
+        assert_eq!(rx.recv().await.unwrap(), Bytes::from_static(b"hello"));
+
+        // A closed stream ends the relay.
+        drop(writer);
+        assert!(relay.await.unwrap().is_err());
+    }
+
+    #[tokio::test]
+    async fn relay_ends_when_the_association_is_gone() {
+        // The writer stays alive, so the stream is silent forever and only the
+        // association can end the relay.
+        let (mut reader, _writer) = tokio::io::duplex(64);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let addr = test_addr();
+        let relay = tokio::time::timeout(
+            Duration::from_secs(5),
+            relay_uni_stream(&mut reader, &GoneSend(tx), &addr),
+        )
+        .await
+        .expect("a parked relay must not wait for a payload that never comes");
+        assert!(matches!(relay, Err(SError::UDPSessionClosed(_))));
+    }
+
+    #[tokio::test]
+    async fn stream_tasks_do_not_outlive_the_connection() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let conn = SQConn {
+            conn: OneStreamConn {
+                stream: Arc::new(Mutex::new(Some(ParkedStream {
+                    dropped: dropped.clone(),
+                }))),
+                accepted: Arc::new(AtomicBool::new(false)),
+                polled: Arc::new(AtomicBool::new(false)),
+                datagrams: Arc::new(Mutex::new(VecDeque::new())),
+                stay_open: false,
+            },
+            authed: Arc::new(SetOnce::new_with(Some(Ok("user".to_string())))),
+            send_id_store: Default::default(),
+            recv_id_store: store(),
+            stats: Default::default(),
+        };
+
+        // A connection that is gone is what ends the receive loop.
+        assert!(handle_udp_packet_recv(conn).await.is_err());
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !dropped.load(Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("a parked stream task must not outlive the connection");
+    }
+
+    #[tokio::test]
+    async fn orphaned_pending_id_is_removed_after_a_busy_cleanup() {
+        let store = store();
+        // A datagram for an id with no control header leaves a pending entry
+        // that no association owns.
+        store
+            .feed_datagram(7, Bytes::from_static(b"orphan"))
+            .await
+            .unwrap();
+        assert!(store.inner.read().await.contains_key(&7));
+
+        let held = store.inner.write().await;
+        let ended = tokio::time::timeout(
+            Duration::from_secs(5),
+            resolve_udp_session(&store, 7, tokio::time::Instant::now()),
+        )
+        .await;
+        assert!(
+            matches!(ended, Ok(Err(SError::UDPSessionClosed(_)))),
+            "the stream task must end at its deadline"
+        );
+        drop(held);
+
+        // The deadline cleanup could not take the lock, and nothing else owns
+        // this id, so it must not be lost.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while store.inner.read().await.contains_key(&7) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("an orphaned pending id must be removed once the store is free");
+    }
+
+    #[tokio::test]
+    async fn expired_stream_cleanup_does_not_wait_for_the_store_lock() {
+        let store = store();
+        let held = store.inner.write().await;
+
+        // The deadline is what bounds the stream task, so the cleanup after it
+        // must not queue behind a held lock.
+        let ended = tokio::time::timeout(
+            Duration::from_secs(5),
+            resolve_udp_session(&store, 7, tokio::time::Instant::now()),
+        )
+        .await;
+        drop(held);
+        assert!(
+            matches!(ended, Ok(Err(SError::UDPSessionClosed(_)))),
+            "the stream task must end at its deadline"
+        );
+    }
+
+    #[tokio::test]
+    async fn datagrams_for_an_id_that_never_registers_are_bounded() {
+        let store = store();
+        // No control header ever arrives for this id, so nothing ever flushes
+        // what it buffers.
+        for _ in 0..(MAX_PENDING_DATAGRAMS_PER_ID * 4) {
+            store
+                .feed_datagram(7, Bytes::from_static(b"never registered"))
+                .await
+                .unwrap();
+        }
+        let buffered = match store.inner.read().await.get(&7) {
+            Some(Err(pending)) => pending.buffer.len(),
+            _ => panic!("expected a pending entry for id 7"),
+        };
+        assert_eq!(buffered, MAX_PENDING_DATAGRAMS_PER_ID);
+
+        // Ids are budgeted too, so walking the id space cannot park more.
+        for id in 0..(MAX_TRACKED_IDS as u16 + 100) {
+            store
+                .feed_datagram(id, Bytes::from_static(b"x"))
+                .await
+                .unwrap();
+        }
+        assert_eq!(store.inner.read().await.len(), MAX_TRACKED_IDS);
+    }
+
+    #[tokio::test]
+    async fn expired_pending_datagrams_release_their_id_budget() {
+        let store = store();
+        // A peer fills the budget with ids whose control header never arrives.
+        for id in 0..(MAX_TRACKED_IDS as u16) {
+            store
+                .feed_datagram(id, Bytes::from_static(b"x"))
+                .await
+                .unwrap();
+        }
+        assert_eq!(store.inner.read().await.len(), MAX_TRACKED_IDS);
+
+        // An id a stream waits on is left to that waiter's own deadline.
+        let waiting = match store.get_socket_or_notify(7).await {
+            Err(waiter) => waiter,
+            Ok(_) => panic!("expected a pending id"),
+        };
+        let after = tokio::time::Instant::now() + PENDING_DATAGRAM_TTL + Duration::from_secs(1);
+        store.remove_expired_pending(after);
+        assert!(store.inner.read().await.contains_key(&7));
+
+        // The rest expire, so the budget is not held for good...
+        assert!(!store.inner.read().await.contains_key(&6));
+        assert_eq!(store.inner.read().await.len(), 1);
+
+        // ...and a new id can buffer its datagrams again.
+        store
+            .feed_datagram(9, Bytes::from_static(b"y"))
+            .await
+            .unwrap();
+        assert!(store.inner.read().await.contains_key(&9));
+
+        // Once the waiter is gone too, the next sweep releases the last one.
+        drop(waiting);
+        store.remove_expired_pending(after);
+        assert!(!store.inner.read().await.contains_key(&7));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_receive_loop_sweeps_expired_pending_ids() {
+        let store = store();
+        store
+            .feed_datagram(7, Bytes::from_static(b"orphan"))
+            .await
+            .unwrap();
+        let polled = Arc::new(AtomicBool::new(false));
+        let conn = SQConn {
+            conn: OneStreamConn {
+                stream: Arc::new(Mutex::new(None)),
+                accepted: Arc::new(AtomicBool::new(false)),
+                polled: polled.clone(),
+                datagrams: Arc::new(Mutex::new(VecDeque::new())),
+                stay_open: true,
+            },
+            authed: Arc::new(SetOnce::new_with(Some(Ok("user".to_string())))),
+            send_id_store: Default::default(),
+            recv_id_store: store.clone(),
+            stats: Default::default(),
+        };
+        let receiving = tokio::spawn(handle_udp_packet_recv(conn));
+
+        // Wait for the loop to poll, so its sweep timer exists before the clock
+        // moves: `advance` only moves a paused clock while the runtime is idle,
+        // and a fired timer is not processed before it returns.
+        for _ in 0..10_000 {
+            if polled.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            polled.load(Ordering::SeqCst),
+            "the receive loop should be running"
+        );
+
+        // Inside the window the entry stays: the sweep is not a general reaper.
+        tokio::time::advance(PENDING_DATAGRAM_TTL - Duration::from_secs(1)).await;
+        for _ in 0..1_000 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            store.inner.read().await.contains_key(&7),
+            "a pending entry must survive its ttl"
+        );
+
+        // Past the window, the loop's next sweep releases it.
+        tokio::time::advance(PENDING_SWEEP_INTERVAL * 2).await;
+        for _ in 0..10_000 {
+            if !store.inner.read().await.contains_key(&7) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            !store.inner.read().await.contains_key(&7),
+            "the receive loop must sweep expired pending ids"
+        );
+        receiving.abort();
+    }
 }
