@@ -8,16 +8,21 @@ mod tests;
 use async_trait::async_trait;
 use bytes::Bytes;
 pub use config::TunServerCfg;
-use std::{io, sync::Mutex};
+use std::{
+    io,
+    sync::{Arc, Mutex},
+};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::Instrument;
 #[cfg(not(target_os = "android"))]
 use tun_rs::DeviceBuilder;
 
-use crate::{Inbound, ProxyRequest, error::SError};
+use crate::{Inbound, ProxyRequest, error::SError, observe::Observer};
 
 pub struct TunServer {
     pub name: String,
+    /// Shared with the manager's observer map when registering this inbound.
+    pub observer: Arc<Observer>,
     requests: mpsc::Receiver<ProxyRequest>,
     task: Mutex<Option<JoinHandle<Result<(), SError>>>>,
 }
@@ -95,6 +100,7 @@ impl TunServer {
         );
         Ok(Self {
             name,
+            observer: Arc::new(Observer::new()),
             requests,
             task: Mutex::new(Some(task)),
         })
@@ -104,7 +110,17 @@ impl TunServer {
 #[async_trait]
 impl Inbound for TunServer {
     async fn accept(&mut self) -> Result<ProxyRequest, SError> {
-        self.requests.recv().await.ok_or(SError::InboundUnavailable)
+        let mut request = self
+            .requests
+            .recv()
+            .await
+            .ok_or(SError::InboundUnavailable)?;
+        request.user_context_mut().observer = Arc::downgrade(&self.observer);
+        request
+            .user_context_mut()
+            .stats
+            .get_or_insert_with(Default::default);
+        Ok(request)
     }
 
     async fn shutdown(&self) -> Result<(), SError> {

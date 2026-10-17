@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use std::{net::ToSocketAddrs, sync::Arc};
+use std::sync::Arc;
 use tokio::sync::{Mutex, OnceCell, SetOnce};
 use tracing::Instrument;
 
@@ -75,6 +75,7 @@ impl SunnyQuicClient {
             authed: Arc::new(SetOnce::new()),
             send_id_store: Default::default(),
             stats: Default::default(),
+            stats_refresh: Default::default(),
             recv_id_store: IDStore {
                 id_counter: Default::default(),
                 inner: Default::default(),

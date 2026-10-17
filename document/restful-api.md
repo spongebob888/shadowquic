@@ -1,0 +1,165 @@
+# REST API
+
+Build with `cargo build --release --features restful-api`. This optional feature
+enables statistics and adds a local HTTP API alongside the proxy listeners.
+It is separate from the `api` CLI subcommand for remote user management.
+The entire API module is compiled only with `restful-api`. The independent
+`jemalloc` feature is enabled by default and selects the global allocator on
+supported targets; enabling `restful-api` does not enable `jemalloc`.
+
+Enable it in your proxy configuration:
+
+```yaml
+api-config:
+  bind-addr: "127.0.0.1:9090"
+```
+
+The address must be loopback (`127.0.0.1` or `::1`). This version has no
+authentication. Omit `api-config` to leave the HTTP listener disabled. Configuring
+the listener without compiling `restful-api` produces a configuration error.
+A bind failure prevents manager startup.
+
+A complete local SOCKS/direct example is available in
+[restful-api.yaml](../shadowquic/config_examples/restful-api.yaml).
+
+## Endpoints
+
+All responses use JSON with `snake_case` fields. Timestamps use UTC RFC 3339;
+durations use milliseconds and byte counters use bytes. Unavailable optional
+fields are `null`. Collections are sorted by tag or session ID.
+
+| Method | Path | Response |
+| --- | --- | --- |
+| GET | `/api/v1/outbounds` | `{"outbounds": [...]}`: tags and cached connection/probe quality |
+| GET | `/api/v1/connections` | `{"connections": [...]}`: active TCP sessions and UDP associations |
+| GET | `/api/v1/traffic` | `{"inbounds": [...]}`: summed user traffic and active session counts per inbound |
+| GET | `/api/v1/memory` | jemalloc allocator statistics; requires `jemalloc` |
+| POST | `/api/v1/outbounds/{tag}/probe` | Probe the selected outbound with an HTTP GET |
+
+```sh
+curl http://127.0.0.1:9090/api/v1/outbounds
+curl http://127.0.0.1:9090/api/v1/connections
+curl http://127.0.0.1:9090/api/v1/traffic
+curl http://127.0.0.1:9090/api/v1/memory
+curl -H 'Content-Type: application/json' \
+  -d '{"url":"http://example.com/","timeout_ms":10000}' \
+  http://127.0.0.1:9090/api/v1/outbounds/direct/probe
+```
+
+Percent-encode the outbound tag as one path segment when necessary.
+Errors have the form `{"error":{"code":"...","message":"..."}}`.
+Invalid requests return `400`, unknown routes or tags `404`, wrong methods
+`405`, overlapping probes on the same outbound `409`, unsupported operations
+`501`, failed probes `502`, and probe timeouts `504`.
+
+## Connections and traffic
+
+Observers cover ShadowQUIC, SunnyQUIC, SOCKS, mixed, TPROXY, and TUN inbounds
+when the corresponding features and platform support are available. Tracking
+does not require an authenticated user. Internal DNS upstream and database
+download queues are excluded from client tracking.
+`Config::build_manager` creates `manager.observers` alongside the inbound map,
+sharing each server's own observer and omitting internal queues. SOCKS, mixed
+(SOCKS and HTTP), TPROXY, and TUN attach their observers to accepted TCP and UDP
+sessions, just like the QUIC servers. Tracking starts after routing and fake-IP
+restoration, so a session is counted once with its final destination.
+SOCKS and mixed requests carry their authenticated username in `StatsContext`.
+Anonymous SOCKS/mixed requests and TUN/TPROXY requests use username `""` and
+an empty connection handle.
+
+Each connection contains `id`, `protocol`, `inbound`, `outbound`, `src`,
+`dst_ip`, `dst_domain`, `dst_port`, `recv_bytes`, `sent_bytes`, `duration_ms`,
+`first_response_ms`, and `half_closed`. The opaque ID is stable during a
+manager's lifetime.
+`src` includes the client port; IP fields do not include ports. Destinations
+reflect fake-IP restoration and router rewrites. IP destinations can have a
+cached domain alongside the IP; listing sessions never performs DNS queries.
+
+`recv_bytes` counts client uploads, and `sent_bytes` counts downloads to the
+client. Counters include payload bytes actually read or written, excluding
+protocol framing. `first_response_ms` measures from tracking creation after
+routing to the first nonempty response sent to the client; it is `null` before
+that event. A UDP entry describes the association's initial routed destination
+and remains active while either tracked half exists. `half_closed` is `true`
+when exactly one scoreboard weak pointer can be upgraded. Fields owned by an
+expired half become `null`: receive stats supply `src`, `recv_bytes`, and
+`duration_ms`; send stats supply `outbound`, destination fields, and `sent_bytes`.
+`first_response_ms` requires both halves. The ID stays the same whichever half
+survives. Entries disappear once both weak pointers have expired.
+`duration_ms` is the elapsed time since tracking began, measured with `Instant`.
+
+Traffic entries contain `inbound`, `recv_bytes`, `sent_bytes`, `tcp_conns`,
+and `udp_conns`. These are sums of all `user_stats` entries; anonymous requests
+use username `""`. Bytes combine TCP and UDP and survive session completion.
+Restored user traffic is included, while resetting or removing user counters
+changes the totals accordingly. Session counts follow the lifetime of the
+receive stats, so a send-only half-closed entry can remain listed with a count
+of zero. Concurrent snapshots
+may differ slightly as I/O progresses.
+
+## Outbound quality and probes
+
+Each outbound has a `quality` object with nullable `sq_conn_stats` and `probe`
+fields. QUIC samples contain `uplink`, `downlink`, and `sample_age_ms`.
+Each direction exposes `lost_packets`, `sent_packets`, `rtt` in milliseconds,
+and `current_mtu` in bytes. Samples are absent for unsupported, disconnected,
+and unsampled connections. Listing quality does not establish a connection or
+request fresh statistics.
+
+Probes accept absolute `http://` URLs without credentials; HTTPS is unsupported
+in this version. `timeout_ms` defaults to 10000 and must be between 1 and 60000.
+The selected outbound must support TCP (direct, SOCKS, ShadowQUIC, or SunnyQUIC).
+Routing scripts do not select or override the probe's outbound.
+
+Latency includes resolution, connection setup, and HTTP request transmission
+through complete response headers. The response body is not downloaded.
+Only `2xx` final responses succeed; redirects are not followed. Each outbound
+allows one probe at a time. Probes do not affect client connections or traffic
+totals, and their streams are closed on completion or cancellation.
+
+The latest completed probe is cached with `url`, `status`, `latency_ms`,
+`measured_at`, and `error`. Status is `ok`, `failed`, or `timeout`. Failure
+replaces the old latency with `null` and records an error. Invalid, unsupported,
+conflicting, and cancelled requests leave the cache unchanged. Cached results
+remain until replaced; use `measured_at` to assess freshness.
+
+## Memory statistics and the global allocator
+
+The `jemalloc` feature is enabled by default. On Linux and macOS, for x86_64
+and aarch64, and on Android (aarch64, armv7, i686, and x86_64), it installs
+jemalloc as the global allocator for both the CLI and library embeddings,
+independently of `restful-api`. Use `--no-default-features`
+and select the required protocol features without `jemalloc` to use the system
+allocator. An embedding supplying its own global allocator must disable the
+crate's `jemalloc` feature to avoid conflicting allocator definitions.
+
+The repository's Cargo configuration sets the jemalloc allocator page size to
+16 KB for aarch64 and x86_64 Android, covering both 4 KB and 16 KB system pages.
+When embedding from another workspace, set
+`AARCH64_LINUX_ANDROID_JEMALLOC_SYS_WITH_LG_PAGE=14` or
+`X86_64_LINUX_ANDROID_JEMALLOC_SYS_WITH_LG_PAGE=14` in that workspace's build
+environment too. See Android's [16 KB page-size guidance](https://developer.android.com/guide/practices/page-sizes).
+
+The memory endpoint is compiled only when both `restful-api` and `jemalloc`
+are enabled. Without `jemalloc`, `/api/v1/memory` returns `404`.
+Memory responses contain `allocator: "jemalloc"`,
+`allocated_bytes`, `active_bytes`, and `resident_bytes`. These are allocator
+statistics, not total process RSS. With both features, other targets return `501` with
+`memory_stats_unavailable`; the other endpoints remain available.
+
+For a manager created directly, set `manager.api_config` to
+`Some(ApiConfig { bind_addr })` before calling `run` or `run_until`.
+Each inbound attaches its observer in `accept`; the manager uses the attached
+observer after routing. `Manager::single` leaves the observer registry empty.
+For a manually created built-in server, clone `server.observer` before boxing
+the server and put that `Arc` in `manager.observers` under its inbound tag to
+expose its statistics through the API. Custom inbounds attach their own observer
+in `accept` and register the same `Arc`. Omit internal request queues from this
+registry.
+`Config::build_manager` also populates `manager.sq_outbounds` with
+`Arc<dyn SQStatsTrait>` references to the original QUIC clients. Embeddings
+building the outbound map manually can populate this map to expose statistics.
+Listing and probing use the manager's existing outbound list with DNS service
+outbounds removed. Probes dispatch an in-memory TCP session through
+`Outbound::handle`, including configured DNS wrappers. Custom outbounds require
+no additional probing trait or registration.

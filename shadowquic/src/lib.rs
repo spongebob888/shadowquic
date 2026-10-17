@@ -15,6 +15,21 @@ use async_trait::async_trait;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{Instrument, error, info, info_span};
 
+#[cfg(all(
+    feature = "jemalloc",
+    any(
+        target_os = "android",
+        all(
+            any(target_os = "linux", target_os = "macos"),
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    )
+))]
+#[global_allocator]
+static ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+#[cfg(feature = "restful-api")]
+pub mod api;
 pub mod config;
 pub mod direct;
 pub mod dns;
@@ -46,7 +61,6 @@ pub mod tproxy;
 ))]
 pub mod tun;
 pub mod utils;
-pub mod api;
 
 pub use msgs::SDecode;
 pub use msgs::SEncode;
@@ -185,12 +199,24 @@ pub struct UserContext {
     pub stats: Option<StatsContext>,
 }
 
-/// Authenticated connection metadata used for statistics and connection control.
+impl Stoppable for () {
+    fn stop(&self) {}
+}
+/// User metadata used for statistics and optional connection control.
 #[derive(Clone)]
 pub struct StatsContext {
     pub username: UserName,
     pub conn_handle: Weak<dyn Stoppable>,
     pub conn_id: u64,
+}
+impl Default for StatsContext {
+    fn default() -> Self {
+        Self {
+            username: Default::default(),
+            conn_handle: Weak::<()>::new(),
+            conn_id: Default::default(),
+        }
+    }
 }
 
 pub type AnyTcp = Box<dyn TcpTrait>;
@@ -244,10 +270,17 @@ impl UdpRecv for Receiver<(Bytes, SocksAddr)> {
 }
 pub struct Manager {
     pub inbounds: HashMap<String, Box<dyn Inbound>>,
+    /// Observers for client inbounds; internal request queues are omitted.
+    pub observers: HashMap<String, Arc<Observer>>,
     pub outbounds: HashMap<String, Arc<dyn Outbound>>,
     /// Fallback outbound tag, used when no router script is configured and the
     /// request carries no `preferred_outbound` from its inbound.
     pub default_outbound: String,
+    #[cfg(feature = "restful-api")]
+    pub api_config: Option<config::ApiConfig>,
+    /// Statistics views of the original QUIC clients, before DNS wrapping.
+    #[cfg(feature = "restful-api")]
+    pub sq_outbounds: HashMap<String, Arc<dyn api::SQStatsTrait>>,
     #[cfg(feature = "plugin")]
     pub router: Option<Arc<plugin::router::Router>>,
 
@@ -264,9 +297,7 @@ struct RequestDispatcher {
 }
 
 impl RequestDispatcher {
-    async fn dispatch(&self, req: ProxyRequest) {
-        #[cfg(any(feature = "plugin", feature = "statistics"))]
-        let mut req = req;
+    async fn dispatch(&self, mut req: ProxyRequest) {
         #[cfg(feature = "plugin")]
         let outbound_tag = match self.router.as_ref() {
             Some(router) => {
@@ -300,11 +331,8 @@ impl RequestDispatcher {
             error!(outbound = %outbound_tag, "selected an unknown outbound");
             return;
         };
-        #[cfg(feature = "statistics")]
-        {
-            if let Some(observer) = req.user_context().observer.upgrade() {
-                req = observer.wrap_request(req, outbound_tag.clone()).await;
-            }
+        if let Some(observer) = req.user_context().observer.upgrade() {
+            req = observer.wrap_request(req, outbound_tag.clone()).await;
         }
         tracing::debug!(outbound = %outbound_tag, dst = %req.dst(), "routing request");
         if let Err(error) = outbound
@@ -350,8 +378,13 @@ impl Manager {
     pub fn single(inbound: Box<dyn Inbound>, outbound: Arc<dyn Outbound>) -> Self {
         Self {
             inbounds: HashMap::from([("inbound".into(), inbound)]),
+            observers: HashMap::new(),
             outbounds: HashMap::from([("outbound".into(), outbound)]),
             default_outbound: "outbound".into(),
+            #[cfg(feature = "restful-api")]
+            api_config: None,
+            #[cfg(feature = "restful-api")]
+            sq_outbounds: HashMap::new(),
             #[cfg(feature = "plugin")]
             router: None,
             #[cfg(feature = "dns-server")]
@@ -366,6 +399,11 @@ impl Manager {
     /// Run listeners and dispatch accepted requests concurrently until shutdown.
     /// Pending dispatch tasks are cancelled before shutting down their inbound.
     pub async fn run_until(self, shutdown: impl Future<Output = ()>) -> Result<(), SError> {
+        #[cfg(feature = "restful-api")]
+        let api_listener = match &self.api_config {
+            Some(config) => Some(api::bind(config).await?),
+            None => None,
+        };
         for (tag, inbound) in &self.inbounds {
             if let Err(error) = inbound.init().await {
                 error!(inbound = %tag, %error, "inbound initialization failed");
@@ -377,6 +415,26 @@ impl Manager {
                 return Err(error);
             }
         }
+        #[cfg(feature = "restful-api")]
+        let api_manager = Arc::new(api::ApiManager::new(
+            self.outbounds
+                .iter()
+                .filter(|(_tag, _)| {
+                    #[cfg(feature = "dns-server")]
+                    if let Some(resolvers) = &self.resolver_manager {
+                        return resolvers.resolver(_tag).is_none();
+                    }
+                    true
+                })
+                .map(|(tag, outbound)| (tag.clone(), outbound.clone()))
+                .collect(),
+            self.sq_outbounds,
+            self.observers,
+            #[cfg(feature = "dns-server")]
+            self.resolver_manager
+                .as_ref()
+                .map(|manager| manager.cache()),
+        ));
         let dispatcher = Arc::new(RequestDispatcher {
             outbounds: self.outbounds,
             default_outbound: self.default_outbound,
@@ -385,6 +443,16 @@ impl Manager {
         });
         let (stop, stopped) = tokio::sync::watch::channel(false);
         let mut tasks = tokio::task::JoinSet::new();
+        #[cfg(feature = "restful-api")]
+        if let Some(listener) = api_listener {
+            let stopped = stopped.clone();
+            tasks.spawn(async move {
+                api_manager
+                    .serve(listener, stopped)
+                    .await
+                    .map_err(SError::Io)
+            });
+        }
         for (tag, mut inbound) in self.inbounds {
             // Only the tag: per-request and per-connection fields belong on the
             // spans that end with them, or they accumulate here (see below).
@@ -423,8 +491,8 @@ impl Manager {
                             // on a span that ends with the request.
                             // Both fields are declared empty and only recorded
                             // when they are known, so a request without them logs
-                            // without them — the local inbounds have no username,
-                            // and the dns and database download inbounds have no
+                            // without them — anonymous requests use an empty
+                            // username, and dns and database download inbounds have no
                             // peer address.
                             let span = match &req {
                                     ProxyRequest::Tcp(_) => {

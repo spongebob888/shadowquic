@@ -4,7 +4,13 @@ use portable_atomic::{AtomicU64, Ordering};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use std::{
-    collections::HashMap, io::{self, IoSlice}, net::SocketAddr, pin::Pin, sync::{Arc, OnceLock, RwLock, Weak}, task::{Context, Poll}, time::{Duration, Instant},
+    collections::HashMap,
+    io::{self, IoSlice},
+    net::SocketAddr,
+    pin::Pin,
+    sync::{Arc, OnceLock, RwLock, Weak},
+    task::{Context, Poll},
+    time::{Duration, Instant},
 };
 
 use async_trait::async_trait;
@@ -24,12 +30,12 @@ use crate::{
 
 #[derive(Default, Clone)]
 pub struct ProxyStatsAtm {
-    tcp_sent: Arc<AtomicU64>,
-    tcp_recv: Arc<AtomicU64>,
-    udp_sent: Arc<AtomicU64>,
-    udp_recv: Arc<AtomicU64>,
-    tcp_conns: Arc<AtomicU64>,
-    udp_conns: Arc<AtomicU64>,
+    pub(crate) tcp_sent: Arc<AtomicU64>,
+    pub(crate) tcp_recv: Arc<AtomicU64>,
+    pub(crate) udp_sent: Arc<AtomicU64>,
+    pub(crate) udp_recv: Arc<AtomicU64>,
+    pub(crate) tcp_conns: Arc<AtomicU64>,
+    pub(crate) udp_conns: Arc<AtomicU64>,
 }
 
 impl ProxyStatsAtm {
@@ -110,9 +116,12 @@ impl Observer {
 
     pub async fn on_new_request(&self, stats_context: &StatsContext) -> ProxyStatsAtm {
         self.cleanup().await;
-        let mut conns = self.sq_conns.lock().await;
-        conns.insert(stats_context.conn_id, stats_context.clone());
-        drop(conns);
+        if stats_context.conn_handle.strong_count() > 0 {
+            self.sq_conns
+                .lock()
+                .await
+                .insert(stats_context.conn_id, stats_context.clone());
+        }
         self.user_stats
             .lock()
             .await
@@ -249,6 +258,8 @@ impl Observer {
 }
 
 pub struct TrackedSendStats {
+    #[cfg(feature = "restful-api")]
+    pub id: u64,
     pub bytes_send: AtomicU64,
     pub dst: RwLock<SocksAddr>,
     /// Filled once the dispatcher has selected an outbound.
@@ -258,33 +269,54 @@ pub struct TrackedSendStats {
 }
 
 impl TrackedSendStats {
-    fn new(dst: SocksAddr, outbound: String) -> Self {
+    fn new(dst: SocksAddr, outbound: String, _recv: &TrackedRecvStats) -> Self {
         Self {
+            #[cfg(feature = "restful-api")]
+            id: _recv.id,
             bytes_send: AtomicU64::new(0),
             dst: RwLock::new(dst),
             outbound,
-            first_send: OnceLock::new()
+            first_send: OnceLock::new(),
+        }
+    }
+
+    fn sent(&self, n: usize) {
+        self.bytes_send.fetch_add(n as u64, Ordering::Relaxed);
+        if n > 0 {
+            self.first_send.get_or_init(Instant::now);
         }
     }
 }
 
 pub struct TrackedRecvStats {
+    conns: Arc<AtomicU64>,
     pub bytes_recv: AtomicU64,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "metadata retained for scoreboard consumers")
-    )]
     pub src_addr: Option<SocketAddr>,
     pub created: Instant,
+    #[cfg(feature = "restful-api")]
+    pub id: u64,
 }
 
 impl TrackedRecvStats {
-    fn new(src_addr: Option<SocketAddr>) -> Self {
+    fn new(src_addr: Option<SocketAddr>, conns: Arc<AtomicU64>) -> Self {
+        conns.fetch_add(1, Ordering::Relaxed);
         Self {
+            conns,
             bytes_recv: AtomicU64::new(0),
             src_addr,
             created: Instant::now(),
+            #[cfg(feature = "restful-api")]
+            id: {
+                static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+                NEXT_ID.fetch_add(1, Ordering::Relaxed)
+            },
         }
+    }
+}
+
+impl Drop for TrackedRecvStats {
+    fn drop(&mut self) {
+        self.conns.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -292,37 +324,27 @@ pub(crate) struct TrackedTcp {
     inner: AnyTcp,
     global_bytes_recv: Arc<AtomicU64>,
     global_bytes_sent: Arc<AtomicU64>,
-    tcp_conns: Arc<AtomicU64>,
-
-    pub(crate) tracked_send_local: Arc<TrackedSendStats>,
-    pub(crate) tracked_recv_local: Arc<TrackedRecvStats>,
+    tracked_send_local: Arc<TrackedSendStats>,
+    tracked_recv_local: Arc<TrackedRecvStats>,
 }
 
 impl TrackedTcp {
     fn new(
         inner: AnyTcp,
-        global_bytes_recv: Arc<AtomicU64>,
-        global_bytes_sent: Arc<AtomicU64>,
-        tcp_conns: Arc<AtomicU64>,
+        stats: &ProxyStatsAtm,
         src: Option<SocketAddr>,
         dst: SocksAddr,
         outbound: String,
     ) -> Self {
-        tcp_conns.fetch_add(1, Ordering::Relaxed);
+        let (global_bytes_recv, global_bytes_sent, tcp_conns) = stats.tcp_counters();
+        let recv = Arc::new(TrackedRecvStats::new(src, tcp_conns));
         Self {
             inner,
             global_bytes_recv,
             global_bytes_sent,
-            tcp_conns,
-            tracked_send_local: Arc::new(TrackedSendStats::new(dst, outbound)),
-            tracked_recv_local: Arc::new(TrackedRecvStats::new(src)),
+            tracked_send_local: Arc::new(TrackedSendStats::new(dst, outbound, &recv)),
+            tracked_recv_local: recv,
         }
-    }
-}
-
-impl Drop for TrackedTcp {
-    fn drop(&mut self) {
-        self.tcp_conns.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -359,10 +381,7 @@ impl AsyncWrite for TrackedTcp {
         if let Poll::Ready(Ok(n)) = &poll {
             self.global_bytes_sent
                 .fetch_add(*n as u64, Ordering::Relaxed);
-            self.tracked_send_local
-                .bytes_send
-                .fetch_add(*n as u64, Ordering::Relaxed);
-            self.tracked_send_local.first_send.get_or_init(||Instant::now());
+            self.tracked_send_local.sent(*n);
         }
 
         poll
@@ -378,9 +397,7 @@ impl AsyncWrite for TrackedTcp {
         if let Poll::Ready(Ok(n)) = &poll {
             self.global_bytes_sent
                 .fetch_add(*n as u64, Ordering::Relaxed);
-            self.tracked_send_local
-                .bytes_send
-                .fetch_add(*n as u64, Ordering::Relaxed);
+            self.tracked_send_local.sent(*n);
         }
 
         poll
@@ -408,14 +425,7 @@ impl TcpTrait for TrackedTcp {
 struct TrackedUdpRecv {
     inner: AnyUdpRecv,
     global_bytes_recv: Arc<AtomicU64>,
-    udp_conns: Arc<AtomicU64>,
-    pub(crate) tracked_recv_local: Arc<TrackedRecvStats>,
-}
-
-impl Drop for TrackedUdpRecv {
-    fn drop(&mut self) {
-        self.udp_conns.fetch_sub(1, Ordering::Relaxed);
-    }
+    tracked_recv_local: Arc<TrackedRecvStats>,
 }
 
 #[async_trait]
@@ -434,7 +444,7 @@ impl UdpRecv for TrackedUdpRecv {
 struct TrackedUdpSend {
     inner: AnyUdpSend,
     global_bytes_sent: Arc<AtomicU64>,
-    pub(crate) tracked_send_local: Arc<TrackedSendStats>,
+    tracked_send_local: Arc<TrackedSendStats>,
 }
 
 #[async_trait]
@@ -443,33 +453,29 @@ impl UdpSend for TrackedUdpSend {
         let len = self.inner.send_to(buf, addr).await?;
         self.global_bytes_sent
             .fetch_add(len as u64, Ordering::Relaxed);
-        self.tracked_send_local
-            .bytes_send
-            .fetch_add(len as u64, Ordering::Relaxed);
-        self.tracked_send_local.first_send.get_or_init(||Instant::now());
+        self.tracked_send_local.sent(len);
         Ok(len)
     }
 }
 
 impl Observer {
     pub(crate) async fn wrap_request(&self, req: ProxyRequest, outbound: String) -> ProxyRequest {
+        let stats = match &req.user_context().stats {
+            Some(context) => self.on_new_request(context).await,
+            None => {
+                self.cleanup().await;
+                self.user_stats
+                    .lock()
+                    .await
+                    .entry(String::new())
+                    .or_default()
+                    .clone()
+            }
+        };
         match req {
             ProxyRequest::Tcp(mut tcp) => {
-                let Some(stats_context) = &tcp.user_context.stats else {
-                    return ProxyRequest::Tcp(tcp);
-                };
-                let stats = self.on_new_request(stats_context).await;
-                let (tcp_recv, tcp_sent, tcp_conns) = stats.tcp_counters();
-
-                let tracked = TrackedTcp::new(
-                    tcp.stream,
-                    tcp_recv,
-                    tcp_sent,
-                    tcp_conns,
-                    tcp.src_addr,
-                    tcp.dst.clone(),
-                    outbound,
-                );
+                let tracked =
+                    TrackedTcp::new(tcp.stream, &stats, tcp.src_addr, tcp.dst.clone(), outbound);
                 self.tcp_scoreboard.lock().await.push((
                     Arc::downgrade(&tracked.tracked_send_local),
                     Arc::downgrade(&tracked.tracked_recv_local),
@@ -478,30 +484,20 @@ impl Observer {
                 ProxyRequest::Tcp(tcp)
             }
             ProxyRequest::Udp(mut udp) => {
-                let Some(stats_context) = &udp.user_context.stats else {
-                    return ProxyRequest::Udp(udp);
-                };
-
-                let stats = self.on_new_request(stats_context).await;
                 let (udp_recv, udp_sent, udp_conns) = stats.udp_counters();
-
-                let tracked_send_local = Arc::new(TrackedSendStats::new(udp.dst.clone(), outbound));
-                let tracked_recv_local = Arc::new(TrackedRecvStats::new(udp.src_addr));
-                self.udp_scoreboard.lock().await.push((
-                    Arc::downgrade(&tracked_send_local),
-                    Arc::downgrade(&tracked_recv_local),
-                ));
-                udp_conns.fetch_add(1, Ordering::Relaxed);
+                let mut scoreboard = self.udp_scoreboard.lock().await;
+                let recv = Arc::new(TrackedRecvStats::new(udp.src_addr, udp_conns));
+                let send = Arc::new(TrackedSendStats::new(udp.dst.clone(), outbound, &recv));
+                scoreboard.push((Arc::downgrade(&send), Arc::downgrade(&recv)));
                 udp.recv = Box::new(TrackedUdpRecv {
                     inner: udp.recv,
                     global_bytes_recv: udp_recv,
-                    udp_conns,
-                    tracked_recv_local,
+                    tracked_recv_local: recv,
                 });
                 udp.send = Arc::new(TrackedUdpSend {
                     inner: udp.send,
                     global_bytes_sent: udp_sent,
-                    tracked_send_local,
+                    tracked_send_local: send,
                 });
                 ProxyRequest::Udp(udp)
             }

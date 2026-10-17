@@ -27,7 +27,8 @@ pub struct ShadowQuicServer {
     user_manager: Arc<ShadowQuicUserManager>,
     request_sender: Sender<ProxyRequest>,
     request: Receiver<ProxyRequest>,
-    observer: Arc<Observer>,
+    /// Shared with the manager's observer map when registering this inbound.
+    pub observer: Arc<Observer>,
 }
 
 struct ShadowQuicUserManager {
@@ -234,6 +235,7 @@ impl ShadowQuicServer {
                 authed: Arc::new(SetOnce::new_with(Some(Ok(user.clone())))),
                 send_id_store: Default::default(),
                 stats: Default::default(),
+                stats_refresh: Default::default(),
                 recv_id_store: IDStore {
                     id_counter: Default::default(),
                     inner: Default::default(),

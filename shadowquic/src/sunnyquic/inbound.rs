@@ -29,7 +29,8 @@ pub struct SunnyQuicServer {
     user_manager: Arc<SunnyQuicUserManager>,
     request_sender: Sender<ProxyRequest>,
     request: Receiver<ProxyRequest>,
-    observer: Arc<Observer>,
+    /// Shared with the manager's observer map when registering this inbound.
+    pub observer: Arc<Observer>,
 }
 
 struct SunnyQuicUserManager {
@@ -245,6 +246,7 @@ impl SunnyQuicServer {
                 authed: Arc::new(SetOnce::new()),
                 send_id_store: Default::default(),
                 stats: Default::default(),
+                stats_refresh: Default::default(),
                 recv_id_store: IDStore {
                     id_counter: Default::default(),
                     inner: Default::default(),

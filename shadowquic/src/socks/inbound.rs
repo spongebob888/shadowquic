@@ -10,9 +10,10 @@ use crate::msgs::socks5::{
     SOCKS5_CMD_TCP_CONNECT, SOCKS5_CMD_UDP_ASSOCIATE, SOCKS5_REPLY_SUCCEEDED, SOCKS5_VERSION,
 };
 use crate::msgs::{SDecode, SEncode};
+use crate::observe::Observer;
 use crate::utils::dual_socket::to_ipv4_mapped;
 use crate::{AnyUdpRecv, AnyUdpSend, TcpTrait};
-use crate::{Inbound, ProxyRequest, TcpSession, UdpSession};
+use crate::{Inbound, ProxyRequest, StatsContext, TcpSession, UdpSession, UserContext};
 use async_trait::async_trait;
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -25,6 +26,8 @@ use super::UdpSocksWrap;
 
 pub struct SocksServer {
     pub cfg: SocksServerCfg,
+    /// Shared with the manager's observer map when registering this inbound.
+    pub observer: Arc<Observer>,
     request_sender: Sender<ProxyRequest>,
     request_receiver: Receiver<ProxyRequest>,
 }
@@ -34,6 +37,7 @@ impl SocksServer {
         let (s, r) = channel(20);
         Ok(Self {
             cfg,
+            observer: Arc::new(Observer::new()),
             request_sender: s,
             request_receiver: r,
         })
@@ -48,14 +52,21 @@ impl SocksServer {
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static + TcpTrait,
     {
         let users_arc = Arc::new(users.to_vec());
-        let (s, req, socket) = handle_socks(users_arc, stream, local_addr).await?;
+        let (s, req, socket, username) = handle_socks(users_arc, stream, local_addr).await?;
         let src_addr = s.peer_addr().map(to_ipv4_mapped);
+        let user_context = UserContext {
+            stats: Some(StatsContext {
+                username,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
         match req.cmd {
             SOCKS5_CMD_TCP_CONNECT => Ok(ProxyRequest::Tcp(TcpSession {
                 stream: Box::new(s),
                 dst: req.dst,
                 src_addr,
-                user_context: Default::default(),
+                user_context,
             })),
             SOCKS5_CMD_UDP_ASSOCIATE => {
                 let socket = Arc::new(socket.unwrap());
@@ -66,7 +77,7 @@ impl SocksServer {
                     bind_addr: req.dst.clone(),
                     dst: req.dst,
                     src_addr,
-                    user_context: Default::default(),
+                    user_context,
                 }
                 .wait_first_packet()
                 .await?;
@@ -78,7 +89,19 @@ impl SocksServer {
 }
 
 // Public authentication helper (standalone)
-pub async fn authenticate<S>(users: Arc<Vec<AuthUser>>, mut stream: S) -> Result<S, SError>
+pub async fn authenticate<S>(users: Arc<Vec<AuthUser>>, stream: S) -> Result<S, SError>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    authenticate_with_username(users, stream)
+        .await
+        .map(|(stream, _)| stream)
+}
+
+async fn authenticate_with_username<S>(
+    users: Arc<Vec<AuthUser>>,
+    mut stream: S,
+) -> Result<(S, String), SError>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -108,7 +131,7 @@ where
     };
     reply.encode(&mut stream).await?;
     if users.is_empty() {
-        return Ok(stream);
+        return Ok((stream, String::new()));
     }
     let auth = PasswordAuthReq::decode(&mut stream).await?;
     let user = AuthUser {
@@ -120,25 +143,25 @@ where
     if !users.contains(&user) {
         return Err(SError::SocksError("authentication failed".to_string()));
     }
-    tracing::Span::current().record("user", tracing::field::display(user.username));
+    tracing::Span::current().record("user", tracing::field::display(&user.username));
     tracing::debug!("socks authentication succeeded");
     let reply = PasswordAuthReply {
         version: 0x01,
         status: SOCKS5_REPLY_SUCCEEDED,
     };
     reply.encode(&mut stream).await?;
-    Ok(stream)
+    Ok((stream, user.username))
 }
 
 async fn handle_socks<S>(
     users: Arc<Vec<AuthUser>>,
     s: S,
     local_addr: SocketAddr,
-) -> Result<(S, CmdReq, Option<UdpSocket>), SError>
+) -> Result<(S, CmdReq, Option<UdpSocket>, String), SError>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
-    let mut s = authenticate(users, s).await?;
+    let (mut s, username) = authenticate_with_username(users, s).await?;
     let mut req = socks5::CmdReq::decode(&mut s).await?;
     normalize_ip_domain(&mut req.dst);
     req.dst.canonicalize_ip();
@@ -173,7 +196,7 @@ where
     };
 
     reply.encode(&mut s).await?;
-    Ok((s, req, socket))
+    Ok((s, req, socket, username))
 }
 /// SOCKS clients(like firefox) sometimes encode an IP literal using the domain address type.
 /// Store it as the corresponding IP type so downstream protocols can use it
@@ -201,10 +224,17 @@ async fn handle_tcp(
 ) -> SResult<()> {
     let local_addr = to_ipv4_mapped(stream.local_addr().unwrap());
 
-    let (s, req, socket) = handle_socks(users, stream, local_addr)
+    let (s, req, socket, username) = handle_socks(users, stream, local_addr)
         .in_current_span()
         .await?;
     let stream_src_addr = s.peer_addr().ok().map(to_ipv4_mapped);
+    let user_context = UserContext {
+        stats: Some(StatsContext {
+            username,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
     let req = match req.cmd {
         SOCKS5_CMD_TCP_CONNECT => {
             info!(dst = %req.dst, "tcp connect request accepted");
@@ -212,7 +242,7 @@ async fn handle_tcp(
                 stream: Box::new(s) as Box<dyn crate::TcpTrait>,
                 dst: req.dst,
                 src_addr: stream_src_addr,
-                user_context: Default::default(),
+                user_context,
             })
         }
         SOCKS5_CMD_UDP_ASSOCIATE => {
@@ -226,7 +256,7 @@ async fn handle_tcp(
                     bind_addr: req.dst.clone(),
                     dst: req.dst, // rewrite later
                     src_addr: stream_src_addr,
-                    user_context: Default::default(),
+                    user_context,
                 }
                 .wait_first_packet()
                 .await?,
@@ -252,6 +282,7 @@ impl Inbound for SocksServer {
             .ok_or(SError::InboundUnavailable)?;
         recv.user_context_mut().inbound_tag = self.cfg.tag.clone();
         recv.user_context_mut().preferred_outbound = self.cfg.default_outbound.clone();
+        recv.user_context_mut().observer = Arc::downgrade(&self.observer);
         Ok(recv)
     }
 

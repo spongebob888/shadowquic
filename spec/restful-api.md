@@ -7,6 +7,9 @@ traffic counters, memory statistics, and outbound probing.
 
 - Gate the API and its dependencies behind a non-default `restful-api` Cargo
   feature. Enabling it must automatically enable `statistics`.
+- Use an independent `jemalloc` feature, enabled by default, to select jemalloc
+  as the global allocator on supported targets. `restful-api` must not enable it.
+  Compile the memory endpoint only when both features are enabled.
 - Start the API only when `api-config` is present. Reject that configuration
   when the binary was built without `restful-api`.
 - Require `bind-addr`. The initial API supports loopback addresses only and
@@ -26,13 +29,30 @@ Preserve observer support for ShadowQUIC and SunnyQUIC, and add support for
 mixed, TPROXY, and TUN inbounds. Include standalone SOCKS inbounds through the
 same request tracking path. Preserve existing feature and platform gates.
 
-Register observers with `ApiManager` by inbound tag. Requests without an
-authenticated user must still be tracked; API tracking must not require a
-synthetic username or a QUIC connection handle. Preserve existing authenticated
-user statistics and connection control behavior.
+Create `manager.observers: HashMap<String, Arc<Observer>>` alongside the inbound
+map, registering only client inbounds. ShadowQUIC, SunnyQUIC, SOCKS, mixed,
+TPROXY, and TUN servers each own an `Arc<Observer>` and attach its weak reference
+to every accepted TCP or UDP request. Clone that same `Arc` into the map before
+erasing the concrete inbound type; keep it when wrapping an inbound for fake-IP
+restoration. Track requests once, after routing. Do not add observer or
+tracking methods to `Inbound`.
+Keep manager registration and dispatch independent of the `statistics` feature;
+the observer module supplies the empty implementation when it is disabled.
+
+Pass this observer map to `ApiManager` by inbound tag. Requests without an
+authenticated user must still be tracked. Store their counters under the empty
+username `""` in `user_stats`, without creating a QUIC connection handle.
+Preserve existing authenticated user statistics and connection control behavior.
+SOCKS and mixed inbounds must populate `UserContext.stats` with the username
+accepted by SOCKS password or HTTP Basic authentication, or `""` when anonymous.
+TUN and TPROXY also populate it with `""`. Use the default empty connection
+handle for these local inbounds; only live handles belong in `sq_conns`.
 
 Internal DNS upstream and database download queues are excluded from client
 tracking so probes and background work do not inflate proxy-session metrics.
+Their tags have no entries in the observer map. The manager preserves the
+observer attached by `Inbound::accept`; it does not attach observers from the
+registry to requests. The registry is used to expose observer snapshots.
 
 In this API, a connection means one TCP proxy session or UDP association, not
 the underlying QUIC transport connection. A UDP association can carry packets
@@ -49,12 +69,21 @@ destination. Do not create duplicate entries for cloned UDP send handles.
 - `first_response_ms` is the monotonic duration from tracking creation to the
   first successful, nonempty write or datagram sent back to the client. It is
   `null` until that event and is set only once. TCP vectored writes count too.
-- API traffic totals are counters for the lifetime of each observer. They start
-  at zero and are independent of persisted user totals, user-stat resets, and
-  user removal. Completed sessions remain included in byte totals.
+- Calculate API traffic totals by summing all entries in `user_stats`, including
+  the anonymous `""` entry. Completed sessions remain included in byte totals.
+  Restored traffic is included; resetting or removing user counters changes the
+  totals accordingly. Do not maintain separate `overall` counters or a
+  `TrackedSession` wrapper.
 - A TCP session is active while its tracked stream exists. A UDP association
-  remains active while either tracked half exists. Keep its metadata and final
-  per-half counters available until both halves are dropped.
+  remains active while either tracked half exists. Each half owns only its own
+  stats; do not retain the other half's stats or maintain an `active` field.
+  Determine liveness by upgrading the scoreboard's weak pointers. Report
+  `half_closed: true` when exactly one upgrades, and omit entries when neither
+  upgrades. Data owned by an expired half is `null` in the API.
+- Store the user's `tcp_conns` or `udp_conns` counter in `TrackedRecvStats`.
+  Increment it on creation and decrement it on drop. Tracking the receive half
+  is sufficient; send stats need no connection counter or shared counter guard.
+  A send-only half-closed entry can remain listed with a connection count of zero.
 - Snapshots may contain small differences caused by concurrent I/O; they need
   not be atomic across all observers. Reading a snapshot must not hold observer
   locks during network I/O or JSON serialization.
@@ -74,7 +103,7 @@ socket-address fields include ports and use brackets for IPv6.
 | `get_outbounds` | `GET /api/v1/outbounds` | `{"outbounds": [...]}` |
 | `get_connections` | `GET /api/v1/connections` | `{"connections": [...]}` |
 | `get_overall_traffic` | `GET /api/v1/traffic` | `{"inbounds": [...]}` |
-| `get_mem_usage` | `GET /api/v1/memory` | Memory object |
+| `get_mem_usage` (requires `jemalloc`) | `GET /api/v1/memory` | Memory object |
 | `probe_outbound` | `POST /api/v1/outbounds/{tag}/probe` | Probe object |
 
 Successful requests return `200`. Empty collections return an empty array.
@@ -88,8 +117,18 @@ timeout, and `500` for unexpected internal errors.
 
 ## Outbounds
 
-Return every registered outbound tag, including automatically registered DNS
-outbounds. Each entry contains `tag` and a `quality` object:
+Preserve `SQStatsTrait` as a separate trait from `Outbound`. When constructing
+the outbound list, clone each concrete QUIC outbound's `Arc` into a tag-keyed
+`HashMap<String, Arc<dyn SQStatsTrait>>`, then coerce the same allocation into
+`Arc<dyn Outbound>` for dispatch. Probe using the manager's existing outbound
+list and `Outbound::handle`; do not add a probing trait or API methods to
+`Outbound`. If DNS wraps an outbound, keep the
+statistics map pointing to the original QUIC client; `ResolvingOutbound` does
+not implement `SQStatsTrait`. Probes use the DNS wrapper from the dispatch list
+so they use the configured resolver.
+
+Use the manager's outbound list with DNS service outbounds removed for both
+listing and probing. Each entry contains `tag` and a `quality` object:
 
 - `sq_conn_stats`: the latest available cached `SQConnStats`, or `null` when
   unsupported, disconnected, or no sample exists. Expose `uplink` and `downlink`
@@ -113,16 +152,22 @@ Each entry contains:
 | --- | --- |
 | `id` | Opaque session ID, stable and unique within this manager's lifetime |
 | `protocol` | `tcp` or `udp` |
+| `half_closed` | `true` when exactly one scoreboard weak pointer can be upgraded |
 | `inbound` | Inbound tag |
-| `outbound` | Selected outbound tag |
+| `outbound` | Selected outbound tag, or `null` when send stats have expired |
 | `src` | Client socket address, or `null` when unavailable |
 | `dst_ip` | Known destination IP, or `null` when only a domain is known |
 | `dst_domain` | Routed destination domain or cached hostname, otherwise `null` |
-| `dst_port` | Destination port |
-| `recv_bytes` | Per-session upload bytes |
-| `sent_bytes` | Per-session download bytes |
-| `created_at` | Time tracking began |
+| `dst_port` | Destination port, or `null` when send stats have expired |
+| `recv_bytes` | Per-session upload bytes, or `null` when receive stats have expired |
+| `sent_bytes` | Per-session download bytes, or `null` when send stats have expired |
+| `duration_ms` | Elapsed tracking duration in milliseconds, using `Instant`, or `null` when receive stats have expired |
 | `first_response_ms` | Time to first response, or `null` |
+
+IDs remain stable whichever half survives. Source addresses require receive
+stats; destination addresses and outbound tags require send stats. Computing
+`first_response_ms` requires both halves. Missing stats never remove completed
+traffic from `user_stats`.
 
 Report the destination after fake-IP restoration and router rewrites. If the
 routed destination is a domain, report that domain. For an IP destination, use the shared
@@ -144,9 +189,9 @@ Return one entry for every registered observer, including idle observers:
 }
 ```
 
-Byte totals combine TCP and UDP. Connection counts describe currently active
-proxy sessions, using the lifetime rules above. Obtain these values from
-observer counters; summing active scoreboard entries would lose completed
+Byte totals combine TCP and UDP. Connection counts follow the lifetime of
+`TrackedRecvStats`, rather than both halves. Sum the counters in all
+`user_stats` entries; summing active scoreboard entries would lose completed
 sessions' traffic.
 
 ## Memory usage
@@ -158,10 +203,16 @@ Build jemalloc with statistics enabled and refresh the statistics epoch before
 reading them, as specified in the [jemalloc manual](https://jemalloc.net/jemalloc.3.html).
 These are allocator metrics; they do not represent total process RSS.
 
-The CLI must use jemalloc as its global allocator on supported targets when
-`restful-api` is enabled. Keep allocator dependencies platform-gated and
-support Linux and macOS on x86_64 and aarch64. A library embedding
-must opt into that allocator explicitly. Where jemalloc statistics are
+The independent `jemalloc` feature is enabled by default and installs the global
+allocator in the library, covering both the CLI and library embeddings even
+without `restful-api`. Keep allocator dependencies platform-gated and support
+Linux and macOS on x86_64 and aarch64, plus Android on aarch64, armv7, i686,
+and x86_64. Build 64-bit Android jemalloc with `JEMALLOC_SYS_WITH_LG_PAGE=14`
+for compatibility with both 4 KB and 16 KB system pages. An embedding defining
+its own global allocator must disable `jemalloc`.
+
+Without `jemalloc`, do not compile the memory module or register the memory
+endpoint; `/api/v1/memory` returns `404`. With both features, where statistics are
 unavailable, keep the other endpoints usable and return `501` with error code
 `memory_stats_unavailable`; never substitute zero values.
 
@@ -178,7 +229,9 @@ Accept a percent-encoded outbound tag as one path segment and a JSON body:
   accept values from `1` through `60000`.
 - Send an HTTP GET through the named outbound directly, bypassing router
   selection. Preserve the URL's host, port, path, and query in the request.
-  Reject outbounds that cannot carry HTTP-over-TCP probes with `501`.
+  Dispatch a TCP session backed by an in-memory stream to `Outbound::handle`.
+  Return `501` when the handler reports an unsupported operation; an outbound
+  that closes the stream (such as `drop`) produces a failed probe with `502`.
 - Measure monotonic elapsed time from the start of the outbound attempt until
   complete response headers arrive. Include destination resolution, connection
   setup, and request transmission; exclude JSON parsing and response-body
@@ -209,13 +262,16 @@ concurrent-probe rejections, and cancelled probes do not overwrite the cache.
 - Verify authenticated and unauthenticated tracking across supported inbound
   types, with platform-gated TPROXY and TUN coverage.
 - Cover partial and vectored TCP I/O, failed I/O, empty writes, first-response
-  timing, UDP half lifetimes, cancellation, and expired scoreboard entries.
-- Verify observer totals survive session completion, user-stat resets, and user
-  removal, and exclude restored historical traffic and API probes.
+  timing, UDP half lifetimes, both half-close directions, cancellation, and
+  expired scoreboard entries.
+- Verify totals include named and anonymous user counters, retain completed
+  traffic, include restored traffic, follow user-stat resets and user removal,
+  and exclude API probes.
 - Cover destination ports, nullable addresses, cached domain hits and misses,
   and operation without `dns-server`.
 - Verify response schemas, empty lists, error mappings, and cache-only reads.
 - Use a local HTTP fixture and a controlled outbound for probe tests. Cover
   success, non-2xx responses, timeout, invalid input, concurrent requests, cache
   replacement, and resource cleanup without relying on public internet access.
-- Verify jemalloc statistics on supported targets and the `501` fallback.
+- Verify the independent allocator feature, memory route absence without
+  `jemalloc`, statistics on supported targets, and the `501` target fallback.

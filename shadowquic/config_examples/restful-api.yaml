@@ -1,0 +1,11 @@
+# cargo run --features restful-api -- -c shadowquic/config_examples/restful-api.yaml
+inbounds:
+  - tag: socks-in
+    type: socks
+    bind-addr: "127.0.0.1:1089"
+outbounds:
+  - tag: direct
+    type: direct
+restful-api:
+  bind-addr: "127.0.0.1:9090"
+log-level: info

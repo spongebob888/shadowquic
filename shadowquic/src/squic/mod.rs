@@ -49,6 +49,8 @@ pub struct SQConn<T: QuicConnection> {
     pub(crate) recv_id_store: IDStore<(AnyUdpSend, SocksAddr)>,
     /// Latest successful peer stats response and the time it was received.
     pub stats: Arc<Mutex<Option<SQConnStats>>>,
+    /// Serialize remote refreshes without blocking readers of the cached sample.
+    pub(crate) stats_refresh: Arc<Mutex<()>>,
 }
 
 #[derive(Clone)]

@@ -110,14 +110,14 @@ pub struct Config {
     pub router: RouterCfg,
     #[serde(default)]
     pub log_level: LogLevel,
-    pub api_config: Option<ApiConfig>,
+    pub restful_api: Option<ApiConfig>,
 }
 
 /// Restful API
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ApiConfig {
-    bind_addr: SocketAddr,
+    pub bind_addr: SocketAddr,
 }
 impl Config {
     /// Explicit outbounds come first, followed by automatically registered DNS services.
@@ -130,6 +130,18 @@ impl Config {
 
     /// Validate endpoint identities before opening any listeners.
     pub fn validate(&self) -> Result<(), SError> {
+        if let Some(api) = &self.restful_api {
+            if !cfg!(feature = "restful-api") {
+                return Err(SError::InvalidConfig(
+                    "api-config requires the restful-api feature".into(),
+                ));
+            }
+            if !api.bind_addr.ip().is_loopback() {
+                return Err(SError::InvalidConfig(
+                    "API bind-addr must be a loopback address".into(),
+                ));
+            }
+        }
         for (kind, tags) in [
             (
                 "inbound",
@@ -260,7 +272,10 @@ impl Config {
             .clone()
             .unwrap_or_else(|| self.outbound_tags().next().unwrap().to_owned());
         let mut inbounds = HashMap::new();
+        let mut observers = HashMap::new();
         let mut outbounds = HashMap::new();
+        #[cfg(feature = "restful-api")]
+        let mut sq_outbounds = HashMap::new();
         #[cfg(feature = "dns-server")]
         let mut resolver_manager = Arc::new(ResolverManager::new());
         #[cfg(not(feature = "dns-server"))]
@@ -329,7 +344,11 @@ impl Config {
                     _ => DnsStrategy::default(),
                 };
                 let inner: Arc<dyn Outbound> = cfg
-                    .build_outbound(resolver_manager.clone())
+                    .build_outbound(
+                        resolver_manager.clone(),
+                        #[cfg(feature = "restful-api")]
+                        &mut sq_outbounds,
+                    )
                     .instrument(span)
                     .await?;
                 let outbound: Arc<dyn Outbound> = match resolver {
@@ -346,9 +365,13 @@ impl Config {
             outbounds.insert(
                 tag,
                 Arc::from(
-                    cfg.build_outbound(resolver_manager.clone())
-                        .instrument(span)
-                        .await?,
+                    cfg.build_outbound(
+                        resolver_manager.clone(),
+                        #[cfg(feature = "restful-api")]
+                        &mut sq_outbounds,
+                    )
+                    .instrument(span)
+                    .await?,
                 ),
             );
         }
@@ -371,7 +394,7 @@ impl Config {
                 )
             ))]
             let restore_fake = cfg.restores_fake_ip();
-            let inbound = cfg.build_inbound().instrument(span).await?;
+            let inbound = cfg.build_inbound(&mut observers).instrument(span).await?;
             #[cfg(all(
                 feature = "dns-server",
                 any(
@@ -399,8 +422,13 @@ impl Config {
         }
         Ok(Manager {
             inbounds,
+            observers,
             outbounds,
             default_outbound,
+            #[cfg(feature = "restful-api")]
+            api_config: self.restful_api,
+            #[cfg(feature = "restful-api")]
+            sq_outbounds,
             #[cfg(feature = "plugin")]
             router,
             #[cfg(feature = "dns-server")]
@@ -523,7 +551,12 @@ impl InboundCfg {
         }
     }
 
-    async fn build_inbound(self) -> Result<Box<dyn Inbound>, SError> {
+    async fn build_inbound(
+        self,
+        observers: &mut HashMap<String, Arc<crate::observe::Observer>>,
+    ) -> Result<Box<dyn Inbound>, SError> {
+        let tag = self.tag().to_owned();
+        let observer;
         let r: Box<dyn Inbound> = match self {
             #[cfg(all(
                 feature = "tun",
@@ -534,15 +567,40 @@ impl InboundCfg {
                     target_os = "android"
                 )
             ))]
-            Self::Tun(cfg) => Box::new(crate::tun::TunServer::new(cfg).await?),
-            InboundCfg::Socks(cfg) => Box::new(SocksServer::new(cfg).await?),
+            Self::Tun(cfg) => {
+                let inbound = crate::tun::TunServer::new(cfg).await?;
+                observer = inbound.observer.clone();
+                Box::new(inbound)
+            }
+            InboundCfg::Socks(cfg) => {
+                let inbound = SocksServer::new(cfg).await?;
+                observer = inbound.observer.clone();
+                Box::new(inbound)
+            }
             #[cfg(feature = "mixed")]
-            InboundCfg::Mixed(cfg) => Box::new(MixedServer::new(cfg).await?),
-            InboundCfg::ShadowQuic(cfg) => Box::new(ShadowQuicServer::new(cfg).await?),
-            InboundCfg::SunnyQuic(cfg) => Box::new(SunnyQuicServer::new(cfg).await?),
+            InboundCfg::Mixed(cfg) => {
+                let inbound = MixedServer::new(cfg).await?;
+                observer = inbound.observer.clone();
+                Box::new(inbound)
+            }
+            InboundCfg::ShadowQuic(cfg) => {
+                let inbound = ShadowQuicServer::new(cfg).await?;
+                observer = inbound.observer.clone();
+                Box::new(inbound)
+            }
+            InboundCfg::SunnyQuic(cfg) => {
+                let inbound = SunnyQuicServer::new(cfg).await?;
+                observer = inbound.observer.clone();
+                Box::new(inbound)
+            }
             #[cfg(all(feature = "tproxy", target_os = "linux"))]
-            InboundCfg::Tproxy(cfg) => Box::new(TproxyServer::new(cfg).await?),
+            InboundCfg::Tproxy(cfg) => {
+                let inbound = TproxyServer::new(cfg).await?;
+                observer = inbound.observer.clone();
+                Box::new(inbound)
+            }
         };
+        observers.insert(tag, observer);
         Ok(r)
     }
 }
@@ -596,13 +654,27 @@ impl OutboundCfg {
     async fn build_outbound(
         self,
         resolver_manager: Arc<ResolverManager>,
+        #[cfg(feature = "restful-api")] sq_outbounds: &mut HashMap<
+            String,
+            Arc<dyn crate::api::SQStatsTrait>,
+        >,
     ) -> Result<Arc<dyn Outbound>, SError> {
+        #[cfg(feature = "restful-api")]
+        let tag = self.tag().to_owned();
         let r: Arc<dyn Outbound> = match self {
-            OutboundCfg::Socks(cfg) => Arc::new(SocksClient::new(cfg, resolver_manager.clone())),
+            OutboundCfg::Socks(cfg) => Arc::new(SocksClient::new(cfg, resolver_manager)),
             OutboundCfg::ShadowQuic(cfg) => {
-                Arc::new(ShadowQuicClient::new(cfg, resolver_manager.clone()))
+                let outbound = Arc::new(ShadowQuicClient::new(cfg, resolver_manager));
+                #[cfg(feature = "restful-api")]
+                sq_outbounds.insert(tag, outbound.clone());
+                outbound
             }
-            OutboundCfg::SunnyQuic(cfg) => Arc::new(SunnyQuicClient::new(cfg, resolver_manager)),
+            OutboundCfg::SunnyQuic(cfg) => {
+                let outbound = Arc::new(SunnyQuicClient::new(cfg, resolver_manager));
+                #[cfg(feature = "restful-api")]
+                sq_outbounds.insert(tag, outbound.clone());
+                outbound
+            }
             OutboundCfg::Direct(cfg) => Arc::new(DirectOut::new(cfg, resolver_manager)),
             OutboundCfg::Drop(_) => Arc::new(DropOutbound),
         };
@@ -1203,6 +1275,57 @@ outbounds:
     }
 
     #[test]
+    fn api_configuration_requires_feature_and_loopback_binding() {
+        let mut cfg = multi_config();
+        cfg.restful_api = Some(super::ApiConfig {
+            bind_addr: "127.0.0.1:0".parse().unwrap(),
+        });
+        assert_eq!(cfg.validate().is_ok(), cfg!(feature = "restful-api"));
+        cfg.restful_api.as_mut().unwrap().bind_addr = "0.0.0.0:9090".parse().unwrap();
+        assert!(cfg.validate().is_err());
+        assert!(serde_saphyr::from_str::<super::ApiConfig>("{}").is_err());
+    }
+
+    #[cfg(feature = "restful-api")]
+    #[tokio::test]
+    async fn api_stats_preserve_original_quic_clients() {
+        for wrapped in [
+            false,
+            #[cfg(feature = "dns-server")]
+            true,
+        ] {
+            let dns = if wrapped {
+                "dns: [{tag: resolver, type: dns-system, bind-addr: '127.0.0.1:0'}]"
+            } else {
+                ""
+            };
+            let resolver = if wrapped { ", dns: resolver" } else { "" };
+            let config: Config = serde_saphyr::from_str(&format!(r#"
+inbounds: [{{tag: local, type: socks, bind-addr: '127.0.0.1:0'}}]
+{dns}
+outbounds:
+  - {{tag: shadow, type: shadowquic, addr: '127.0.0.1:443', username: alice, password: pass, server-name: localhost{resolver}}}
+  - {{tag: sunny, type: sunnyquic, addr: '127.0.0.1:443', username: alice, password: pass, server-name: localhost{resolver}}}
+  - {{tag: direct, type: direct{resolver}}}
+  - {{tag: socks, type: socks, addr: '127.0.0.1:1080'{resolver}}}
+  - {{tag: drop, type: drop}}
+"#)).unwrap();
+            let manager = config.build_manager().await.unwrap();
+            assert_eq!(manager.sq_outbounds.len(), 2);
+            for tag in ["shadow", "sunny"] {
+                let stats = &manager.sq_outbounds[tag];
+                assert_eq!(
+                    std::sync::Arc::as_ptr(&manager.outbounds[tag]) as *const ()
+                        == std::sync::Arc::as_ptr(stats) as *const (),
+                    !wrapped,
+                    "statistics must refer to the original QUIC client for {tag}",
+                );
+                assert!(stats.get_sq_stats().await.is_none());
+            }
+        }
+    }
+
+    #[test]
     fn main_branch_configs_are_compatible() {
         for yaml in [
             include_str!("../../tests/fixtures/main_config/client.yaml"),
@@ -1491,6 +1614,43 @@ outbounds:
         assert!(manager.inbounds.contains_key("one"));
         assert!(manager.outbounds.contains_key("a-second"));
         assert_eq!(manager.default_outbound, "z-first");
+        assert_eq!(manager.observers.len(), 2);
+        assert!(manager.observers.contains_key("one"));
+        assert!(manager.observers.contains_key("two"));
+    }
+
+    #[tokio::test]
+    async fn observers_exclude_internal_dns_and_database_queues() {
+        let dns = if cfg!(feature = "dns-server") {
+            "dns: [{tag: resolver, type: dns-system, bind-addr: '127.0.0.1:0'}]"
+        } else {
+            ""
+        };
+        #[cfg(feature = "router-db")]
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(feature = "router-db")]
+        let database = format!(
+            "router:\n  database: [{{tag: download, type: country, url: 'http://127.0.0.1:9/db', path: '{}'}}]",
+            directory.path().join("country.mmdb").display()
+        );
+        #[cfg(not(feature = "router-db"))]
+        let database = "";
+        let config: Config = serde_saphyr::from_str(&format!(
+            r#"
+inbounds: [{{tag: client, type: socks, bind-addr: '127.0.0.1:0'}}]
+outbounds: [{{tag: direct, type: direct}}]
+{dns}
+{database}
+"#
+        ))
+        .unwrap();
+        let manager = config.build_manager().await.unwrap();
+        #[cfg(feature = "dns-server")]
+        assert!(manager.inbounds.contains_key("resolver"));
+        #[cfg(feature = "router-db")]
+        assert!(manager.inbounds.contains_key("download"));
+        assert_eq!(manager.observers.len(), 1);
+        assert!(manager.observers.contains_key("client"));
     }
 
     #[test]
@@ -1569,6 +1729,7 @@ outbounds:
     }
 
     #[test]
+    #[cfg(feature = "dns-server")]
     fn rejects_reserved_default_system_dns_tag() {
         // DNS services may not claim the reserved default system resolver tag.
         let mut cfg = multi_config();
@@ -1609,6 +1770,8 @@ outbounds:
             include_str!("../../config_examples/server.yaml"),
             include_str!("../../config_examples/server_sunnyquic.yaml"),
             include_str!("../../config_examples/socks2socks.yaml"),
+            #[cfg(feature = "restful-api")]
+            include_str!("../../config_examples/restful-api.yaml"),
         ] {
             serde_saphyr::from_str::<Config>(yaml)
                 .unwrap()
@@ -1680,9 +1843,13 @@ outbounds:
             serde_saphyr::from_str("type: drop\ntag: blackhole\n").unwrap();
         assert_eq!(cfg.tag(), "blackhole");
         assert!(
-            cfg.build_outbound(std::sync::Arc::new(crate::dns::ResolverManager::new()))
-                .await
-                .is_ok()
+            cfg.build_outbound(
+                std::sync::Arc::new(crate::dns::ResolverManager::new()),
+                #[cfg(feature = "restful-api")]
+                &mut std::collections::HashMap::new(),
+            )
+            .await
+            .is_ok()
         );
     }
 

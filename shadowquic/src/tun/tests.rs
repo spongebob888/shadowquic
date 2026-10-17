@@ -1,5 +1,5 @@
 use super::{
-    TunServerCfg,
+    TunServer, TunServerCfg,
     packet::{Packet, udp_packet},
     stack,
 };
@@ -12,7 +12,11 @@ use smoltcp::{
         UdpRepr,
     },
 };
-use std::{net::SocketAddr, time::Duration};
+use std::{
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     sync::mpsc,
@@ -23,7 +27,9 @@ fn config() -> TunServerCfg {
     serde_saphyr::from_str("tag: tun-in\ndefault-outbound: direct").unwrap()
 }
 
+#[cfg(feature = "dns-server")]
 struct PacketInbound(mpsc::Receiver<ProxyRequest>);
+#[cfg(feature = "dns-server")]
 #[async_trait::async_trait]
 impl Inbound for PacketInbound {
     async fn accept(&mut self) -> Result<ProxyRequest, SError> {
@@ -31,6 +37,7 @@ impl Inbound for PacketInbound {
     }
 }
 struct Harness {
+    observer: Arc<crate::observe::Observer>,
     input: mpsc::Sender<Bytes>,
     output: mpsc::Receiver<Vec<u8>>,
     inbound: Box<dyn Inbound>,
@@ -41,10 +48,17 @@ impl Harness {
         let (tx, rx) = mpsc::channel(256);
         let (output, output_rx) = mpsc::channel(256);
         let (requests, request_rx) = mpsc::channel(256);
+        let observer = Arc::new(crate::observe::Observer::new());
         Self {
             input: tx,
             output: output_rx,
-            inbound: Box::new(PacketInbound(request_rx)),
+            inbound: Box::new(TunServer {
+                name: "test-tun".into(),
+                observer: observer.clone(),
+                requests: request_rx,
+                task: Mutex::new(None),
+            }),
+            observer,
             task: tokio::spawn(stack::run(cfg, rx, output, requests)),
         }
     }
@@ -55,10 +69,18 @@ impl Harness {
             .unwrap()
     }
     async fn accept(&mut self) -> ProxyRequest {
-        tokio::time::timeout(Duration::from_secs(2), self.inbound.accept())
+        let request = tokio::time::timeout(Duration::from_secs(2), self.inbound.accept())
             .await
             .unwrap()
-            .unwrap()
+            .unwrap();
+        assert!(Arc::ptr_eq(
+            &request.user_context().observer.upgrade().unwrap(),
+            &self.observer
+        ));
+        let stats = request.user_context().stats.as_ref().unwrap();
+        assert_eq!(stats.username, "");
+        assert!(stats.conn_handle.upgrade().is_none());
+        self.observer.wrap_request(request, "direct".into()).await
     }
     #[cfg(feature = "dns-server")]
     fn restore(&mut self, fake: std::sync::Arc<crate::dns::FakeIp>) {
@@ -192,6 +214,12 @@ async fn tcp_ipv4_and_ipv6_transfer_and_preserve_half_closes() {
         // Receiving FIN must not prevent the outbound's response.
         session.stream.write_all(b"world").await.unwrap();
         session.stream.shutdown().await.unwrap();
+        #[cfg(feature = "statistics")]
+        {
+            assert_eq!(harness.observer.get_user_stats("").await.tcp_conns, 1);
+            assert_eq!(harness.observer.get_user_stats("").await.tcp_recv, 5);
+            assert_eq!(harness.observer.get_user_stats("").await.tcp_sent, 5);
+        }
         let mut got_data = false;
         let mut got_fin = false;
         while !got_data || !got_fin {
@@ -224,6 +252,9 @@ async fn tcp_ipv4_and_ipv6_transfer_and_preserve_half_closes() {
                     .unwrap();
             }
         }
+        drop(session);
+        #[cfg(feature = "statistics")]
+        assert_eq!(harness.observer.get_user_stats("").await.tcp_conns, 0);
     }
 }
 
@@ -293,6 +324,21 @@ async fn udp_keeps_each_destination_and_original_reply_source_for_both_families(
             assert_eq!(repr.dst_port, client.port());
             assert_eq!(udp.payload(), payload.as_ref());
         }
+        #[cfg(feature = "statistics")]
+        {
+            assert_eq!(harness.observer.get_user_stats("").await.udp_conns, 1);
+            assert_eq!(harness.observer.get_user_stats("").await.udp_recv, 11);
+            assert_eq!(harness.observer.get_user_stats("").await.udp_sent, 11);
+            let entry = harness.observer.udp_scoreboard.lock().await[0]
+                .0
+                .upgrade()
+                .unwrap();
+            assert_eq!(entry.dst.read().unwrap().to_string(), first.to_string());
+            assert_eq!(entry.outbound, "direct");
+        }
+        drop(session);
+        #[cfg(feature = "statistics")]
+        assert_eq!(harness.observer.get_user_stats("").await.udp_conns, 0);
     }
 }
 

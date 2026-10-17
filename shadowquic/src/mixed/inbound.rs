@@ -12,6 +12,7 @@ use crate::{
     config::MixedServerCfg,
     error::{SError, SResult},
     http::inbound::{HttpProxyServer, ProxyBasicAuth},
+    observe::Observer,
     socks::inbound::SocksServer,
     utils::dual_socket::to_ipv4_mapped,
     utils::replay_stream::ReplayStream,
@@ -19,6 +20,8 @@ use crate::{
 
 pub struct MixedServer {
     cfg: MixedServerCfg,
+    /// Shared with the manager's observer map when registering this inbound.
+    pub observer: Arc<Observer>,
     request_sender: Sender<ProxyRequest>,
     request_receiver: Receiver<ProxyRequest>,
 }
@@ -28,6 +31,7 @@ impl MixedServer {
         let (s, r) = channel(20);
         Ok(Self {
             cfg,
+            observer: Arc::new(Observer::new()),
             request_sender: s,
             request_receiver: r,
         })
@@ -75,6 +79,7 @@ impl Inbound for MixedServer {
             .ok_or(SError::InboundUnavailable)?;
         recv.user_context_mut().inbound_tag = self.cfg.tag.clone();
         recv.user_context_mut().preferred_outbound = self.cfg.default_outbound.clone();
+        recv.user_context_mut().observer = Arc::downgrade(&self.observer);
         Ok(recv)
     }
 

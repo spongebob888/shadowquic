@@ -41,6 +41,7 @@ pub enum ExtOpcodeConn {
     GetConnStats = 0x0,
 }
 #[derive(PartialEq, SEncode, SDecode, Clone)]
+#[cfg_attr(feature = "restful-api", derive(serde::Serialize))]
 #[size_tag] // size tag allow future compatibility by prefixing a size field before the content, so that decoder can skip unknown opcode content based on the size field.
 pub struct ConnStats {
     pub lost_packets: u64,

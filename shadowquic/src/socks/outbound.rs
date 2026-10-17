@@ -5,7 +5,7 @@ use crate::{
     msgs::socks5::{
         CmdReply, PasswordAuthReply, PasswordAuthReq, SOCKS5_AUTH_METHOD_PASSWORD,
         SOCKS5_CMD_TCP_CONNECT, SOCKS5_CMD_UDP_ASSOCIATE, SOCKS5_REPLY_SUCCEEDED, SOCKS5_RESERVE,
-        SOCKS5_VERSION,
+        SOCKS5_VERSION, SocksAddr,
     },
     socks::UdpSocksWrap,
     utils::socket_opt::{SocketFactory, TcpSocketFactory, UdpSocketFactory},
@@ -142,17 +142,14 @@ impl SocksClient {
         Ok(tcp)
     }
 
-    async fn handle_tcp(&self, mut tcp_session: TcpSession) -> Result<(), SError> {
+    async fn connect_destination(&self, dst: SocksAddr) -> Result<tokio::net::TcpStream, SError> {
         tracing::info!(server = %self.cfg.addr, "connect to socks server");
         let socket = self.tcp_socket_factory.create_socket().await?;
         let std_stream: std::net::TcpStream = socket.into();
         let tokio_socket = tokio::net::TcpSocket::from_std_stream(std_stream);
-        let addr = self.cfg.addr.to_socket_addrs()?.next().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "socks server address not found",
-            )
-        })?;
+        let addr =
+            crate::dns::resolve_destination(&*self.addr_resolver, &self.cfg.addr.parse()?, None)
+                .await?;
         let tcp = tokio_socket.connect(addr).await?;
         tcp.set_nodelay(true)?;
         let mut tcp = self.authenticate(tcp).await?;
@@ -160,11 +157,19 @@ impl SocksClient {
             version: SOCKS5_VERSION,
             cmd: SOCKS5_CMD_TCP_CONNECT,
             rsv: SOCKS5_RESERVE,
-            dst: tcp_session.dst,
+            dst,
         };
         socksreq.encode(&mut tcp).await?;
-        let _rep = CmdReply::decode(&mut tcp).await?;
+        let rep = CmdReply::decode(&mut tcp).await?;
+        if rep.rep != SOCKS5_REPLY_SUCCEEDED {
+            return Err(SError::SocksError(format!("CONNECT failed: {}", rep.rep)));
+        }
         tracing::trace!("socks tcp connection established");
+        Ok(tcp)
+    }
+
+    async fn handle_tcp(&self, mut tcp_session: TcpSession) -> Result<(), SError> {
+        let mut tcp = self.connect_destination(tcp_session.dst).await?;
         crate::utils::copy::copy_bidirectional(
             &mut tcp,
             &mut tcp_session.stream,

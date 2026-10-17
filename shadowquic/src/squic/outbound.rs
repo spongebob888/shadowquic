@@ -208,10 +208,13 @@ async fn send_user_extension<C: QuicConnection, R: SDecode>(
 }
 
 async fn print_stats<C: QuicConnection>(sq_conn: &SQConn<C>) -> SResult<()> {
-    let Ok(mut cached_stats) = sq_conn.stats.try_lock() else {
+    let Ok(_refresh) = sq_conn.stats_refresh.try_lock() else {
         return Ok(()); // if we can't get the lock, it means another task is already printing stats, so we skip this one.
     };
-    if cached_stats
+    if sq_conn
+        .stats
+        .lock()
+        .await
         .as_ref()
         .is_some_and(|stats| stats.time.elapsed() < Duration::from_secs(10))
     {
@@ -231,7 +234,7 @@ async fn print_stats<C: QuicConnection>(sq_conn: &SQConn<C>) -> SResult<()> {
         };
     log_conn_stats(&downlink, "downlink");
 
-    *cached_stats = Some(SQConnStats {
+    *sq_conn.stats.lock().await = Some(SQConnStats {
         uplink,
         downlink,
         time: Instant::now(),
