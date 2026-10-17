@@ -60,21 +60,13 @@ impl ShadowQuicClient {
     }
 
     pub async fn get_conn(&self) -> Result<ShadowQuicConn, SError> {
-        let addr = self
-            .config
-            .addr
-            .to_socket_addrs()
-            .unwrap_or_else(|_| panic!("resolve quic addr faile: {}", self.config.addr))
-            .next()
-            .unwrap_or_else(|| panic!("resolve quic addr faile: {}", self.config.addr));
+        let addr =
+            crate::dns::resolve_destination(&*self.addr_resolver, &self.config.addr.parse()?, None)
+                .await?;
         let conn = self
             .quic_end
-            .get_or_init(|| async {
-                self.init_endpoint()
-                    .await
-                    .expect("error during initialize quic endpoint")
-            })
-            .await
+            .get_or_try_init(|| self.init_endpoint())
+            .await?
             .connect(addr, &self.config.server_name)
             .await?;
 

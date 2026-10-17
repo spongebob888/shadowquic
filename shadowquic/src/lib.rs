@@ -46,6 +46,7 @@ pub mod tproxy;
 ))]
 pub mod tun;
 pub mod utils;
+pub mod api;
 
 pub use msgs::SDecode;
 pub use msgs::SEncode;

@@ -51,6 +51,7 @@ pub struct SQConn<T: QuicConnection> {
     pub stats: Arc<Mutex<Option<SQConnStats>>>,
 }
 
+#[derive(Clone)]
 pub struct SQConnStats {
     pub uplink: ConnStats,
     pub downlink: ConnStats,

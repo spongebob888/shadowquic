@@ -110,6 +110,14 @@ pub struct Config {
     pub router: RouterCfg,
     #[serde(default)]
     pub log_level: LogLevel,
+    pub api_config: Option<ApiConfig>,
+}
+
+/// Restful API
+#[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ApiConfig {
+    bind_addr: SocketAddr,
 }
 impl Config {
     /// Explicit outbounds come first, followed by automatically registered DNS services.

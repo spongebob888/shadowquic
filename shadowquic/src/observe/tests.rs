@@ -135,12 +135,14 @@ async fn tcp_tracks_partial_and_vectored_io_per_session_and_per_user() {
         let recv = recv.upgrade().unwrap();
         assert_eq!(recv.src_addr, tcp.src_addr);
         assert_eq!(*send.dst.read().unwrap(), tcp.dst);
-        assert!(send.created.elapsed() < Duration::from_secs(5));
+        assert!(recv.created.elapsed() < Duration::from_secs(5));
+        assert!(send.first_send.get().is_none());
         assert_eq!(send.outbound, "selected");
     }
     assert_eq!(tcp.stream.peer_addr(), tcp.src_addr);
     assert!(tcp.stream.is_write_vectored());
     assert_eq!(tcp.stream.write(b"long write").await.unwrap(), 3);
+    assert!(send.upgrade().unwrap().first_send.get().is_some());
     assert_eq!(
         tcp.stream
             .write_vectored(&[IoSlice::new(b"abcdef"), IoSlice::new(b"ghi")])

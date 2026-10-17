@@ -40,7 +40,7 @@ pub enum ExtOpcodeConn {
     /// Get connection stats
     GetConnStats = 0x0,
 }
-#[derive(PartialEq, SEncode, SDecode)]
+#[derive(PartialEq, SEncode, SDecode, Clone)]
 #[size_tag] // size tag allow future compatibility by prefixing a size field before the content, so that decoder can skip unknown opcode content based on the size field.
 pub struct ConnStats {
     pub lost_packets: u64,
