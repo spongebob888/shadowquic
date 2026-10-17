@@ -1,4 +1,4 @@
-//! Optional local REST API. Enable `restful-api` and configure `api-config`.
+//! Optional REST API. Enable `restful-api` and configure `restful-api`.
 //!
 //! The memory endpoint additionally requires the independent `jemalloc` feature.
 
@@ -20,6 +20,7 @@ use hyper::{Method, Request, Response, StatusCode, body::Incoming, service::serv
 use hyper_util::rt::TokioIo;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use subtle::ConstantTimeEq;
 use tokio::{
     io::{AsyncRead, AsyncWrite, DuplexStream, ReadBuf},
     net::TcpListener,
@@ -51,6 +52,7 @@ struct ApiOutbound {
 }
 
 pub struct ApiManager {
+    secret: Option<String>,
     outbounds: HashMap<String, ApiOutbound>,
     sq_outbounds: HashMap<String, Arc<dyn SQStatsTrait>>,
     observers: HashMap<String, Arc<Observer>>,
@@ -85,7 +87,14 @@ impl ApiError {
     }
 
     fn response(self) -> HttpResponse {
-        response(self.status, json!({"error": self.body}))
+        let mut response = response(self.status, json!({"error": self.body}));
+        if self.status == StatusCode::UNAUTHORIZED {
+            response.headers_mut().insert(
+                hyper::header::WWW_AUTHENTICATE,
+                hyper::header::HeaderValue::from_static("Bearer"),
+            );
+        }
+        response
     }
 }
 
@@ -110,22 +119,19 @@ fn timestamp(time: SystemTime) -> String {
 }
 
 pub(crate) async fn bind(config: &ApiConfig) -> Result<TcpListener, SError> {
-    if !config.bind_addr.ip().is_loopback() {
-        return Err(SError::InvalidConfig(
-            "API bind-addr must be a loopback address".into(),
-        ));
-    }
     Ok(TcpListener::bind(config.bind_addr).await?)
 }
 
 impl ApiManager {
     pub(crate) fn new(
+        secret: Option<String>,
         outbounds: HashMap<String, Arc<dyn Outbound>>,
         sq_outbounds: HashMap<String, Arc<dyn SQStatsTrait>>,
         observers: HashMap<String, Arc<Observer>>,
         #[cfg(feature = "dns-server")] dns_cache: Option<Arc<crate::dns::DnsCache>>,
     ) -> Self {
         Self {
+            secret: secret.filter(|secret| !secret.is_empty()),
             outbounds: outbounds
                 .into_iter()
                 .map(|(tag, outbound)| {
@@ -193,6 +199,13 @@ impl ApiManager {
     }
 
     async fn route(&self, request: Request<Incoming>) -> Result<Value, ApiError> {
+        if !self.authorized(request.headers()) {
+            return Err(ApiError::new(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "missing or invalid bearer token",
+            ));
+        }
         let path = request.uri().path();
         let method = request.method();
         let require = |expected: Method| {
@@ -294,6 +307,26 @@ impl ApiManager {
                 Ok(json!(probe))
             }
         }
+    }
+
+    fn authorized(&self, headers: &hyper::HeaderMap) -> bool {
+        let Some(secret) = &self.secret else {
+            return true;
+        };
+        let mut values = headers.get_all(hyper::header::AUTHORIZATION).iter();
+        let Some(value) = values.next().and_then(|value| value.to_str().ok()) else {
+            return false;
+        };
+        let Some((scheme, token)) = value.split_once(' ') else {
+            return false;
+        };
+        values.next().is_none()
+            && scheme.eq_ignore_ascii_case("Bearer")
+            && bool::from(
+                secret
+                    .as_bytes()
+                    .ct_eq(token.trim_start_matches(' ').as_bytes()),
+            )
     }
 
     async fn get_outbounds(&self) -> Value {

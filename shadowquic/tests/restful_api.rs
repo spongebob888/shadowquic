@@ -14,6 +14,16 @@ use tokio::{
 };
 
 async fn call(address: SocketAddr, method: &str, path: &str, body: Value) -> (StatusCode, Value) {
+    call_with_authorization(address, method, path, body, None).await
+}
+
+async fn call_with_authorization(
+    address: SocketAddr,
+    method: &str,
+    path: &str,
+    body: Value,
+    authorization: Option<&str>,
+) -> (StatusCode, Value) {
     let stream = TcpStream::connect(address).await.unwrap();
     let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
         .await
@@ -21,11 +31,15 @@ async fn call(address: SocketAddr, method: &str, path: &str, body: Value) -> (St
     let task = tokio::spawn(async move {
         let _ = connection.await;
     });
-    let request = Request::builder()
+    let mut request = Request::builder()
         .method(method)
         .uri(path)
         .header("host", "localhost")
-        .header("content-type", "application/json")
+        .header("content-type", "application/json");
+    if let Some(authorization) = authorization {
+        request = request.header("authorization", authorization);
+    }
+    let request = request
         .body(Full::new(Bytes::from(body.to_string())))
         .unwrap();
     let response = sender.send_request(request).await.unwrap();
@@ -41,6 +55,60 @@ async fn unused_address() -> SocketAddr {
         .unwrap()
         .local_addr()
         .unwrap()
+}
+
+#[tokio::test]
+async fn configured_api_allows_wildcard_binding_with_optional_secret() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        for secret in [None, Some(""), Some("integration-secret")] {
+            let address = unused_address().await;
+            let secret_config = secret
+                .map(|secret| format!("  secret: '{secret}'"))
+                .unwrap_or_default();
+            let config: Config = serde_saphyr::from_str(&format!(
+                "inbounds: [{{tag: inbound, type: socks, bind-addr: '127.0.0.1:0'}}]\n\
+                 outbounds: [{{tag: direct, type: direct}}]\n\
+                 restful-api:\n  bind-addr: '0.0.0.0:{}'\n{secret_config}",
+                address.port()
+            ))
+            .unwrap();
+            let manager = config.build_manager().await.unwrap();
+            let (stop, stopped) = tokio::sync::oneshot::channel();
+            let task = tokio::spawn(manager.run_until(async {
+                let _ = stopped.await;
+            }));
+            loop {
+                if TcpStream::connect(address).await.is_ok() {
+                    break;
+                }
+                assert!(!task.is_finished(), "manager failed before API startup");
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            let status = call(address, "GET", "/api/v1/traffic", Value::Null).await.0;
+            assert_eq!(
+                status,
+                if secret == Some("integration-secret") {
+                    StatusCode::UNAUTHORIZED
+                } else {
+                    StatusCode::OK
+                }
+            );
+            let (status, body) = call_with_authorization(
+                address,
+                "GET",
+                "/api/v1/traffic",
+                Value::Null,
+                Some("Bearer integration-secret"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body["inbounds"][0]["inbound"], "inbound");
+            stop.send(()).unwrap();
+            task.await.unwrap().unwrap();
+        }
+    })
+    .await
+    .unwrap();
 }
 
 #[tokio::test]

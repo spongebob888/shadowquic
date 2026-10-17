@@ -53,6 +53,7 @@ fn manager(
     sq_outbounds: HashMap<String, Arc<dyn SQStatsTrait>>,
 ) -> Arc<ApiManager> {
     Arc::new(ApiManager::new(
+        None,
         outbounds,
         sq_outbounds,
         HashMap::new(),
@@ -77,6 +78,7 @@ async fn server(
 ) {
     let listener = bind(&ApiConfig {
         bind_addr: "127.0.0.1:0".parse().unwrap(),
+        secret: None,
     })
     .await
     .unwrap();
@@ -86,6 +88,16 @@ async fn server(
 }
 
 async fn call(addr: SocketAddr, method: &str, path: &str, body: &str) -> (u16, Value) {
+    call_with_authorization(addr, method, path, body, &[]).await
+}
+
+async fn call_with_authorization(
+    addr: SocketAddr,
+    method: &str,
+    path: &str,
+    body: &str,
+    authorization: &[&str],
+) -> (u16, Value) {
     let stream = TcpStream::connect(addr).await.unwrap();
     let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
         .await
@@ -93,11 +105,15 @@ async fn call(addr: SocketAddr, method: &str, path: &str, body: &str) -> (u16, V
     let driver = AbortOnDrop(tokio::spawn(async move {
         let _ = connection.await;
     }));
-    let request = Request::builder()
+    let mut request = Request::builder()
         .method(method)
         .uri(path)
         .header("host", "localhost")
-        .header("content-type", "application/json")
+        .header("content-type", "application/json");
+    for value in authorization {
+        request = request.header(hyper::header::AUTHORIZATION, *value);
+    }
+    let request = request
         .body(Full::new(Bytes::copy_from_slice(body.as_bytes())))
         .unwrap();
     let response = tokio::time::timeout(Duration::from_secs(3), sender.send_request(request))
@@ -106,6 +122,12 @@ async fn call(addr: SocketAddr, method: &str, path: &str, body: &str) -> (u16, V
         .unwrap();
     assert_eq!(response.headers()["content-type"], "application/json");
     let status = response.status().as_u16();
+    if status == 401 {
+        assert_eq!(
+            response.headers()[hyper::header::WWW_AUTHENTICATE],
+            "Bearer"
+        );
+    }
     let body = response.into_body().collect().await.unwrap().to_bytes();
     drop(driver);
     (status, serde_json::from_slice(&body).unwrap())
@@ -369,15 +391,102 @@ fn probe_validation_rejects_invalid_urls_and_timeouts() {
 }
 
 #[tokio::test]
-async fn api_binding_rejects_non_loopback_addresses() {
-    for addr in ["0.0.0.0:0", "[::]:0", "192.0.2.1:8080"] {
-        assert!(
-            bind(&ApiConfig {
-                bind_addr: addr.parse().unwrap()
-            })
+async fn api_binding_allows_wildcard_addresses_without_a_secret() {
+    for addr in ["0.0.0.0:0", "[::]:0"] {
+        let listener = bind(&ApiConfig {
+            bind_addr: addr.parse().unwrap(),
+            secret: None,
+        })
+        .await
+        .unwrap();
+        assert!(listener.local_addr().unwrap().ip().is_unspecified());
+    }
+}
+
+#[tokio::test]
+async fn bearer_secret_protects_all_routes_before_validation_or_probe_dispatch() {
+    let (target, mut requests, fixture_task) = fixture().await;
+    let outbound = Arc::new(FixtureOutbound {
+        destination: target,
+        calls: 0.into(),
+    });
+    let mut api = probing_manager("proxy", outbound.clone());
+    Arc::get_mut(&mut api).unwrap().secret = Some("test-secret".into());
+    let (addr, stop, task) = server(api).await;
+    for (method, path, body) in [
+        ("GET", "/api/v1/outbounds", ""),
+        ("GET", "/api/v1/connections", ""),
+        ("GET", "/api/v1/traffic", ""),
+        ("GET", "/api/v1/memory", ""),
+        ("GET", "/missing", ""),
+        ("DELETE", "/api/v1/traffic", ""),
+        ("POST", "/api/v1/outbounds/proxy/probe", "not json"),
+        (
+            "POST",
+            "/api/v1/outbounds/proxy/probe",
+            r#"{"url":"http://example.test/"}"#,
+        ),
+    ] {
+        for authorization in [
+            vec![],
+            vec!["Bearer wrong"],
+            vec!["Bearer test-secreu"],
+            vec!["Basic test-secret"],
+            vec!["Bearer"],
+            vec!["Bearer "],
+            vec!["Bearer test-secret", "Bearer test-secret"],
+        ] {
+            let (status, body) =
+                call_with_authorization(addr, method, path, body, &authorization).await;
+            assert_eq!(status, 401, "{method} {path} {authorization:?}");
+            assert_eq!(body["error"]["code"], "unauthorized");
+            assert!(!body.to_string().contains("test-secret"));
+        }
+    }
+    assert_eq!(outbound.calls.load(Ordering::Relaxed), 0);
+    assert!(requests.try_recv().is_err());
+    for authorization in [
+        "Bearer test-secret",
+        "bearer test-secret",
+        "BEARER   test-secret",
+    ] {
+        let (status, body) =
+            call_with_authorization(addr, "GET", "/api/v1/outbounds", "", &[authorization]).await;
+        assert_eq!(status, 200);
+        assert_eq!(body["outbounds"][0]["tag"], "proxy");
+    }
+    assert_eq!(
+        call_with_authorization(addr, "GET", "/missing", "", &["Bearer test-secret"])
             .await
-            .is_err()
+            .0,
+        404
+    );
+    stop.send(true).unwrap();
+    task.await.unwrap().unwrap();
+    fixture_task.abort();
+}
+
+#[tokio::test]
+async fn omitted_or_empty_secret_allows_requests_without_authentication() {
+    for secret in [None, Some(String::new())] {
+        let api = Arc::new(ApiManager::new(
+            secret,
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+            #[cfg(feature = "dns-server")]
+            None,
+        ));
+        let (addr, stop, task) = server(api).await;
+        assert_eq!(call(addr, "GET", "/api/v1/traffic", "").await.0, 200);
+        assert_eq!(
+            call_with_authorization(addr, "GET", "/api/v1/traffic", "", &["Bearer wrong"])
+                .await
+                .0,
+            200
         );
+        stop.send(true).unwrap();
+        task.await.unwrap().unwrap();
     }
 }
 
@@ -472,6 +581,7 @@ async fn traffic_sums_named_and_anonymous_users_and_follows_user_counter_changes
         ])
         .await;
     let api = ApiManager::new(
+        None,
         HashMap::new(),
         HashMap::new(),
         HashMap::from([("local".into(), observer.clone())]),
@@ -564,6 +674,7 @@ async fn traffic_sums_named_and_anonymous_users_and_follows_user_counter_changes
 async fn snapshots_report_active_sessions_and_preserve_udp_half_metadata() {
     let observer = Arc::new(Observer::new());
     let api = ApiManager::new(
+        None,
         HashMap::new(),
         HashMap::new(),
         HashMap::from([
@@ -678,6 +789,7 @@ async fn snapshots_report_active_sessions_and_preserve_udp_half_metadata() {
 async fn connections_report_half_closed_when_only_udp_receiver_remains() {
     let observer = Arc::new(Observer::new());
     let api = ApiManager::new(
+        None,
         HashMap::new(),
         HashMap::new(),
         HashMap::from([("local".into(), observer.clone())]),
@@ -871,6 +983,7 @@ async fn connections_use_cached_domains_without_resolving_on_a_miss() {
     responder.abort();
     let observer = Arc::new(Observer::new());
     let api = ApiManager::new(
+        None,
         HashMap::new(),
         HashMap::new(),
         HashMap::from([("local".into(), observer.clone())]),

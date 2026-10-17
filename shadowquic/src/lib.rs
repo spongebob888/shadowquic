@@ -417,6 +417,7 @@ impl Manager {
         }
         #[cfg(feature = "restful-api")]
         let api_manager = Arc::new(api::ApiManager::new(
+            self.api_config.and_then(|config| config.secret),
             self.outbounds
                 .iter()
                 .filter(|(_tag, _)| {

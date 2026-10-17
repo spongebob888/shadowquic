@@ -118,6 +118,9 @@ pub struct Config {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ApiConfig {
     pub bind_addr: SocketAddr,
+    /// Require `Authorization: Bearer <secret>` when nonempty.
+    #[serde(default)]
+    pub secret: Option<String>,
 }
 impl Config {
     /// Explicit outbounds come first, followed by automatically registered DNS services.
@@ -130,17 +133,10 @@ impl Config {
 
     /// Validate endpoint identities before opening any listeners.
     pub fn validate(&self) -> Result<(), SError> {
-        if let Some(api) = &self.restful_api {
-            if !cfg!(feature = "restful-api") {
-                return Err(SError::InvalidConfig(
-                    "api-config requires the restful-api feature".into(),
-                ));
-            }
-            if !api.bind_addr.ip().is_loopback() {
-                return Err(SError::InvalidConfig(
-                    "API bind-addr must be a loopback address".into(),
-                ));
-            }
+        if self.restful_api.is_some() && !cfg!(feature = "restful-api") {
+            return Err(SError::InvalidConfig(
+                "restful-api configuration requires the restful-api feature".into(),
+            ));
         }
         for (kind, tags) in [
             (
@@ -1275,15 +1271,26 @@ outbounds:
     }
 
     #[test]
-    fn api_configuration_requires_feature_and_loopback_binding() {
+    fn api_configuration_requires_feature_and_allows_any_address_with_or_without_secret() {
         let mut cfg = multi_config();
-        cfg.restful_api = Some(super::ApiConfig {
-            bind_addr: "127.0.0.1:0".parse().unwrap(),
-        });
-        assert_eq!(cfg.validate().is_ok(), cfg!(feature = "restful-api"));
-        cfg.restful_api.as_mut().unwrap().bind_addr = "0.0.0.0:9090".parse().unwrap();
-        assert!(cfg.validate().is_err());
+        for addr in ["127.0.0.1:0", "0.0.0.0:9090", "[::]:9090", "192.0.2.1:9090"] {
+            for secret in [None, Some("".into()), Some("test-secret".into())] {
+                cfg.restful_api = Some(super::ApiConfig {
+                    bind_addr: addr.parse().unwrap(),
+                    secret,
+                });
+                assert_eq!(cfg.validate().is_ok(), cfg!(feature = "restful-api"));
+            }
+        }
         assert!(serde_saphyr::from_str::<super::ApiConfig>("{}").is_err());
+        let config =
+            serde_saphyr::from_str::<super::ApiConfig>("bind-addr: '0.0.0.0:9090'").unwrap();
+        assert!(config.secret.is_none());
+        let config = serde_saphyr::from_str::<super::ApiConfig>(
+            "bind-addr: '[::]:9090'\nsecret: test-secret",
+        )
+        .unwrap();
+        assert_eq!(config.secret.as_deref(), Some("test-secret"));
     }
 
     #[cfg(feature = "restful-api")]

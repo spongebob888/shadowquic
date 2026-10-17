@@ -14,7 +14,7 @@ default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", 
 dns-server = ["dep:ipnet", "dep:quick_cache", "dep:simple-dns", "dep:tokio-rustls-jls", "dep:rustls_jls"]
 # cost 200k
 statistics = ["dep:portable-atomic"]
-restful-api = ["statistics", "dep:hyper", "hyper/server", "dep:hyper-util", "dep:http-body-util", "dep:serde_json", "dep:url", "dep:percent-encoding", "time/formatting"]
+restful-api = ["statistics", "dep:hyper", "hyper/server", "dep:hyper-util", "dep:http-body-util", "dep:serde_json", "dep:url", "dep:percent-encoding", "dep:subtle", "time/formatting"]
 jemalloc = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-sys"]
 # cost 200k
 mixed = ["dep:base64"]
@@ -92,6 +92,7 @@ webpki-roots = "1.0.7"
 shadowquic-macros = { path = "../shadowquic-macros", version = ">=0.3.11" }
 yaml-rust2 = "0.13.0"
 serde = { version = "1.0.228", features = ["derive"]}
+subtle = { version = "2.6", optional = true }
 clap = { version = "4", features = ["derive"] }
 educe = "0.8.1"
 socket2 = "0.6.2"

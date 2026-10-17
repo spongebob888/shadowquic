@@ -5,22 +5,27 @@
 Implement an optional HTTP API for outbound quality, active proxy sessions,
 traffic counters, memory statistics, and outbound probing.
 
-- Gate the API and its dependencies behind a non-default `restful-api` Cargo
+- Gate the API and its dependencies behind the default-enabled `restful-api` Cargo
   feature. Enabling it must automatically enable `statistics`.
 - Use an independent `jemalloc` feature, enabled by default, to select jemalloc
   as the global allocator on supported targets. `restful-api` must not enable it.
   Compile the memory endpoint only when both features are enabled.
-- Start the API only when `api-config` is present. Reject that configuration
+- Start the API only when `restful-api` is present. Reject that configuration
   when the binary was built without `restful-api`.
-- Require `bind-addr`. The initial API supports loopback addresses only and
-  has no authentication; reject non-loopback addresses during validation.
-  Authenticated remote access is outside this version's scope.
+- Require `bind-addr` and allow any address, including wildcard addresses,
+  whether or not a secret is configured.
+- Accept an optional `secret`. If nonempty, require `Authorization: Bearer <secret>`
+  on every request before route validation or probe execution. Compare tokens
+  in constant time. Reject missing, malformed, duplicate, or incorrect credentials
+  with `401`, error code `unauthorized`, and `WWW-Authenticate: Bearer`.
+  Omitted or empty secrets disable authentication. Never return the secret in errors.
 - Run the API alongside the proxy listeners. A bind failure must fail startup;
   shut down the API and cancel probes when the manager shuts down.
 
 ```yaml
-api-config:
+restful-api:
   bind-addr: "127.0.0.1:9090"
+  # secret: "choose-a-secret"
 ```
 
 ## Observer coverage and metric semantics
@@ -110,7 +115,8 @@ Successful requests return `200`. Empty collections return an empty array.
 Sort outbound and traffic entries by tag, and connections by ID.
 
 Errors use `{"error": {"code": "invalid_request", "message": "..."}}`.
-Return `400` for invalid input, `404` for unknown routes or outbound tags, `405`
+Return `400` for invalid input, `401` for missing or invalid authentication when
+a secret is configured, `404` for unknown routes or outbound tags, `405`
 for unsupported methods, `409` for an already-running probe on the same outbound,
 `501` for an unsupported operation, `502` for a failed probe, `504` for a probe
 timeout, and `500` for unexpected internal errors.
@@ -259,6 +265,8 @@ concurrent-probe rejections, and cancelled probes do not overwrite the cache.
 
 - Verify feature gating, configuration validation, listener startup failure,
   and shutdown behavior.
+- Verify bearer authentication on every route, rejected credentials before probe
+  dispatch, omitted and empty secrets, and wildcard listeners with or without a secret.
 - Verify authenticated and unauthenticated tracking across supported inbound
   types, with platform-gated TPROXY and TUN coverage.
 - Cover partial and vectored TCP I/O, failed I/O, empty writes, first-response

@@ -1,7 +1,8 @@
 # REST API
 
 Build with `cargo build --release --features restful-api`. This optional feature
-enables statistics and adds a local HTTP API alongside the proxy listeners.
+enables statistics and adds an HTTP API alongside the proxy listeners. It is
+enabled by default.
 It is separate from the `api` CLI subcommand for remote user management.
 The entire API module is compiled only with `restful-api`. The independent
 `jemalloc` feature is enabled by default and selects the global allocator on
@@ -10,14 +11,26 @@ supported targets; enabling `restful-api` does not enable `jemalloc`.
 Enable it in your proxy configuration:
 
 ```yaml
-api-config:
+restful-api:
   bind-addr: "127.0.0.1:9090"
+  # secret: "choose-a-secret"
 ```
 
-The address must be loopback (`127.0.0.1` or `::1`). This version has no
-authentication. Omit `api-config` to leave the HTTP listener disabled. Configuring
+Any bind address is allowed, including `0.0.0.0` and `::`, with or without a
+secret. A nonempty `secret` requires `Authorization: Bearer <secret>` on every
+request. Omit `secret` or set it to `""` to disable authentication. Omit
+`restful-api` to leave the HTTP listener disabled. Configuring
 the listener without compiling `restful-api` produces a configuration error.
 A bind failure prevents manager startup.
+
+When a secret is set, include it in requests:
+
+```sh
+curl -H 'Authorization: Bearer choose-a-secret' http://127.0.0.1:9090/api/v1/traffic
+```
+
+Missing or invalid credentials return `401` with error code `unauthorized` and
+`WWW-Authenticate: Bearer`.
 
 A complete local SOCKS/direct example is available in
 [restful-api.yaml](../shadowquic/config_examples/restful-api.yaml).
@@ -148,7 +161,8 @@ statistics, not total process RSS. With both features, other targets return `501
 `memory_stats_unavailable`; the other endpoints remain available.
 
 For a manager created directly, set `manager.api_config` to
-`Some(ApiConfig { bind_addr })` before calling `run` or `run_until`.
+`Some(ApiConfig { bind_addr, secret: None })` before calling `run` or `run_until`.
+Use `secret: Some("your-secret".into())` to require bearer authentication.
 Each inbound attaches its observer in `accept`; the manager uses the attached
 observer after routing. `Manager::single` leaves the observer registry empty.
 For a manually created built-in server, clone `server.observer` before boxing

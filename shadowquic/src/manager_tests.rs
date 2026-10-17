@@ -231,6 +231,7 @@ async fn api_bind_failure_prevents_inbound_initialization() {
     );
     manager.api_config = Some(crate::config::ApiConfig {
         bind_addr: occupied.local_addr().unwrap(),
+        secret: None,
     });
     let error = manager.run_until(std::future::pending()).await.unwrap_err();
     assert!(matches!(error, SError::Io(_)));
