@@ -48,6 +48,8 @@ fields are `null`. Collections are sorted by tag or session ID.
 | GET | `/api/v1/traffic` | `{"inbounds": [...]}`: summed user traffic and active session counts per inbound |
 | GET | `/api/v1/memory` | jemalloc allocator statistics; requires `jemalloc` |
 | POST | `/api/v1/outbounds/{tag}/probe` | Probe the selected outbound with an HTTP GET |
+| GET | `/api/v1/outbounds/{tag}/selection` | Selector's current member and allowed outbound tags |
+| PUT | `/api/v1/outbounds/{tag}/selection` | Set a selector's member with `{"selected":"outbound-tag"}` |
 
 ```sh
 curl http://127.0.0.1:9090/api/v1/outbounds
@@ -64,6 +66,60 @@ Errors have the form `{"error":{"code":"...","message":"..."}}`.
 Invalid requests return `400`, unknown routes or tags `404`, wrong methods
 `405`, overlapping probes on the same outbound `409`, unsupported operations
 `501`, failed probes `502`, and probe timeouts `504`.
+
+## Selector outbounds
+
+Use a selector as the router's outbound, or an inbound's `default-outbound`,
+to switch between configured outbounds at runtime:
+
+```yaml
+outbounds:
+  - tag: choice
+    type: selector
+    outbounds: [direct, proxy]
+    selected: direct
+  - tag: direct
+    type: direct
+  - tag: proxy
+    type: socks
+    addr: "127.0.0.1:1080"
+router:
+  default-outbound: choice
+```
+
+`outbounds` must contain at least one unique, existing outbound tag. `selected`
+defaults to its first member and must name a member when specified. Members can
+be declared later in the configuration and can include other selectors or DNS
+services. Self-references and cycles through any members are rejected at startup.
+Each member retains its own DNS and transport settings.
+
+```sh
+curl http://127.0.0.1:9090/api/v1/outbounds/choice/selection
+curl -X PUT -H 'Content-Type: application/json' \
+  -d '{"selected":"proxy"}' \
+  http://127.0.0.1:9090/api/v1/outbounds/choice/selection
+```
+
+Both operations return `{"selected":"proxy","outbounds":["direct","proxy"]}`
+when `proxy` is selected. The outbound listing includes the same object in a
+selector entry's `selector` field. Non-selector entries omit that field.
+The usual bearer authentication applies. Unknown tags return `404`; selecting
+a nonmember or using selection controls on a non-selector returns `400`.
+
+A switch applies to new TCP sessions, UDP associations, and probes that dispatch
+after the switch. Existing sessions keep their original target, including all
+datagrams in an existing UDP association. Nested selectors resolve their own
+selection when they receive the session. Switches are held in memory; restarting
+restores the configured initial selection. Connection statistics retain the
+selector tag chosen by routing. Probe results remain cached until another probe
+completes, so an earlier result may describe a previously selected member.
+The selector itself is available without `restful-api`; changing it through
+HTTP requires that feature and a configured API listener. Library embeddings
+can import `shadowquic::Selectable` and call `select` directly. Selection controls
+are independent of `Outbound`: `Config::build_manager` registers the same
+selector instances in `manager.selectable_outbounds` as `Arc<dyn Selectable>`.
+Embeddings constructing a manager manually register selection controls in that
+map under the corresponding outbound tag to expose them through the REST API.
 
 ## Connections and traffic
 
@@ -122,7 +178,8 @@ request fresh statistics.
 
 Probes accept absolute `http://` URLs without credentials; HTTPS is unsupported
 in this version. `timeout_ms` defaults to 10000 and must be between 1 and 60000.
-The selected outbound must support TCP (direct, SOCKS, ShadowQUIC, or SunnyQUIC).
+The selected outbound must support TCP (direct, SOCKS, ShadowQUIC, SunnyQUIC,
+or a selector pointing to one of these).
 Routing scripts do not select or override the probe's outbound.
 
 Latency includes resolution, connection setup, and HTTP request transmission

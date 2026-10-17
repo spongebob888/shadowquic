@@ -44,6 +44,7 @@ mod observe;
 #[cfg(feature = "plugin")]
 pub mod plugin;
 pub mod quic;
+pub mod selector;
 pub mod shadowquic;
 pub mod socks;
 pub mod squic;
@@ -64,6 +65,7 @@ pub mod utils;
 
 pub use msgs::SDecode;
 pub use msgs::SEncode;
+pub use selector::Selectable;
 
 use crate::{observe::Observer, utils::dual_socket::to_ipv4_mapped};
 #[cfg(test)]
@@ -273,6 +275,8 @@ pub struct Manager {
     /// Observers for client inbounds; internal request queues are omitted.
     pub observers: HashMap<String, Arc<Observer>>,
     pub outbounds: HashMap<String, Arc<dyn Outbound>>,
+    /// Selection controls sharing the outbound instances used for dispatch.
+    pub selectable_outbounds: HashMap<String, Arc<dyn Selectable>>,
     /// Fallback outbound tag, used when no router script is configured and the
     /// request carries no `preferred_outbound` from its inbound.
     pub default_outbound: String,
@@ -380,6 +384,7 @@ impl Manager {
             inbounds: HashMap::from([("inbound".into(), inbound)]),
             observers: HashMap::new(),
             outbounds: HashMap::from([("outbound".into(), outbound)]),
+            selectable_outbounds: HashMap::new(),
             default_outbound: "outbound".into(),
             #[cfg(feature = "restful-api")]
             api_config: None,
@@ -430,6 +435,7 @@ impl Manager {
                 .map(|(tag, outbound)| (tag.clone(), outbound.clone()))
                 .collect(),
             self.sq_outbounds,
+            self.selectable_outbounds,
             self.observers,
             #[cfg(feature = "dns-server")]
             self.resolver_manager

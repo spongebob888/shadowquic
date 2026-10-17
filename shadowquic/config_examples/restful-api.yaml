@@ -4,9 +4,19 @@ inbounds:
     type: socks
     bind-addr: "127.0.0.1:1089"
 outbounds:
+  - tag: choice
+    type: selector
+    outbounds: [direct, blocked]
+    selected: direct
   - tag: direct
     type: direct
+  - tag: blocked
+    type: drop
+router:
+  default-outbound: choice
 restful-api:
   bind-addr: "127.0.0.1:9090"
   # secret: "choose-a-secret"
 log-level: info
+# Switch new sessions to blocked:
+# curl -X PUT -H 'Content-Type: application/json' -d '{"selected":"blocked"}' http://127.0.0.1:9090/api/v1/outbounds/choice/selection

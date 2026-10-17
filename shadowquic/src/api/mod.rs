@@ -29,7 +29,7 @@ use tokio::{
 };
 
 use crate::{
-    Outbound, ProxyRequest, TcpSession,
+    Outbound, ProxyRequest, Selectable, TcpSession,
     config::ApiConfig,
     error::SError,
     msgs::socks5::{AddrOrDomain, SocksAddr},
@@ -55,6 +55,7 @@ pub struct ApiManager {
     secret: Option<String>,
     outbounds: HashMap<String, ApiOutbound>,
     sq_outbounds: HashMap<String, Arc<dyn SQStatsTrait>>,
+    selectable_outbounds: HashMap<String, Arc<dyn Selectable>>,
     observers: HashMap<String, Arc<Observer>>,
     #[cfg(feature = "dns-server")]
     dns_cache: Option<Arc<crate::dns::DnsCache>>,
@@ -127,6 +128,7 @@ impl ApiManager {
         secret: Option<String>,
         outbounds: HashMap<String, Arc<dyn Outbound>>,
         sq_outbounds: HashMap<String, Arc<dyn SQStatsTrait>>,
+        selectable_outbounds: HashMap<String, Arc<dyn Selectable>>,
         observers: HashMap<String, Arc<Observer>>,
         #[cfg(feature = "dns-server")] dns_cache: Option<Arc<crate::dns::DnsCache>>,
     ) -> Self {
@@ -146,6 +148,7 @@ impl ApiManager {
                 })
                 .collect(),
             sq_outbounds,
+            selectable_outbounds,
             observers,
             #[cfg(feature = "dns-server")]
             dns_cache,
@@ -238,18 +241,44 @@ impl ApiManager {
                 memory::get()
             }
             _ => {
-                let tag = path
+                let (tag, action) = path
                     .strip_prefix("/api/v1/outbounds/")
-                    .and_then(|tail| tail.strip_suffix("/probe"))
-                    .filter(|tag| !tag.is_empty() && !tag.contains('/'))
+                    .and_then(|tail| tail.rsplit_once('/'))
+                    .filter(|(tag, action)| {
+                        !tag.is_empty()
+                            && !tag.contains('/')
+                            && matches!(*action, "probe" | "selection")
+                    })
                     .ok_or_else(|| {
                         ApiError::new(StatusCode::NOT_FOUND, "not_found", "unknown route")
                     })?;
-                require(Method::POST)?;
+                if action == "selection" && method == Method::GET {
+                    require(Method::GET)?;
+                } else {
+                    require(if action == "selection" {
+                        Method::PUT
+                    } else {
+                        Method::POST
+                    })?;
+                }
                 let tag = decode_tag(tag)?;
                 let outbound = self.outbounds.get(&tag).ok_or_else(|| {
                     ApiError::new(StatusCode::NOT_FOUND, "not_found", "unknown outbound")
                 })?;
+                let selector = if action == "selection" {
+                    Some(
+                        self.selectable_outbounds
+                            .get(&tag)
+                            .ok_or_else(|| ApiError::invalid("outbound is not a selector"))?,
+                    )
+                } else {
+                    None
+                };
+                if let Some(selector) = selector
+                    && method == Method::GET
+                {
+                    return Ok(json!(selector.state()));
+                }
                 let content_type = request
                     .headers()
                     .get(hyper::header::CONTENT_TYPE)
@@ -267,6 +296,14 @@ impl ApiManager {
                     .await
                     .map_err(ApiError::invalid)?
                     .to_bytes();
+                if let Some(selector) = selector {
+                    let input: SelectionRequest =
+                        serde_json::from_slice(&body).map_err(ApiError::invalid)?;
+                    let state = selector
+                        .select(&input.selected)
+                        .map_err(ApiError::invalid)?;
+                    return Ok(json!(state));
+                }
                 let input: ProbeRequest =
                     serde_json::from_slice(&body).map_err(ApiError::invalid)?;
                 let (url, timeout) = input.validate()?;
@@ -343,7 +380,11 @@ impl ApiManager {
                 sq_conn_stats,
                 probe: outbound.probe.lock().unwrap().clone(),
             };
-            outbounds.push(json!({"tag": tag, "quality": quality}));
+            let mut entry = json!({"tag": tag, "quality": quality});
+            if let Some(selector) = self.selectable_outbounds.get(tag) {
+                entry["selector"] = json!(selector.state());
+            }
+            outbounds.push(entry);
         }
         json!({"outbounds": outbounds})
     }
@@ -444,6 +485,12 @@ fn decode_tag(tag: &str) -> Result<String, ApiError> {
         .decode_utf8()
         .map(|tag| tag.into_owned())
         .map_err(ApiError::invalid)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SelectionRequest {
+    selected: String,
 }
 
 #[derive(Deserialize)]

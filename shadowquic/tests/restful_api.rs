@@ -58,6 +58,119 @@ async fn unused_address() -> SocketAddr {
 }
 
 #[tokio::test]
+async fn configured_selector_switches_proxy_sessions_and_probes() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let socks_addr = unused_address().await;
+        let api_addr = unused_address().await;
+        let dns = if cfg!(feature = "dns-server") {
+            "dns: [{tag: resolver, type: dns-system, bind-addr: '127.0.0.1:0'}]"
+        } else {
+            ""
+        };
+        let resolver = if cfg!(feature = "dns-server") {
+            ", dns: resolver"
+        } else {
+            ""
+        };
+        let config: Config = serde_saphyr::from_str(&format!(
+            r#"
+inbounds:
+  - {{tag: inbound, type: socks, bind-addr: "{socks_addr}"}}
+{dns}
+outbounds:
+  - {{tag: choice, type: selector, outbounds: [direct, blocked]}}
+  - {{tag: direct, type: direct{resolver}}}
+  - {{tag: blocked, type: drop}}
+restful-api:
+  bind-addr: "{api_addr}"
+"#
+        ))
+        .unwrap();
+        let manager = config.build_manager().await.unwrap();
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(manager.run_until(async {
+            let _ = stopped.await;
+        }));
+        loop {
+            if TcpStream::connect(api_addr).await.is_ok() {
+                break;
+            }
+            assert!(!task.is_finished());
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(socks_addr).await.unwrap();
+        client.write_all(&[5, 1, 0]).await.unwrap();
+        client.read_exact(&mut [0; 2]).await.unwrap();
+        let mut connect = vec![5, 1, 0, 1, 127, 0, 0, 1];
+        connect.extend_from_slice(&target.port().to_be_bytes());
+        client.write_all(&connect).await.unwrap();
+        client.read_exact(&mut [0; 10]).await.unwrap();
+        let (mut peer, _) = listener.accept().await.unwrap();
+        client.write_all(b"before").await.unwrap();
+        peer.read_exact(&mut [0; 6]).await.unwrap();
+        let path = "/api/v1/outbounds/choice/selection";
+        assert_eq!(
+            call(api_addr, "PUT", path, json!({"selected": "blocked"}))
+                .await
+                .0,
+            StatusCode::OK
+        );
+        // Switching does not close the original session or change its target.
+        peer.write_all(b"after").await.unwrap();
+        let mut response = [0; 5];
+        client.read_exact(&mut response).await.unwrap();
+        assert_eq!(&response, b"after");
+        let probe_body = json!({"url": format!("http://localhost:{}/health", target.port())});
+        assert_eq!(
+            call(
+                api_addr,
+                "POST",
+                "/api/v1/outbounds/choice/probe",
+                probe_body.clone()
+            )
+            .await
+            .0,
+            StatusCode::BAD_GATEWAY
+        );
+        assert_eq!(
+            call(api_addr, "PUT", path, json!({"selected": "direct"}))
+                .await
+                .0,
+            StatusCode::OK
+        );
+        let probe = tokio::spawn(call(
+            api_addr,
+            "POST",
+            "/api/v1/outbounds/choice/probe",
+            probe_body,
+        ));
+        let (mut probe_peer, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            let mut byte = [0];
+            probe_peer.read_exact(&mut byte).await.unwrap();
+            request.push(byte[0]);
+        }
+        probe_peer
+            .write_all(b"HTTP/1.1 204 No Content\r\n\r\n")
+            .await
+            .unwrap();
+        assert_eq!(probe.await.unwrap().0, StatusCode::OK);
+        let (_, sessions) = call(api_addr, "GET", "/api/v1/connections", Value::Null).await;
+        assert_eq!(sessions["connections"].as_array().unwrap().len(), 1);
+        assert_eq!(sessions["connections"][0]["outbound"], "choice");
+        drop(client);
+        drop(peer);
+        stop.send(()).unwrap();
+        task.await.unwrap().unwrap();
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
 async fn configured_api_allows_wildcard_binding_with_optional_secret() {
     tokio::time::timeout(Duration::from_secs(10), async {
         for secret in [None, Some(""), Some("integration-secret")] {

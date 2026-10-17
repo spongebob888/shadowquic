@@ -57,6 +57,7 @@ fn manager(
         outbounds,
         sq_outbounds,
         HashMap::new(),
+        HashMap::new(),
         #[cfg(feature = "dns-server")]
         None,
     ))
@@ -421,6 +422,12 @@ async fn bearer_secret_protects_all_routes_before_validation_or_probe_dispatch()
         ("GET", "/missing", ""),
         ("DELETE", "/api/v1/traffic", ""),
         ("POST", "/api/v1/outbounds/proxy/probe", "not json"),
+        ("GET", "/api/v1/outbounds/proxy/selection", ""),
+        (
+            "PUT",
+            "/api/v1/outbounds/proxy/selection",
+            r#"{"selected":"other"}"#,
+        ),
         (
             "POST",
             "/api/v1/outbounds/proxy/probe",
@@ -467,10 +474,88 @@ async fn bearer_secret_protects_all_routes_before_validation_or_probe_dispatch()
 }
 
 #[tokio::test]
+async fn selector_api_lists_switches_and_rejects_invalid_updates() {
+    let mut outbounds: HashMap<String, Arc<dyn Outbound>> = HashMap::from([
+        (
+            "a".into(),
+            Arc::new(crate::drop_outbound::DropOutbound) as Arc<dyn Outbound>,
+        ),
+        (
+            "b".into(),
+            Arc::new(crate::drop_outbound::DropOutbound) as Arc<dyn Outbound>,
+        ),
+    ]);
+    let selector = Arc::new(
+        crate::selector::SelectorOutbound::new(
+            crate::config::SelectorOutCfg {
+                tag: "choice/one".into(),
+                outbounds: vec!["a".into(), "b".into()],
+                selected: None,
+            },
+            &outbounds,
+        )
+        .unwrap(),
+    );
+    outbounds.insert("choice/one".into(), selector.clone());
+    let mut api = manager(outbounds, HashMap::new());
+    Arc::get_mut(&mut api)
+        .unwrap()
+        .selectable_outbounds
+        .insert("choice/one".into(), selector.clone());
+    let (addr, stop, task) = server(api).await;
+    let path = "/api/v1/outbounds/choice%2Fone/selection";
+    let initial = json!({"selected": "a", "outbounds": ["a", "b"]});
+    assert_eq!(call(addr, "GET", path, "").await, (200, initial.clone()));
+    let (_, listing) = call(addr, "GET", "/api/v1/outbounds", "").await;
+    assert_eq!(listing["outbounds"][2]["selector"], initial);
+    for body in [
+        "not json",
+        "{}",
+        r#"{"selected":null}"#,
+        r#"{"selected":"missing"}"#,
+        r#"{"selected":"b","extra":1}"#,
+    ] {
+        assert_eq!(call(addr, "PUT", path, body).await.0, 400, "{body}");
+        assert_eq!(selector.state().selected, "a");
+    }
+    assert_eq!(call(addr, "POST", path, "{}").await.0, 405);
+    assert_eq!(
+        call(
+            addr,
+            "PUT",
+            "/api/v1/outbounds/missing/selection",
+            r#"{"selected":"a"}"#
+        )
+        .await
+        .0,
+        404
+    );
+    assert_eq!(
+        call(addr, "GET", "/api/v1/outbounds/a/selection", "")
+            .await
+            .0,
+        400
+    );
+    let updated = json!({"selected": "b", "outbounds": ["a", "b"]});
+    for _ in 0..2 {
+        assert_eq!(
+            call(addr, "PUT", path, r#"{"selected":"b"}"#).await,
+            (200, updated.clone())
+        );
+    }
+    assert_eq!(selector.state().selected, "b");
+    let (_, listing) = call(addr, "GET", "/api/v1/outbounds", "").await;
+    assert_eq!(listing["outbounds"][2]["selector"], updated);
+    stop.send(true).unwrap();
+    task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
 async fn omitted_or_empty_secret_allows_requests_without_authentication() {
     for secret in [None, Some(String::new())] {
         let api = Arc::new(ApiManager::new(
             secret,
+            HashMap::new(),
             HashMap::new(),
             HashMap::new(),
             HashMap::new(),
@@ -584,6 +669,7 @@ async fn traffic_sums_named_and_anonymous_users_and_follows_user_counter_changes
         None,
         HashMap::new(),
         HashMap::new(),
+        HashMap::new(),
         HashMap::from([("local".into(), observer.clone())]),
         #[cfg(feature = "dns-server")]
         None,
@@ -681,6 +767,7 @@ async fn snapshots_report_active_sessions_and_preserve_udp_half_metadata() {
     let observer = Arc::new(Observer::new());
     let api = ApiManager::new(
         None,
+        HashMap::new(),
         HashMap::new(),
         HashMap::new(),
         HashMap::from([
@@ -800,6 +887,7 @@ async fn connections_report_half_closed_when_only_udp_receiver_remains() {
     let observer = Arc::new(Observer::new());
     let api = ApiManager::new(
         None,
+        HashMap::new(),
         HashMap::new(),
         HashMap::new(),
         HashMap::from([("local".into(), observer.clone())]),
@@ -994,6 +1082,7 @@ async fn connections_use_cached_domains_without_resolving_on_a_miss() {
     let observer = Arc::new(Observer::new());
     let api = ApiManager::new(
         None,
+        HashMap::new(),
         HashMap::new(),
         HashMap::new(),
         HashMap::from([("local".into(), observer.clone())]),

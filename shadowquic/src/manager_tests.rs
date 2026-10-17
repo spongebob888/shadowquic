@@ -156,6 +156,7 @@ async fn check_manager(fail_init: bool, fail_shutdown: bool) {
     let manager = Manager {
         inbounds,
         observers: HashMap::new(),
+        selectable_outbounds: HashMap::new(),
         outbounds: HashMap::from([
             (
                 "selected".into(),
@@ -532,6 +533,7 @@ async fn manager_preserves_inbound_tags_and_routes_by_preferred_outbound() {
     let manager = Manager {
         inbounds,
         observers: HashMap::new(),
+        selectable_outbounds: HashMap::new(),
         outbounds: HashMap::from([
             (
                 "out-a".to_string(),

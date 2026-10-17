@@ -20,6 +20,7 @@ use crate::{
     sunnyquic::{inbound::SunnyQuicServer, outbound::SunnyQuicClient},
 };
 
+mod selector;
 mod serde_utils;
 use crate::dns::ResolverManager;
 #[cfg(feature = "dns-server")]
@@ -39,6 +40,7 @@ use crate::tproxy::inbound::TproxyServer;
     )
 ))]
 pub use crate::tun::TunServerCfg;
+pub use selector::SelectorOutCfg;
 
 mod shadowquic;
 mod sunnyquic;
@@ -256,6 +258,7 @@ impl Config {
                 }
             }
         }
+        self.validate_selectors()?;
         self.router.validate()?;
         Ok(())
     }
@@ -270,6 +273,7 @@ impl Config {
         let mut inbounds = HashMap::new();
         let mut observers = HashMap::new();
         let mut outbounds = HashMap::new();
+        let mut selectable_outbounds: HashMap<String, Arc<dyn crate::Selectable>> = HashMap::new();
         #[cfg(feature = "restful-api")]
         let mut sq_outbounds = HashMap::new();
         #[cfg(feature = "dns-server")]
@@ -327,7 +331,12 @@ impl Config {
                 databases,
             )?
             .map(Arc::new);
+        let mut selectors = Vec::new();
         for cfg in self.outbounds {
+            if let OutboundCfg::Selector(cfg) = cfg {
+                selectors.push(cfg);
+                continue;
+            }
             let tag = cfg.tag().to_owned();
             let span = info_span!("outbound", tag = %tag);
             #[cfg(feature = "dns-server")]
@@ -370,6 +379,28 @@ impl Config {
                     .await?,
                 ),
             );
+        }
+        // Build selectors after their dependencies, independent of config order.
+        while !selectors.is_empty() {
+            let before = selectors.len();
+            let mut pending = Vec::new();
+            for cfg in selectors {
+                if cfg.outbounds.iter().all(|tag| outbounds.contains_key(tag)) {
+                    let tag = cfg.tag.clone();
+                    let selector =
+                        Arc::new(crate::selector::SelectorOutbound::new(cfg, &outbounds)?);
+                    selectable_outbounds.insert(tag.clone(), selector.clone());
+                    outbounds.insert(tag, selector);
+                } else {
+                    pending.push(cfg);
+                }
+            }
+            if pending.len() == before {
+                return Err(SError::InvalidConfig(
+                    "unresolved selector outbounds".into(),
+                ));
+            }
+            selectors = pending;
         }
         for cfg in self.inbounds {
             let tag = cfg.tag().to_owned();
@@ -420,6 +451,7 @@ impl Config {
             inbounds,
             observers,
             outbounds,
+            selectable_outbounds,
             default_outbound,
             #[cfg(feature = "restful-api")]
             api_config: self.restful_api,
@@ -605,7 +637,7 @@ impl InboundCfg {
 /// example:
 /// ```yaml
 /// tag: proxy
-/// type: socks # or shadowquic, sunnyquic, direct, or drop
+/// type: socks # or shadowquic, sunnyquic, direct, drop, or selector
 /// addr: "127.0.0.1:443" # "[::1]:443"
 /// xxx: xxx # other field depending on type
 /// ```
@@ -622,6 +654,7 @@ pub enum OutboundCfg {
     Direct(DirectOutCfg),
     #[serde(rename = "drop")]
     Drop(DropOutCfg),
+    Selector(SelectorOutCfg),
 }
 
 impl OutboundCfg {
@@ -632,7 +665,7 @@ impl OutboundCfg {
             Self::Socks(cfg) => cfg.dns.as_deref(),
             Self::ShadowQuic(cfg) => cfg.dns.as_deref(),
             Self::SunnyQuic(cfg) => cfg.dns.as_deref(),
-            Self::Drop(_) => None,
+            Self::Drop(_) | Self::Selector(_) => None,
         }
     }
 
@@ -644,6 +677,7 @@ impl OutboundCfg {
             Self::SunnyQuic(cfg) => &cfg.tag,
             Self::Direct(cfg) => &cfg.tag,
             Self::Drop(cfg) => &cfg.tag,
+            Self::Selector(cfg) => &cfg.tag,
         }
     }
 
@@ -673,6 +707,11 @@ impl OutboundCfg {
             }
             OutboundCfg::Direct(cfg) => Arc::new(DirectOut::new(cfg, resolver_manager)),
             OutboundCfg::Drop(_) => Arc::new(DropOutbound),
+            OutboundCfg::Selector(_) => {
+                return Err(SError::InvalidConfig(
+                    "selectors must be built after their member outbounds".into(),
+                ));
+            }
         };
         Ok(r)
     }
@@ -1140,7 +1179,7 @@ mod test {
                     OutboundCfg::Socks(cfg) => cfg.half_close_timeout,
                     OutboundCfg::ShadowQuic(cfg) => cfg.half_close_timeout,
                     OutboundCfg::SunnyQuic(cfg) => cfg.half_close_timeout,
-                    OutboundCfg::Drop(_) => unreachable!(),
+                    OutboundCfg::Drop(_) | OutboundCfg::Selector(_) => unreachable!(),
                 };
                 assert_eq!(actual, expected);
             }

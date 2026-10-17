@@ -111,6 +111,8 @@ socket-address fields include ports and use brackets for IPv6.
 | `get_overall_traffic` | `GET /api/v1/traffic` | `{"inbounds": [...]}` |
 | `get_mem_usage` (requires `jemalloc`) | `GET /api/v1/memory` | Memory object |
 | `probe_outbound` | `POST /api/v1/outbounds/{tag}/probe` | Probe object |
+| `get_selection` | `GET /api/v1/outbounds/{tag}/selection` | Selector state |
+| `set_selection` | `PUT /api/v1/outbounds/{tag}/selection` | Selector state |
 
 Successful requests return `200`. Empty collections return an empty array.
 Sort outbound and traffic entries by tag, and connections by ID.
@@ -148,6 +150,33 @@ listing and probing. Each entry contains `tag` and a `quality` object:
 
 This endpoint reads cached state only. It must not connect an idle outbound,
 request fresh peer statistics, or initiate a probe.
+
+## Runtime selector controls
+
+A `type: selector` outbound defines a nonempty, unique `outbounds` list of
+configured outbound tags and optional `selected` member, defaulting to the first.
+Resolve forward references and reject unknown members, invalid initial choices,
+self-references, and cycles across all possible selector members before opening
+listeners. Reuse existing outbound instances and their DNS wrappers. Selectors
+remain available without the REST API feature.
+Keep member controls in a separate `Selectable` trait, with no selection method
+on `Outbound`. Register each selector's shared instance in
+`manager.selectable_outbounds` as `Arc<dyn Selectable>` and pass that registry
+to the API independently of the outbound dispatch map.
+
+Expose the current state as `{"selected":"tag","outbounds":["tag","other"]}`
+through `GET /api/v1/outbounds/{tag}/selection` and the `selector` field on selector
+entries in the outbound list. Omit that field for other outbound types.
+`PUT` on the same route accepts `{"selected":"other"}` and returns the updated
+state. Reject invalid bodies and nonmembers with `400`, unknown outbound tags
+with `404`, non-selector controls with `400`, and unsupported methods with `405`.
+Apply existing authentication, path decoding, and JSON body limits.
+
+Switch subsequent sessions atomically without moving or closing active TCP
+sessions or UDP associations. Keep selection in memory and restore the configured
+initial member on restart. Probes dispatch through the selected member; existing
+probe caches retain their result until another probe completes. Connection
+tracking reports the selector tag chosen by routing.
 
 ## Connections
 
