@@ -81,29 +81,30 @@ Anonymous SOCKS/mixed requests and TUN/TPROXY requests use username `""` and
 an empty connection handle.
 
 Each connection contains `id`, `protocol`, `inbound`, `outbound`, `src`,
-`dst_ip`, `dst_domain`, `dst_port`, `recv_bytes`, `sent_bytes`, `duration_ms`,
+`dst_ip`, `dst_domain`, `dst_port`, `upload_bytes`, `download_bytes`, `duration_ms`,
 `first_response_ms`, and `half_closed`. The opaque ID is stable during a
 manager's lifetime.
 `src` includes the client port; IP fields do not include ports. Destinations
 reflect fake-IP restoration and router rewrites. IP destinations can have a
 cached domain alongside the IP; listing sessions never performs DNS queries.
 
-`recv_bytes` counts client uploads, and `sent_bytes` counts downloads to the
+`upload_bytes` counts client uploads, and `download_bytes` counts downloads to the
 client. Counters include payload bytes actually read or written, excluding
 protocol framing. `first_response_ms` measures from tracking creation after
 routing to the first nonempty response sent to the client; it is `null` before
 that event. A UDP entry describes the association's initial routed destination
 and remains active while either tracked half exists. `half_closed` is `true`
 when exactly one scoreboard weak pointer can be upgraded. Fields owned by an
-expired half become `null`: receive stats supply `src`, `recv_bytes`, and
-`duration_ms`; send stats supply `outbound`, destination fields, and `sent_bytes`.
+expired half become `null`: receive stats supply `src`, `upload_bytes`, and
+`duration_ms`; send stats supply `outbound`, destination fields, and `download_bytes`.
 `first_response_ms` requires both halves. The ID stays the same whichever half
 survives. Entries disappear once both weak pointers have expired.
 `duration_ms` is the elapsed time since tracking began, measured with `Instant`.
 
-Traffic entries contain `inbound`, `recv_bytes`, `sent_bytes`, `tcp_conns`,
-and `udp_conns`. These are sums of all `user_stats` entries; anonymous requests
-use username `""`. Bytes combine TCP and UDP and survive session completion.
+Traffic entries contain `inbound`, `tcp_upload_bytes`, `tcp_download_bytes`,
+`udp_upload_bytes`, `udp_download_bytes`, `tcp_conns`, and `udp_conns`.
+These are sums of all `user_stats` entries; anonymous requests
+use username `""`. TCP and UDP bytes are reported separately and survive session completion.
 Restored user traffic is included, while resetting or removing user counters
 changes the totals accordingly. Session counts follow the lifetime of the
 receive stats, so a send-only half-closed entry can remain listed with a count

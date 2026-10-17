@@ -67,8 +67,9 @@ destination. Do not create duplicate entries for cloned UDP send handles.
 - All byte counters count successfully transferred proxy payload bytes, excluding
   protocol framing. Partial I/O counts only the bytes actually transferred;
   errors and pending operations do not increase counters.
-- `recv_bytes` means bytes received from the inbound client (upload).
-  `sent_bytes` means bytes sent back to the inbound client (download).
+- `upload_bytes` means bytes received from the inbound client (upload).
+  `download_bytes` means bytes sent back to the inbound client (download).
+  Traffic totals expose these separately with `tcp_` and `udp_` prefixes.
 - Create session metadata when tracking starts, after routing selects the
   outbound. Thus creation time excludes inbound handshakes and router execution.
 - `first_response_ms` is the monotonic duration from tracking creation to the
@@ -165,8 +166,8 @@ Each entry contains:
 | `dst_ip` | Known destination IP, or `null` when only a domain is known |
 | `dst_domain` | Routed destination domain or cached hostname, otherwise `null` |
 | `dst_port` | Destination port, or `null` when send stats have expired |
-| `recv_bytes` | Per-session upload bytes, or `null` when receive stats have expired |
-| `sent_bytes` | Per-session download bytes, or `null` when send stats have expired |
+| `upload_bytes` | Per-session upload bytes, or `null` when receive stats have expired |
+| `download_bytes` | Per-session download bytes, or `null` when send stats have expired |
 | `duration_ms` | Elapsed tracking duration in milliseconds, using `Instant`, or `null` when receive stats have expired |
 | `first_response_ms` | Time to first response, or `null` |
 
@@ -189,13 +190,15 @@ Return one entry for every registered observer, including idle observers:
 ```json
 {
   "inbounds": [
-    {"inbound": "proxy-in", "sent_bytes": 2048, "recv_bytes": 1024,
+    {"inbound": "proxy-in",
+     "tcp_download_bytes": 2048, "tcp_upload_bytes": 1024,
+     "udp_download_bytes": 512, "udp_upload_bytes": 256,
      "tcp_conns": 2, "udp_conns": 1}
   ]
 }
 ```
 
-Byte totals combine TCP and UDP. Connection counts follow the lifetime of
+Return TCP and UDP byte totals separately. Connection counts follow the lifetime of
 `TrackedRecvStats`, rather than both halves. Sum the counters in all
 `user_stats` entries; summing active scoreboard entries would lose completed
 sessions' traffic.

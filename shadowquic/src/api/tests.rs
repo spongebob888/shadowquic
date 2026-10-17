@@ -591,7 +591,8 @@ async fn traffic_sums_named_and_anonymous_users_and_follows_user_counter_changes
     assert_eq!(
         api.get_traffic().await["inbounds"][0],
         json!({
-            "inbound": "local", "sent_bytes": 40, "recv_bytes": 60, "tcp_conns": 0, "udp_conns": 0,
+            "inbound": "local", "tcp_download_bytes": 10, "tcp_upload_bytes": 20,
+            "udp_download_bytes": 30, "udp_upload_bytes": 40, "tcp_conns": 0, "udp_conns": 0,
         })
     );
     let (request, mut peer) = tcp_request("192.0.2.1:443".parse::<SocketAddr>().unwrap().into());
@@ -636,28 +637,32 @@ async fn traffic_sums_named_and_anonymous_users_and_follows_user_counter_changes
     assert_eq!(
         api.get_traffic().await["inbounds"][0],
         json!({
-            "inbound": "local", "sent_bytes": 48, "recv_bytes": 70, "tcp_conns": 1, "udp_conns": 1,
+            "inbound": "local", "tcp_download_bytes": 15, "tcp_upload_bytes": 26,
+            "udp_download_bytes": 33, "udp_upload_bytes": 44, "tcp_conns": 1, "udp_conns": 1,
         })
     );
     observer.clear_user_stats("alice").await;
     assert_eq!(
         api.get_traffic().await["inbounds"][0],
         json!({
-            "inbound": "local", "sent_bytes": 35, "recv_bytes": 46, "tcp_conns": 1, "udp_conns": 1,
+            "inbound": "local", "tcp_download_bytes": 5, "tcp_upload_bytes": 6,
+            "udp_download_bytes": 30, "udp_upload_bytes": 40, "tcp_conns": 1, "udp_conns": 1,
         })
     );
     observer.remove_user("bob").await;
     assert_eq!(
         api.get_traffic().await["inbounds"][0],
         json!({
-            "inbound": "local", "sent_bytes": 5, "recv_bytes": 6, "tcp_conns": 1, "udp_conns": 1,
+            "inbound": "local", "tcp_download_bytes": 5, "tcp_upload_bytes": 6,
+            "udp_download_bytes": 0, "udp_upload_bytes": 0, "tcp_conns": 1, "udp_conns": 1,
         })
     );
     observer.clear_all_stats(&["".into()]).await;
     assert_eq!(
         api.get_traffic().await["inbounds"][0],
         json!({
-            "inbound": "local", "sent_bytes": 0, "recv_bytes": 0, "tcp_conns": 1, "udp_conns": 1,
+            "inbound": "local", "tcp_download_bytes": 0, "tcp_upload_bytes": 0,
+            "udp_download_bytes": 0, "udp_upload_bytes": 0, "tcp_conns": 1, "udp_conns": 1,
         })
     );
     drop(tcp);
@@ -665,7 +670,8 @@ async fn traffic_sums_named_and_anonymous_users_and_follows_user_counter_changes
     assert_eq!(
         api.get_traffic().await["inbounds"][0],
         json!({
-            "inbound": "local", "sent_bytes": 0, "recv_bytes": 0, "tcp_conns": 0, "udp_conns": 0,
+            "inbound": "local", "tcp_download_bytes": 0, "tcp_upload_bytes": 0,
+            "udp_download_bytes": 0, "udp_upload_bytes": 0, "tcp_conns": 0, "udp_conns": 0,
         })
     );
 }
@@ -714,8 +720,8 @@ async fn snapshots_report_active_sessions_and_preserve_udp_half_metadata() {
     tcp.stream.write_all(b"reply").await.unwrap();
     let after = api.get_connections().await;
     assert_eq!(after["connections"][0]["id"], initial["id"]);
-    assert_eq!(after["connections"][0]["recv_bytes"], 6);
-    assert_eq!(after["connections"][0]["sent_bytes"], 5);
+    assert_eq!(after["connections"][0]["upload_bytes"], 6);
+    assert_eq!(after["connections"][0]["download_bytes"], 5);
     assert!(after["connections"][0]["duration_ms"].as_u64().unwrap() >= duration_ms);
     assert!(after["connections"][0]["first_response_ms"].is_u64());
     // Liveness and half-close status follow the scoreboard's weak pointers.
@@ -724,7 +730,7 @@ async fn snapshots_report_active_sessions_and_preserve_udp_half_metadata() {
     let snapshot = api.get_connections().await;
     assert_eq!(snapshot["connections"][0]["id"], initial["id"]);
     assert_eq!(snapshot["connections"][0]["half_closed"], true);
-    assert!(snapshot["connections"][0]["sent_bytes"].is_null());
+    assert!(snapshot["connections"][0]["download_bytes"].is_null());
     assert_eq!(api.get_traffic().await["inbounds"][1]["tcp_conns"], 1);
     drop(held_metadata);
     assert_eq!(api.get_connections().await, json!({"connections": []}));
@@ -757,7 +763,7 @@ async fn snapshots_report_active_sessions_and_preserve_udp_half_metadata() {
     recv_reply.recv().await.unwrap();
     let before = api.get_connections().await;
     assert_eq!(before["connections"][0]["half_closed"], false);
-    assert_eq!(before["connections"][0]["recv_bytes"], 7);
+    assert_eq!(before["connections"][0]["upload_bytes"], 7);
     let send = udp.send.clone();
     drop(udp);
     let snapshot = api.get_connections().await;
@@ -768,21 +774,25 @@ async fn snapshots_report_active_sessions_and_preserve_udp_half_metadata() {
     assert_eq!(session["dst_ip"], "2001:db8::1");
     assert!(session["dst_domain"].is_null());
     assert!(session["src"].is_null());
-    assert!(session["recv_bytes"].is_null());
+    assert!(session["upload_bytes"].is_null());
     assert!(session["duration_ms"].is_null());
     assert!(session["first_response_ms"].is_null());
-    assert_eq!(session["sent_bytes"], 6);
+    assert_eq!(session["download_bytes"], 6);
     assert_eq!(
         api.get_traffic().await,
         json!({"inbounds": [
-            {"inbound": "idle", "sent_bytes": 0, "recv_bytes": 0, "tcp_conns": 0, "udp_conns": 0},
-            {"inbound": "local", "sent_bytes": 11, "recv_bytes": 13, "tcp_conns": 0, "udp_conns": 0},
+            {"inbound": "idle", "tcp_download_bytes": 0, "tcp_upload_bytes": 0,
+             "udp_download_bytes": 0, "udp_upload_bytes": 0, "tcp_conns": 0, "udp_conns": 0},
+            {"inbound": "local", "tcp_download_bytes": 5, "tcp_upload_bytes": 6,
+             "udp_download_bytes": 6, "udp_upload_bytes": 7, "tcp_conns": 0, "udp_conns": 0},
         ]})
     );
     drop(send);
     assert_eq!(api.get_connections().await, json!({"connections": []}));
     assert_eq!(api.get_traffic().await["inbounds"][1]["udp_conns"], 0);
-    assert_eq!(api.get_traffic().await["inbounds"][1]["sent_bytes"], 11);
+    let traffic = api.get_traffic().await;
+    assert_eq!(traffic["inbounds"][1]["tcp_download_bytes"], 5);
+    assert_eq!(traffic["inbounds"][1]["udp_download_bytes"], 6);
 }
 
 #[tokio::test]
@@ -828,13 +838,13 @@ async fn connections_report_half_closed_when_only_udp_receiver_remains() {
     );
     assert_eq!(session["half_closed"], true);
     assert_eq!(session["src"], "127.0.0.1:1234");
-    assert_eq!(session["recv_bytes"], 6);
+    assert_eq!(session["upload_bytes"], 6);
     for field in [
         "outbound",
         "dst_ip",
         "dst_domain",
         "dst_port",
-        "sent_bytes",
+        "download_bytes",
         "first_response_ms",
     ] {
         assert!(session[field].is_null(), "{field}");

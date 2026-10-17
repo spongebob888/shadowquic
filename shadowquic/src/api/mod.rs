@@ -387,8 +387,8 @@ impl ApiManager {
                         "src": recv.as_ref().and_then(|recv| recv.src_addr).map(|addr| addr.to_string()),
                         "dst_ip": dst_ip.map(|ip| ip.to_string()), "dst_domain": dst_domain,
                         "dst_port": dst.as_ref().map(|dst| dst.port),
-                        "recv_bytes": recv.as_ref().map(|recv| recv.bytes_recv.load(Ordering::Relaxed)),
-                        "sent_bytes": send.as_ref().map(|send| send.bytes_send.load(Ordering::Relaxed)),
+                        "upload_bytes": recv.as_ref().map(|recv| recv.bytes_recv.load(Ordering::Relaxed)),
+                        "download_bytes": send.as_ref().map(|send| send.bytes_send.load(Ordering::Relaxed)),
                         "duration_ms": recv.as_ref().map(|recv| millis(recv.created.elapsed())),
                         "first_response_ms": send.as_ref().zip(recv.as_ref()).and_then(|(send, recv)|
                             send.first_send.get().map(|first| millis(first.saturating_duration_since(recv.created)))),
@@ -405,22 +405,25 @@ impl ApiManager {
         tags.sort();
         let mut inbounds = Vec::with_capacity(tags.len());
         for tag in tags {
-            let (mut sent_bytes, mut recv_bytes, mut tcp_conns, mut udp_conns) =
-                (0u64, 0u64, 0u64, 0u64);
+            let (mut tcp_download_bytes, mut tcp_upload_bytes) = (0u64, 0u64);
+            let (mut udp_download_bytes, mut udp_upload_bytes) = (0u64, 0u64);
+            let (mut tcp_conns, mut udp_conns) = (0u64, 0u64);
             for stats in self.observers[tag].user_stats.lock().await.values() {
-                sent_bytes = sent_bytes
-                    .saturating_add(stats.tcp_sent.load(Ordering::Relaxed))
-                    .saturating_add(stats.udp_sent.load(Ordering::Relaxed));
-                recv_bytes = recv_bytes
-                    .saturating_add(stats.tcp_recv.load(Ordering::Relaxed))
-                    .saturating_add(stats.udp_recv.load(Ordering::Relaxed));
+                tcp_download_bytes =
+                    tcp_download_bytes.saturating_add(stats.tcp_sent.load(Ordering::Relaxed));
+                tcp_upload_bytes =
+                    tcp_upload_bytes.saturating_add(stats.tcp_recv.load(Ordering::Relaxed));
+                udp_download_bytes =
+                    udp_download_bytes.saturating_add(stats.udp_sent.load(Ordering::Relaxed));
+                udp_upload_bytes =
+                    udp_upload_bytes.saturating_add(stats.udp_recv.load(Ordering::Relaxed));
                 tcp_conns = tcp_conns.saturating_add(stats.tcp_conns.load(Ordering::Relaxed));
                 udp_conns = udp_conns.saturating_add(stats.udp_conns.load(Ordering::Relaxed));
             }
-            inbounds.push(
-                json!({"inbound": tag, "sent_bytes": sent_bytes, "recv_bytes": recv_bytes,
-                "tcp_conns": tcp_conns, "udp_conns": udp_conns}),
-            );
+            inbounds.push(json!({"inbound": tag,
+                "tcp_download_bytes": tcp_download_bytes, "tcp_upload_bytes": tcp_upload_bytes,
+                "udp_download_bytes": udp_download_bytes, "udp_upload_bytes": udp_upload_bytes,
+                "tcp_conns": tcp_conns, "udp_conns": udp_conns}));
         }
         json!({"inbounds": inbounds})
     }

@@ -224,8 +224,8 @@ restful-api:
         assert_eq!(connection["outbound"], "outbound");
         assert_eq!(connection["dst_ip"], "127.0.0.1");
         assert_eq!(connection["dst_port"], target.port());
-        assert_eq!(connection["recv_bytes"], 6);
-        assert_eq!(connection["sent_bytes"], 8);
+        assert_eq!(connection["upload_bytes"], 6);
+        assert_eq!(connection["download_bytes"], 8);
         assert!(connection["first_response_ms"].is_u64());
         assert!(connection["duration_ms"].is_u64());
         assert!(connection.get("created_at").is_none());
@@ -270,8 +270,15 @@ restful-api:
         loop {
             let (_, traffic) = call(api_addr, "GET", "/api/v1/traffic", Value::Null).await;
             if traffic["inbounds"][0]["tcp_conns"] == 0 {
-                assert_eq!(traffic["inbounds"][0]["recv_bytes"], 6);
-                assert_eq!(traffic["inbounds"][0]["sent_bytes"], 8);
+                assert_eq!(
+                    traffic["inbounds"][0],
+                    json!({
+                        "inbound": "inbound",
+                        "tcp_upload_bytes": 6, "tcp_download_bytes": 8,
+                        "udp_upload_bytes": 0, "udp_download_bytes": 0,
+                        "tcp_conns": 0, "udp_conns": 0,
+                    })
+                );
                 break;
             }
             tokio::task::yield_now().await;
