@@ -1,12 +1,17 @@
 use super::{Result, Slot, import_database};
 use crate::{
-    AnyTcp, Inbound, ProxyRequest, TcpSession, TcpTrait, UserContext, config::RouterDatabaseCfg,
-    error::SError, msgs::socks5::SocksAddr,
+    AnyTcp, Inbound, ProxyRequest,
+    config::RouterDatabaseCfg,
+    error::SError,
+    utils::{
+        http::{self, HttpConnection},
+        proxy::tcp_request,
+        tls::tls_connector,
+    },
 };
 use async_trait::async_trait;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Empty};
-use hyper_util::rt::TokioIo;
 use std::{
     io::Write,
     sync::{Arc, Mutex},
@@ -108,42 +113,6 @@ impl Inbound for DownloadInbound {
         Ok(())
     }
 }
-// Keep the transport private to this module rather than changing public TCP APIs.
-struct DownloadStream(tokio::io::DuplexStream);
-impl tokio::io::AsyncRead for DownloadStream {
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.0).poll_read(cx, buf)
-    }
-}
-impl tokio::io::AsyncWrite for DownloadStream {
-    fn poll_write(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        std::pin::Pin::new(&mut self.0).poll_write(cx, buf)
-    }
-    fn poll_flush(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.0).poll_flush(cx)
-    }
-    fn poll_shutdown(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.0).poll_shutdown(cx)
-    }
-}
-impl TcpTrait for DownloadStream {}
-#[cfg(not(feature = "dns-server"))]
-impl TcpTrait for tokio_rustls_jls::client::TlsStream<tokio::io::DuplexStream> {}
-
 async fn download(
     cfg: &RouterDatabaseCfg,
     tx: mpsc::Sender<ProxyRequest>,
@@ -155,80 +124,23 @@ async fn download(
             .ok_or("missing download host")?
             .trim_start_matches('[')
             .trim_end_matches(']');
-        let port = url.port_or_known_default().ok_or("missing download port")?;
-        let dst = match host.parse::<std::net::IpAddr>() {
-            Ok(ip) => std::net::SocketAddr::new(ip, port).into(),
-            Err(_) => SocksAddr::from_domain(host.to_owned(), port),
-        };
-        let (client, server) = tokio::io::duplex(64 * 1024);
-        tx.send(ProxyRequest::Tcp(TcpSession {
-            stream: Box::new(DownloadStream(server)),
-            dst,
-            src_addr: None,
-            user_context: UserContext {
-                ..Default::default()
-            },
-        }))
-        .await?;
+        let dst = http::destination(&url)?;
+        let (client, request, _request_guard) = tcp_request(dst, Default::default(), 64 * 1024);
+        tx.send(request).await?;
         let stream: AnyTcp = if url.scheme() == "https" {
-            let roots = rustls_jls::RootCertStore::from_iter(
-                webpki_roots::TLS_SERVER_ROOTS.iter().cloned(),
-            );
-            let provider = rustls_jls::crypto::CryptoProvider::get_default()
-                .cloned()
-                .or_else(|| {
-                    #[cfg(feature = "ring")]
-                    {
-                        Some(Arc::new(rustls_jls::crypto::ring::default_provider()))
-                    }
-                    #[cfg(all(not(feature = "ring"), feature = "aws-lc-rs"))]
-                    {
-                        Some(Arc::new(rustls_jls::crypto::aws_lc_rs::default_provider()))
-                    }
-                    #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
-                    {
-                        None
-                    }
-                })
-                .ok_or("HTTPS database downloads require a TLS crypto provider")?;
-            let mut tls = rustls_jls::ClientConfig::builder_with_provider(provider)
-                .with_safe_default_protocol_versions()?
-                .with_root_certificates(roots)
-                .with_no_client_auth();
-            // Database sources use ordinary HTTPS with certificate verification.
-            tls.jls_config.enable = false;
             let name = rustls_jls::pki_types::ServerName::try_from(host.to_owned())?;
-            Box::new(
-                tokio_rustls_jls::TlsConnector::from(Arc::new(tls))
-                    .connect(name, client)
-                    .await?,
-            )
+            Box::new(tls_connector()?.connect(name, client).await?)
         } else {
-            Box::new(DownloadStream(client))
+            Box::new(client)
         };
-        let (mut sender, connection) =
-            hyper::client::conn::http1::handshake(TokioIo::new(stream)).await?;
-        // Dropping the guard also cancels the connection on timeout/shutdown.
-        struct Connection(tokio::task::JoinHandle<()>);
-        impl Drop for Connection {
-            fn drop(&mut self) {
-                self.0.abort();
-            }
-        }
-        let _connection = Connection(tokio::spawn(async move {
-            let _ = connection.await;
-        }));
-        let authority = &url[url::Position::BeforeHost..url::Position::AfterPort];
-        let target = &url[url::Position::BeforePath..url::Position::AfterQuery];
-        let request = hyper::Request::builder()
-            .uri(target)
-            .header("Host", authority)
+        let mut connection = HttpConnection::new(stream, None).await?;
+        let request = http::get_request(&url)
             .header(
                 "User-Agent",
                 concat!("shadowquic/", env!("CARGO_PKG_VERSION")),
             )
             .body(Empty::<Bytes>::new())?;
-        let response = sender.send_request(request).await?;
+        let response = connection.send_request(request).await?;
         if response.status().is_redirection() {
             let location = response
                 .headers()

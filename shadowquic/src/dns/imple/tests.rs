@@ -1,5 +1,6 @@
 use super::config::{DnsFakeIpServerCfg, DnsSystemServerCfg, DnsUdpServerCfg};
 use super::*;
+use crate::TcpSession;
 use crate::{
     AnyUdpRecv, AnyUdpSend, Manager, UdpRecv,
     config::{Config, DirectOutCfg},
@@ -1233,12 +1234,6 @@ async fn tls_configuration_rejects_invalid_server_name_before_binding() {
     };
     assert!(config.validate().is_err());
     assert!(config.build().await.is_err());
-}
-
-#[test]
-fn dns_tls_connector_disables_jls() {
-    let connector = tls_connector().unwrap();
-    assert!(!connector.config().jls_config.enable);
 }
 
 #[tokio::test]

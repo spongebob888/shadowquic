@@ -1,13 +1,20 @@
 use super::*;
-use crate::ProxyRequest;
 #[cfg(feature = "dns-server")]
 use crate::dns::DnsService;
+use crate::{ProxyRequest, msgs::socks5::SocksAddr};
 use std::net::SocketAddr;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
     sync::mpsc,
 };
+
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
 
 struct FixtureOutbound {
     destination: SocketAddr,
@@ -623,9 +630,6 @@ async fn cached_quality_reads_do_not_wait_for_a_reconnecting_quic_outbound() {
             .is_none()
     );
 }
-
-#[cfg(not(feature = "dns-server"))]
-impl crate::TcpTrait for tokio::io::DuplexStream {}
 
 fn tcp_request(dst: SocksAddr) -> (ProxyRequest, tokio::io::DuplexStream) {
     let (stream, peer) = tokio::io::duplex(1024);

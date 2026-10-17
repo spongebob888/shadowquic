@@ -5,12 +5,8 @@
 use std::{
     collections::HashMap,
     convert::Infallible,
-    future::Future,
-    io,
     net::IpAddr,
-    pin::Pin,
     sync::{Arc, atomic::Ordering},
-    task::{Context, Poll},
     time::{Duration, Instant, SystemTime},
 };
 
@@ -22,18 +18,21 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use subtle::ConstantTimeEq;
 use tokio::{
-    io::{AsyncRead, AsyncWrite, DuplexStream, ReadBuf},
     net::TcpListener,
-    sync::{Mutex, oneshot, watch},
+    sync::{Mutex, watch},
     task::JoinSet,
 };
 
 use crate::{
-    Outbound, ProxyRequest, Selectable, TcpSession,
+    Outbound, Selectable,
     config::ApiConfig,
     error::SError,
-    msgs::socks5::{AddrOrDomain, SocksAddr},
+    msgs::socks5::AddrOrDomain,
     observe::Observer,
+    utils::{
+        http::{self, HttpConnection},
+        proxy::tcp_request,
+    },
 };
 
 #[cfg(feature = "jemalloc")]
@@ -527,94 +526,17 @@ impl ProbeRequest {
     }
 }
 
-struct AbortOnDrop(tokio::task::JoinHandle<()>);
-impl Drop for AbortOnDrop {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
-
-struct ProbeStream {
-    inner: DuplexStream,
-    cancelled: oneshot::Receiver<()>,
-    closed: bool,
-}
-
-impl ProbeStream {
-    fn check_cancelled(&mut self, cx: &mut Context<'_>) -> io::Result<()> {
-        if self.closed || Pin::new(&mut self.cancelled).poll(cx).is_ready() {
-            self.closed = true;
-            return Err(io::Error::new(
-                io::ErrorKind::ConnectionAborted,
-                "probe finished",
-            ));
-        }
-        Ok(())
-    }
-}
-
-impl crate::TcpTrait for ProbeStream {}
-
-impl AsyncRead for ProbeStream {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        self.check_cancelled(cx)?;
-        Pin::new(&mut self.inner).poll_read(cx, buf)
-    }
-}
-
-impl AsyncWrite for ProbeStream {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        self.check_cancelled(cx)?;
-        Pin::new(&mut self.inner).poll_write(cx, buf)
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.check_cancelled(cx)?;
-        Pin::new(&mut self.inner).poll_flush(cx)
-    }
-
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.check_cancelled(cx)?;
-        Pin::new(&mut self.inner).poll_shutdown(cx)
-    }
-}
-
 async fn probe_http_outbound(
     url: &url::Url,
     outbound: &dyn Outbound,
     timeout: Duration,
 ) -> Result<Duration, ApiError> {
     let probe = async {
-        let port = url.port_or_known_default().unwrap();
-        let addr = match url.host().unwrap() {
-            url::Host::Ipv4(ip) => AddrOrDomain::V4(ip.octets()),
-            url::Host::Ipv6(ip) => AddrOrDomain::V6(ip.octets()),
-            url::Host::Domain(domain) => AddrOrDomain::Domain(domain.as_bytes().to_vec().into()),
-        };
+        let dst = http::destination(url).map_err(ApiError::invalid)?;
         let started = Instant::now();
-        let (stream, peer) = tokio::io::duplex(16 * 1024);
-        // Dropping this sender interrupts pending proxy I/O with an error, so
-        // detached outbound relays close both directions instead of half-closing.
-        let (_cancel_on_drop, cancelled) = oneshot::channel();
+        let (stream, request, _request_guard) = tcp_request(dst, Default::default(), 16 * 1024);
         outbound
-            .handle(ProxyRequest::Tcp(TcpSession {
-                stream: Box::new(ProbeStream {
-                    inner: peer,
-                    cancelled,
-                    closed: false,
-                }),
-                dst: SocksAddr { addr, port },
-                src_addr: None,
-                user_context: Default::default(),
-            }))
+            .handle(request)
             .await
             .map_err(|error| match error {
                 SError::ProtocolUnimpl => {
@@ -622,28 +544,14 @@ async fn probe_http_outbound(
                 }
                 _ => ApiError::new(StatusCode::BAD_GATEWAY, "probe_failed", error),
             })?;
-        let (mut sender, connection) = hyper::client::conn::http1::Builder::new()
-            .max_buf_size(32 * 1024)
-            .handshake::<_, Empty<Bytes>>(TokioIo::new(stream))
+        let mut connection = HttpConnection::new(stream, Some(32 * 1024))
             .await
             .map_err(|error| ApiError::new(StatusCode::BAD_GATEWAY, "probe_failed", error))?;
-        let _driver = AbortOnDrop(tokio::spawn(async move {
-            let _ = connection.await;
-        }));
-        let authority = &url[url::Position::BeforeHost..url::Position::AfterPort];
-        let mut target = url.path().to_owned();
-        if let Some(query) = url.query() {
-            target.push('?');
-            target.push_str(query);
-        }
-        let request = Request::builder()
-            .method(Method::GET)
-            .uri(target)
-            .header(hyper::header::HOST, authority)
+        let request = http::get_request(url)
             .header(hyper::header::CONNECTION, "close")
             .body(Empty::<Bytes>::new())
             .map_err(ApiError::invalid)?;
-        let response = sender
+        let response = connection
             .send_request(request)
             .await
             .map_err(|error| ApiError::new(StatusCode::BAD_GATEWAY, "probe_failed", error))?;
