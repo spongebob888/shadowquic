@@ -302,6 +302,10 @@ struct RequestDispatcher {
 
 impl RequestDispatcher {
     async fn dispatch(&self, mut req: ProxyRequest) {
+        let preferred = &mut req.user_context_mut().preferred_outbound;
+        if preferred.is_none() {
+            *preferred = Some(self.default_outbound.clone());
+        }
         #[cfg(feature = "plugin")]
         let outbound_tag = match self.router.as_ref() {
             Some(router) => {
