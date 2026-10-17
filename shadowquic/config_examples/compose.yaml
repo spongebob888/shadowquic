@@ -8,6 +8,7 @@ services:
     # - "443:443/udp" # UDP port for QUIC
     volumes:
       - ./server.yaml:/etc/shadowquic/config.yaml #adjust ./server.yaml to your shadowquic config path
+      - ./data:/etc/shadowquic/
     environment:
       - TZ=Asia/Shanghai
     network_mode: "host"
