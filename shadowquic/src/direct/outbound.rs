@@ -9,7 +9,7 @@ use tokio::{
     net::{TcpSocket, TcpStream, lookup_host},
     sync::Mutex,
 };
-use tracing::{Instrument, error, info_span, trace};
+use tracing::{Instrument, error, trace};
 
 use crate::{
     Outbound, UdpSession,
@@ -48,9 +48,9 @@ impl Outbound for DirectOut {
         let dns_strategy = self.cfg.dns_strategy.clone();
         let self_clone = self.clone();
 
-        let fut = async move {
-            match req {
-                crate::ProxyRequest::Tcp(mut tcp_session) => {
+        match req {
+            crate::ProxyRequest::Tcp(mut tcp_session) => {
+                let fut = async move {
                     trace!("direct tcp to {}", tcp_session.dst);
                     let dst = tcp_session.dst.to_socket_addrs()?;
                     let dst = apply_dns_strategy(dst, &dns_strategy)
@@ -67,22 +67,29 @@ impl Outbound for DirectOut {
                         self_clone.cfg.half_close_timeout,
                     )
                     .await?;
-                }
+                    Ok(()) as Result<(), SError>
+                };
+                tokio::spawn(
+                    async {
+                        let _ = fut.await.map_err(|x| error!("{}", x));
+                    }
+                    .in_current_span(),
+                );
+            }
 
-                crate::ProxyRequest::Udp(udp_session) => {
+            crate::ProxyRequest::Udp(udp_session) => {
+                let fut = async move {
                     self_clone.handle_udp(udp_session).await?;
-                }
+                    Ok(()) as Result<(), SError>
+                };
+                tokio::spawn(
+                    async {
+                        let _ = fut.await.map_err(|x| error!("{}", x));
+                    }
+                    .in_current_span(),
+                );
             }
-
-            Ok(()) as Result<(), SError>
-        };
-        let span = info_span!("direct");
-        tokio::spawn(
-            async {
-                let _ = fut.await.map_err(|x| error!("{}", x));
-            }
-            .instrument(span),
-        );
+        }
 
         Ok(())
     }

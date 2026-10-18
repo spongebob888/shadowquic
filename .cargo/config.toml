@@ -13,3 +13,8 @@ rustflags = ["-C", "default-linker-libraries"]
 
 [target.armv7-unknown-linux-musleabihf]
   rustflags = ["-C", "default-linker-libraries"]
+
+[env]
+# jemalloc's allocator page must cover Android's 4 KB and 16 KB system pages.
+AARCH64_LINUX_ANDROID_JEMALLOC_SYS_WITH_LG_PAGE = "14"
+X86_64_LINUX_ANDROID_JEMALLOC_SYS_WITH_LG_PAGE = "14"

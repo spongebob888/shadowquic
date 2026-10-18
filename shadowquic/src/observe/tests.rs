@@ -135,12 +135,14 @@ async fn tcp_tracks_partial_and_vectored_io_per_session_and_per_user() {
         let recv = recv.upgrade().unwrap();
         assert_eq!(recv.src_addr, tcp.src_addr);
         assert_eq!(*send.dst.read().unwrap(), tcp.dst);
-        assert!(send.created.elapsed() < Duration::from_secs(5));
+        assert!(recv.created.elapsed() < Duration::from_secs(5));
+        assert!(send.first_send.get().is_none());
         assert_eq!(send.outbound, "selected");
     }
     assert_eq!(tcp.stream.peer_addr(), tcp.src_addr);
     assert!(tcp.stream.is_write_vectored());
     assert_eq!(tcp.stream.write(b"long write").await.unwrap(), 3);
+    assert!(send.upgrade().unwrap().first_send.get().is_some());
     assert_eq!(
         tcp.stream
             .write_vectored(&[IoSlice::new(b"abcdef"), IoSlice::new(b"ghi")])
@@ -313,6 +315,8 @@ async fn udp_tracks_first_packet_errors_and_independent_half_lifetimes() {
     assert_eq!(observer.udp_scoreboard.lock().await.len(), 1);
     drop(cloned_send);
     assert!(send.upgrade().is_none());
+    assert!(recv.upgrade().is_none());
+    assert_eq!(observer.get_user_stats("alice").await.udp_conns, 0);
     *observer.last_cleanup.lock().await = Instant::now() - CLEANUP_INTERVAL;
     observer.cleanup().await;
     assert!(observer.udp_scoreboard.lock().await.is_empty());
@@ -364,7 +368,23 @@ async fn cancelling_udp_registration_does_not_leak_connection_count() {
 }
 
 #[tokio::test]
-async fn unauthenticated_requests_do_not_create_stats_or_scoreboard_entries() {
+async fn cancelling_tcp_registration_rolls_back_user_counts() {
+    let observer = Observer::new();
+    let conn: Arc<dyn Stoppable> = Arc::new(TestConnection);
+    let _scoreboard = observer.tcp_scoreboard.lock().await;
+    let mut registration = Box::pin(observer.wrap_request(
+        tcp_request(user_context(&conn, 1), false),
+        "selected".into(),
+    ));
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(registration.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(observer.get_user_stats("alice").await.tcp_conns, 1);
+    drop(registration);
+    assert_eq!(observer.get_user_stats("alice").await.tcp_conns, 0);
+}
+
+#[tokio::test]
+async fn unauthenticated_requests_use_the_empty_username() {
     let observer = Observer::new();
     let tcp = observer
         .wrap_request(
@@ -376,10 +396,124 @@ async fn unauthenticated_requests_do_not_create_stats_or_scoreboard_entries() {
     let udp = observer.wrap_request(udp, "selected".into()).await;
     assert!(tcp.user_context().stats.is_none());
     assert!(udp.user_context().stats.is_none());
-    assert!(observer.user_stats.lock().await.is_empty());
+    assert_eq!(observer.user_stats.lock().await.len(), 1);
+    assert!(observer.user_stats.lock().await.contains_key(""));
     assert!(observer.sq_conns.lock().await.is_empty());
-    assert!(observer.tcp_scoreboard.lock().await.is_empty());
-    assert!(observer.udp_scoreboard.lock().await.is_empty());
+    assert_eq!(observer.tcp_scoreboard.lock().await.len(), 1);
+    assert_eq!(observer.udp_scoreboard.lock().await.len(), 1);
+    assert_eq!(observer.get_user_stats("").await.tcp_conns, 1);
+    assert_eq!(observer.get_user_stats("").await.udp_conns, 1);
+    drop(tcp);
+    drop(udp);
+    assert_eq!(observer.get_user_stats("").await.tcp_conns, 0);
+    assert_eq!(observer.get_user_stats("").await.udp_conns, 0);
+}
+
+#[tokio::test]
+async fn first_response_requires_nonempty_successful_io_and_is_set_once() {
+    let observer = Observer::new();
+    let ProxyRequest::Tcp(mut tcp) = observer
+        .wrap_request(
+            tcp_request(UserContext::default(), false),
+            "selected".into(),
+        )
+        .await
+    else {
+        unreachable!()
+    };
+    let (send, _) = observer.tcp_scoreboard.lock().await[0].clone();
+    assert_eq!(tcp.stream.write(&[]).await.unwrap(), 0);
+    assert_eq!(tcp.stream.write_vectored(&[]).await.unwrap(), 0);
+    assert_eq!(tcp.stream.read(&mut [0; 16]).await.unwrap(), 4);
+    assert!(send.upgrade().unwrap().first_send.get().is_none());
+    assert_eq!(
+        tcp.stream
+            .write_vectored(&[IoSlice::new(b"response")])
+            .await
+            .unwrap(),
+        3
+    );
+    let first = *send.upgrade().unwrap().first_send.get().unwrap();
+    assert_eq!(tcp.stream.write(b"another").await.unwrap(), 3);
+    assert_eq!(send.upgrade().unwrap().first_send.get(), Some(&first));
+
+    let (request, _, mut replies) = udp_request(UserContext::default());
+    let ProxyRequest::Udp(udp) = observer.wrap_request(request, "selected".into()).await else {
+        unreachable!()
+    };
+    let (send, _) = observer.udp_scoreboard.lock().await[0].clone();
+    udp.send.send_to(Bytes::new(), addr()).await.unwrap();
+    replies.recv().await.unwrap();
+    assert!(send.upgrade().unwrap().first_send.get().is_none());
+    udp.send
+        .send_to(Bytes::from_static(b"reply"), addr())
+        .await
+        .unwrap();
+    assert!(send.upgrade().unwrap().first_send.get().is_some());
+}
+
+#[tokio::test]
+async fn user_counters_include_restored_traffic_and_follow_resets_and_removal() {
+    let observer = Observer::new();
+    observer
+        .restore_stats(&[UserStats {
+            username: "alice".into(),
+            tcp_sent: 1000,
+            ..Default::default()
+        }])
+        .await;
+    assert_eq!(observer.get_user_stats("alice").await.tcp_sent, 1000);
+    let conn: Arc<dyn Stoppable> = Arc::new(TestConnection);
+    let ProxyRequest::Tcp(mut tcp) = observer
+        .wrap_request(
+            tcp_request(user_context(&conn, 1), false),
+            "selected".into(),
+        )
+        .await
+    else {
+        unreachable!()
+    };
+    assert_eq!(tcp.stream.write(b"one").await.unwrap(), 3);
+    assert_eq!(observer.get_user_stats("alice").await.tcp_sent, 1003);
+    observer.clear_user_stats("alice").await;
+    assert_eq!(observer.get_user_stats("alice").await.tcp_sent, 0);
+    assert_eq!(tcp.stream.write(b"two").await.unwrap(), 3);
+    assert_eq!(observer.get_user_stats("alice").await.tcp_sent, 3);
+    observer.clear_all_stats(&["alice".into()]).await;
+    assert_eq!(observer.get_user_stats("alice").await.tcp_sent, 0);
+    observer.remove_user("alice").await;
+    assert_eq!(tcp.stream.write(b"three").await.unwrap(), 3);
+    assert_eq!(tcp.stream.read(&mut [0; 16]).await.unwrap(), 4);
+    drop(tcp);
+    assert_eq!(observer.get_user_stats("alice").await.tcp_sent, 0);
+    assert_eq!(observer.get_user_stats("alice").await.tcp_recv, 0);
+    assert_eq!(observer.get_user_stats("alice").await.tcp_conns, 0);
+    assert!(observer.user_stats.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn udp_receive_half_keeps_only_its_metadata_and_connection_count_until_drop() {
+    let observer = Observer::new();
+    let (request, sender, _) = udp_request(UserContext::default());
+    let ProxyRequest::Udp(udp) = observer.wrap_request(request, "selected".into()).await else {
+        unreachable!()
+    };
+    let (send, recv) = observer.udp_scoreboard.lock().await[0].clone();
+    let mut receiver = udp.recv;
+    drop(udp.send);
+    assert!(send.upgrade().is_none());
+    assert!(recv.upgrade().is_some());
+    assert_eq!(observer.get_user_stats("").await.udp_conns, 1);
+    sender
+        .send((Bytes::from_static(b"upload"), addr()))
+        .await
+        .unwrap();
+    receiver.recv_from().await.unwrap();
+    assert_eq!(observer.get_user_stats("").await.udp_recv, 6);
+    drop(receiver);
+    assert_eq!(observer.get_user_stats("").await.udp_conns, 0);
+    assert!(send.upgrade().is_none());
+    assert!(recv.upgrade().is_none());
 }
 
 struct CompleteOutbound(mpsc::UnboundedSender<ProxyRequest>);

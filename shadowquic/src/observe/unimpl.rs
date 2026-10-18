@@ -39,7 +39,7 @@ impl Observer {
 
     pub async fn restore_stats(&self, _stats: &[UserStats]) {}
 
-    pub(crate) async fn wrap_request(&self, req: ProxyRequest) -> ProxyRequest {
+    pub(crate) async fn wrap_request(&self, req: ProxyRequest, _outbound: String) -> ProxyRequest {
         req
     }
 }

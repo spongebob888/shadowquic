@@ -47,6 +47,7 @@ impl UdpRecv for UdpSocksWrap {
 #[async_trait]
 impl UdpSend for UdpSocksWrap {
     async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
+        let payload_len = buf.len();
         let reply = UdpReqHeader {
             rsv: 0,
             frag: 0,
@@ -60,6 +61,7 @@ impl UdpSend for UdpSocksWrap {
         buf_new.put(Bytes::from(header));
         buf_new.put(buf);
 
-        Ok(self.0.send(&buf_new).await?)
+        self.0.send(&buf_new).await?;
+        Ok(payload_len)
     }
 }

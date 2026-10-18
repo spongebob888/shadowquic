@@ -38,9 +38,9 @@ pub async fn handle_request<C: QuicConnection>(
         }
         .in_current_span(),
     );
-    let fut = async move {
-        match req {
-            crate::ProxyRequest::Tcp(mut tcp_session) => {
+    match req {
+        crate::ProxyRequest::Tcp(mut tcp_session) => {
+            let fut = async move {
                 info!(dst = %tcp_session.dst, "bistream opened for tcp");
                 let req = SQReq::SQConnect(tcp_session.dst.clone());
                 req.encode(&mut send).await?;
@@ -59,9 +59,18 @@ pub async fn handle_request<C: QuicConnection>(
                     "request:{} finished, upload:{}bytes,download:{}bytes",
                     tcp_session.dst, u.1, u.0
                 );
-            }
+                Ok(()) as Result<(), SError>
+            };
+            tokio::spawn(
+                async {
+                    let _ = fut.await.map_err(|x| error!("{}", x));
+                }
+                .instrument(_span),
+            );
+        }
 
-            crate::ProxyRequest::Udp(udp_session) => {
+        crate::ProxyRequest::Udp(udp_session) => {
+            let fut = async move {
                 info!(bind_addr = %udp_session.bind_addr, "bistream opened for udp association");
                 let req = if over_stream {
                     SQReq::SQAssociatOverStream(udp_session.bind_addr.clone())
@@ -94,16 +103,16 @@ pub async fn handle_request<C: QuicConnection>(
 
                 tokio::try_join!(fut1, fut2, fut3)?;
                 info!("udp association to {} ended", udp_session.bind_addr.clone());
-            }
+                Ok(()) as Result<(), SError>
+            };
+            tokio::spawn(
+                async {
+                    let _ = fut.await.map_err(|x| error!("{}", x));
+                }
+                .instrument(_span),
+            );
         }
-        Ok(()) as Result<(), SError>
-    };
-    tokio::spawn(
-        async {
-            let _ = fut.await.map_err(|x| error!("{}", x));
-        }
-        .instrument(_span),
-    );
+    }
     Ok(())
 }
 
@@ -208,10 +217,13 @@ async fn send_user_extension<C: QuicConnection, R: SDecode>(
 }
 
 async fn print_stats<C: QuicConnection>(sq_conn: &SQConn<C>) -> SResult<()> {
-    let Ok(mut cached_stats) = sq_conn.stats.try_lock() else {
+    let Ok(_refresh) = sq_conn.stats_refresh.try_lock() else {
         return Ok(()); // if we can't get the lock, it means another task is already printing stats, so we skip this one.
     };
-    if cached_stats
+    if sq_conn
+        .stats
+        .lock()
+        .await
         .as_ref()
         .is_some_and(|stats| stats.time.elapsed() < Duration::from_secs(10))
     {
@@ -231,7 +243,7 @@ async fn print_stats<C: QuicConnection>(sq_conn: &SQConn<C>) -> SResult<()> {
         };
     log_conn_stats(&downlink, "downlink");
 
-    *cached_stats = Some(SQConnStats {
+    *sq_conn.stats.lock().await = Some(SQConnStats {
         uplink,
         downlink,
         time: Instant::now(),

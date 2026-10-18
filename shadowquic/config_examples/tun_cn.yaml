@@ -1,0 +1,107 @@
+inbounds:
+- type: socks
+  tag: socks-in
+  bind-addr: "[::]:1089"
+- type: tun
+  tag: tun-in
+dns:
+- type: dns-tls
+  tag: tls-dns
+  bind-addr: "[::]:5553"
+  upstream: "223.5.5.5:853"
+  server-name: "dns.alidns.com"
+- type: dns-udp
+  tag: lan-dns
+  bind-addr: "[::]:0"
+  upstream: "192.168.1.1:53"
+- type: dns-udp
+  tag: hijack-dns
+  bypass-cache: true
+  bind-addr: "[::]:0"
+  upstream: "192.168.1.1:53"
+- type: dns-fakeip
+  tag: fake-dns
+  bind-addr: "[::]:0"
+outbounds:
+- tag: select
+  type: selector
+  outbounds: ["proxy", "direct"]
+- tag: proxy
+  type: shadowquic
+  addr: "example.com:443"
+  username: "87654321"
+  password: "12345678"
+  server-name: "cdn.shopify.com" # must be the same as jls_upstream in server
+  alpn: ["h3"]
+  congestion-control: bbr
+  #bind-interface: eth1
+  zero-rtt: true
+  gso: true # Enable Quinn Generic Segmentation Offload (GSO)
+  over-stream: false  # true for udp over stream, false for udp over datagram
+  addr-resolver: tls-dns # resovle shadowquic server domain
+- tag: direct
+  type: direct
+  dns: tls-dns
+restful-api:
+  bind-addr: 127.0.0.1:9090
+router:
+  database:
+    # GeoLite2 Country (MMDB) for CN IP ranges. Downloaded on first start.
+    - tag: geoip-db
+      type: country
+      path: data/geolite2-country.mmdb
+    # v2fly domain-list-community for CN domains. Downloaded on first start.
+    - tag: geosite-db
+      type: geosite
+      list-include: ["cn", "geolocation-cn"]
+      path: data/geosite.redb
+
+  src: |
+    return function(ctx)
+      -- The database download inbounds are ordinary TCP connections. Route them
+      -- directly so the databases can bootstrap themselves.
+      if ctx.inbound_tag == "geoip-db" or ctx.inbound_tag == "geosite-db" then
+        return "select"
+      end
+
+      if ctx.inbound_tag == "tls-dns" or ctx.inbound_tag == "lan-dns" then
+        return "direct"
+      end
+
+      if ctx.inbound_tag == "tun-in" and ctx.dst_port == 53 then
+        return "hijack-dns"
+      end
+
+      if ctx.inbound_tag == "hijack-dns" then
+        if #ctx.dns_query > 0 and ctx.dns_query[1].name:sub(-4) == ".lan" then
+          return "lan-dns"
+        end
+        if #ctx.dns_query > 0 and find_domain("geosite-db", "geolocation-cn", ctx.dns_query[1].name) then
+          return "tls-dns"
+        end
+        return "fake-dns"
+      end
+
+      -- CN domain names.
+      if ctx.dst_domain then
+        local ok, cn = pcall(find_domain, "geosite-db", "geolocation-cn", ctx.dst_domain)
+        if ok and cn then return "direct" end
+      end
+
+      -- CN IP ranges from the country database (the primary path for tproxy).
+      if ctx.dst_ip_v4 then
+        local ok, cn = pcall(find_ip_v4, "geoip-db", "CN", ctx.dst_ip_v4)
+        if ok and cn then return "direct" end
+      end
+      if ctx.dst_ip_v6 then
+        local ok, cn = pcall(find_ip_v6, "geoip-db", "CN", ctx.dst_ip_v6)
+        if ok and cn then return "direct" end
+      end
+
+      -- Everything else (non-CN public traffic) goes through shadowquic.
+      return "select"
+    end
+
+
+
+log-level: "trace"

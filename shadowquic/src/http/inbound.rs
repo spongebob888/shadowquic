@@ -5,7 +5,7 @@ use base64::engine::general_purpose::STANDARD;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{
-    ProxyRequest, TcpSession, TcpTrait,
+    ProxyRequest, StatsContext, TcpSession, TcpTrait, UserContext,
     error::SError,
     msgs::socks5::{AddrOrDomain, SocksAddr},
     utils::{dual_socket::to_ipv4_mapped, replay_stream::ReplayStream},
@@ -59,12 +59,24 @@ impl HttpProxyServer {
             return Err(SError::SocksError("invalid http request line".into()));
         }
 
-        if self.auth_enabled() && !check_proxy_basic_auth(text, &self.users) {
-            tracing::Span::current().record("user", tracing::field::display(text));
+        let username = if self.auth_enabled() {
+            let Some(user) = check_proxy_basic_auth(text, &self.users) else {
+                write_proxy_auth_required(&mut stream).await?;
+                return Err(SError::SocksError("http proxy auth failed".into()));
+            };
+            tracing::Span::current().record("user", tracing::field::display(&user.username));
             tracing::debug!("http proxy authentication succeeded");
-            write_proxy_auth_required(&mut stream).await?;
-            return Err(SError::SocksError("http proxy auth failed".into()));
-        }
+            user.username.clone()
+        } else {
+            String::new()
+        };
+        let user_context = UserContext {
+            stats: Some(StatsContext {
+                username,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
 
         if method.eq_ignore_ascii_case("CONNECT") {
             let dst = parse_connect_target(target)?;
@@ -80,7 +92,7 @@ impl HttpProxyServer {
                 stream: Box::new(stream),
                 dst,
                 src_addr,
-                user_context: Default::default(),
+                user_context,
             }));
         }
 
@@ -94,7 +106,7 @@ impl HttpProxyServer {
             stream: Box::new(stream),
             dst,
             src_addr,
-            user_context: Default::default(),
+            user_context,
         }))
     }
 
@@ -135,27 +147,21 @@ fn find_header_end(buf: &[u8]) -> Option<usize> {
         .map(|pos| pos + 4)
 }
 
-fn check_proxy_basic_auth(text: &str, users: &[ProxyBasicAuth]) -> bool {
-    let Some(value) = find_header_value(text, "Proxy-Authorization") else {
-        return false;
-    };
+fn check_proxy_basic_auth<'a>(
+    text: &str,
+    users: &'a [ProxyBasicAuth],
+) -> Option<&'a ProxyBasicAuth> {
+    let value = find_header_value(text, "Proxy-Authorization")?;
 
     let value_lower = value.to_ascii_lowercase();
-    let Some(encoded) = value_lower.strip_prefix("basic ").map(|_| &value[6..]) else {
-        return false;
-    };
+    let encoded = value_lower.strip_prefix("basic ").map(|_| &value[6..])?;
 
-    let Ok(decoded) = STANDARD.decode(encoded.trim()) else {
-        return false;
-    };
-
-    let Ok(decoded) = str::from_utf8(&decoded) else {
-        return false;
-    };
+    let decoded = STANDARD.decode(encoded.trim()).ok()?;
+    let decoded = str::from_utf8(&decoded).ok()?;
 
     users
         .iter()
-        .any(|u| decoded == format!("{}:{}", u.username, u.password))
+        .find(|u| decoded == format!("{}:{}", u.username, u.password))
 }
 
 fn find_header_value<'a>(text: &'a str, name: &str) -> Option<&'a str> {
@@ -400,47 +406,67 @@ mod tests {
     fn basic_auth_standard_case() {
         let creds = STANDARD.encode(b"myuser:mypass");
         let req = make_request(&format!("Proxy-Authorization: Basic {}", creds));
-        assert!(check_proxy_basic_auth(&req, &make_users()));
+        assert_eq!(
+            check_proxy_basic_auth(&req, &make_users())
+                .unwrap()
+                .username,
+            "myuser"
+        );
     }
 
     #[test]
     fn basic_auth_lowercase() {
         let creds = STANDARD.encode(b"myuser:mypass");
         let req = make_request(&format!("Proxy-Authorization: basic {}", creds));
-        assert!(check_proxy_basic_auth(&req, &make_users()));
+        assert_eq!(
+            check_proxy_basic_auth(&req, &make_users())
+                .unwrap()
+                .username,
+            "myuser"
+        );
     }
 
     #[test]
     fn basic_auth_uppercase() {
         let creds = STANDARD.encode(b"myuser:mypass");
         let req = make_request(&format!("Proxy-Authorization: BASIC {}", creds));
-        assert!(check_proxy_basic_auth(&req, &make_users()));
+        assert_eq!(
+            check_proxy_basic_auth(&req, &make_users())
+                .unwrap()
+                .username,
+            "myuser"
+        );
     }
 
     #[test]
     fn basic_auth_mixed_case() {
         let creds = STANDARD.encode(b"myuser:mypass");
         let req = make_request(&format!("Proxy-Authorization: bAsIc {}", creds));
-        assert!(check_proxy_basic_auth(&req, &make_users()));
+        assert_eq!(
+            check_proxy_basic_auth(&req, &make_users())
+                .unwrap()
+                .username,
+            "myuser"
+        );
     }
 
     #[test]
     fn basic_auth_wrong_credentials() {
         let creds = STANDARD.encode(b"myuser:wrong");
         let req = make_request(&format!("Proxy-Authorization: Basic {}", creds));
-        assert!(!check_proxy_basic_auth(&req, &make_users()));
+        assert!(check_proxy_basic_auth(&req, &make_users()).is_none());
     }
 
     #[test]
     fn basic_auth_no_header() {
         let req = make_request("X-Other: value");
-        assert!(!check_proxy_basic_auth(&req, &make_users()));
+        assert!(check_proxy_basic_auth(&req, &make_users()).is_none());
     }
 
     #[test]
     fn basic_auth_unsupported_scheme() {
         let creds = STANDARD.encode(b"myuser:mypass");
         let req = make_request(&format!("Proxy-Authorization: Bearer {}", creds));
-        assert!(!check_proxy_basic_auth(&req, &make_users()));
+        assert!(check_proxy_basic_auth(&req, &make_users()).is_none());
     }
 }

@@ -7,3 +7,4 @@ __pycache__
 /config.yaml
 _site
 /result
+.agents

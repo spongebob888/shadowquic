@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use std::{net::ToSocketAddrs, sync::Arc};
+use std::sync::Arc;
 use tokio::sync::{Mutex, OnceCell, SetOnce};
 use tracing::Instrument;
 
@@ -61,21 +61,13 @@ impl SunnyQuicClient {
     }
 
     pub async fn get_conn(&self) -> Result<SunnyQuicConn, SError> {
-        let addr = self
-            .config
-            .addr
-            .to_socket_addrs()
-            .unwrap_or_else(|_| panic!("resolve quic addr faile: {}", self.config.addr))
-            .next()
-            .unwrap_or_else(|| panic!("resolve quic addr faile: {}", self.config.addr));
+        let addr =
+            crate::dns::resolve_destination(&*self.addr_resolver, &self.config.addr.parse()?, None)
+                .await?;
         let end = self
             .quic_end
-            .get_or_init(|| async {
-                self.init_endpoint()
-                    .await
-                    .expect("error during initialize quic endpoint")
-            })
-            .await;
+            .get_or_try_init(|| self.init_endpoint())
+            .await?;
         let conn = QuicClient::connect(end, addr, &self.config.server_name).await?;
 
         let conn = SQConn {
@@ -83,6 +75,7 @@ impl SunnyQuicClient {
             authed: Arc::new(SetOnce::new()),
             send_id_store: Default::default(),
             stats: Default::default(),
+            stats_refresh: Default::default(),
             recv_id_store: IDStore {
                 id_counter: Default::default(),
                 inner: Default::default(),

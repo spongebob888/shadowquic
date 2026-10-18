@@ -75,6 +75,62 @@ fn request() -> ProxyRequest {
     })
 }
 
+#[tokio::test]
+async fn manager_preserves_inbound_observers_without_attaching_registered_ones() {
+    struct Capture(mpsc::Sender<ProxyRequest>);
+    #[async_trait]
+    impl Outbound for Capture {
+        async fn handle(&self, request: ProxyRequest) -> Result<(), SError> {
+            self.0.send(request).await.unwrap();
+            Ok(())
+        }
+    }
+    for registered in [false, true] {
+        for existing in [false, true] {
+            let original = Arc::new(Observer::new());
+            let mut req = request();
+            if existing {
+                req.user_context_mut().observer = Arc::downgrade(&original);
+            }
+            let (send, recv) = mpsc::channel(1);
+            send.send(req).await.unwrap();
+            let (captured, mut requests) = mpsc::channel(1);
+            let mut manager = Manager::single(
+                Box::new(TestInbound {
+                    tag: "inbound".into(),
+                    requests: recv,
+                    initialized: Arc::new(AtomicUsize::new(0)),
+                    stopped: Arc::new(AtomicUsize::new(0)),
+                    fail_init: false,
+                    fail_shutdown: false,
+                }),
+                Arc::new(Capture(captured)),
+            );
+            if registered {
+                manager
+                    .observers
+                    .insert("inbound".into(), Arc::new(Observer::new()));
+            }
+            let (stop, stopped) = tokio::sync::oneshot::channel();
+            let task = tokio::spawn(manager.run_until(async {
+                let _ = stopped.await;
+            }));
+            let req = tokio::time::timeout(Duration::from_secs(1), requests.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            let actual = req.user_context().observer.upgrade();
+            if existing {
+                assert!(Arc::ptr_eq(actual.as_ref().unwrap(), &original));
+            } else {
+                assert!(actual.is_none());
+            }
+            stop.send(()).unwrap();
+            task.await.unwrap().unwrap();
+        }
+    }
+}
+
 async fn check_manager(fail_init: bool, fail_shutdown: bool) {
     let initialized = Arc::new(AtomicUsize::new(0));
     let stopped = Arc::new(AtomicUsize::new(0));
@@ -99,6 +155,8 @@ async fn check_manager(fail_init: bool, fail_shutdown: bool) {
     }
     let manager = Manager {
         inbounds,
+        observers: HashMap::new(),
+        selectable_outbounds: HashMap::new(),
         outbounds: HashMap::from([
             (
                 "selected".into(),
@@ -115,6 +173,10 @@ async fn check_manager(fail_init: bool, fail_shutdown: bool) {
             ),
         ]),
         default_outbound: "selected".into(),
+        #[cfg(feature = "restful-api")]
+        api_config: None,
+        #[cfg(feature = "restful-api")]
+        sq_outbounds: HashMap::new(),
         #[cfg(feature = "plugin")]
         router: None,
         #[cfg(feature = "dns-server")]
@@ -148,6 +210,34 @@ async fn shutdown_failure_does_not_skip_other_listeners() {
 #[tokio::test]
 async fn initialization_failure_cleans_up_listeners() {
     check_manager(true, false).await;
+}
+
+#[cfg(feature = "restful-api")]
+#[tokio::test]
+async fn api_bind_failure_prevents_inbound_initialization() {
+    let occupied = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let initialized = Arc::new(AtomicUsize::new(0));
+    let stopped = Arc::new(AtomicUsize::new(0));
+    let (_send, requests) = mpsc::channel(1);
+    let mut manager = Manager::single(
+        Box::new(TestInbound {
+            tag: "inbound".into(),
+            requests,
+            initialized: initialized.clone(),
+            stopped: stopped.clone(),
+            fail_init: false,
+            fail_shutdown: false,
+        }),
+        Arc::new(crate::drop_outbound::DropOutbound),
+    );
+    manager.api_config = Some(crate::config::ApiConfig {
+        bind_addr: occupied.local_addr().unwrap(),
+        secret: None,
+    });
+    let error = manager.run_until(std::future::pending()).await.unwrap_err();
+    assert!(matches!(error, SError::Io(_)));
+    assert_eq!(initialized.load(Ordering::SeqCst), 0);
+    assert_eq!(stopped.load(Ordering::SeqCst), 0);
 }
 
 struct DispatchDropCounter(Arc<AtomicUsize>);
@@ -442,6 +532,8 @@ async fn manager_preserves_inbound_tags_and_routes_by_preferred_outbound() {
     }
     let manager = Manager {
         inbounds,
+        observers: HashMap::new(),
+        selectable_outbounds: HashMap::new(),
         outbounds: HashMap::from([
             (
                 "out-a".to_string(),
@@ -463,6 +555,10 @@ async fn manager_preserves_inbound_tags_and_routes_by_preferred_outbound() {
         // out-a is reachable only through the preference; inbound "b" has none,
         // so it falls back to the global default.
         default_outbound: "out-b".into(),
+        #[cfg(feature = "restful-api")]
+        api_config: None,
+        #[cfg(feature = "restful-api")]
+        sq_outbounds: HashMap::new(),
         #[cfg(feature = "plugin")]
         router: None,
         #[cfg(feature = "dns-server")]

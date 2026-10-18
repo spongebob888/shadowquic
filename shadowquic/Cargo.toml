@@ -9,11 +9,13 @@ description = { workspace = true }
 license = { workspace = true}
 readme = { workspace = true}
 [features]
-default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", "mixed", "plugin-vendored", "router-db", "dns-server", "router-dhcp-lease","tun"]
+default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", "mixed", "plugin-vendored", "router-db", "dns-server", "router-dhcp-lease","tun", "jemalloc","restful-api"]
 # cost 1.4 mb
 dns-server = ["dep:ipnet", "dep:quick_cache", "dep:simple-dns", "dep:tokio-rustls-jls", "dep:rustls_jls"]
 # cost 200k
 statistics = ["dep:portable-atomic"]
+restful-api = ["statistics", "dep:hyper", "hyper/server", "dep:hyper-util", "dep:http-body-util", "dep:serde_json", "dep:url", "dep:percent-encoding", "dep:subtle", "time/formatting"]
+jemalloc = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-sys"]
 # cost 200k
 mixed = ["dep:base64"]
 # cost about 2.4m
@@ -63,6 +65,8 @@ hyper = { version = "1", features = ["client", "http1"], optional = true }
 hyper-util = { version = "0.1", features = ["tokio"], optional = true }
 http-body-util = { version = "0.1", optional = true }
 url = { version = "2", optional = true }
+serde_json = { version = "1", optional = true }
+percent-encoding = { version = "2", optional = true }
 simple-dns = { version = "0.12", optional = true }
 # Version 0.1.0 requires early-data to compile its server implementation.
 # TLS early data remains disabled in DNS and database download clients.
@@ -88,6 +92,7 @@ webpki-roots = "1.0.7"
 shadowquic-macros = { path = "../shadowquic-macros", version = ">=0.3.11" }
 yaml-rust2 = "0.13.0"
 serde = { version = "1.0.228", features = ["derive"]}
+subtle = { version = "2.6", optional = true }
 clap = { version = "4", features = ["derive"] }
 educe = "0.8.1"
 socket2 = "0.6.2"
@@ -126,6 +131,11 @@ tun-rs = { version = "2", features = ["async_tokio"], optional = true }
 [target.'cfg(target_os="linux")'.dependencies]
 libc = { version = "0.2", optional = true }
 etherparse = { version = "0.21.0", optional = true }
+
+# Keep other targets usable with the memory endpoint's 501 fallback.
+[target.'cfg(any(target_os = "android", all(any(target_os = "linux", target_os = "macos"), any(target_arch = "x86_64", target_arch = "aarch64"))))'.dependencies]
+tikv-jemallocator = { version = "0.6", default-features = false, features = ["stats"], optional = true }
+tikv-jemalloc-sys = { version = "0.6", default-features = false, features = ["stats"], optional = true }
 
 # LuaJIT has no RISC-V or LoongArch backend. Keep Lua 5.1 routing available
 # on those architectures with the portable interpreter.

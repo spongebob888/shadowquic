@@ -7,6 +7,7 @@ use tracing::Instrument;
 use crate::config::TproxyServerCfg;
 use crate::error::SError;
 use crate::msgs::socks5::{AddrOrDomain, SocksAddr};
+use crate::observe::Observer;
 use crate::{
     AnyTcp, AnyUdpRecv, AnyUdpSend, Inbound, ProxyRequest, TcpSession, UdpRecv, UdpSend, UdpSession,
 };
@@ -22,6 +23,8 @@ use socket2::{
 };
 
 pub struct TproxyServer {
+    /// Shared with the manager's observer map when registering this inbound.
+    pub observer: Arc<Observer>,
     _bind_addr: SocketAddr,
     cfg: TproxyServerCfg,
     tcp_listener: TcpListener,
@@ -47,6 +50,7 @@ impl TproxyServer {
         }
 
         Ok(Self {
+            observer: Arc::new(Observer::new()),
             _bind_addr: cfg.bind_addr,
             tcp_listener,
             udp_req_rx,
@@ -150,6 +154,10 @@ impl Inbound for TproxyServer {
         };
         req.user_context_mut().inbound_tag = self.cfg.tag.clone();
         req.user_context_mut().preferred_outbound = self.cfg.default_outbound.clone();
+        req.user_context_mut().observer = Arc::downgrade(&self.observer);
+        req.user_context_mut()
+            .stats
+            .get_or_insert_with(Default::default);
         Ok(req)
     }
 }
@@ -665,6 +673,110 @@ impl ToCanonical for SocketAddr {
 mod tests {
     use super::udp_gro_packets;
 
+    #[cfg(feature = "statistics")]
+    #[tokio::test]
+    async fn observer_tracks_tcp_and_udp_without_transparent_socket_privileges() {
+        use super::*;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let bind_addr = listener.local_addr().unwrap();
+            let (requests, udp_req_rx) = channel(1);
+            let mut inbound = TproxyServer {
+                observer: Arc::new(Observer::new()),
+                _bind_addr: bind_addr,
+                cfg: TproxyServerCfg {
+                    tag: "transparent".into(),
+                    default_outbound: Some("direct".into()),
+                    bind_addr,
+                },
+                tcp_listener: listener,
+                udp_req_rx,
+            };
+            let observer = inbound.observer.clone();
+            let mut client = tokio::net::TcpStream::connect(bind_addr).await.unwrap();
+            let src = client.local_addr().unwrap();
+            let request = inbound.accept().await.unwrap();
+            assert!(Arc::ptr_eq(
+                &request.user_context().observer.upgrade().unwrap(),
+                &observer
+            ));
+            assert_eq!(request.user_context().inbound_tag, "transparent");
+            assert_eq!(request.user_context().stats.as_ref().unwrap().username, "");
+            assert_eq!(
+                request.user_context().preferred_outbound.as_deref(),
+                Some("direct")
+            );
+            let ProxyRequest::Tcp(mut session) =
+                observer.wrap_request(request, "direct".into()).await
+            else {
+                panic!()
+            };
+            assert_eq!(session.src_addr, Some(src));
+            assert_eq!(session.dst, bind_addr.into());
+            client.write_all(b"hello").await.unwrap();
+            session.stream.read_exact(&mut [0; 5]).await.unwrap();
+            session.stream.write_all(b"world").await.unwrap();
+            client.read_exact(&mut [0; 5]).await.unwrap();
+            assert_eq!(observer.get_user_stats("").await.tcp_conns, 1);
+            assert_eq!(observer.get_user_stats("").await.tcp_recv, 5);
+            assert_eq!(observer.get_user_stats("").await.tcp_sent, 5);
+            drop(session);
+            assert_eq!(observer.get_user_stats("").await.tcp_conns, 0);
+
+            let (send, recv) = channel(1);
+            let (reply, mut replies) = channel(1);
+            let destination: SocksAddr = "192.0.2.1:53".parse::<SocketAddr>().unwrap().into();
+            send.send((Bytes::from_static(b"hello"), destination.clone()))
+                .await
+                .unwrap();
+            requests
+                .send(ProxyRequest::Udp(UdpSession {
+                    recv: Box::new(recv),
+                    send: Arc::new(reply),
+                    stream: None,
+                    bind_addr: bind_addr.into(),
+                    dst: destination.clone(),
+                    src_addr: Some(src),
+                    user_context: Default::default(),
+                }))
+                .await
+                .unwrap();
+            let request = inbound.accept().await.unwrap();
+            assert_eq!(request.user_context().stats.as_ref().unwrap().username, "");
+            assert!(Arc::ptr_eq(
+                &request.user_context().observer.upgrade().unwrap(),
+                &observer
+            ));
+            let ProxyRequest::Udp(mut session) =
+                observer.wrap_request(request, "direct".into()).await
+            else {
+                panic!()
+            };
+            assert_eq!(session.recv.recv_from().await.unwrap().0.as_ref(), b"hello");
+            session
+                .send
+                .send_to(Bytes::from_static(b"world"), destination.clone())
+                .await
+                .unwrap();
+            assert_eq!(replies.recv().await.unwrap().0.as_ref(), b"world");
+            assert_eq!(observer.get_user_stats("").await.udp_recv, 5);
+            assert_eq!(observer.get_user_stats("").await.udp_sent, 5);
+            let entry = observer.udp_scoreboard.lock().await[0].0.upgrade().unwrap();
+            assert_eq!(*entry.dst.read().unwrap(), destination);
+            assert_eq!(entry.outbound, "direct");
+            assert!(entry.first_send.get().is_some());
+            let retained = session.send.clone();
+            drop(session);
+            assert_eq!(observer.get_user_stats("").await.udp_conns, 0);
+            drop(retained);
+            assert_eq!(observer.get_user_stats("").await.udp_conns, 0);
+        })
+        .await
+        .unwrap();
+    }
+
     #[test]
     fn splits_udp_gro_payload_by_stride() {
         let buf = b"aaabbbccd";
@@ -682,6 +794,9 @@ mod tests {
             udp_gro_packets(buf, buf.len()).collect::<Vec<_>>(),
             vec![&buf[..]]
         );
-        assert_eq!(udp_gro_packets(&[], 0).collect::<Vec<_>>(), vec![&[][..]]);
+        assert_eq!(
+            udp_gro_packets(&[], 0).collect::<Vec<_>>(),
+            vec![&[] as &[u8]]
+        );
     }
 }
