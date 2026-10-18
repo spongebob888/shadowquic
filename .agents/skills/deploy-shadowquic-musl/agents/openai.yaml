@@ -1,0 +1,3 @@
+interface:
+  display_name: "Deploy Shadowquic musl"
+  short_description: "Build musl and replace a remote Shadowquic instance"
