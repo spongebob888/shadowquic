@@ -3,7 +3,7 @@
 ## Scope and configuration
 
 Implement an optional HTTP API for outbound quality, active proxy sessions,
-traffic counters, memory statistics, and outbound probing.
+traffic counters, Tokio runtime metrics, memory statistics, and outbound probing.
 
 - Gate the API and its dependencies behind the default-enabled `restful-api` Cargo
   feature. Enabling it must automatically enable `statistics`.
@@ -109,6 +109,7 @@ socket-address fields include ports and use brackets for IPv6.
 | `get_outbounds` | `GET /api/v1/outbounds` | `{"outbounds": [...]}` |
 | `get_connections` | `GET /api/v1/connections` | `{"connections": [...]}` |
 | `get_overall_traffic` | `GET /api/v1/traffic` | `{"inbounds": [...]}` |
+| `get_tokio_metric` | `GET /api/v1/tokio_metric` | `{"num_workers": N, "num_alive_tasks": N, "global_queue_depth": N}` |
 | `get_mem_usage` (requires `jemalloc`) | `GET /api/v1/memory` | Memory object |
 | `probe_outbound` | `POST /api/v1/outbounds/{tag}/probe` | Probe object |
 | `get_selection` | `GET /api/v1/outbounds/{tag}/selection` | Selector state |

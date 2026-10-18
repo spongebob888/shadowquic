@@ -262,6 +262,10 @@ impl ApiManager {
                 require(Method::GET)?;
                 Ok(self.get_traffic().await)
             }
+            "/api/v1/tokio_metric" => {
+                require(Method::GET)?;
+                Ok(self.get_tokio_metric())
+            }
             #[cfg(feature = "jemalloc")]
             "/api/v1/memory" => {
                 require(Method::GET)?;
@@ -466,6 +470,15 @@ impl ApiManager {
         }
         connections.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
         json!({"connections": connections})
+    }
+
+    fn get_tokio_metric(&self) -> Value {
+        let metrics = tokio::runtime::Handle::current().metrics();
+        json!({
+            "num_workers": metrics.num_workers(),
+            "num_alive_tasks": metrics.num_alive_tasks(),
+            "global_queue_depth": metrics.global_queue_depth(),
+        })
     }
 
     async fn get_traffic(&self) -> Value {

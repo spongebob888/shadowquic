@@ -323,6 +323,32 @@ async fn routes_return_empty_collections_and_json_errors() {
     task.await.unwrap().unwrap();
 }
 
+async fn assert_tokio_metric_route(expected_workers: u64) {
+    let (addr, stop, task) = server(manager(HashMap::new(), HashMap::new())).await;
+    let (status, body) = call(addr, "GET", "/api/v1/tokio_metric", "").await;
+    assert_eq!(status, 200);
+    assert_eq!(body.as_object().unwrap().len(), 3);
+    assert_eq!(body["num_workers"], expected_workers);
+    // The API server, HTTP connection handler, and client driver are alive.
+    assert!(body["num_alive_tasks"].as_u64().unwrap() >= 3);
+    assert!(body["global_queue_depth"].is_u64());
+    let (status, body) = call(addr, "POST", "/api/v1/tokio_metric", "{}").await;
+    assert_eq!(status, 405);
+    assert_eq!(body["error"]["code"], "method_not_allowed");
+    stop.send(true).unwrap();
+    task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn tokio_metric_reports_current_thread_runtime() {
+    assert_tokio_metric_route(1).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tokio_metric_reports_multi_thread_runtime() {
+    assert_tokio_metric_route(2).await;
+}
+
 #[tokio::test]
 async fn probes_preserve_http_target_cache_results_and_release_connections() {
     let (target, mut requests, fixture_task) = fixture().await;
@@ -535,6 +561,7 @@ async fn bearer_secret_protects_all_routes_before_validation_or_probe_dispatch()
         ("GET", "/api/v1/outbounds", ""),
         ("GET", "/api/v1/connections", ""),
         ("GET", "/api/v1/traffic", ""),
+        ("GET", "/api/v1/tokio_metric", ""),
         ("GET", "/api/v1/memory", ""),
         ("GET", "/missing", ""),
         ("DELETE", "/api/v1/traffic", ""),

@@ -58,6 +58,7 @@ fields are `null`. Collections are sorted by tag or session ID.
 | GET | `/api/v1/outbounds` | `{"outbounds": [...]}`: tags and cached connection/probe quality |
 | GET | `/api/v1/connections` | `{"connections": [...]}`: active TCP sessions and UDP associations |
 | GET | `/api/v1/traffic` | `{"inbounds": [...]}`: summed user traffic and active session counts per inbound |
+| GET | `/api/v1/tokio_metric` | Tokio runtime worker count, alive task count, and global queue depth |
 | GET | `/api/v1/memory` | jemalloc allocator statistics; requires `jemalloc` |
 | POST | `/api/v1/outbounds/{tag}/probe` | Probe the selected outbound with an HTTP GET |
 | GET | `/api/v1/outbounds/{tag}/selection` | Selector's current member and allowed outbound tags |
@@ -67,6 +68,7 @@ fields are `null`. Collections are sorted by tag or session ID.
 curl http://127.0.0.1:9090/api/v1/outbounds
 curl http://127.0.0.1:9090/api/v1/connections
 curl http://127.0.0.1:9090/api/v1/traffic
+curl http://127.0.0.1:9090/api/v1/tokio_metric
 curl http://127.0.0.1:9090/api/v1/memory
 curl -H 'Content-Type: application/json' \
   -d '{"url":"http://example.com/","timeout_ms":10000}' \
@@ -78,6 +80,21 @@ Errors have the form `{"error":{"code":"...","message":"..."}}`.
 Invalid requests return `400`, unknown routes or tags `404`, wrong methods
 `405`, overlapping probes on the same outbound `409`, unsupported operations
 `501`, failed probes `502`, and probe timeouts `504`.
+
+## Tokio runtime metrics
+
+`GET /api/v1/tokio_metric` (`get_tokio_metric`) returns metrics from the Tokio
+runtime serving the request:
+
+```json
+{"num_workers": 8, "num_alive_tasks": 42, "global_queue_depth": 0}
+```
+
+`num_workers` is the runtime's worker thread count (always `1` for a
+current-thread runtime). `num_alive_tasks` counts tasks that have been spawned
+and have not yet exited, including API and background tasks. `global_queue_depth`
+counts tasks waiting in the global scheduler queue, excluding worker-local
+queues. These are live measurements and may change while the response is built.
 
 ## Selector outbounds
 
