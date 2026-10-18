@@ -39,6 +39,7 @@ use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
+use tracing::Instrument;
 
 /// Resolve after routing and preserve the original address on UDP replies.
 pub(crate) struct ResolvingOutbound {
@@ -54,35 +55,39 @@ impl Outbound for ResolvingOutbound {
         let resolver = self.resolver.clone();
         let strategy = self.strategy.clone();
         // The manager must remain free to route this resolver's upstream sessions.
-        tokio::spawn(async move {
-            let result = async {
-                let req = match req {
-                    ProxyRequest::Tcp(mut session) => {
-                        session.dst = resolve(&*resolver, &session.dst, &strategy).await?;
-                        ProxyRequest::Tcp(session)
-                    }
-                    ProxyRequest::Udp(mut session) => {
-                        let mapping = Arc::new(Mutex::new(HashMap::new()));
-                        session.recv = Box::new(ResolvingRecv {
-                            inner: session.recv,
-                            resolver,
-                            strategy,
-                            mapping: mapping.clone(),
-                        });
-                        session.send = Arc::new(MappedSend {
-                            inner: session.send,
-                            mapping,
-                        });
-                        ProxyRequest::Udp(session)
-                    }
+        tokio::spawn(
+            async move {
+                let result = async {
+                    let req = match req {
+                        ProxyRequest::Tcp(mut session) => {
+                            session.dst = resolve(&*resolver, &session.dst, &strategy).await?;
+                            ProxyRequest::Tcp(session)
+                        }
+                        ProxyRequest::Udp(mut session) => {
+                            let mapping = Arc::new(Mutex::new(HashMap::new()));
+                            session.recv = Box::new(ResolvingRecv {
+                                inner: session.recv,
+                                resolver,
+                                strategy,
+                                mapping: mapping.clone(),
+                            });
+                            session.send = Arc::new(MappedSend {
+                                inner: session.send,
+                                mapping,
+                            });
+                            ProxyRequest::Udp(session)
+                        }
+                    };
+                    inner.handle(req).await
+                }
+                .await;
+                if let Err(error) = result {
+                    tracing::debug!(%error, "outbound DNS resolution failed");
                 };
-                inner.handle(req).await
             }
-            .await;
-            if let Err(error) = result {
-                tracing::debug!(%error, "outbound DNS resolution failed");
-            }
-        });
+            // Outbound spans must inherit the request, not retain this task's runtime span.
+            .in_current_span(),
+        );
         Ok(())
     }
 }

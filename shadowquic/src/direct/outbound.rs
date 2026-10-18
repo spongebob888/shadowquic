@@ -76,12 +76,11 @@ impl Outbound for DirectOut {
 
             Ok(()) as Result<(), SError>
         };
-        let span = info_span!("direct");
         tokio::spawn(
             async {
                 let _ = fut.await.map_err(|x| error!("{}", x));
             }
-            .instrument(span),
+            .in_current_span(),
         );
 
         Ok(())
