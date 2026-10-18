@@ -111,6 +111,7 @@ pub(super) fn default_ipv6_range() -> Ipv6Net {
 }
 
 /// Local UDP/TCP DNS listener allocating stable synthetic addresses.
+/// Only tun/tproxy inbound supports fake ip.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct DnsFakeIpServerCfg {

@@ -31,7 +31,7 @@
             src = craneLib.cleanCargoSource ./.;
             pname = "shadowquic";
             doCheck = false;
-            cargoExtraArgs = "--no-default-features --features shadowquic-quinn,sunnyquic-noq,ring,statistics,tproxy,mixed,plugin-system,router-db,dns-server";
+            cargoExtraArgs = "--no-default-features --features shadowquic-quinn,sunnyquic-noq,ring,statistics,tproxy,mixed,plugin-system,router-db,dns-server,router-dhcp-lease,restful-api,tun,jemalloc";
             nativeBuildInputs = [ targetPkgs.buildPackages.pkg-config ];
             buildInputs = [ targetPkgs.luajit ];
           };
@@ -64,6 +64,21 @@
 
           shellHook =
             ''
+              # Cargo's cc crate builds C dependencies with -O0 for dev builds.
+              # Nix's cc-wrapper adds fortify hardening by default, and glibc's
+              # fortify headers then emit a #warning that jemalloc's configure
+              # promotes to an error with -Werror.  Drop fortify flags while
+              # keeping the remaining hardening flags.
+              export NIX_HARDENING_ENABLE="$(
+                if [ -n "$NIX_HARDENING_ENABLE" ]; then
+                  for flag in $NIX_HARDENING_ENABLE; do
+                    case "$flag" in
+                      fortify|fortify3) ;;
+                      *) printf '%s ' "$flag" ;;
+                    esac
+                  done
+                fi
+              )"
               export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath libraries}:$LD_LIBRARY_PATH
               # Nix's rustup linker wrappers embed absolute toolchain paths.
               # Cross 0.2.5 mounts the toolchain at /rust, so also keep its host path.

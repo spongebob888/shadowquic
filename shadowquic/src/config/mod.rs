@@ -112,10 +112,31 @@ pub struct Config {
     pub router: RouterCfg,
     #[serde(default)]
     pub log_level: LogLevel,
+    /// Restful API for control shadowquid
     pub restful_api: Option<ApiConfig>,
 }
 
-/// Restful API
+/// Restful API for controlling shaodowquic
+///
+/// ```yaml
+/// restful-api:
+///   bind-addr: 127.0.0.1:9090
+///   secret: NONSENSE
+/// ```
+///
+/// All responses use JSON with `snake_case` fields. Timestamps use UTC RFC 3339;
+/// durations use milliseconds and byte counters use bytes. Unavailable optional
+/// fields are `null`. Collections are sorted by tag or session ID.
+///
+/// | Method | Path | Response |
+/// | --- | --- | --- |
+/// | GET | `/api/v1/outbounds` | `{"outbounds": [...]}`: tags and cached connection/probe quality |
+/// | GET | `/api/v1/connections` | `{"connections": [...]}`: active TCP sessions and UDP associations |
+/// | GET | `/api/v1/traffic` | `{"inbounds": [...]}`: summed user traffic and active session counts per inbound |
+/// | GET | `/api/v1/memory` | jemalloc allocator statistics; requires `jemalloc` |
+/// | POST| `/api/v1/outbounds/{tag}/probe` | Probe the selected outbound with an HTTP GET |
+/// | GET | `/api/v1/outbounds/{tag}/selection` | Selector's current member and allowed outbound tags |
+/// | PUT | `/api/v1/outbounds/{tag}/selection` | Set a selector's member with `{"selected":"outbound-tag"}` |
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ApiConfig {
