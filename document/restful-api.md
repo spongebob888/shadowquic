@@ -18,8 +18,8 @@ restful-api:
 
 Any bind address is allowed, including `0.0.0.0` and `::`, with or without a
 secret. A nonempty `secret` requires `Authorization: Bearer <secret>` on every
-request. Omit `secret` or set it to `""` to disable authentication. Omit
-`restful-api` to leave the HTTP listener disabled. Configuring
+request except CORS preflights. Omit `secret` or set it to `""` to disable
+authentication. Omit `restful-api` to leave the HTTP listener disabled. Configuring
 the listener without compiling `restful-api` produces a configuration error.
 A bind failure prevents manager startup.
 
@@ -35,9 +35,21 @@ Missing or invalid credentials return `401` with error code `unauthorized` and
 A complete local SOCKS/direct example is available in
 [restful-api.yaml](../shadowquic/config_examples/restful-api.yaml).
 
+## Browser access (CORS)
+
+CORS is enabled for all origins (`Access-Control-Allow-Origin: *`), including
+on error responses. Browser preflight `OPTIONS` requests with `Origin` and
+`Access-Control-Request-Method` headers return an empty `204` without requiring
+authentication. They allow `GET`, `POST`, `PUT`, and `OPTIONS` with the
+`Authorization` and `Content-Type` request headers. Actual API requests still
+require the configured bearer token.
+
+Use a bearer header for browser authentication; cookie credentials and
+`fetch`'s `credentials: "include"` mode are not supported by this CORS policy.
+
 ## Endpoints
 
-All responses use JSON with `snake_case` fields. Timestamps use UTC RFC 3339;
+API responses use JSON with `snake_case` fields. Timestamps use UTC RFC 3339;
 durations use milliseconds and byte counters use bytes. Unavailable optional
 fields are `null`. Collections are sorted by tag or session ID.
 

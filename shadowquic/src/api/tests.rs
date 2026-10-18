@@ -106,13 +106,6 @@ async fn call_with_authorization(
     body: &str,
     authorization: &[&str],
 ) -> (u16, Value) {
-    let stream = TcpStream::connect(addr).await.unwrap();
-    let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
-        .await
-        .unwrap();
-    let driver = AbortOnDrop(tokio::spawn(async move {
-        let _ = connection.await;
-    }));
     let mut request = Request::builder()
         .method(method)
         .uri(path)
@@ -124,11 +117,9 @@ async fn call_with_authorization(
     let request = request
         .body(Full::new(Bytes::copy_from_slice(body.as_bytes())))
         .unwrap();
-    let response = tokio::time::timeout(Duration::from_secs(3), sender.send_request(request))
-        .await
-        .unwrap()
-        .unwrap();
+    let response = send_request(addr, request).await;
     assert_eq!(response.headers()["content-type"], "application/json");
+    assert_eq!(response.headers()["access-control-allow-origin"], "*");
     let status = response.status().as_u16();
     if status == 401 {
         assert_eq!(
@@ -136,9 +127,128 @@ async fn call_with_authorization(
             "Bearer"
         );
     }
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    drop(driver);
-    (status, serde_json::from_slice(&body).unwrap())
+    (status, serde_json::from_slice(response.body()).unwrap())
+}
+
+async fn send_request(addr: SocketAddr, request: Request<Full<Bytes>>) -> Response<Bytes> {
+    let stream = TcpStream::connect(addr).await.unwrap();
+    let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .unwrap();
+    let _driver = AbortOnDrop(tokio::spawn(async move {
+        let _ = connection.await;
+    }));
+    tokio::time::timeout(Duration::from_secs(3), async {
+        let (parts, body) = sender.send_request(request).await.unwrap().into_parts();
+        Response::from_parts(parts, body.collect().await.unwrap().to_bytes())
+    })
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn cors_preflights_allow_bearer_and_json_without_authentication_or_dispatch() {
+    let (target, _, fixture_task) = fixture().await;
+    let outbound = Arc::new(FixtureOutbound {
+        destination: target,
+        calls: 0.into(),
+    });
+    let mut api = probing_manager("proxy", outbound.clone());
+    Arc::get_mut(&mut api).unwrap().secret = Some("test-secret".into());
+    let (addr, stop, task) = server(api).await;
+    for (method, path) in [
+        ("GET", "/api/v1/traffic"),
+        ("POST", "/api/v1/outbounds/proxy/probe"),
+        ("PUT", "/api/v1/outbounds/proxy/selection"),
+    ] {
+        let request = Request::builder()
+            .method("OPTIONS")
+            .uri(path)
+            .header("host", "localhost")
+            .header("origin", "https://dashboard.example")
+            .header("access-control-request-method", method)
+            .header(
+                "access-control-request-headers",
+                "authorization, content-type",
+            )
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        let response = send_request(addr, request).await;
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert!(response.body().is_empty());
+        assert_eq!(response.headers()["access-control-allow-origin"], "*");
+        assert_eq!(
+            response.headers()["access-control-allow-methods"],
+            "GET, POST, PUT, OPTIONS"
+        );
+        assert_eq!(
+            response.headers()["access-control-allow-headers"],
+            "Authorization, Content-Type"
+        );
+        assert!(
+            !response
+                .headers()
+                .contains_key("access-control-allow-credentials")
+        );
+    }
+    assert_eq!(outbound.calls.load(Ordering::Relaxed), 0);
+    stop.send(true).unwrap();
+    task.await.unwrap().unwrap();
+    fixture_task.abort();
+}
+
+#[tokio::test]
+async fn cors_headers_cover_success_and_errors_while_preserving_authentication() {
+    let mut api = manager(HashMap::new(), HashMap::new());
+    Arc::get_mut(&mut api).unwrap().secret = Some("test-secret".into());
+    let (addr, stop, task) = server(api).await;
+    for (method, path, authorized, expected) in [
+        ("GET", "/api/v1/traffic", false, StatusCode::UNAUTHORIZED),
+        ("GET", "/api/v1/traffic", true, StatusCode::OK),
+        ("GET", "/missing", true, StatusCode::NOT_FOUND),
+        (
+            "DELETE",
+            "/api/v1/traffic",
+            true,
+            StatusCode::METHOD_NOT_ALLOWED,
+        ),
+        (
+            "OPTIONS",
+            "/api/v1/traffic",
+            false,
+            StatusCode::UNAUTHORIZED,
+        ),
+        (
+            "OPTIONS",
+            "/api/v1/traffic",
+            true,
+            StatusCode::METHOD_NOT_ALLOWED,
+        ),
+    ] {
+        let mut request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("host", "localhost")
+            .header("origin", "https://dashboard.example");
+        if authorized {
+            request = request.header("authorization", "Bearer test-secret");
+        }
+        let response = send_request(addr, request.body(Full::new(Bytes::new())).unwrap()).await;
+        assert_eq!(response.status(), expected);
+        assert_eq!(response.headers()["access-control-allow-origin"], "*");
+        assert!(
+            !response
+                .headers()
+                .contains_key("access-control-allow-credentials")
+        );
+        let body: Value = serde_json::from_slice(response.body()).unwrap();
+        if expected == StatusCode::UNAUTHORIZED {
+            assert_eq!(response.headers()["www-authenticate"], "Bearer");
+            assert_eq!(body["error"]["code"], "unauthorized");
+        }
+    }
+    stop.send(true).unwrap();
+    task.await.unwrap().unwrap();
 }
 
 async fn fixture() -> (

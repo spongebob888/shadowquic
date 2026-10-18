@@ -194,10 +194,38 @@ impl ApiManager {
     }
 
     async fn handle(&self, request: Request<Incoming>) -> HttpResponse {
-        match self.route(request).await {
-            Ok(value) => response(StatusCode::OK, value),
-            Err(error) => error.response(),
-        }
+        // Browsers send preflights without bearer credentials. Actual requests
+        // still pass through route(), including its authentication check.
+        let mut response = if request.method() == Method::OPTIONS
+            && request.headers().contains_key(hyper::header::ORIGIN)
+            && request
+                .headers()
+                .contains_key(hyper::header::ACCESS_CONTROL_REQUEST_METHOD)
+        {
+            let mut response = Response::new(Full::new(Bytes::new()));
+            *response.status_mut() = StatusCode::NO_CONTENT;
+            response.headers_mut().insert(
+                hyper::header::ACCESS_CONTROL_ALLOW_METHODS,
+                hyper::header::HeaderValue::from_static("GET, POST, PUT, OPTIONS"),
+            );
+            response.headers_mut().insert(
+                hyper::header::ACCESS_CONTROL_ALLOW_HEADERS,
+                hyper::header::HeaderValue::from_static("Authorization, Content-Type"),
+            );
+            response
+        } else {
+            match self.route(request).await {
+                Ok(value) => response(StatusCode::OK, value),
+                Err(error) => error.response(),
+            }
+        };
+        // Include errors so browser clients can read authentication failures
+        // and other API errors as well as successful responses.
+        response.headers_mut().insert(
+            hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN,
+            hyper::header::HeaderValue::from_static("*"),
+        );
+        response
     }
 
     async fn route(&self, request: Request<Incoming>) -> Result<Value, ApiError> {

@@ -124,7 +124,10 @@ pub struct Config {
 ///   secret: NONSENSE
 /// ```
 ///
-/// All responses use JSON with `snake_case` fields. Timestamps use UTC RFC 3339;
+/// CORS allows all origins, with unauthenticated browser preflights for `GET`,
+/// `POST`, and `PUT` using `Authorization` and `Content-Type` request headers.
+///
+/// API responses use JSON with `snake_case` fields. Timestamps use UTC RFC 3339;
 /// durations use milliseconds and byte counters use bytes. Unavailable optional
 /// fields are `null`. Collections are sorted by tag or session ID.
 ///
@@ -141,7 +144,7 @@ pub struct Config {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ApiConfig {
     pub bind_addr: SocketAddr,
-    /// Require `Authorization: Bearer <secret>` when nonempty.
+    /// Require `Authorization: Bearer <secret>` when nonempty, except on CORS preflights.
     #[serde(default)]
     pub secret: Option<String>,
 }

@@ -15,8 +15,8 @@ traffic counters, memory statistics, and outbound probing.
 - Require `bind-addr` and allow any address, including wildcard addresses,
   whether or not a secret is configured.
 - Accept an optional `secret`. If nonempty, require `Authorization: Bearer <secret>`
-  on every request before route validation or probe execution. Compare tokens
-  in constant time. Reject missing, malformed, duplicate, or incorrect credentials
+  on every request except CORS preflights before route validation or probe execution.
+  Compare tokens in constant time. Reject missing, malformed, duplicate, or incorrect credentials
   with `401`, error code `unauthorized`, and `WWW-Authenticate: Bearer`.
   Omitted or empty secrets disable authentication. Never return the secret in errors.
 - Run the API alongside the proxy listeners. A bind failure must fail startup;
@@ -293,12 +293,21 @@ object containing `code` and `message`. Return the corresponding HTTP error
 with the common error envelope. Validation failures, unsupported operations,
 concurrent-probe rejections, and cancelled probes do not overwrite the cache.
 
+## CORS
+
+- Include `Access-Control-Allow-Origin: *` on every response, including errors.
+- Handle `OPTIONS` requests carrying `Origin` and `Access-Control-Request-Method`
+  before authentication or route execution. Return an empty `204`, allowing
+  `GET, POST, PUT, OPTIONS` and request headers `Authorization, Content-Type`.
+- Continue to authenticate actual API requests. Do not enable cookie credentials.
+
 ## Acceptance criteria
 
 - Verify feature gating, configuration validation, listener startup failure,
   and shutdown behavior.
 - Verify bearer authentication on every route, rejected credentials before probe
   dispatch, omitted and empty secrets, and wildcard listeners with or without a secret.
+- Verify unauthenticated CORS preflights and CORS headers on success and error responses.
 - Verify authenticated and unauthenticated tracking across supported inbound
   types, with platform-gated TPROXY and TUN coverage.
 - Cover partial and vectored TCP I/O, failed I/O, empty writes, first-response
