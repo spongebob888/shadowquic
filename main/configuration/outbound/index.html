@@ -686,6 +686,8 @@
       
         
       
+        
+      
     
     
     
@@ -864,6 +866,33 @@
     
   
   Drop outbound
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./selector/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Selector outbound
 
     
   </span>
@@ -1173,6 +1202,8 @@
       
         
       
+        
+      
     
     
     
@@ -1236,6 +1267,33 @@
     
   
   Log level
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shared/apiconfig/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Api config
 
     
   </span>
@@ -1767,7 +1825,7 @@
 <p>Outbound configuration
 example:</p>
 <p><div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">tag</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">proxy</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">socks</span><span class="w"> </span><span class="c1"># or shadowquic, sunnyquic, direct, or drop</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">socks</span><span class="w"> </span><span class="c1"># or shadowquic, sunnyquic, direct, drop, or selector</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nt">addr</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;127.0.0.1:443&quot;</span><span class="w"> </span><span class="c1"># &quot;[::1]:443&quot;</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nt">xxx</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">xxx</span><span class="w"> </span><span class="c1"># other field depending on type</span>
 </code></pre></div>
@@ -1806,6 +1864,11 @@ See <a href="socks/"><code>SocksClientCfg</code></a> and <a href="shadowquic/"><
 <tr>
 <td><code>drop</code></td>
 <td><a href="drop/"><code>DropOutCfg</code></a></td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>selector</code></td>
+<td><a href="selector/"><code>SelectorOutCfg</code></a></td>
 <td>—</td>
 </tr>
 </tbody>
