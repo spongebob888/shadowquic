@@ -28,6 +28,22 @@ use tracing::{Instrument, error, info, info_span};
 #[global_allocator]
 static ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
+// jemalloc reads this before main, so profiling includes startup allocations.
+#[cfg(all(
+    feature = "mem-profile",
+    any(
+        target_os = "android",
+        all(
+            any(target_os = "linux", target_os = "macos"),
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    )
+))]
+#[unsafe(export_name = "_rjem_malloc_conf")]
+static MALLOC_CONF: Option<&'static std::ffi::c_char> =
+    // SAFETY: The NUL-terminated configuration has static storage duration.
+    Some(unsafe { &*c"prof:true,prof_active:true".as_ptr() });
+
 #[cfg(feature = "restful-api")]
 pub mod api;
 pub mod config;
