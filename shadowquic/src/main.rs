@@ -244,8 +244,8 @@ fn setup_log(level: LogLevel) {
 
     #[cfg(feature = "tokio-console")]
     let console_layer = console_subscriber::ConsoleLayer::builder()
-        .with_default_env()
         .retention(std::time::Duration::from_secs(60))
+        .with_default_env()
         .spawn();
 
     let timer = LocalTime::new(time::macros::format_description!(
