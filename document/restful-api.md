@@ -49,7 +49,8 @@ Use a bearer header for browser authentication; cookie credentials and
 
 ## Endpoints
 
-API responses use JSON with `snake_case` fields. Timestamps use UTC RFC 3339;
+API responses use JSON with `snake_case` fields, except heap profile downloads.
+Timestamps use UTC RFC 3339;
 durations use milliseconds and byte counters use bytes. Unavailable optional
 fields are `null`. Collections are sorted by tag or session ID.
 
@@ -60,6 +61,7 @@ fields are `null`. Collections are sorted by tag or session ID.
 | GET | `/api/v1/traffic` | `{"inbounds": [...]}`: summed user traffic and active session counts per inbound |
 | GET | `/api/v1/tokio_metric` | Tokio runtime worker count, alive task count, and global queue depth |
 | GET | `/api/v1/memory` | jemalloc allocator statistics; requires `jemalloc` |
+| POST | `/api/v1/memory/profile` | Download a jemalloc heap profile; requires `mem-profile` |
 | POST | `/api/v1/outbounds/{tag}/probe` | Probe the selected outbound with an HTTP GET |
 | GET | `/api/v1/outbounds/{tag}/selection` | Selector's current member and allowed outbound tags |
 | PUT | `/api/v1/outbounds/{tag}/selection` | Set a selector's member with `{"selected":"outbound-tag"}` |
@@ -246,6 +248,52 @@ Memory responses contain `allocator: "jemalloc"`,
 `allocated_bytes`, `active_bytes`, and `resident_bytes`. These are allocator
 statistics, not total process RSS. With both features, other targets return `501` with
 `memory_stats_unavailable`; the other endpoints remain available.
+
+### Heap profiling
+
+The `mem-profile` feature is disabled by default. It enables `restful-api`,
+`jemalloc`, and jemalloc's profiling support. On targets supported by the
+jemalloc allocator above, it enables allocation sampling from process startup
+with jemalloc's default sampling interval (512 KiB). Profiling adds CPU and
+memory overhead while the process runs.
+
+```sh
+./scripts/build-profiling.sh
+# Run with a configuration that enables the REST API listener.
+./target/release/shadowquic -c shadowquic/config_examples/restful-api.yaml
+```
+
+The build script uses the release profile with full debug symbols and stripping
+disabled. It enables both `mem-profile` and `tokio-console`, and sets
+`--cfg tokio_unstable` for Tokio console instrumentation. Existing `RUSTFLAGS`
+or `CARGO_ENCODED_RUSTFLAGS` are preserved; additional arguments are passed to
+`cargo build`. Tokio console retains completed data for 60 seconds by default;
+override this with `TOKIO_CONSOLE_RETENTION`, for example `120s`.
+
+In another terminal, trigger a snapshot and save it locally:
+
+```sh
+curl --fail -X POST http://127.0.0.1:9090/api/v1/memory/profile \
+  -o shadowquic.heap
+# Add -H 'Authorization: Bearer choose-a-secret' when a secret is configured.
+```
+
+The response is `application/octet-stream` with attachment filename
+`shadowquic.heap`. It contains jemalloc's native heap profile, including sampled
+allocation stacks and mapped libraries. Analyze it with `jeprof` and the exact
+executable used for the capture. The build command above retains debug symbols
+for function names; the repository's usual release build strips them.
+The server uses a temporary file and removes it after reading the snapshot.
+Dumping runs on a blocking worker, and overlapping dumps return `409` with
+`memory_profile_in_progress`.
+
+Without `mem-profile` the route returns `404`; unsupported targets return `501`
+with `memory_profiling_unavailable`. `_RJEM_MALLOC_CONF` can override jemalloc's
+startup settings. If `prof:false` disables profiling, dumps return `503` with
+`memory_profiling_disabled`; restart with `prof:true,prof_active:true` to collect
+profiles. All requests use the API's existing authentication and CORS rules.
+
+## Library integration
 
 For a manager created directly, set `manager.api_config` to
 `Some(ApiConfig { bind_addr, secret: None })` before calling `run` or `run_until`.

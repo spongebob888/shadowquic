@@ -7,4 +7,7 @@ __pycache__
 /config.yaml
 _site
 /result
-.agents
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/deploy-shadowquic-musl/

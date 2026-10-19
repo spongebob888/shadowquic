@@ -37,6 +37,8 @@ use crate::{
 
 #[cfg(feature = "jemalloc")]
 mod memory;
+#[cfg(feature = "mem-profile")]
+mod memory_profile;
 pub(crate) mod quality;
 pub use quality::SQStatsTrait;
 
@@ -215,7 +217,7 @@ impl ApiManager {
             response
         } else {
             match self.route(request).await {
-                Ok(value) => response(StatusCode::OK, value),
+                Ok(response) => response,
                 Err(error) => error.response(),
             }
         };
@@ -228,7 +230,7 @@ impl ApiManager {
         response
     }
 
-    async fn route(&self, request: Request<Incoming>) -> Result<Value, ApiError> {
+    async fn route(&self, request: Request<Incoming>) -> Result<HttpResponse, ApiError> {
         if !self.authorized(request.headers()) {
             return Err(ApiError::new(
                 StatusCode::UNAUTHORIZED,
@@ -236,6 +238,23 @@ impl ApiManager {
                 "missing or invalid bearer token",
             ));
         }
+        #[cfg(feature = "mem-profile")]
+        if request.uri().path() == "/api/v1/memory/profile" {
+            if request.method() != Method::POST {
+                return Err(ApiError::new(
+                    StatusCode::METHOD_NOT_ALLOWED,
+                    "method_not_allowed",
+                    "unsupported method",
+                ));
+            }
+            return memory_profile::dump().await;
+        }
+        self.route_json(request)
+            .await
+            .map(|value| response(StatusCode::OK, value))
+    }
+
+    async fn route_json(&self, request: Request<Incoming>) -> Result<Value, ApiError> {
         let path = request.uri().path();
         let method = request.method();
         let require = |expected: Method| {

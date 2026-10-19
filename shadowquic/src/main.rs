@@ -9,7 +9,9 @@ use shadowquic::{
     sunnyquic::outbound::SunnyQuicClient,
 };
 use tracing::{Level, info};
-use tracing_subscriber::{fmt::time::LocalTime, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{
+    Layer, fmt::time::LocalTime, layer::SubscriberExt, util::SubscriberInitExt,
+};
 
 #[derive(Parser)]
 #[clap(author, about, long_about = None, version)]
@@ -234,7 +236,6 @@ fn print_user_stats(username: &str, stats: &shadowquic::msgs::squic::UserStats) 
 
 fn setup_log(level: LogLevel) {
     let filter = tracing_subscriber::filter::Targets::new()
-        // Enable the `INFO` level for anything in `my_crate`
         .with_target("shadowquic", level.as_tracing_level())
         .with_target(
             "quinn",
@@ -242,11 +243,10 @@ fn setup_log(level: LogLevel) {
         );
 
     #[cfg(feature = "tokio-console")]
-    let filter = filter
-        .with_target("tokio", Level::TRACE)
-        .with_target("runtime", Level::TRACE);
-    #[cfg(feature = "tokio-console")]
-    let console_layer = console_subscriber::spawn();
+    let console_layer = console_subscriber::ConsoleLayer::builder()
+        .retention(std::time::Duration::from_secs(60))
+        .with_default_env()
+        .spawn();
 
     let timer = LocalTime::new(time::macros::format_description!(
         "[year repr:last_two]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]"
@@ -260,8 +260,9 @@ fn setup_log(level: LogLevel) {
         .with_file(false)
         .with_line_number(false)
         .with_level(true)
-        .with_writer(std::io::stdout);
-    let sub = tracing_subscriber::registry().with(fmt).with(filter);
+        .with_writer(std::io::stdout)
+        .with_filter(filter);
+    let sub = tracing_subscriber::registry().with(fmt);
     #[cfg(feature = "tokio-console")]
     let sub = sub.with(console_layer);
     sub.init();

@@ -323,6 +323,60 @@ async fn routes_return_empty_collections_and_json_errors() {
     task.await.unwrap().unwrap();
 }
 
+#[tokio::test]
+async fn memory_profile_download_is_feature_gated_and_requires_post() {
+    let (addr, stop, task) = server(manager(HashMap::new(), HashMap::new())).await;
+    if !cfg!(feature = "mem-profile") {
+        assert_eq!(
+            call(addr, "POST", "/api/v1/memory/profile", "").await.0,
+            404
+        );
+    } else {
+        assert_eq!(call(addr, "GET", "/api/v1/memory/profile", "").await.0, 405);
+        // Keep enough live heap memory for jemalloc's default sampling interval.
+        let allocation = std::hint::black_box(vec![42u8; 8 * 1024 * 1024]);
+        for _ in 0..2 {
+            let request = Request::builder()
+                .method("POST")
+                .uri("/api/v1/memory/profile")
+                .header("host", "localhost")
+                .body(Full::new(Bytes::new()))
+                .unwrap();
+            let response = send_request(addr, request).await;
+            if cfg!(any(
+                target_os = "android",
+                all(
+                    any(target_os = "linux", target_os = "macos"),
+                    any(target_arch = "x86_64", target_arch = "aarch64")
+                )
+            )) {
+                assert_eq!(response.status(), StatusCode::OK);
+                assert_eq!(
+                    response.headers()["content-type"],
+                    "application/octet-stream"
+                );
+                assert_eq!(
+                    response.headers()["content-disposition"],
+                    "attachment; filename=shadowquic.heap"
+                );
+                assert_eq!(response.headers()["cache-control"], "no-store");
+                assert_eq!(response.headers()["access-control-allow-origin"], "*");
+                let profile = std::str::from_utf8(response.body()).unwrap();
+                assert!(profile.starts_with("heap_v2/"), "{profile}");
+                assert!(profile.contains("MAPPED_LIBRARIES:"));
+                assert!(profile.lines().any(|line| line.starts_with('@')));
+            } else {
+                assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+                let error: Value = serde_json::from_slice(response.body()).unwrap();
+                assert_eq!(error["error"]["code"], "memory_profiling_unavailable");
+            }
+        }
+        drop(allocation);
+    }
+    stop.send(true).unwrap();
+    task.await.unwrap().unwrap();
+}
+
 async fn assert_tokio_metric_route(expected_workers: u64) {
     let (addr, stop, task) = server(manager(HashMap::new(), HashMap::new())).await;
     let (status, body) = call(addr, "GET", "/api/v1/tokio_metric", "").await;
@@ -563,6 +617,7 @@ async fn bearer_secret_protects_all_routes_before_validation_or_probe_dispatch()
         ("GET", "/api/v1/traffic", ""),
         ("GET", "/api/v1/tokio_metric", ""),
         ("GET", "/api/v1/memory", ""),
+        ("POST", "/api/v1/memory/profile", ""),
         ("GET", "/missing", ""),
         ("DELETE", "/api/v1/traffic", ""),
         ("POST", "/api/v1/outbounds/proxy/probe", "not json"),
