@@ -10,6 +10,9 @@
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/inbound/</loc>
       </url>
       <url>
+        <loc>https://spongebob888.github.io/shadowquic/main/configuration/inbound/tun/</loc>
+      </url>
+      <url>
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/inbound/socks/</loc>
       </url>
       <url>
@@ -67,10 +70,10 @@
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/router/</loc>
       </url>
       <url>
-        <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/loglevel/</loc>
+        <loc>https://spongebob888.github.io/shadowquic/main/configuration/restful-api/</loc>
       </url>
       <url>
-        <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/apiconfig/</loc>
+        <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/loglevel/</loc>
       </url>
       <url>
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/routerdatabasecfg/</loc>

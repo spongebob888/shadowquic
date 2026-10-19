@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://spongebob888.github.io/shadowquic/main/configuration/shared/apiconfig/">
+        <link rel="canonical" href="https://spongebob888.github.io/shadowquic/main/configuration/inbound/tun/">
       
       
-        <link rel="prev" href="../loglevel/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../routerdatabasecfg/">
+        <link rel="next" href="../socks/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Api config - shadowquic</title>
+        <title>Tun server - shadowquic</title>
       
     
     
@@ -83,7 +83,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#api-config" class="md-skip">
+        <a href="#tun-server" class="md-skip">
           Skip to content
         </a>
       
@@ -121,7 +121,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Api config
+              Tun server
             
           </span>
         </div>
@@ -227,6 +227,8 @@
       
         
           
+        
+      
         
       
         
@@ -383,6 +385,8 @@
       
         
       
+        
+      
     
     
     
@@ -442,8 +446,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -461,6 +467,8 @@
       
         
       
+        
+      
     
     
     
@@ -473,17 +481,15 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_2" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_2" checked>
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../inbound/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   
@@ -506,7 +512,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_2_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -522,10 +528,189 @@
                 
   
   
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tun server
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tun server
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Fields
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Fields">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tag" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>tag</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#default-outbound" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>default-outbound</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#name" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>name</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ipv4" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>ipv4</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ipv6" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>ipv6</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mtu" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>mtu</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#max-sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>max-sessions</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#idle-timeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>idle-timeout</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
   
   
     <li class="md-nav__item">
-      <a href="../../inbound/socks/" class="md-nav__link">
+      <a href="../socks/" class="md-nav__link">
         
   
   
@@ -552,7 +737,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../inbound/mixed/" class="md-nav__link">
+      <a href="../mixed/" class="md-nav__link">
         
   
   
@@ -579,7 +764,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../inbound/shadowquic/" class="md-nav__link">
+      <a href="../shadowquic/" class="md-nav__link">
         
   
   
@@ -606,7 +791,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../inbound/sunnyquic/" class="md-nav__link">
+      <a href="../sunnyquic/" class="md-nav__link">
         
   
   
@@ -633,7 +818,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../inbound/tproxy/" class="md-nav__link">
+      <a href="../tproxy/" class="md-nav__link">
         
   
   
@@ -1167,14 +1352,37 @@
                 
   
   
-    
   
   
-  
-    
-    
-      
+    <li class="md-nav__item">
+      <a href="../../restful-api/" class="md-nav__link">
         
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  REST API
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
       
         
       
@@ -1218,14 +1426,16 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_6" checked>
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_7" >
         
           
-          <label class="md-nav__link" for="__nav_2_6" id="__nav_2_6_label" tabindex="">
+          <label class="md-nav__link" for="__nav_2_7" id="__nav_2_7_label" tabindex="">
             
   
   
@@ -1242,8 +1452,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_6_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_2_6">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_7">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1259,7 +1469,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../loglevel/" class="md-nav__link">
+      <a href="../../shared/loglevel/" class="md-nav__link">
         
   
   
@@ -1283,123 +1493,10 @@
                 
   
   
-    
-  
-  
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Api config
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Api config
-
-    
-  </span>
-  
-  
-
-      </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#fields" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Fields
-      </span>
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Fields">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#bind-addr" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>bind-addr</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#secret" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>secret</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
   
   
     <li class="md-nav__item">
-      <a href="../routerdatabasecfg/" class="md-nav__link">
+      <a href="../../shared/routerdatabasecfg/" class="md-nav__link">
         
   
   
@@ -1426,7 +1523,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../dhcpleasecfg/" class="md-nav__link">
+      <a href="../../shared/dhcpleasecfg/" class="md-nav__link">
         
   
   
@@ -1453,7 +1550,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../authuser/" class="md-nav__link">
+      <a href="../../shared/authuser/" class="md-nav__link">
         
   
   
@@ -1480,7 +1577,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../jlsupstream/" class="md-nav__link">
+      <a href="../../shared/jlsupstream/" class="md-nav__link">
         
   
   
@@ -1507,7 +1604,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../congestioncontrol/" class="md-nav__link">
+      <a href="../../shared/congestioncontrol/" class="md-nav__link">
         
   
   
@@ -1534,7 +1631,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../brutalparams/" class="md-nav__link">
+      <a href="../../shared/brutalparams/" class="md-nav__link">
         
   
   
@@ -1561,7 +1658,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../socketopt/" class="md-nav__link">
+      <a href="../../shared/socketopt/" class="md-nav__link">
         
   
   
@@ -1588,7 +1685,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../ciphersuitepreference/" class="md-nav__link">
+      <a href="../../shared/ciphersuitepreference/" class="md-nav__link">
         
   
   
@@ -1615,7 +1712,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../dnsstrategy/" class="md-nav__link">
+      <a href="../../shared/dnsstrategy/" class="md-nav__link">
         
   
   
@@ -1642,7 +1739,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../countrydbcfg/" class="md-nav__link">
+      <a href="../../shared/countrydbcfg/" class="md-nav__link">
         
   
   
@@ -1669,7 +1766,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../geositedbcfg/" class="md-nav__link">
+      <a href="../../shared/geositedbcfg/" class="md-nav__link">
         
   
   
@@ -1696,7 +1793,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../dnsmasqleasecfg/" class="md-nav__link">
+      <a href="../../shared/dnsmasqleasecfg/" class="md-nav__link">
         
   
   
@@ -1723,7 +1820,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../odhcpleasecfg/" class="md-nav__link">
+      <a href="../../shared/odhcpleasecfg/" class="md-nav__link">
         
   
   
@@ -1750,7 +1847,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../interface/" class="md-nav__link">
+      <a href="../../shared/interface/" class="md-nav__link">
         
   
   
@@ -1890,10 +1987,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#bind-addr" class="md-nav__link">
+  <a href="#tag" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        <code>bind-addr</code>
+        <code>tag</code>
       </span>
     </span>
   </a>
@@ -1901,10 +1998,76 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#secret" class="md-nav__link">
+  <a href="#default-outbound" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        <code>secret</code>
+        <code>default-outbound</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#name" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>name</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ipv4" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>ipv4</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ipv6" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>ipv6</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mtu" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>mtu</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#max-sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>max-sessions</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#idle-timeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>idle-timeout</code>
       </span>
     </span>
   </a>
@@ -1934,75 +2097,56 @@
   
 
 
-<h1 id="api-config">Api config<a class="headerlink" href="#api-config" title="Permanent link">&para;</a></h1>
-<p>Restful API for controlling shaodowquic</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">restful-api</span><span class="p">:</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">bind-addr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">127.0.0.1:9090</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">secret</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NONSENSE</span>
-</code></pre></div>
-<p>CORS allows all origins, with unauthenticated browser preflights for <code>GET</code>,
-<code>POST</code>, and <code>PUT</code> using <code>Authorization</code> and <code>Content-Type</code> request headers.</p>
-<p>API responses use JSON with <code>snake_case</code> fields. Timestamps use UTC RFC 3339;
-durations use milliseconds and byte counters use bytes. Unavailable optional
-fields are <code>null</code>. Collections are sorted by tag or session ID.</p>
-<table>
-<thead>
-<tr>
-<th>Method</th>
-<th>Path</th>
-<th>Response</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>GET</td>
-<td><code>/api/v1/outbounds</code></td>
-<td><code>{"outbounds": [...]}</code>: tags and cached connection/probe quality</td>
-</tr>
-<tr>
-<td>GET</td>
-<td><code>/api/v1/connections</code></td>
-<td><code>{"connections": [...]}</code>: active TCP sessions and UDP associations</td>
-</tr>
-<tr>
-<td>GET</td>
-<td><code>/api/v1/traffic</code></td>
-<td><code>{"inbounds": [...]}</code>: summed user traffic and active session counts per inbound</td>
-</tr>
-<tr>
-<td>GET</td>
-<td><code>/api/v1/memory</code></td>
-<td>jemalloc allocator statistics; requires <code>jemalloc</code></td>
-</tr>
-<tr>
-<td>POST</td>
-<td><code>/api/v1/outbounds/{tag}/probe</code></td>
-<td>Probe the selected outbound with an HTTP GET</td>
-</tr>
-<tr>
-<td>GET</td>
-<td><code>/api/v1/outbounds/{tag}/selection</code></td>
-<td>Selector's current member and allowed outbound tags</td>
-</tr>
-<tr>
-<td>PUT</td>
-<td><code>/api/v1/outbounds/{tag}/selection</code></td>
-<td>Set a selector's member with <code>{"selected":"outbound-tag"}</code></td>
-</tr>
-</tbody>
-</table>
+<h1 id="tun-server">Tun server<a class="headerlink" href="#tun-server" title="Permanent link">&para;</a></h1>
+<p>A layer-3 TUN interface. Routing traffic into it is configured by the OS.</p>
 <h2 id="fields">Fields<a class="headerlink" href="#fields" title="Permanent link">&para;</a></h2>
-<h3 id="bind-addr"><code>bind-addr</code><a class="headerlink" href="#bind-addr" title="Permanent link">&para;</a></h3>
+<h3 id="tag"><code>tag</code><a class="headerlink" href="#tag" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Type:</strong> <code>SocketAddr</code></li>
+<li><strong>Type:</strong> <code>string</code></li>
 <li><strong>Required:</strong> <strong>yes</strong></li>
 </ul>
-<h3 id="secret"><code>secret</code><a class="headerlink" href="#secret" title="Permanent link">&para;</a></h3>
+<h3 id="default-outbound"><code>default-outbound</code><a class="headerlink" href="#default-outbound" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Type:</strong> <code>string</code> <em>(optional)</em></li>
 <li><strong>Required:</strong> no</li>
 </ul>
-<p>Require <code>Authorization: Bearer &lt;secret&gt;</code> when nonempty, except on CORS preflights.</p>
+<h3 id="name"><code>name</code><a class="headerlink" href="#name" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>string</code> <em>(optional)</em></li>
+<li><strong>Required:</strong> no</li>
+</ul>
+<p>Leave unset to let the OS choose a name (utunN on macOS).</p>
+<h3 id="ipv4"><code>ipv4</code><a class="headerlink" href="#ipv4" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>Ipv4Net</code></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <code>default_ipv4()</code></li>
+</ul>
+<h3 id="ipv6"><code>ipv6</code><a class="headerlink" href="#ipv6" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>Ipv6Net</code></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <code>default_ipv6()</code></li>
+</ul>
+<h3 id="mtu"><code>mtu</code><a class="headerlink" href="#mtu" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>u16</code></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <code>default_mtu()</code></li>
+</ul>
+<h3 id="max-sessions"><code>max-sessions</code><a class="headerlink" href="#max-sessions" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>usize</code></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <code>default_max_sessions()</code></li>
+</ul>
+<p>Shared limit for TCP connections and UDP client sessions.</p>
+<h3 id="idle-timeout"><code>idle-timeout</code><a class="headerlink" href="#idle-timeout" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>u64</code></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <code>default_idle_timeout()</code></li>
+</ul>
 
 
 
