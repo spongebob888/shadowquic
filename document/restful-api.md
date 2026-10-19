@@ -258,11 +258,17 @@ with jemalloc's default sampling interval (512 KiB). Profiling adds CPU and
 memory overhead while the process runs.
 
 ```sh
-CARGO_PROFILE_RELEASE_DEBUG=1 CARGO_PROFILE_RELEASE_STRIP=false \
-  cargo build --release --features mem-profile
+./scripts/build-profiling.sh
 # Run with a configuration that enables the REST API listener.
 ./target/release/shadowquic -c shadowquic/config_examples/restful-api.yaml
 ```
+
+The build script uses the release profile with full debug symbols and stripping
+disabled. It enables both `mem-profile` and `tokio-console`, and sets
+`--cfg tokio_unstable` for Tokio console instrumentation. Existing `RUSTFLAGS`
+or `CARGO_ENCODED_RUSTFLAGS` are preserved; additional arguments are passed to
+`cargo build`. Tokio console retains completed data for 60 seconds by default;
+override this with `TOKIO_CONSOLE_RETENTION`, for example `120s`.
 
 In another terminal, trigger a snapshot and save it locally:
 
