@@ -79,7 +79,9 @@ uv --project assets/sites run python assets/sites/gen_docs.py
    the overview. Versions without DNS omit this section. If `RouterCfg` is reachable from `Config`, it gets a dedicated
    `configuration/router.md` page and a **Configuration → Router** navigation
    entry. The overview's `router` field links to it. Older versions without
-   `RouterCfg` omit this entry.
+   `RouterCfg` omit this entry. Reachable `ApiConfig` types get a dedicated
+   `configuration/restful-api.md` page and a **Configuration → REST API** entry,
+   linked from the overview's `restful-api` field. Versions without it omit the entry.
 5. The `nav` block of `zensical.toml` is rewritten between
    `# >>> generated nav` / `# <<< generated nav` markers.
 

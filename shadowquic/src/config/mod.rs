@@ -81,6 +81,9 @@ pub use router_database::{CountryDbCfg, GeositeDbCfg, RouterDBKind, RouterDataba
 ///    type: dns-udp
 ///    xxx: xxx
 ///
+/// restful-api:
+///   bind-addr: "127.0.0.1:9090"
+///
 /// router:
 ///   default-outbound: proxy-out
 ///   src: |
@@ -122,22 +125,37 @@ pub struct Config {
     pub router: RouterCfg,
     #[serde(default)]
     pub log_level: LogLevel,
-    /// Restful API for control shadowquid
+    /// HTTP API for statistics, outbound probes, and selector controls.
+    /// Omit this section to leave the API listener disabled. Requires the
+    /// `restful-api` feature.
     pub restful_api: Option<ApiConfig>,
 }
 
-/// Restful API for controlling shaodowquic
+/// HTTP API for monitoring and controlling Shadowquic.
+///
+/// The `restful-api` feature is enabled by default. Build with
+/// `cargo build --release --features restful-api` to include it explicitly.
+/// Configuring this section without the feature produces a configuration error.
+/// Omit `restful-api` to leave the HTTP listener disabled.
 ///
 /// ```yaml
 /// restful-api:
 ///   bind-addr: 127.0.0.1:9090
-///   secret: NONSENSE
+///   secret: choose-a-secret
+/// ```
+///
+/// A nonempty `secret` requires `Authorization: Bearer <secret>` on API requests.
+/// Omit `secret` or set it to an empty string to disable authentication.
+///
+/// ```sh
+/// curl -H 'Authorization: Bearer choose-a-secret' http://127.0.0.1:9090/api/v1/traffic
 /// ```
 ///
 /// CORS allows all origins, with unauthenticated browser preflights for `GET`,
 /// `POST`, and `PUT` using `Authorization` and `Content-Type` request headers.
 ///
-/// API responses use JSON with `snake_case` fields. Timestamps use UTC RFC 3339;
+/// API responses use JSON with `snake_case` fields, except heap profile downloads.
+/// Timestamps use UTC RFC 3339;
 /// durations use milliseconds and byte counters use bytes. Unavailable optional
 /// fields are `null`. Collections are sorted by tag or session ID.
 ///
@@ -146,15 +164,20 @@ pub struct Config {
 /// | GET | `/api/v1/outbounds` | `{"outbounds": [...]}`: tags and cached connection/probe quality |
 /// | GET | `/api/v1/connections` | `{"connections": [...]}`: active TCP sessions and UDP associations |
 /// | GET | `/api/v1/traffic` | `{"inbounds": [...]}`: summed user traffic and active session counts per inbound |
+/// | GET | `/api/v1/tokio_metric` | Tokio runtime worker count, alive task count, and global queue depth |
 /// | GET | `/api/v1/memory` | jemalloc allocator statistics; requires `jemalloc` |
+/// | POST | `/api/v1/memory/profile` | Download a jemalloc heap profile; requires `mem-profile` |
 /// | POST| `/api/v1/outbounds/{tag}/probe` | Probe the selected outbound with an HTTP GET |
 /// | GET | `/api/v1/outbounds/{tag}/selection` | Selector's current member and allowed outbound tags |
 /// | PUT | `/api/v1/outbounds/{tag}/selection` | Set a selector's member with `{"selected":"outbound-tag"}` |
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ApiConfig {
+    /// HTTP listener address. Wildcard addresses such as `0.0.0.0:9090` and
+    /// `[::]:9090` are allowed. A bind failure prevents manager startup.
     pub bind_addr: SocketAddr,
     /// Require `Authorization: Bearer <secret>` when nonempty, except on CORS preflights.
+    /// Omit this field or set it to an empty string to disable authentication.
     #[serde(default)]
     pub secret: Option<String>,
 }

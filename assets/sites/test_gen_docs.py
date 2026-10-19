@@ -1,4 +1,4 @@
-"""Regression checks for DNS configuration discovery and navigation."""
+"""Regression checks for configuration discovery and navigation."""
 import tempfile
 import tomllib
 import unittest
@@ -61,6 +61,40 @@ class DnsDocsTests(unittest.TestCase):
         server = parse_container_serde(attrs.container["DnsUdpServerCfg"])
         self.assertEqual(server.rename_all, "kebab-case")
         self.assertTrue(server.deny_unknown_fields)
+
+
+class RestApiDocsTests(unittest.TestCase):
+    def index(self, include_api=True):
+        def item(id, name, inner):
+            return Item(dict(id=id, name=name, inner=inner,
+                             span=dict(filename="shadowquic/src/config/mod.rs")))
+
+        items = [
+            item(0, "Config", {"struct": {"kind": {"plain": {"fields": [3] if include_api else []}}}}),
+            item(1, "InboundCfg", {"enum": {"variants": []}}),
+            item(2, "OutboundCfg", {"enum": {"variants": []}}),
+            item(3, "restful_api", {"struct_field": {"resolved_path": {
+                "path": "Option", "id": 99, "args": {"angle_bracketed": {"args": [
+                    {"type": {"resolved_path": {"id": 4}}},
+                ]}},
+            }}}),
+            item(4, "ApiConfig", {"struct": {"kind": {"plain": {"fields": []}}}}),
+        ]
+        return {it.id: it for it in items}
+
+    def test_rest_api_has_dedicated_configuration_page_and_navigation(self):
+        pages = plan_pages(self.index(), SourceAttrs())
+        paths = {p.item_id: p.rel_path for p in pages}
+        self.assertEqual(paths[4], "configuration/restful-api.md")
+        nav = tomllib.loads(render_nav(pages))["nav"]
+        configuration = next(entry["Configuration"] for entry in nav if "Configuration" in entry)
+        self.assertIn({"REST API": "configuration/restful-api.md"}, configuration)
+        self.assertFalse(any(p.rel_path == "configuration/shared/apiconfig.md" for p in pages))
+
+    def test_unreachable_api_config_omits_page_and_navigation(self):
+        pages = plan_pages(self.index(include_api=False), SourceAttrs())
+        self.assertFalse(any(p.item_id == 4 for p in pages))
+        self.assertNotIn('"REST API"', render_nav(pages))
 
 
 if __name__ == "__main__":

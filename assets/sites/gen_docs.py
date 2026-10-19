@@ -1135,6 +1135,14 @@ def plan_pages(
         ))
         placed.add("RouterCfg")
 
+    api = next((it for it in discovered if it.name == "ApiConfig"), None)
+    if api is not None:
+        pages.append(PageSpec(
+            title="REST API", nav_label="REST API",
+            rel_path="configuration/restful-api.md", item_id=int(api.id),
+        ))
+        placed.add("ApiConfig")
+
     # Everything else reachable from the roots becomes a shared type page.
     for it in discovered:
         if it.name in placed or not it.name:
@@ -1191,7 +1199,7 @@ def render_nav(
         lines.append('    ] },')
 
     for p in cfg_pages:
-        if p.rel_path == "configuration/router.md":
+        if p.rel_path in ("configuration/router.md", "configuration/restful-api.md"):
             lines.append(f'    {{ "{p.nav_label}" = "{p.rel_path}" }},')
 
     if shared_pages:
