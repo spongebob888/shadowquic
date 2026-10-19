@@ -1,13 +1,12 @@
 //! TCP/UDP proxying from a layer-3 TUN interface.
-mod config;
 mod packet;
 mod stack;
 #[cfg(test)]
 mod tests;
 
+pub use crate::config::TunServerCfg;
 use async_trait::async_trait;
 use bytes::Bytes;
-pub use config::TunServerCfg;
 use std::{
     io,
     sync::{Arc, Mutex},

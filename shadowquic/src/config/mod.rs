@@ -39,8 +39,18 @@ use crate::tproxy::inbound::TproxyServer;
         target_os = "android"
     )
 ))]
-pub use crate::tun::TunServerCfg;
+mod tun;
 pub use selector::SelectorOutCfg;
+#[cfg(all(
+    feature = "tun",
+    any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "windows",
+        target_os = "android"
+    )
+))]
+pub use tun::TunServerCfg;
 
 mod shadowquic;
 mod sunnyquic;
