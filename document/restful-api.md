@@ -267,10 +267,22 @@ memory overhead while the process runs.
 ```
 
 The build script uses the release profile with full debug symbols and stripping
-disabled. It enables both `mem-profile` and `tokio-console`, and sets
-`--cfg tokio_unstable` for Tokio console instrumentation. Existing `RUSTFLAGS`
-or `CARGO_ENCODED_RUSTFLAGS` are preserved; additional arguments are passed to
-`cargo build`. Tokio console retains completed data for 60 seconds by default;
+disabled. By default, it enables both `mem-profile` and `tokio-console`, and sets
+`--cfg tokio_unstable` for Tokio console instrumentation. Use
+`./scripts/build-profiling.sh --mem-profile-only` to enable only `mem-profile`
+without adding Tokio console instrumentation; Cargo's default features remain
+enabled. Existing `RUSTFLAGS` or `CARGO_ENCODED_RUSTFLAGS` are preserved;
+additional arguments are passed to Cargo. For `--target x86_64-unknown-linux-musl`
+(also accepted via `CARGO_BUILD_TARGET`), the script uses `cargo rustc` with the
+Rust toolchain's bundled LLVM linker to avoid GNU linker errors in debug sections
+with fat LTO. The musl C compiler and linker must still be configured, for example
+by entering `nix develop` first:
+
+```sh
+./scripts/build-profiling.sh --mem-profile-only --target x86_64-unknown-linux-musl
+```
+
+Tokio console retains completed data for 60 seconds by default;
 override this with `TOKIO_CONSOLE_RETENTION`, for example `120s`.
 
 In another terminal, trigger a snapshot and save it locally:
