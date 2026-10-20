@@ -11,7 +11,7 @@ readme = { workspace = true}
 [features]
 default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", "mixed", "plugin-vendored", "router-db", "dns-server", "router-dhcp-lease","tun", "jemalloc","restful-api"]
 # cost 1.4 mb
-dns-server = ["dep:ipnet", "dep:quick_cache", "dep:simple-dns", "dep:tokio-rustls-jls", "dep:rustls_jls"]
+dns-server = ["dep:ipnet", "dep:quick_cache", "dep:simple-dns", "dep:tokio-rustls-jls", "dep:rustls_jls", "dep:quinn"]
 # cost 200k
 statistics = ["dep:portable-atomic"]
 restful-api = ["statistics", "dep:hyper", "hyper/server", "dep:hyper-util", "dep:http-body-util", "dep:serde_json", "dep:url", "dep:percent-encoding", "dep:subtle", "time/formatting"]

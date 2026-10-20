@@ -5,10 +5,10 @@ inbounds:
     bind-addr: 127.0.0.1:1080
 dns:
   - tag: resolver
-    type: dns-tls
+    type: dns-quic # Use dns-tls for DNS over TLS instead.
     bind-addr: 127.0.0.1:1053
-    upstream: 1.1.1.1:853
-    server-name: cloudflare-dns.com
+    upstream: 223.5.5.5:853
+    server-name: dns.alidns.com
     bypass-cache: false # Set true to skip shared DNS cache reads and writes.
   - tag: fake
     type: dns-fakeip

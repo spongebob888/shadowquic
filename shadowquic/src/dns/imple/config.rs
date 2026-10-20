@@ -102,6 +102,48 @@ impl DnsTlsServerCfg {
     }
 }
 
+/// Local UDP/TCP DNS listener using a certificate-verified DNS over QUIC upstream.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct DnsQuicServerCfg {
+    pub tag: String,
+    pub bind_addr: SocketAddr,
+    pub upstream: SocketAddr,
+    /// TLS identity verified against the public root store.
+    pub server_name: String,
+    #[serde(default)]
+    pub bypass_cache: bool,
+}
+
+impl DnsQuicServerCfg {
+    pub fn validate(&self) -> Result<(), SError> {
+        rustls_jls::pki_types::ServerName::try_from(self.server_name.as_str())
+            .map_err(|error| SError::InvalidConfig(error.to_string()))?;
+        Ok(())
+    }
+
+    pub async fn build(self) -> Result<DnsServer, SError> {
+        self.build_with_cache(Arc::new(DnsCache::default())).await
+    }
+
+    pub(crate) async fn build_with_cache(self, cache: Arc<DnsCache>) -> Result<DnsServer, SError> {
+        self.validate()?;
+        let client = super::quic::DoqClient::new(
+            self.upstream,
+            self.server_name,
+            tls_connector()?.config().as_ref().clone(),
+        )?;
+        DnsServer::new(
+            self.tag,
+            self.bind_addr,
+            Backend::Quic(Arc::new(client)),
+            cache,
+            self.bypass_cache,
+        )
+        .await
+    }
+}
+
 pub(super) fn default_ipv4_range() -> Ipv4Net {
     "198.18.0.0/15".parse().unwrap()
 }
@@ -179,6 +221,8 @@ pub enum DnsCfg {
     Tcp(DnsTcpServerCfg),
     #[serde(rename = "dns-tls")]
     Tls(DnsTlsServerCfg),
+    #[serde(rename = "dns-quic")]
+    Quic(DnsQuicServerCfg),
     #[serde(rename = "dns-fakeip")]
     FakeIp(DnsFakeIpServerCfg),
     #[serde(rename = "dns-system")]
@@ -191,6 +235,7 @@ impl DnsCfg {
             Self::Udp(cfg) => &cfg.tag,
             Self::Tcp(cfg) => &cfg.tag,
             Self::Tls(cfg) => &cfg.tag,
+            Self::Quic(cfg) => &cfg.tag,
             Self::FakeIp(cfg) => &cfg.tag,
             Self::System(cfg) => &cfg.tag,
         }
@@ -203,6 +248,7 @@ impl DnsCfg {
     pub fn validate(&self) -> Result<(), SError> {
         match self {
             Self::Tls(cfg) => cfg.validate()?,
+            Self::Quic(cfg) => cfg.validate()?,
             Self::FakeIp(cfg) => cfg.validate()?,
             _ => {}
         }
@@ -218,6 +264,7 @@ impl DnsCfg {
             Self::Udp(cfg) => cfg.build_with_cache(cache).await,
             Self::Tcp(cfg) => cfg.build_with_cache(cache).await,
             Self::Tls(cfg) => cfg.build_with_cache(cache).await,
+            Self::Quic(cfg) => cfg.build_with_cache(cache).await,
             Self::FakeIp(cfg) => cfg.build_with_cache(cache).await,
             Self::System(cfg) => cfg.build_with_cache(cache).await,
         }
