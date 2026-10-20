@@ -62,6 +62,9 @@ fields are `null`. Collections are sorted by tag or session ID.
 | GET | `/api/v1/tokio_metric` | Tokio runtime worker count, alive task count, and global queue depth |
 | GET | `/api/v1/memory` | jemalloc allocator statistics; requires `jemalloc` |
 | POST | `/api/v1/memory/profile` | Download a jemalloc heap profile; requires `mem-profile` |
+| GET | `/api/v1/memory/profile/status` | Current sampling state as `{"active":true}` or `{"active":false}`; requires `mem-profile` |
+| POST | `/api/v1/memory/profile/activate` | Resume heap sampling; returns `{"active":true}`; requires `mem-profile` |
+| POST | `/api/v1/memory/profile/deactivate` | Pause heap sampling; returns `{"active":false}`; requires `mem-profile` |
 | POST | `/api/v1/outbounds/{tag}/probe` | Probe the selected outbound with an HTTP GET |
 | GET | `/api/v1/outbounds/{tag}/selection` | Selector's current member and allowed outbound tags |
 | PUT | `/api/v1/outbounds/{tag}/selection` | Set a selector's member with `{"selected":"outbound-tag"}` |
@@ -278,20 +281,47 @@ curl --fail -X POST http://127.0.0.1:9090/api/v1/memory/profile \
 # Add -H 'Authorization: Bearer choose-a-secret' when a secret is configured.
 ```
 
+Sampling is active by default when built with `mem-profile`. Pause or resume it
+without restarting the process:
+
+```sh
+curl --fail http://127.0.0.1:9090/api/v1/memory/profile/status
+# {"active":true}
+curl --fail -X POST http://127.0.0.1:9090/api/v1/memory/profile/deactivate
+# {"active":false}
+curl --fail -X POST http://127.0.0.1:9090/api/v1/memory/profile/activate
+# {"active":true}
+```
+
+These process-wide controls require no request body and use the existing bearer
+authentication. Repeated calls to the same action succeed. Deactivation stops
+sampling new allocations; existing samples continue to track deallocations and
+remain available through the dump endpoint. Activation resumes sampling without
+resetting previous data. Allocations made while sampling is inactive are not
+added retroactively. Deactivation does not purge allocator pages or guarantee
+that RSS decreases.
+
+The status endpoint reads the allocator's current state without changing it,
+including after activation or deactivation. Status reads remain available during
+profile dumps.
+
 The response is `application/octet-stream` with attachment filename
 `shadowquic.heap`. It contains jemalloc's native heap profile, including sampled
 allocation stacks and mapped libraries. Analyze it with `jeprof` and the exact
 executable used for the capture. The build command above retains debug symbols
 for function names; the repository's usual release build strips them.
 The server uses a temporary file and removes it after reading the snapshot.
-Dumping runs on a blocking worker, and overlapping dumps return `409` with
+Profiling requests run on blocking workers. Overlapping dumps and sampling
+controls return `409` with
 `memory_profile_in_progress`.
 
-Without `mem-profile` the route returns `404`; unsupported targets return `501`
+Without `mem-profile` these routes return `404`; unsupported targets return `501`
 with `memory_profiling_unavailable`. `_RJEM_MALLOC_CONF` can override jemalloc's
-startup settings. If `prof:false` disables profiling, dumps return `503` with
-`memory_profiling_disabled`; restart with `prof:true,prof_active:true` to collect
-profiles. All requests use the API's existing authentication and CORS rules.
+startup settings. If `prof:false` disables profiling, these endpoints return
+`503` with `memory_profiling_disabled`; restart with
+`prof:true,prof_active:true` to enable profiling. `prof_active:false` starts with
+sampling paused and allows activation through the API. All requests use the
+API's existing authentication and CORS rules.
 
 ## Library integration
 

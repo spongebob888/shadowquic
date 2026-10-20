@@ -324,17 +324,121 @@ async fn routes_return_empty_collections_and_json_errors() {
 }
 
 #[tokio::test]
-async fn memory_profile_download_is_feature_gated_and_requires_post() {
+async fn memory_profile_download_and_controls_are_feature_gated() {
     let (addr, stop, task) = server(manager(HashMap::new(), HashMap::new())).await;
     if !cfg!(feature = "mem-profile") {
         assert_eq!(
-            call(addr, "POST", "/api/v1/memory/profile", "").await.0,
+            call(addr, "GET", "/api/v1/memory/profile/status", "")
+                .await
+                .0,
             404
         );
+        for path in [
+            "/api/v1/memory/profile",
+            "/api/v1/memory/profile/activate",
+            "/api/v1/memory/profile/deactivate",
+        ] {
+            assert_eq!(call(addr, "POST", path, "").await.0, 404);
+        }
     } else {
-        assert_eq!(call(addr, "GET", "/api/v1/memory/profile", "").await.0, 405);
+        assert_eq!(
+            call(addr, "POST", "/api/v1/memory/profile/status", "")
+                .await
+                .0,
+            405
+        );
+        for path in [
+            "/api/v1/memory/profile",
+            "/api/v1/memory/profile/activate",
+            "/api/v1/memory/profile/deactivate",
+        ] {
+            assert_eq!(call(addr, "GET", path, "").await.0, 405);
+        }
         // Keep enough live heap memory for jemalloc's default sampling interval.
         let allocation = std::hint::black_box(vec![42u8; 8 * 1024 * 1024]);
+        #[cfg(all(
+            feature = "mem-profile",
+            any(
+                target_os = "android",
+                all(
+                    any(target_os = "linux", target_os = "macos"),
+                    any(target_arch = "x86_64", target_arch = "aarch64")
+                )
+            )
+        ))]
+        {
+            fn assert_sampling_active(expected: bool) {
+                let mut active = false;
+                let mut size = size_of::<bool>();
+                // SAFETY: prof.active returns a bool into a live, correctly sized output.
+                let result = unsafe {
+                    tikv_jemalloc_sys::mallctl(
+                        c"prof.active".as_ptr(),
+                        (&mut active as *mut bool).cast(),
+                        &mut size,
+                        std::ptr::null_mut(),
+                        0,
+                    )
+                };
+                assert_eq!(result, 0);
+                assert_eq!(size, size_of::<bool>());
+                assert_eq!(active, expected);
+            }
+
+            assert_sampling_active(true);
+            let (status, body) = call(addr, "GET", "/api/v1/memory/profile/status", "").await;
+            assert_eq!(status, 200);
+            assert_eq!(body, json!({"active": true}));
+            assert_sampling_active(true);
+            // Repeated calls are idempotent, and paused profiles remain downloadable.
+            for active in [false, false, true, true] {
+                let action = if active { "activate" } else { "deactivate" };
+                let path = format!("/api/v1/memory/profile/{action}");
+                let (status, body) = call(addr, "POST", &path, "").await;
+                assert_eq!(status, 200);
+                assert_eq!(body, json!({"active": active}));
+                assert_sampling_active(active);
+                let (status, body) = call(addr, "GET", "/api/v1/memory/profile/status", "").await;
+                assert_eq!(status, 200);
+                assert_eq!(body, json!({"active": active}));
+                assert_sampling_active(active);
+                if !active {
+                    let request = Request::builder()
+                        .method("POST")
+                        .uri("/api/v1/memory/profile")
+                        .header("host", "localhost")
+                        .body(Full::new(Bytes::new()))
+                        .unwrap();
+                    let response = send_request(addr, request).await;
+                    assert_eq!(response.status(), StatusCode::OK);
+                    let profile = std::str::from_utf8(response.body()).unwrap();
+                    assert!(profile.starts_with("heap_v2/"));
+                    assert!(profile.lines().any(|line| line.starts_with('@')));
+                }
+            }
+        }
+        if !cfg!(any(
+            target_os = "android",
+            all(
+                any(target_os = "linux", target_os = "macos"),
+                any(target_arch = "x86_64", target_arch = "aarch64")
+            )
+        )) {
+            let (status, body) = call(addr, "GET", "/api/v1/memory/profile/status", "").await;
+            assert_eq!(status, 501);
+            assert_eq!(body["error"]["code"], "memory_profiling_unavailable");
+            for action in ["activate", "deactivate"] {
+                let (status, body) = call(
+                    addr,
+                    "POST",
+                    &format!("/api/v1/memory/profile/{action}"),
+                    "",
+                )
+                .await;
+                assert_eq!(status, 501);
+                assert_eq!(body["error"]["code"], "memory_profiling_unavailable");
+            }
+        }
         for _ in 0..2 {
             let request = Request::builder()
                 .method("POST")
@@ -618,6 +722,9 @@ async fn bearer_secret_protects_all_routes_before_validation_or_probe_dispatch()
         ("GET", "/api/v1/tokio_metric", ""),
         ("GET", "/api/v1/memory", ""),
         ("POST", "/api/v1/memory/profile", ""),
+        ("GET", "/api/v1/memory/profile/status", ""),
+        ("POST", "/api/v1/memory/profile/activate", ""),
+        ("POST", "/api/v1/memory/profile/deactivate", ""),
         ("GET", "/missing", ""),
         ("DELETE", "/api/v1/traffic", ""),
         ("POST", "/api/v1/outbounds/proxy/probe", "not json"),

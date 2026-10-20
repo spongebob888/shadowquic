@@ -1,4 +1,4 @@
-use super::{ApiError, HttpResponse, StatusCode};
+use super::{ApiError, HttpResponse, StatusCode, Value};
 
 #[cfg(any(
     target_os = "android",
@@ -8,20 +8,27 @@ use super::{ApiError, HttpResponse, StatusCode};
     )
 ))]
 mod supported {
-    use std::{ffi::CString, os::unix::ffi::OsStrExt, sync::Mutex};
+    use std::{
+        ffi::CString,
+        os::unix::ffi::OsStrExt,
+        sync::{Mutex, MutexGuard},
+    };
 
     use super::*;
 
-    static DUMP_LOCK: Mutex<()> = Mutex::new(());
+    static PROFILE_LOCK: Mutex<()> = Mutex::new(());
 
-    pub(super) fn dump() -> Result<Vec<u8>, ApiError> {
-        let _guard = DUMP_LOCK.try_lock().map_err(|_| {
+    fn lock() -> Result<MutexGuard<'static, ()>, ApiError> {
+        PROFILE_LOCK.try_lock().map_err(|_| {
             ApiError::new(
                 StatusCode::CONFLICT,
                 "memory_profile_in_progress",
-                "a heap profile dump is already in progress",
+                "a heap profiling operation is already in progress",
             )
-        })?;
+        })
+    }
+
+    fn ensure_enabled() -> Result<(), ApiError> {
         let mut enabled = false;
         let mut size = size_of::<bool>();
         // SAFETY: opt.prof returns a bool into a correctly sized live variable.
@@ -41,6 +48,55 @@ mod supported {
                 "jemalloc profiling is disabled; restart with _RJEM_MALLOC_CONF=prof:true,prof_active:true",
             ));
         }
+        Ok(())
+    }
+
+    pub(super) fn get_active() -> Result<Value, ApiError> {
+        ensure_enabled()?;
+        let mut active = false;
+        let mut size = size_of::<bool>();
+        // SAFETY: prof.active returns a bool into a live, correctly sized output.
+        let result = unsafe {
+            tikv_jemalloc_sys::mallctl(
+                c"prof.active".as_ptr(),
+                (&mut active as *mut bool).cast(),
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if result != 0 {
+            return Err(failed(std::io::Error::from_raw_os_error(result)));
+        }
+        if size != size_of::<bool>() {
+            return Err(failed("unexpected prof.active response size"));
+        }
+        Ok(serde_json::json!({ "active": active }))
+    }
+
+    pub(super) fn set_active(mut active: bool) -> Result<Value, ApiError> {
+        let _guard = lock()?;
+        ensure_enabled()?;
+        // SAFETY: prof.active accepts a bool. The input has the exact type,
+        // size, and lifetime required by this synchronous mallctl call.
+        let result = unsafe {
+            tikv_jemalloc_sys::mallctl(
+                c"prof.active".as_ptr(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                (&mut active as *mut bool).cast(),
+                size_of::<bool>(),
+            )
+        };
+        if result != 0 {
+            return Err(failed(std::io::Error::from_raw_os_error(result)));
+        }
+        Ok(serde_json::json!({ "active": active }))
+    }
+
+    pub(super) fn dump() -> Result<Vec<u8>, ApiError> {
+        let _guard = lock()?;
+        ensure_enabled()?;
         let file = tempfile::NamedTempFile::new().map_err(failed)?;
         let path = CString::new(file.path().as_os_str().as_bytes()).map_err(failed)?;
         let mut path_ptr = path.as_ptr();
@@ -60,13 +116,77 @@ mod supported {
         }
         std::fs::read(file.path()).map_err(failed)
     }
+}
 
-    fn failed(error: impl std::fmt::Display) -> ApiError {
-        ApiError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "memory_profile_failed",
-            format!("failed to dump heap profile: {error}"),
+#[cfg(any(
+    target_os = "android",
+    all(
+        any(target_os = "linux", target_os = "macos"),
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )
+))]
+fn failed(error: impl std::fmt::Display) -> ApiError {
+    ApiError::new(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "memory_profile_failed",
+        format!("heap profiling operation failed: {error}"),
+    )
+}
+
+pub(super) async fn get_active() -> Result<Value, ApiError> {
+    #[cfg(any(
+        target_os = "android",
+        all(
+            any(target_os = "linux", target_os = "macos"),
+            any(target_arch = "x86_64", target_arch = "aarch64")
         )
+    ))]
+    {
+        tokio::task::spawn_blocking(supported::get_active)
+            .await
+            .map_err(failed)?
+    }
+    #[cfg(not(any(
+        target_os = "android",
+        all(
+            any(target_os = "linux", target_os = "macos"),
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    )))]
+    Err(ApiError::new(
+        StatusCode::NOT_IMPLEMENTED,
+        "memory_profiling_unavailable",
+        "jemalloc profiling is unavailable on this target",
+    ))
+}
+
+pub(super) async fn set_active(active: bool) -> Result<Value, ApiError> {
+    #[cfg(any(
+        target_os = "android",
+        all(
+            any(target_os = "linux", target_os = "macos"),
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    {
+        tokio::task::spawn_blocking(move || supported::set_active(active))
+            .await
+            .map_err(failed)?
+    }
+    #[cfg(not(any(
+        target_os = "android",
+        all(
+            any(target_os = "linux", target_os = "macos"),
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    )))]
+    {
+        let _ = active;
+        Err(ApiError::new(
+            StatusCode::NOT_IMPLEMENTED,
+            "memory_profiling_unavailable",
+            "jemalloc profiling is unavailable on this target",
+        ))
     }
 }
 
@@ -81,13 +201,7 @@ pub(super) async fn dump() -> Result<HttpResponse, ApiError> {
     {
         let data = tokio::task::spawn_blocking(supported::dump)
             .await
-            .map_err(|error| {
-                ApiError::new(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "memory_profile_failed",
-                    error,
-                )
-            })??;
+            .map_err(failed)??;
         return Ok(hyper::Response::builder()
             .header(hyper::header::CONTENT_TYPE, "application/octet-stream")
             .header(
