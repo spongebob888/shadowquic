@@ -51,7 +51,7 @@ larger, IPv6 /126 or larger. The first and last address of each range are reserv
 `server-name` is the TLS identity; public WebPKI roots are used. DNS uses
 `rustls-jls` and `tokio-rustls-jls` with JLS explicitly disabled, so upstream
 connections use standard TLS and verify certificates. QUIC uses `quinn-jls`
-with JLS and early data disabled and the standard `doq` ALPN. Local listeners
+with JLS disabled and the standard `doq` ALPN. Local listeners
 use plain DNS even for `dns-tls` and `dns-quic`; those types encrypt the upstream connection.
 
 For example, AliDNS over QUIC uses:
@@ -63,6 +63,7 @@ dns:
     bind-addr: 127.0.0.1:1055
     upstream: 223.5.5.5:853
     server-name: dns.alidns.com
+    zero-rtt: false # Default; set true to enable early data on resumed connections.
 ```
 
 DoQ caches one connection per service and multiplexes concurrent queries over
@@ -72,6 +73,14 @@ once, using DNS metadata from the query that establishes the connection; later
 queries reuse that route. Transport queues hold 16 datagrams per direction,
 with an 8 KiB stream receive window and 64 KiB connection receive/send windows.
 Full-size DNS responses are read incrementally through those windows.
+
+`dns-quic` supports `zero-rtt` (default: `false`). Set `zero-rtt: true` to enable
+early data. The first connection completes its normal certificate-verified
+handshake. Later connections can use cached TLS
+session tickets to send DNS queries before the handshake completes. If the
+upstream rejects early data, the query is retried on a fresh stream after the
+handshake. Set `zero-rtt: false` to disable early data; established connections
+are still reused. TLS session tickets are held in memory for that DNS service.
 
 UDP, TCP, TLS, and QUIC upstream traffic becomes a `ProxyRequest` tagged with the DNS
 service's tag. The usual router and outbounds carry it, including through a
@@ -232,8 +241,16 @@ cargo test --release -p shadowquic --features dns-server --test dns_tls_alidns -
 
 The AliDNS DoQ integration test uses `223.5.5.5:853` over UDP with the verified
 identity `dns.alidns.com`. It checks repeated and concurrent queries with DNS
-response caching bypassed. It is also ignored by default:
+response caching bypassed, with `zero-rtt` enabled and disabled. It is also ignored by default:
 
 ```sh
 cargo test --release -p shadowquic --features dns-server --test dns_quic_alidns -- --ignored --nocapture
+```
+
+An additional live test forces a reconnect, verifies a 0-RTT attempt, and checks
+that DNS resolution succeeds whether AliDNS accepts early data or rejects it.
+It prints the upstream's early-data acceptance result:
+
+```sh
+cargo test --release -p shadowquic --lib alidns_resumes_with_zero_rtt_attempt_and_fallback -- --ignored --nocapture
 ```

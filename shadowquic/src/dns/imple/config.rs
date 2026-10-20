@@ -111,6 +111,9 @@ pub struct DnsQuicServerCfg {
     pub upstream: SocketAddr,
     /// TLS identity verified against the public root store.
     pub server_name: String,
+    /// Attempt TLS early data on resumed QUIC connections. Defaults to false.
+    #[serde(default)]
+    pub zero_rtt: bool,
     #[serde(default)]
     pub bypass_cache: bool,
 }
@@ -132,6 +135,7 @@ impl DnsQuicServerCfg {
             self.upstream,
             self.server_name,
             tls_connector()?.config().as_ref().clone(),
+            self.zero_rtt,
         )?;
         DnsServer::new(
             self.tag,

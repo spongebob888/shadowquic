@@ -17,7 +17,7 @@ use quinn::{
     AsyncUdpSocket, UdpSender,
     udp::{RecvMeta, Transmit},
 };
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, OnceCell, mpsc};
 
 use super::{Result, dns_error, parse_query, read_frame, validate_response, write_frame};
 use crate::{
@@ -35,6 +35,7 @@ pub(crate) struct DoqClient {
     upstream: SocketAddr,
     server_name: String,
     config: quinn::ClientConfig,
+    zero_rtt: bool,
     session: Mutex<Option<Arc<Session>>>,
 }
 
@@ -50,6 +51,23 @@ impl Drop for Endpoint {
 struct Session {
     _endpoint: Endpoint,
     connection: quinn::Connection,
+    acceptance: Option<Mutex<quinn::ZeroRttAccepted>>,
+    accepted: OnceCell<bool>,
+}
+
+impl Session {
+    async fn early_data_accepted(&self) -> bool {
+        *self
+            .accepted
+            .get_or_init(|| async {
+                match &self.acceptance {
+                    // Keep the future in place so cancellation cannot lose it.
+                    Some(acceptance) => (&mut *acceptance.lock().await).await,
+                    None => true,
+                }
+            })
+            .await
+    }
 }
 
 impl DoqClient {
@@ -57,9 +75,10 @@ impl DoqClient {
         upstream: SocketAddr,
         server_name: String,
         mut tls: rustls_jls::ClientConfig,
+        zero_rtt: bool,
     ) -> Result<Self> {
         tls.jls_config.enable = false;
-        tls.enable_early_data = false;
+        tls.enable_early_data = zero_rtt;
         tls.alpn_protocols = vec![b"doq".to_vec()];
         let crypto = quinn::crypto::rustls::QuicClientConfig::try_from(tls).map_err(dns_error)?;
         let mut config = quinn::ClientConfig::new(Arc::new(crypto));
@@ -80,6 +99,7 @@ impl DoqClient {
             upstream,
             server_name,
             config,
+            zero_rtt,
             session: Mutex::new(None),
         })
     }
@@ -116,15 +136,26 @@ impl DoqClient {
             Arc::new(quinn::TokioRuntime),
         )?);
         requests.send(request).await.map_err(dns_error)?;
-        let connection = endpoint
+        let connecting = endpoint
             .0
             .connect_with(self.config.clone(), self.upstream, &self.server_name)
-            .map_err(dns_error)?
-            .await
             .map_err(dns_error)?;
+        let (connection, acceptance) = if self.zero_rtt {
+            match connecting.into_0rtt() {
+                Ok((connection, acceptance)) => {
+                    tracing::debug!("attempting DNS over QUIC 0-RTT");
+                    (connection, Some(Mutex::new(acceptance)))
+                }
+                Err(connecting) => (connecting.await.map_err(dns_error)?, None),
+            }
+        } else {
+            (connecting.await.map_err(dns_error)?, None)
+        };
         let session = Arc::new(Session {
             _endpoint: endpoint,
             connection,
+            acceptance,
+            accepted: OnceCell::new(),
         });
         *cached = Some(session.clone());
         Ok(session)
@@ -138,7 +169,18 @@ impl DoqClient {
         // Retry once if a cached connection closes while opening/using a stream.
         for attempt in 0..2 {
             let session = self.connection(query, requests).await?;
-            match exchange_stream(&session.connection, query).await {
+            let early = session.acceptance.is_some() && session.accepted.get().is_none();
+            let mut result = exchange_stream(&session.connection, query).await;
+            if early {
+                let accepted = session.early_data_accepted().await;
+                tracing::debug!(accepted, "DNS over QUIC 0-RTT handshake completed");
+                if !accepted && result.is_err() && session.connection.close_reason().is_none() {
+                    // Rejected early streams cannot be reused. Repeat the query on
+                    // a fresh 1-RTT stream of the authenticated connection.
+                    result = exchange_stream(&session.connection, query).await;
+                }
+            }
+            match result {
                 Ok(reply) => return Ok(reply),
                 Err(_)
                     if attempt == 0

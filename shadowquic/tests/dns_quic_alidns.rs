@@ -10,11 +10,22 @@ use tokio::{net::UdpSocket, sync::oneshot, time::timeout};
 #[tokio::test]
 #[ignore = "requires Internet access to AliDNS over UDP port 853"]
 async fn resolves_through_alidns_over_quic() -> Result<(), Box<dyn Error>> {
+    assert_alidns_queries(true).await
+}
+
+#[tokio::test]
+#[ignore = "requires Internet access to AliDNS over UDP port 853"]
+async fn resolves_through_alidns_over_quic_with_zero_rtt_disabled() -> Result<(), Box<dyn Error>> {
+    assert_alidns_queries(false).await
+}
+
+async fn assert_alidns_queries(zero_rtt: bool) -> Result<(), Box<dyn Error>> {
     let server = DnsQuicServerCfg {
         tag: "alidns".into(),
         bind_addr: "127.0.0.1:0".parse()?,
         upstream: "223.5.5.5:853".parse()?,
         server_name: "dns.alidns.com".into(),
+        zero_rtt,
         // Every exchange must reach DoQ, including repeated questions.
         bypass_cache: true,
     }

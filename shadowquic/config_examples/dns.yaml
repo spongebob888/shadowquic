@@ -9,6 +9,7 @@ dns:
     bind-addr: 127.0.0.1:1053
     upstream: 223.5.5.5:853
     server-name: dns.alidns.com
+    zero-rtt: false # Default; set true to enable early data on resumed QUIC connections.
     bypass-cache: false # Set true to skip shared DNS cache reads and writes.
   - tag: fake
     type: dns-fakeip

@@ -16,6 +16,15 @@ fn query(id: u16) -> Vec<u8> {
 }
 
 fn fixture(trusted: bool, name: &str) -> (quinn::Endpoint, DoqClient) {
+    let (endpoint, client, _) = fixture_with_zero_rtt(trusted, name, true);
+    (endpoint, client)
+}
+
+fn fixture_with_zero_rtt(
+    trusted: bool,
+    name: &str,
+    zero_rtt: bool,
+) -> (quinn::Endpoint, DoqClient, quinn::ServerConfig) {
     let cert = rcgen::generate_simple_self_signed(vec!["dns.test".into()]).unwrap();
     let connector = crate::utils::tls::tls_connector().unwrap();
     let provider = connector.config().crypto_provider().clone();
@@ -33,6 +42,11 @@ fn fixture(trusted: bool, name: &str) -> (quinn::Endpoint, DoqClient) {
         .enable(false)
         .into();
     tls.alpn_protocols = vec![b"doq".to_vec()];
+    // Clone preserves the resumption store while changing early-data policy.
+    let rejected = quinn::ServerConfig::with_crypto(Arc::new(
+        quinn::crypto::rustls::QuicServerConfig::try_from(tls.clone()).unwrap(),
+    ));
+    tls.max_early_data_size = u32::MAX;
     let server = quinn::ServerConfig::with_crypto(Arc::new(
         quinn::crypto::rustls::QuicServerConfig::try_from(tls).unwrap(),
     ));
@@ -46,8 +60,9 @@ fn fixture(trusted: bool, name: &str) -> (quinn::Endpoint, DoqClient) {
         .unwrap()
         .with_root_certificates(roots)
         .with_no_client_auth();
-    let client = DoqClient::new(endpoint.local_addr().unwrap(), name.into(), tls).unwrap();
-    (endpoint, client)
+    let client =
+        DoqClient::new(endpoint.local_addr().unwrap(), name.into(), tls, zero_rtt).unwrap();
+    (endpoint, client, rejected)
 }
 
 fn route(
@@ -373,8 +388,158 @@ async fn doq_configuration_rejects_invalid_server_name_before_binding() {
         bind_addr: "127.0.0.1:0".parse().unwrap(),
         upstream: "127.0.0.1:853".parse().unwrap(),
         server_name: "invalid name".into(),
+        zero_rtt: true,
         bypass_cache: false,
     };
     assert!(config.validate().is_err());
     assert!(config.build().await.is_err());
+}
+
+#[test]
+fn doq_zero_rtt_defaults_to_disabled_and_can_be_enabled() {
+    for (option, expected) in [
+        ("", false),
+        (", zero-rtt: true", true),
+        (", zero-rtt: false", false),
+    ] {
+        let config: crate::config::DnsCfg = serde_saphyr::from_str(&format!(
+            "{{tag: quic, type: dns-quic, bind-addr: '127.0.0.1:0', upstream: '127.0.0.1:853', server-name: dns.test{option}}}"
+        )).unwrap();
+        let crate::config::DnsCfg::Quic(config) = config else {
+            panic!("expected QUIC")
+        };
+        assert_eq!(config.zero_rtt, expected);
+    }
+}
+
+#[tokio::test]
+async fn doq_resumes_with_early_data_and_retries_rejected_early_queries() {
+    for (enabled, accepted) in [(true, true), (true, false), (false, true)] {
+        timeout(Duration::from_secs(5), async {
+            let (server, client, rejected) = fixture_with_zero_rtt(true, "dns.test", enabled);
+            let (requests, count, routing) = route(&client);
+            let (reconnect, reconnecting) = tokio::sync::oneshot::channel();
+            let endpoint = server.clone();
+            let serving = tokio::spawn(async move {
+                let connection = endpoint.accept().await.unwrap().await.unwrap();
+                let (send, recv) = connection.accept_bi().await.unwrap();
+                answer(send, recv).await;
+                reconnecting.await.unwrap();
+                if !accepted {
+                    endpoint.set_server_config(Some(rejected));
+                }
+                connection.close(0u32.into(), b"resume test");
+                let connection = endpoint.accept().await.unwrap().await.unwrap();
+                // Both concurrent requests must survive a rejected 0-RTT flight.
+                for _ in 0..2 {
+                    let (send, recv) = connection.accept_bi().await.unwrap();
+                    answer(send, recv).await;
+                }
+                connection.closed().await;
+            });
+            client.exchange(&query(1), &requests).await.unwrap();
+            let old = client.session.lock().await.as_ref().unwrap().clone();
+            assert!(
+                old.acceptance.is_none(),
+                "the first connection cannot use 0-RTT"
+            );
+            reconnect.send(()).unwrap();
+            old.connection.closed().await;
+            let q1 = query(2);
+            let q2 = query(3);
+            let (r1, r2) = tokio::join!(
+                client.exchange(&q1, &requests),
+                client.exchange(&q2, &requests)
+            );
+            assert_eq!(Packet::parse(&r1.unwrap()).unwrap().id(), 2);
+            assert_eq!(Packet::parse(&r2.unwrap()).unwrap().id(), 3);
+            {
+                let cached = client.session.lock().await;
+                let session = cached.as_ref().unwrap();
+                assert_eq!(session.acceptance.is_some(), enabled);
+                if enabled {
+                    assert_eq!(session.accepted.get(), Some(&accepted));
+                }
+            }
+            assert_eq!(
+                count.load(Ordering::SeqCst),
+                2,
+                "resumption must use one new UDP session"
+            );
+            drop(old);
+            drop(client);
+            serving.await.unwrap();
+            drop(requests);
+            routing.await.unwrap();
+        })
+        .await
+        .unwrap();
+    }
+}
+
+/// Proves 0-RTT negotiation on a replacement AliDNS connection, rather than
+/// merely reusing an already established connection. No DNS response cache is used.
+#[tokio::test]
+#[ignore = "requires Internet access to AliDNS over UDP port 853"]
+async fn alidns_resumes_with_zero_rtt_attempt_and_fallback() {
+    timeout(Duration::from_secs(12), async {
+        let tls = crate::utils::tls::tls_connector()
+            .unwrap()
+            .config()
+            .as_ref()
+            .clone();
+        let client = DoqClient::new(
+            "223.5.5.5:853".parse().unwrap(),
+            "dns.alidns.com".into(),
+            tls,
+            true,
+        )
+        .unwrap();
+        let (requests, mut received) = mpsc::channel::<ProxyRequest>(4);
+        let routing = tokio::spawn(async move {
+            while let Some(request) = received.recv().await {
+                DirectOut::default().handle(request).await.unwrap();
+            }
+        });
+        let mut packet = Packet::new_query(123);
+        packet.set_flags(PacketFlag::RECURSION_DESIRED);
+        packet.questions.push(Question::new(
+            Name::new("www.aliyun.com").unwrap(),
+            TYPE::A.into(),
+            CLASS::IN.into(),
+            false,
+        ));
+        let query = packet.build_bytes_vec().unwrap();
+        for resumed in [false, true] {
+            let reply = client.exchange(&query, &requests).await.unwrap();
+            let reply = Packet::parse(&reply).unwrap();
+            assert_eq!(reply.id(), 123);
+            assert_eq!(reply.rcode(), simple_dns::RCODE::NoError);
+            assert!(
+                reply
+                    .answers
+                    .iter()
+                    .any(|record| matches!(record.rdata, simple_dns::rdata::RData::A(_)))
+            );
+            let cached = client.session.lock().await;
+            let session = cached.as_ref().unwrap();
+            assert_eq!(session.acceptance.is_some(), resumed);
+            if resumed {
+                let accepted = session
+                    .accepted
+                    .get()
+                    .expect("0-RTT handshake result must be observed");
+                eprintln!(
+                    "AliDNS resumed connection: 0-RTT accepted={accepted}; DNS query succeeded"
+                );
+            }
+            session.connection.close(0u32.into(), b"resumption test");
+            session.connection.closed().await;
+        }
+        drop(client);
+        drop(requests);
+        routing.await.unwrap();
+    })
+    .await
+    .unwrap();
 }
