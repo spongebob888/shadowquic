@@ -560,6 +560,98 @@ async fn closed_udp_relay_is_replaced_for_later_queries() {
     .unwrap();
 }
 
+/// Exercise the real resolver with DNS response caching bypassed, and verify
+/// the cached QUIC connection itself survives sequential and concurrent queries.
+#[tokio::test]
+#[ignore = "requires Internet access to AliDNS over UDP port 853"]
+async fn alidns_reuses_cached_quic_connection() {
+    use crate::{Inbound, dns::DnsService};
+
+    let mut server = crate::config::DnsQuicServerCfg {
+        tag: "alidns".into(),
+        bind_addr: "127.0.0.1:0".parse().unwrap(),
+        upstream: "223.5.5.5:853".parse().unwrap(),
+        server_name: "dns.alidns.com".into(),
+        zero_rtt: false,
+        bypass_cache: true,
+    }
+    .build()
+    .await
+    .unwrap();
+    let resolver = server.resolver.clone();
+    let crate::dns::Backend::Quic(client) = &resolver.backend else {
+        panic!("expected DoQ resolver")
+    };
+    let client = client.clone();
+    let sessions = Arc::new(AtomicUsize::new(0));
+    let routed = sessions.clone();
+    let (stop, mut stopped) = tokio::sync::oneshot::channel();
+    let routing = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = &mut stopped => break,
+                request = server.accept() => {
+                    let request = request.unwrap();
+                    assert!(matches!(request, ProxyRequest::Udp(_)));
+                    assert_eq!(request.user_context().inbound_tag, "alidns");
+                    routed.fetch_add(1, Ordering::SeqCst);
+                    DirectOut::default().handle(request).await.unwrap();
+                }
+            }
+        }
+        server.shutdown().await.unwrap();
+    });
+
+    let result = timeout(Duration::from_secs(12), async {
+        let query = |id| {
+            let mut packet = Packet::new_query(id);
+            packet.set_flags(PacketFlag::RECURSION_DESIRED);
+            packet.questions.push(Question::new(
+                Name::new("www.aliyun.com").unwrap(), TYPE::A.into(), CLASS::IN.into(), false,
+            ));
+            packet.build_bytes_vec().unwrap()
+        };
+        let assert_reply = |query: &[u8], reply: &[u8]| {
+            let reply = validate_response(query, reply).unwrap();
+            assert_eq!(reply.rcode(), simple_dns::RCODE::NoError);
+            assert!(!reply.has_flags(PacketFlag::TRUNCATION));
+            assert!(reply.answers.iter().any(|record| matches!(record.rdata, simple_dns::rdata::RData::A(_))));
+        };
+
+        let first_query = query(100);
+        assert_reply(&first_query, &resolver.exchange(&first_query).await.unwrap());
+        // Retaining this handle also prevents stable_id from being recycled.
+        let original = client.session.lock().await.as_ref().unwrap().clone();
+        let connection_id = original.connection.stable_id();
+
+        for id in [101, 102] {
+            let query = query(id);
+            assert_reply(&query, &resolver.exchange(&query).await.unwrap());
+            assert_eq!(client.session.lock().await.as_ref().unwrap().connection.stable_id(), connection_id);
+        }
+        let queries = [query(103), query(104), query(105)];
+        let (first, second, third) = tokio::join!(
+            resolver.exchange(&queries[0]),
+            resolver.exchange(&queries[1]),
+            resolver.exchange(&queries[2]),
+        );
+        for (query, reply) in queries.iter().zip([first, second, third]) {
+            assert_reply(query, &reply.unwrap());
+        }
+        let cached = client.session.lock().await;
+        let cached = cached.as_ref().unwrap();
+        assert_eq!(cached.connection.stable_id(), connection_id,
+            "AliDNS queries must reuse the cached QUIC connection, not merely its UDP socket");
+        assert!(cached.connection.close_reason().is_none());
+        assert_eq!(sessions.load(Ordering::SeqCst), 1);
+        eprintln!("AliDNS: six validated DNS queries reused QUIC connection {connection_id}, including three concurrent queries");
+    }).await;
+
+    let _ = stop.send(());
+    routing.await.unwrap();
+    result.unwrap();
+}
+
 /// Proves 0-RTT negotiation on replacement AliDNS connections, rather than
 /// merely reusing an already established connection. No DNS response cache is used.
 #[tokio::test]

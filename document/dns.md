@@ -250,7 +250,15 @@ response caching bypassed, with `zero-rtt` enabled and disabled. It is also igno
 cargo test --release -p shadowquic --features dns-server --test dns_quic_alidns -- --ignored --nocapture
 ```
 
-An additional live test forces three reconnects over the same UDP session and
+A dedicated live test bypasses DNS response caching and verifies that six
+sequential and concurrent queries to AliDNS retain the same cached QUIC
+connection ID and use only one routed UDP session:
+
+```sh
+cargo test --release -p shadowquic --lib alidns_reuses_cached_quic_connection -- --ignored --nocapture
+```
+
+Another live test forces three reconnects over the same UDP session and
 checks that AliDNS accepts each resumed connection's 0-RTT DNS query. It prints
 the upstream's early-data acceptance results:
 
