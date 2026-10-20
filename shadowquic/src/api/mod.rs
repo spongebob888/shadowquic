@@ -290,6 +290,16 @@ impl ApiManager {
                 require(Method::GET)?;
                 memory::get()
             }
+            #[cfg(feature = "mem-profile")]
+            "/api/v1/memory/profile/status" => {
+                require(Method::GET)?;
+                memory_profile::get_active().await
+            }
+            #[cfg(feature = "mem-profile")]
+            "/api/v1/memory/profile/activate" | "/api/v1/memory/profile/deactivate" => {
+                require(Method::POST)?;
+                memory_profile::set_active(path == "/api/v1/memory/profile/activate").await
+            }
             _ => {
                 let (tag, action) = path
                     .strip_prefix("/api/v1/outbounds/")
