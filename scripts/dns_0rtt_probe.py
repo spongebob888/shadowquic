@@ -15,7 +15,7 @@ import base64
 import json
 import logging
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -51,74 +51,99 @@ class Target:
         return 443 if self.protocol == "h3" else 853
 
 
+@dataclass
+class Reply:
+    future: asyncio.Future
+    body: bytearray = field(default_factory=bytearray)
+    headers: dict = field(default_factory=dict)
+
+
 class ProbeProtocol(QuicConnectionProtocol):
     def __init__(self, *args, target, **kwargs):
         super().__init__(*args, **kwargs)
         self.target = target
         self.http = H3Connection(self._quic) if target.protocol == "h3" else None
         self.handshake = None
+        self.handshake_ready = asyncio.Event()
         self.termination = None
         self.local_port = None
-        self.reply = None
+        self.requests = {}
         self.stream_id = None
-        self.body = bytearray()
         self.headers = {}
 
     def connection_made(self, transport):
         super().connection_made(transport)
         self.local_port = transport.get_extra_info("sockname")[1]
 
-    def fail(self, message):
-        if self.reply is not None and not self.reply.done():
-            self.reply.set_exception(ConnectionError(message))
+    async def wait_handshake(self):
+        # An Event stays safe when the probe timeout cancels the wait. aioquic's
+        # shielded wait_connected future can otherwise outlive its cancelled caller.
+        await self.handshake_ready.wait()
+        if self.handshake is None:
+            raise ConnectionError("QUIC terminated before the handshake completed")
+
+    def fail(self, message, stream_id=None):
+        for request_id, reply in self.requests.items():
+            if (
+                stream_id is None or stream_id == request_id
+            ) and not reply.future.done():
+                reply.future.set_exception(ConnectionError(message))
+
+    def http_event_received(self, event):
+        if not isinstance(event, (HeadersReceived, DataReceived)):
+            return
+        reply = self.requests.get(event.stream_id)
+        if reply is None:
+            return
+        if isinstance(event, HeadersReceived):
+            reply.headers.update(event.headers)
+            if event.stream_id == self.stream_id:
+                self.headers.update(event.headers)
+        else:
+            reply.body.extend(event.data)
+        if len(reply.body) > 65535:
+            self.fail("HTTP DNS response exceeds 65535 bytes", event.stream_id)
+        if event.stream_ended and not reply.future.done():
+            reply.future.set_result(bytes(reply.body))
 
     def quic_event_received(self, event):
         if isinstance(event, HandshakeCompleted):
             self.handshake = event
+            self.handshake_ready.set()
         if isinstance(event, ConnectionTerminated):
             self.termination = event
+            self.handshake_ready.set()
             self.fail(f"QUIC close 0x{event.error_code:x}: {event.reason_phrase}")
-        if isinstance(event, StreamReset) and event.stream_id == self.stream_id:
-            self.fail(f"stream reset 0x{event.error_code:x}")
+        if isinstance(event, StreamReset):
+            self.fail(f"stream reset 0x{event.error_code:x}", event.stream_id)
 
         if self.http is not None:
             for http_event in self.http.handle_event(event):
-                if (
-                    isinstance(http_event, (HeadersReceived, DataReceived))
-                    and http_event.stream_id == self.stream_id
-                ):
-                    if isinstance(http_event, HeadersReceived):
-                        self.headers.update(http_event.headers)
-                    else:
-                        self.body.extend(http_event.data)
-                    if len(self.body) > 65535:
-                        self.fail("HTTP DNS response exceeds 65535 bytes")
-                    if (
-                        http_event.stream_ended
-                        and self.reply is not None
-                        and not self.reply.done()
-                    ):
-                        self.reply.set_result(bytes(self.body))
-        elif (
-            isinstance(event, StreamDataReceived) and event.stream_id == self.stream_id
-        ):
-            self.body.extend(event.data)
-            if len(self.body) > 65537:
-                self.fail("DoQ response exceeds one DNS frame")
-            if event.end_stream and self.reply is not None and not self.reply.done():
-                self.reply.set_result(bytes(self.body))
+                self.http_event_received(http_event)
+        elif isinstance(event, StreamDataReceived):
+            reply = self.requests.get(event.stream_id)
+            if reply is None:
+                return
+            reply.body.extend(event.data)
+            if len(reply.body) > 65537:
+                self.fail("DoQ response exceeds one DNS frame", event.stream_id)
+            if event.end_stream and not reply.future.done():
+                reply.future.set_result(bytes(reply.body))
 
     async def query(self, wire):
-        self.stream_id = self._quic.get_next_available_stream_id()
-        self.reply = asyncio.get_running_loop().create_future()
+        stream_id = self._quic.get_next_available_stream_id()
+        if self.stream_id is None:
+            self.stream_id = stream_id  # Retain the first query's 0-RTT evidence.
+        reply = Reply(asyncio.get_running_loop().create_future())
+        self.requests[stream_id] = reply
         if self.http is None:
             self._quic.send_stream_data(
-                self.stream_id, len(wire).to_bytes(2) + wire, end_stream=True
+                stream_id, len(wire).to_bytes(2) + wire, end_stream=True
             )
         else:
             encoded = base64.urlsafe_b64encode(wire).rstrip(b"=")
             self.http.send_headers(
-                self.stream_id,
+                stream_id,
                 [
                     (b":method", b"GET"),
                     (b":scheme", b"https"),
@@ -128,21 +153,24 @@ class ProbeProtocol(QuicConnectionProtocol):
                 ],
                 end_stream=True,
             )
-        self.transmit()
-        body = await self.reply
+        try:
+            self.transmit()
+            body = await reply.future
+        finally:
+            del self.requests[stream_id]
         if self.http is None:
             if len(body) < 2 or int.from_bytes(body[:2]) != len(body) - 2:
                 raise ValueError("invalid DoQ length prefix or extra response")
-            return body[2:]
-        status = self.headers.get(b":status", b"?")
+            return body[2:], stream_id, None
+        status = reply.headers.get(b":status", b"?")
         if status != b"200":
             raise ValueError(f"HTTP status {status.decode()}")
         if (
-            self.headers.get(b"content-type", b"").split(b";", 1)[0].strip().lower()
+            reply.headers.get(b"content-type", b"").split(b";", 1)[0].strip().lower()
             != b"application/dns-message"
         ):
             raise ValueError("unexpected HTTP content-type")
-        return body
+        return body, stream_id, status.decode()
 
 
 def count_early_packets(qlog, stream_id):
@@ -174,6 +202,20 @@ def validate_reply(query, wire):
     if not addresses:
         raise ValueError("DNS response has no A answers")
     return addresses
+
+
+async def checked_query(protocol, query, index, mode):
+    result = {"query": index, "mode": mode, "dns_ok": False, "error": None}
+    started = time.monotonic()
+    try:
+        wire, stream_id, status = await protocol.query(query.to_wire())
+        result.update(stream_id=stream_id, http_status=status)
+        result["answers"] = validate_reply(query, wire)
+        result["dns_ok"] = True
+    except (OSError, ValueError, dns.exception.DNSException) as error:
+        result["error"] = f"{type(error).__name__}: {error}"
+    result["elapsed_ms"] = round((time.monotonic() - started) * 1000, 2)
+    return result
 
 
 async def probe_connection(target, query, ticket, args, local_port=0):
@@ -209,6 +251,10 @@ async def probe_connection(target, query, ticket, args, local_port=0):
         "answers": [],
         "http_status": None,
         "error": None,
+        "queries": [],
+        "queries_ok": 0,
+        "connection_reused": None,
+        "multiplexing_ok": None,
     }
     protocol = None
 
@@ -228,13 +274,38 @@ async def probe_connection(target, query, ticket, args, local_port=0):
                 configuration=configuration,
                 create_protocol=make_protocol,
                 session_ticket_handler=save_ticket,
-                wait_connected=not eligible,
+                wait_connected=False,
                 local_port=local_port,
             ) as protocol:
-                wire = await protocol.query(query.to_wire())
-                result["answers"] = validate_reply(query, wire)
-                result["dns_ok"] = True
+                if not eligible:
+                    protocol.transmit()
+                    await protocol.wait_handshake()
+                first = await checked_query(protocol, query, 0, "initial")
+                result["queries"].append(first)
+                if not first["dns_ok"]:
+                    raise ValueError(first["error"])
+                result["answers"] = first["answers"]
                 result["query_ms"] = round((time.monotonic() - started) * 1000, 2)
+                # Reuse this established connection once sequentially, then
+                # multiplex the remaining requests without opening a connection.
+                if args.queries_per_connection > 1:
+                    result["queries"].append(
+                        await checked_query(protocol, query, 1, "sequential")
+                    )
+                if args.queries_per_connection > 2:
+                    result["queries"].extend(
+                        await asyncio.gather(
+                            *(
+                                checked_query(protocol, query, index, "concurrent")
+                                for index in range(2, args.queries_per_connection)
+                            )
+                        )
+                    )
+                result["dns_ok"] = all(item["dns_ok"] for item in result["queries"])
+                if not result["dns_ok"]:
+                    result["error"] = "; ".join(
+                        item["error"] for item in result["queries"] if item["error"]
+                    )
                 # Ticket delivery may follow the DNS response; wait explicitly.
                 try:
                     await asyncio.wait_for(ticket_ready.wait(), args.ticket_wait)
@@ -244,6 +315,14 @@ async def probe_connection(target, query, ticket, args, local_port=0):
         result["error"] = f"{type(error).__name__}: {error}"
 
     trace = logger.to_dict()
+    result["queries_ok"] = sum(item["dns_ok"] for item in result["queries"])
+    if len(result["queries"]) > 1:
+        result["connection_reused"] = (
+            result["queries_ok"] > 1 and len(trace["traces"]) == 1
+        )
+    concurrent = [item for item in result["queries"] if item["mode"] == "concurrent"]
+    if len(concurrent) > 1:
+        result["multiplexing_ok"] = all(item["dns_ok"] for item in concurrent)
     if protocol is not None:
         result["client_port"] = protocol.local_port
         result["dns_0rtt_packets"] = count_early_packets(trace, protocol.stream_id)
@@ -331,10 +410,11 @@ async def main(args):
         "aioquic_version": aioquic.__version__,
         "query": args.domain,
         "reuse_client_port": args.reuse_port,
+        "queries_per_connection": args.queries_per_connection,
         "results": results,
     }
     print(
-        f"{'Provider/address':<25} {'ALPN':<5} {'Conn':>4} {'Resumed':<8} {'0-RTT DNS':>9} {'0-RTT result':<30} {'DNS':<5}"
+        f"{'Provider/address':<25} {'ALPN':<5} {'Conn':>4} {'Resumed':<8} {'0-RTT DNS':>9} {'0-RTT result':<30} {'Queries':<7} {'Reuse':<9} {'Mux':<9}"
     )
     for endpoint in results:
         for result in endpoint["connections"]:
@@ -346,7 +426,8 @@ async def main(args):
             print(
                 f"{endpoint['provider'] + '/' + endpoint['address']:<25} {endpoint['protocol']:<5} "
                 f"{result['connection']:>4} {resumed:<8} {result['dns_0rtt_packets']:>9} "
-                f"{result['zero_rtt_result']:<30} {'OK' if result['dns_ok'] else 'FAIL':<5}"
+                f"{result['zero_rtt_result']:<30} {str(result['queries_ok']) + '/' + str(args.queries_per_connection):<7} "
+                f"{str(result['connection_reused']).lower():<9} {str(result['multiplexing_ok']).lower():<9}"
             )
             if result["error"]:
                 print(f"  {result['error']}")
@@ -381,6 +462,12 @@ if __name__ == "__main__":
     )
     parser.add_argument("--domain", default="example.com")
     parser.add_argument(
+        "--queries-per-connection",
+        type=int,
+        default=4,
+        help="queries on each connection: initial, sequential, then concurrent (default: 4)",
+    )
+    parser.add_argument(
         "--attempts",
         type=int,
         default=3,
@@ -393,7 +480,14 @@ if __name__ == "__main__":
         "--qlog-dir", type=Path, help="save packet-level evidence as qlog files"
     )
     args = parser.parse_args()
-    if args.attempts < 1 or args.timeout <= 0 or args.ticket_wait <= 0:
-        parser.error("attempts, timeout and ticket-wait must be positive")
+    if (
+        args.attempts < 1
+        or args.queries_per_connection < 1
+        or args.timeout <= 0
+        or args.ticket_wait <= 0
+    ):
+        parser.error(
+            "attempts, queries-per-connection, timeout and ticket-wait must be positive"
+        )
     logging.basicConfig(level=logging.ERROR)
     asyncio.run(main(args))

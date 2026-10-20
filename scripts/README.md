@@ -21,6 +21,14 @@ data reflects retransmission at 1-RTT, and does not count as accepted 0-RTT.
 JSON includes ticket availability, negotiated ALPN, HTTP status, DNS answers,
 client ports, timings, and errors. Tickets and TLS secrets are not written out.
 
+Each connection also handles four queries by default: an initial query, another
+query after its reply, then two concurrent queries on separate streams. `Reuse`
+confirms that multiple DNS queries succeeded on the same QUIC connection; `Mux`
+confirms the concurrent batch succeeded. `Queries` shows successful queries over
+the requested count. This checks established-connection reuse separately from
+TLS session resumption on a fresh connection. JSON records each query's stream
+ID, mode, HTTP status, answers, and timing.
+
 Useful options:
 
 ```sh
@@ -30,6 +38,9 @@ uv run scripts/dns_0rtt_probe.py --provider alidns --all-addresses --attempts 10
 
 # Limit the protocol or query; list all options with --help.
 uv run scripts/dns_0rtt_probe.py --provider google --protocol h3 --domain example.com
+
+# Test one established connection with more simultaneous queries after warm-up.
+uv run scripts/dns_0rtt_probe.py --all-addresses --reuse-port --queries-per-connection 6
 ```
 
 A failed handshake or timeout leaves 0-RTT support **unmeasured**. Missing tickets
