@@ -68,9 +68,12 @@ dns:
 
 DoQ caches one connection per service and multiplexes concurrent queries over
 independent bidirectional streams. Closed connections are replaced on the next
-query; connections expire after at most 30 seconds idle. The UDP session is routed
-once, using DNS metadata from the query that establishes the connection; later
-queries reuse that route. Transport queues hold 16 datagrams per direction,
+query; connections expire after at most 30 seconds idle. The QUIC endpoint and
+routed UDP session remain alive across reconnects, preserving the outbound
+socket's source port for session resumption. A failed UDP relay is replaced on
+the next query. The UDP session is routed once when the endpoint is created,
+using that query's DNS metadata; later queries and reconnects reuse that route.
+Transport queues hold 16 datagrams per direction,
 with an 8 KiB stream receive window and 64 KiB connection receive/send windows.
 Full-size DNS responses are read incrementally through those windows.
 
@@ -247,9 +250,9 @@ response caching bypassed, with `zero-rtt` enabled and disabled. It is also igno
 cargo test --release -p shadowquic --features dns-server --test dns_quic_alidns -- --ignored --nocapture
 ```
 
-An additional live test forces a reconnect, verifies a 0-RTT attempt, and checks
-that DNS resolution succeeds whether AliDNS accepts early data or rejects it.
-It prints the upstream's early-data acceptance result:
+An additional live test forces three reconnects over the same UDP session and
+checks that AliDNS accepts each resumed connection's 0-RTT DNS query. It prints
+the upstream's early-data acceptance results:
 
 ```sh
 cargo test --release -p shadowquic --lib alidns_resumes_with_zero_rtt_attempt_and_fallback -- --ignored --nocapture

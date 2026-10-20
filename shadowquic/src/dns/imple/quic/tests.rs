@@ -121,6 +121,7 @@ async fn routed_doq_multiplexes_reuses_and_reconnects() {
         let (close, closing) = tokio::sync::oneshot::channel();
         let serving = tokio::spawn(async move {
             let connection = endpoint.accept().await.unwrap().await.unwrap();
+            let remote = connection.remote_address();
             let (send, recv) = connection.accept_bi().await.unwrap();
             answer(send, recv).await;
             // Accept both queries before answering either: serialization would deadlock.
@@ -138,6 +139,11 @@ async fn routed_doq_multiplexes_reuses_and_reconnects() {
             closing.await.unwrap();
             connection.close(0u32.into(), b"reconnect test");
             let connection = endpoint.accept().await.unwrap().await.unwrap();
+            assert_eq!(
+                connection.remote_address(),
+                remote,
+                "reconnect must preserve the UDP source port"
+            );
             let (send, recv) = connection.accept_bi().await.unwrap();
             answer(send, recv).await;
             // Keep the server endpoint and connection until the client is done.
@@ -159,7 +165,11 @@ async fn routed_doq_multiplexes_reuses_and_reconnects() {
         old.connection.closed().await;
         let reply = client.exchange(&query(20), &requests).await.unwrap();
         assert_eq!(Packet::parse(&reply).unwrap().id(), 20);
-        assert_eq!(count.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            1,
+            "reconnect must reuse the routed UDP session"
+        );
         drop(old);
         drop(client);
         serving.await.unwrap();
@@ -422,6 +432,7 @@ async fn doq_resumes_with_early_data_and_retries_rejected_early_queries() {
             let endpoint = server.clone();
             let serving = tokio::spawn(async move {
                 let connection = endpoint.accept().await.unwrap().await.unwrap();
+                let remote = connection.remote_address();
                 let (send, recv) = connection.accept_bi().await.unwrap();
                 answer(send, recv).await;
                 reconnecting.await.unwrap();
@@ -430,6 +441,11 @@ async fn doq_resumes_with_early_data_and_retries_rejected_early_queries() {
                 }
                 connection.close(0u32.into(), b"resume test");
                 let connection = endpoint.accept().await.unwrap().await.unwrap();
+                assert_eq!(
+                    connection.remote_address(),
+                    remote,
+                    "resumption must preserve the UDP source port"
+                );
                 // Both concurrent requests must survive a rejected 0-RTT flight.
                 for _ in 0..2 {
                     let (send, recv) = connection.accept_bi().await.unwrap();
@@ -463,8 +479,8 @@ async fn doq_resumes_with_early_data_and_retries_rejected_early_queries() {
             }
             assert_eq!(
                 count.load(Ordering::SeqCst),
-                2,
-                "resumption must use one new UDP session"
+                1,
+                "resumption must reuse the original UDP session"
             );
             drop(old);
             drop(client);
@@ -477,7 +493,74 @@ async fn doq_resumes_with_early_data_and_retries_rejected_early_queries() {
     }
 }
 
-/// Proves 0-RTT negotiation on a replacement AliDNS connection, rather than
+#[tokio::test]
+async fn cancelled_handshake_preserves_endpoint_and_udp_source_port() {
+    timeout(Duration::from_secs(5), async {
+        let (server, client) = fixture(true, "dns.test");
+        let (requests, count, routing) = route(&client);
+        let (arrived, arrival) = tokio::sync::oneshot::channel();
+        let (resume, resumed) = tokio::sync::oneshot::channel();
+        let serving = tokio::spawn(async move {
+            let incoming = server.accept().await.unwrap();
+            let remote = incoming.remote_address();
+            arrived.send(()).unwrap();
+            resumed.await.unwrap();
+            incoming.refuse();
+            let connection = server.accept().await.unwrap().await.unwrap();
+            assert_eq!(connection.remote_address(), remote);
+            let (send, recv) = connection.accept_bi().await.unwrap();
+            answer(send, recv).await;
+            connection.closed().await;
+        });
+        let first_query = query(1);
+        let mut cancelled = Box::pin(client.exchange(&first_query, &requests));
+        tokio::select! {
+            result = &mut cancelled => panic!("handshake must still be pending: {result:?}"),
+            result = arrival => result.unwrap(),
+        }
+        drop(cancelled);
+        resume.send(()).unwrap();
+        client.exchange(&query(2), &requests).await.unwrap();
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+        drop(client);
+        serving.await.unwrap();
+        drop(requests);
+        routing.await.unwrap();
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn closed_udp_relay_is_replaced_for_later_queries() {
+    timeout(Duration::from_secs(5), async {
+        let (server, client) = fixture(true, "dns.test");
+        let (requests, mut received) = mpsc::channel::<ProxyRequest>(2);
+        let routing = tokio::spawn(async move {
+            // Simulate an outbound which fails and drops the routed session.
+            drop(received.recv().await.unwrap());
+            let request = received.recv().await.unwrap();
+            DirectOut::default().handle(request).await.unwrap();
+            assert!(received.recv().await.is_none());
+        });
+        let serving = tokio::spawn(async move {
+            let connection = server.accept().await.unwrap().await.unwrap();
+            let (send, recv) = connection.accept_bi().await.unwrap();
+            answer(send, recv).await;
+            connection.closed().await;
+        });
+        assert!(client.exchange(&query(1), &requests).await.is_err());
+        client.exchange(&query(2), &requests).await.unwrap();
+        drop(client);
+        serving.await.unwrap();
+        drop(requests);
+        routing.await.unwrap();
+    })
+    .await
+    .unwrap();
+}
+
+/// Proves 0-RTT negotiation on replacement AliDNS connections, rather than
 /// merely reusing an already established connection. No DNS response cache is used.
 #[tokio::test]
 #[ignore = "requires Internet access to AliDNS over UDP port 853"]
@@ -496,8 +579,11 @@ async fn alidns_resumes_with_zero_rtt_attempt_and_fallback() {
         )
         .unwrap();
         let (requests, mut received) = mpsc::channel::<ProxyRequest>(4);
+        let sessions = Arc::new(AtomicUsize::new(0));
+        let routed = sessions.clone();
         let routing = tokio::spawn(async move {
             while let Some(request) = received.recv().await {
+                routed.fetch_add(1, Ordering::SeqCst);
                 DirectOut::default().handle(request).await.unwrap();
             }
         });
@@ -510,7 +596,8 @@ async fn alidns_resumes_with_zero_rtt_attempt_and_fallback() {
             false,
         ));
         let query = packet.build_bytes_vec().unwrap();
-        for resumed in [false, true] {
+        for attempt in 0..4 {
+            let resumed = attempt > 0;
             let reply = client.exchange(&query, &requests).await.unwrap();
             let reply = Packet::parse(&reply).unwrap();
             assert_eq!(reply.id(), 123);
@@ -529,6 +616,10 @@ async fn alidns_resumes_with_zero_rtt_attempt_and_fallback() {
                     .accepted
                     .get()
                     .expect("0-RTT handshake result must be observed");
+                assert!(
+                    accepted,
+                    "AliDNS must accept 0-RTT with a stable UDP session"
+                );
                 eprintln!(
                     "AliDNS resumed connection: 0-RTT accepted={accepted}; DNS query succeeded"
                 );
@@ -536,6 +627,11 @@ async fn alidns_resumes_with_zero_rtt_attempt_and_fallback() {
             session.connection.close(0u32.into(), b"resumption test");
             session.connection.closed().await;
         }
+        assert_eq!(
+            sessions.load(Ordering::SeqCst),
+            1,
+            "all connections must use the same routed UDP session"
+        );
         drop(client);
         drop(requests);
         routing.await.unwrap();

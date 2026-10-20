@@ -37,19 +37,30 @@ pub(crate) struct DoqClient {
     config: quinn::ClientConfig,
     zero_rtt: bool,
     session: Mutex<Option<Arc<Session>>>,
+    endpoint: Mutex<Option<Arc<Endpoint>>>,
 }
 
-struct Endpoint(quinn::Endpoint);
+struct Endpoint {
+    inner: quinn::Endpoint,
+    outgoing: mpsc::WeakSender<Datagram>,
+}
+
+impl Endpoint {
+    fn is_open(&self) -> bool {
+        self.outgoing
+            .upgrade()
+            .is_some_and(|send| !send.is_closed())
+    }
+}
 
 impl Drop for Endpoint {
     fn drop(&mut self) {
-        // Also closes the routed UDP session on failed/cancelled handshakes.
-        self.0.close(0u32.into(), b"DNS endpoint closed");
+        self.inner.close(0u32.into(), b"DNS endpoint closed");
     }
 }
 
 struct Session {
-    _endpoint: Endpoint,
+    _endpoint: Arc<Endpoint>,
     connection: quinn::Connection,
     acceptance: Option<Mutex<quinn::ZeroRttAccepted>>,
     accepted: OnceCell<bool>,
@@ -101,6 +112,7 @@ impl DoqClient {
             config,
             zero_rtt,
             session: Mutex::new(None),
+            endpoint: Mutex::new(None),
         })
     }
 
@@ -112,34 +124,59 @@ impl DoqClient {
         let mut cached = self.session.lock().await;
         if let Some(session) = cached.as_ref()
             && session.connection.close_reason().is_none()
+            && session._endpoint.is_open()
         {
             return Ok(session.clone());
         }
-        // Release closed connections and their UDP queues before reconnecting.
+        // Replace the connection, retaining the endpoint and routed UDP socket
+        // so the source port and upstream resumption affinity stay stable.
         *cached = None;
-        let user_context = UserContext {
-            dns_query: parse_query(query)?
-                .questions
-                .iter()
-                .map(|question| DnsQuery {
-                    name: question.qname.to_string(),
-                    record_type: question.qtype.into(),
-                })
-                .collect(),
-            ..Default::default()
+        let endpoint = {
+            let mut cached = self.endpoint.lock().await;
+            if cached.as_ref().is_some_and(|endpoint| !endpoint.is_open()) {
+                *cached = None;
+            }
+            if cached.is_none() {
+                let user_context = UserContext {
+                    dns_query: parse_query(query)?
+                        .questions
+                        .iter()
+                        .map(|question| DnsQuery {
+                            name: question.qname.to_string(),
+                            record_type: question.qtype.into(),
+                        })
+                        .collect(),
+                    ..Default::default()
+                };
+                let (socket, request) = ProxySocket::new(self.upstream, user_context);
+                let outgoing = socket.send.downgrade();
+                let endpoint = Arc::new(Endpoint {
+                    inner: quinn::Endpoint::new_with_abstract_socket(
+                        quinn::EndpointConfig::default(),
+                        None,
+                        Box::new(socket),
+                        Arc::new(quinn::TokioRuntime),
+                    )?,
+                    outgoing,
+                });
+                requests.send(request).await.map_err(dns_error)?;
+                *cached = Some(endpoint);
+            }
+            cached.as_ref().unwrap().clone()
         };
-        let (socket, request) = ProxySocket::new(self.upstream, user_context);
-        let endpoint = Endpoint(quinn::Endpoint::new_with_abstract_socket(
-            quinn::EndpointConfig::default(),
-            None,
-            Box::new(socket),
-            Arc::new(quinn::TokioRuntime),
-        )?);
-        requests.send(request).await.map_err(dns_error)?;
-        let connecting = endpoint
-            .0
-            .connect_with(self.config.clone(), self.upstream, &self.server_name)
-            .map_err(dns_error)?;
+        let connecting =
+            match endpoint
+                .inner
+                .connect_with(self.config.clone(), self.upstream, &self.server_name)
+            {
+                Ok(connecting) => connecting,
+                Err(error) => {
+                    if matches!(error, quinn::ConnectError::EndpointStopping) {
+                        *self.endpoint.lock().await = None;
+                    }
+                    return Err(dns_error(error));
+                }
+            };
         let (connection, acceptance) = if self.zero_rtt {
             match connecting.into_0rtt() {
                 Ok((connection, acceptance)) => {
