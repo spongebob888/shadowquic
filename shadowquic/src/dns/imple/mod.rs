@@ -3,6 +3,7 @@ mod cache;
 pub mod config;
 mod fakeip;
 mod integration;
+mod quic;
 #[cfg(test)]
 mod tests;
 
@@ -206,6 +207,7 @@ pub(crate) enum Backend {
         server_name: rustls_jls::pki_types::ServerName<'static>,
         connector: tokio_rustls_jls::TlsConnector,
     },
+    Quic(Arc<quic::DoqClient>),
     FakeIp(Arc<FakeIp>),
     System,
 }
@@ -407,7 +409,7 @@ impl Resolver {
             Backend::Udp(upstream) | Backend::Tcp(upstream) | Backend::Tls { upstream, .. } => {
                 *upstream
             }
-            Backend::FakeIp(_) | Backend::System => {
+            Backend::Quic(_) | Backend::FakeIp(_) | Backend::System => {
                 return Err(dns_error("local resolver has no upstream"));
             }
         };
@@ -533,6 +535,7 @@ impl DnsService for Resolver {
             match &self.backend {
                 Backend::System | Backend::FakeIp(_) => self.local(packet).await,
                 Backend::Tcp(_) | Backend::Tls { .. } => self.upstream(query, true).await,
+                Backend::Quic(client) => client.exchange(query, &self.requests).await,
                 Backend::Udp(_) => {
                     let reply = self.upstream(query, false).await?;
                     if Packet::parse(&reply)

@@ -875,6 +875,7 @@ dns:
   - {tag: udp, type: dns-udp, bind-addr: '127.0.0.1:0', upstream: '127.0.0.1:53'}
   - {tag: tcp, type: dns-tcp, bind-addr: '127.0.0.1:0', upstream: '127.0.0.1:53'}
   - {tag: tls, type: dns-tls, bind-addr: '127.0.0.1:0', upstream: '127.0.0.1:853', server-name: dns.test}
+  - {tag: quic, type: dns-quic, bind-addr: '127.0.0.1:0', upstream: '127.0.0.1:853', server-name: dns.test}
 outbounds:
   - {tag: direct, type: direct, dns: system}
   - {tag: socks, type: socks, addr: '127.0.0.1:1080', dns: system}
@@ -882,10 +883,10 @@ outbounds:
   - {tag: sunny, type: sunnyquic, addr: '127.0.0.1:443', username: test, password: test, server-name: localhost, dns: system}
 "#).unwrap();
     let manager = config.build_manager().await.unwrap();
-    assert_eq!(manager.inbounds.len(), 6);
-    assert_eq!(manager.outbounds.len(), 9);
+    assert_eq!(manager.inbounds.len(), 7);
+    assert_eq!(manager.outbounds.len(), 10);
     assert_eq!(manager.default_outbound, "direct");
-    for tag in ["system", "fake", "udp", "tcp", "tls"] {
+    for tag in ["system", "fake", "udp", "tcp", "tls", "quic"] {
         assert!(manager.outbounds.contains_key(tag));
     }
 }
@@ -1222,6 +1223,11 @@ fn dns_configurations_require_only_their_own_fields() {
         ),
         (
             "dns-tls",
+            ", upstream: '127.0.0.1:853', server-name: dns.test",
+            ", unknown: true",
+        ),
+        (
+            "dns-quic",
             ", upstream: '127.0.0.1:853', server-name: dns.test",
             ", unknown: true",
         ),
@@ -1601,6 +1607,10 @@ async fn bypass_cache_defaults_to_false_and_is_configurable_except_for_fakeip() 
         ("dns-tcp", ", upstream: '127.0.0.1:53'"),
         (
             "dns-tls",
+            ", upstream: '127.0.0.1:853', server-name: dns.test",
+        ),
+        (
+            "dns-quic",
             ", upstream: '127.0.0.1:853', server-name: dns.test",
         ),
         ("dns-system", ""),

@@ -25,8 +25,8 @@ mod serde_utils;
 use crate::dns::ResolverManager;
 #[cfg(feature = "dns-server")]
 pub use crate::dns::config::{
-    DnsCfg, DnsFakeIpServerCfg, DnsSystemServerCfg, DnsTcpServerCfg, DnsTlsServerCfg,
-    DnsUdpServerCfg,
+    DnsCfg, DnsFakeIpServerCfg, DnsQuicServerCfg, DnsSystemServerCfg, DnsTcpServerCfg,
+    DnsTlsServerCfg, DnsUdpServerCfg,
 };
 #[cfg(all(feature = "tproxy", target_os = "linux"))]
 use crate::tproxy::inbound::TproxyServer;

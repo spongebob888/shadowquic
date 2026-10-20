@@ -19,6 +19,7 @@ It supports following dns type:
 - dns over udp
 - dns over tcp
 - dns over tls, the tls use the rustls lib
+- dns over quic, using quinn-jls with JLS disabled, routed UDP sessions, and cached multiplexed connections
 - fakeip dns. At most one instance and if it exists, perform fake ip mapping in tproxy. The fakeip should not exist in router stage.
 - system dns, which use tokio lookup function to perform dns.
 
