@@ -25,6 +25,8 @@ inbounds:
 `tag` is required. `name` is optional; the OS chooses a name when omitted. On
 macOS, use `utunN` or leave it unset. `ipv4` and `ipv6` are interface addresses
 with CIDR prefixes, not fake-IP pools. They default to the values shown above.
+Set `ipv6: null` to disable IPv6 address and route setup and drop incoming IPv6
+packets. Omitting `ipv6` keeps IPv6 enabled with the default address.
 The device is brought up when the inbound is created and closed on shutdown.
 
 `mtu` defaults to 1500 and must be at least 1280. `max-sessions` defaults to 1024

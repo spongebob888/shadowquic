@@ -5,7 +5,7 @@ inbounds:
     type: tun
     # name: sq-tun0 # Linux/Windows; on macOS leave unset or use utunN.
     ipv4: 172.19.0.1/30
-    ipv6: fdfe:dcba:9876::1/126
+    ipv6: fdfe:dcba:9876::1/126 # Set null to disable IPv6.
     mtu: 1500
     max-sessions: 1024
     idle-timeout: 300

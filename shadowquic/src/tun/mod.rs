@@ -33,8 +33,10 @@ impl TunServer {
         let (device, name) = {
             let mut builder = DeviceBuilder::new()
                 .ipv4(cfg.ipv4.addr(), cfg.ipv4.prefix_len(), None)
-                .ipv6(cfg.ipv6.addr(), cfg.ipv6.prefix_len())
                 .mtu(cfg.mtu);
+            if let Some(ipv6) = cfg.ipv6 {
+                builder = builder.ipv6(ipv6.addr(), ipv6.prefix_len());
+            }
             if let Some(name) = &cfg.name {
                 builder = builder.name(name);
             }

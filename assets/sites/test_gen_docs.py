@@ -69,7 +69,11 @@ class TunDocsTests(unittest.TestCase):
         filename = "shadowquic/src/config/tun.rs"
         fields = [
             ("ipv4", {"resolved_path": {"path": "Ipv4Net"}}, "172.19.0.1/30"),
-            ("ipv6", {"resolved_path": {"path": "Ipv6Net"}}, "fdfe:dcba:9876::1/126"),
+            ("ipv6", {"resolved_path": {
+                "path": "Option", "args": {"angle_bracketed": {"args": [
+                    {"type": {"resolved_path": {"path": "Ipv6Net"}}},
+                ]}},
+            }}, "fdfe:dcba:9876::1/126"),
             ("mtu", {"primitive": "u16"}, "1500"),
             ("max_sessions", {"primitive": "usize"}, "1024"),
             ("idle_timeout", {"primitive": "u64"}, "300"),
@@ -94,6 +98,8 @@ class TunDocsTests(unittest.TestCase):
                 section = rendered.split(f"### `{name.replace('_', '-')}`\n", 1)[1].split("\n### ", 1)[0]
                 self.assertIn(f"- **Default:** `{expected}`", section)
                 self.assertNotIn("default_", section)
+                if name == "ipv6":
+                    self.assertIn("*(optional)*", section)
 
 
 class RestApiDocsTests(unittest.TestCase):

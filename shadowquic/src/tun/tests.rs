@@ -165,6 +165,97 @@ async fn connect(harness: &mut Harness, src: SocketAddr, dst: SocketAddr) -> i32
 }
 
 #[tokio::test]
+async fn disabled_ipv6_drops_tcp_and_udp_without_consuming_ipv4_capacity() {
+    let ipv6_client = "[2001:db8::10]:45000".parse().unwrap();
+    let ipv6_destination = "[2001:db8:1::20]:443".parse().unwrap();
+    let client = "192.0.2.10:45000".parse().unwrap();
+    let destination = "198.51.100.20:443".parse().unwrap();
+    for tcp in [true, false] {
+        let mut cfg = config();
+        cfg.ipv6 = None;
+        cfg.max_sessions = 1;
+        let mut harness = Harness::new(cfg);
+        // Neither IPv6 protocol may consume the single available session slot
+        // or produce a response/request ahead of the IPv4 flow.
+        for packet in [
+            tcp_packet(
+                ipv6_client,
+                ipv6_destination,
+                TcpControl::Syn,
+                100,
+                None,
+                &[],
+            ),
+            udp_packet(ipv6_client, ipv6_destination, b"ipv6", 1500).unwrap(),
+        ] {
+            harness.input.send(packet.into()).await.unwrap();
+        }
+        if tcp {
+            let ack = connect(&mut harness, client, destination).await;
+            let ProxyRequest::Tcp(mut session) = harness.accept().await else {
+                panic!("expected IPv4 TCP session")
+            };
+            assert_eq!(session.src_addr, Some(client));
+            assert_eq!(session.dst, destination.into());
+            harness
+                .input
+                .send(
+                    tcp_packet(
+                        client,
+                        destination,
+                        TcpControl::Psh,
+                        101,
+                        Some(ack),
+                        b"ipv4",
+                    )
+                    .into(),
+                )
+                .await
+                .unwrap();
+            let mut payload = [0; 4];
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                session.stream.read_exact(&mut payload),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(&payload, b"ipv4");
+        } else {
+            harness
+                .input
+                .send(
+                    udp_packet(client, destination, b"ipv4", 1500)
+                        .unwrap()
+                        .into(),
+                )
+                .await
+                .unwrap();
+            let ProxyRequest::Udp(mut session) = harness.accept().await else {
+                panic!("expected IPv4 UDP session")
+            };
+            assert_eq!(session.src_addr, Some(client));
+            let (payload, dst) =
+                tokio::time::timeout(Duration::from_secs(2), session.recv.recv_from())
+                    .await
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(payload.as_ref(), b"ipv4");
+            assert_eq!(dst, destination.into());
+            session.send.send_to(payload, dst).await.unwrap();
+            let reply = harness.receive().await;
+            let ip = Packet::parse(&reply).unwrap();
+            assert_eq!(std::net::IpAddr::from(ip.src), destination.ip());
+            assert_eq!(std::net::IpAddr::from(ip.dst), client.ip());
+            assert_eq!(
+                UdpPacket::new_checked(ip.payload).unwrap().payload(),
+                b"ipv4"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn tcp_ipv4_and_ipv6_transfer_and_preserve_half_closes() {
     for (src, dst) in [
         ("192.0.2.10:45000", "198.51.100.20:443"),
@@ -428,6 +519,21 @@ async fn fakeip_restores_tcp_before_routing_and_each_udp_packet_and_reply() {
 }
 
 #[test]
+fn tun_ipv6_defaults_to_enabled_and_null_disables_it() {
+    assert_eq!(
+        config().ipv6,
+        Some("fdfe:dcba:9876::1/126".parse().unwrap())
+    );
+    let disabled: TunServerCfg = serde_saphyr::from_str("tag: tun\nipv6: null").unwrap();
+    assert_eq!(disabled.ipv6, None);
+    disabled.validate().unwrap();
+    let custom: TunServerCfg = serde_saphyr::from_str("tag: tun\nipv6: '2001:db8::1/64'").unwrap();
+    assert_eq!(custom.ipv6, Some("2001:db8::1/64".parse().unwrap()));
+    custom.validate().unwrap();
+    assert!(serde_saphyr::from_str::<TunServerCfg>("tag: tun\nipv6: invalid").is_err());
+}
+
+#[test]
 fn tun_configuration_is_validated_without_opening_a_device() {
     use crate::config::{Config, InboundCfg};
     let cfg: Config = serde_saphyr::from_str("inbounds: [{tag: tun-in, type: tun, default-outbound: direct}]\noutbounds: [{tag: direct, type: direct}]").unwrap();
@@ -440,6 +546,7 @@ fn tun_configuration_is_validated_without_opening_a_device() {
         "max-sessions: 0",
         "idle-timeout: 0",
         "ipv4: 0.0.0.0/30",
+        "ipv6: '::/64'",
         "ipv6: 'ff00::1/64'",
         "name: ''",
     ] {

@@ -8,8 +8,8 @@ pub fn default_ipv4() -> Ipv4Net {
     "172.19.0.1/30".parse().unwrap()
 }
 /// Default IPv6 address and prefix for the TUN interface.
-pub fn default_ipv6() -> Ipv6Net {
-    "fdfe:dcba:9876::1/126".parse().unwrap()
+pub fn default_ipv6() -> Option<Ipv6Net> {
+    Some("fdfe:dcba:9876::1/126".parse().unwrap())
 }
 /// Default TUN interface MTU in bytes.
 pub fn default_mtu() -> u16 {
@@ -40,8 +40,10 @@ pub struct TunServerCfg {
     pub name: Option<String>,
     #[serde(default = "default_ipv4")]
     pub ipv4: Ipv4Net,
+    /// IPv6 interface address and prefix. Set to null to disable IPv6;
+    /// omitting this field enables IPv6 with the default address.
     #[serde(default = "default_ipv6")]
-    pub ipv6: Ipv6Net,
+    pub ipv6: Option<Ipv6Net>,
     #[serde(default = "default_mtu")]
     pub mtu: u16,
     /// Shared limit for TCP connections and UDP client sessions.
@@ -75,8 +77,9 @@ impl TunServerCfg {
         if self.ipv4.addr().is_unspecified()
             || self.ipv4.addr().is_multicast()
             || self.ipv4.addr().is_broadcast()
-            || self.ipv6.addr().is_unspecified()
-            || self.ipv6.addr().is_multicast()
+            || self
+                .ipv6
+                .is_some_and(|ipv6| ipv6.addr().is_unspecified() || ipv6.addr().is_multicast())
         {
             return Err(SError::InvalidConfig(
                 "TUN interface addresses must be unicast".into(),

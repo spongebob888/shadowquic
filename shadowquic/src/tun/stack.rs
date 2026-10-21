@@ -17,8 +17,8 @@ use smoltcp::{
     socket::tcp,
     time::Instant,
     wire::{
-        HardwareAddress, IpCidr, IpEndpoint, IpProtocol, TcpControl, TcpPacket, TcpRepr, UdpPacket,
-        UdpRepr,
+        HardwareAddress, IpAddress, IpCidr, IpEndpoint, IpProtocol, TcpControl, TcpPacket, TcpRepr,
+        UdpPacket, UdpRepr,
     },
 };
 use tokio::{
@@ -195,9 +195,11 @@ impl Stack {
             addrs
                 .push(IpCidr::new(cfg.ipv4.addr().into(), cfg.ipv4.prefix_len()))
                 .unwrap();
-            addrs
-                .push(IpCidr::new(cfg.ipv6.addr().into(), cfg.ipv6.prefix_len()))
-                .unwrap();
+            if let Some(ipv6) = cfg.ipv6 {
+                addrs
+                    .push(IpCidr::new(ipv6.addr().into(), ipv6.prefix_len()))
+                    .unwrap();
+            }
         });
         // AnyIP accepts all routed destination addresses, not only the TUN's
         // local addresses. These routes exist only in the userspace stack.
@@ -205,10 +207,12 @@ impl Stack {
             .routes_mut()
             .add_default_ipv4_route(cfg.ipv4.addr())
             .unwrap();
-        iface
-            .routes_mut()
-            .add_default_ipv6_route(cfg.ipv6.addr())
-            .unwrap();
+        if let Some(ipv6) = cfg.ipv6 {
+            iface
+                .routes_mut()
+                .add_default_ipv6_route(ipv6.addr())
+                .unwrap();
+        }
         iface.set_any_ip(true);
         Self {
             iface,
@@ -238,6 +242,9 @@ impl Stack {
         let Some(packet) = Packet::parse(&bytes) else {
             return;
         };
+        if self.cfg.ipv6.is_none() && matches!(packet.src, IpAddress::Ipv6(_)) {
+            return;
+        }
         match packet.protocol {
             IpProtocol::Tcp => {
                 let Ok(tcp_packet) = TcpPacket::new_checked(packet.payload) else {

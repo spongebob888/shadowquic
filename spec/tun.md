@@ -106,15 +106,17 @@ outbounds:
 | `default-outbound` | `Option<String>` | Unset | Manager validates the referenced outbound/DNS tag; copied to each request's routing preference |
 | `name` | `Option<String>` | OS chooses | If supplied, must be nonempty and contain no NUL; further naming restrictions are enforced by the OS/library |
 | `ipv4` | `Ipv4Net` | `172.19.0.1/30` | Adapter's IPv4 address and prefix |
-| `ipv6` | `Ipv6Net` | `fdfe:dcba:9876::1/126` | Adapter's IPv6 address and prefix |
+| `ipv6` | `Option<Ipv6Net>` | `fdfe:dcba:9876::1/126` | Adapter's IPv6 address and prefix; `null` disables IPv6 |
 | `mtu` | `u16` | `1500` | `1280..=65535`; IPv6 determines the minimum |
 | `max-sessions` | `usize` | `1024` | `1..=65536`; combined TCP-flow and UDP-client-session limit |
 | `idle-timeout` | `u64` | `300` seconds | `1..=86400`; strict UDP inactivity threshold and smoltcp TCP timeout setting |
 
 `ipv4` and `ipv6` are interface addresses: host bits are expected and preserved.
 They are different from the network-aligned `ipv4-range`/`ipv6-range` fields of a
-`dns-fakeip` service. Both interface families are configured; there is no
-family-disable setting.
+`dns-fakeip` service. Omitting `ipv6` enables IPv6 with the default address.
+Setting `ipv6: null` skips IPv6 address and route setup and drops incoming IPv6
+packets before they can allocate TCP or UDP sessions. On Android, the embedding
+application still owns the interface's OS address and route configuration.
 
 Validation rejects unspecified and multicast interface addresses and the IPv4
 limited broadcast address `255.255.255.255`. Address-family and prefix syntax
@@ -172,9 +174,10 @@ and drops the other futures. TCP bridging does not spawn a task per connection.
 
 ### OS device
 
-`TunServer::new` applies the configured IPv4 address/prefix, IPv6 address/prefix,
-and MTU with `DeviceBuilder`, optionally applies the requested name, and calls
-`build_async`. On macOS it explicitly sets `associate_route(false)`.
+`TunServer::new` applies the configured IPv4 address/prefix and MTU with
+`DeviceBuilder`, adds the IPv6 address/prefix when `ipv6` is `Some`, optionally
+applies the requested name, and calls `build_async`. On macOS it explicitly sets
+`associate_route(false)`.
 
 The code uses packet-oriented `recv` and `send`. It does not configure TAP,
 Ethernet framing, multiqueue, packet batching, or offload features. Platform device
@@ -212,10 +215,11 @@ The smoltcp interface uses `HardwareAddress::Ip`, the configured interface CIDRs
 and a randomized seed derived by hashing the tag with a fresh `RandomState`.
 It owns a `SocketSet<'static>` with heap-owned socket buffers.
 
-AnyIP is enabled. The interface installs an IPv4 and an IPv6 default route whose
-gateway is the corresponding configured local address. This lets smoltcp accept
-TCP packets addressed to destinations other than the adapter's own addresses.
-These routes exist only inside smoltcp; they do not install OS capture routes.
+AnyIP is enabled. The interface installs an IPv4 default route, plus an IPv6
+default route when IPv6 is enabled, whose gateway is the corresponding configured
+local address. This lets smoltcp accept TCP packets addressed to destinations
+other than the adapter's own addresses. These routes exist only inside smoltcp;
+they do not install OS capture routes.
 
 ## 7. Event loop and scheduling
 
@@ -678,12 +682,14 @@ handshakes are driven at packet level; tests do not need root or a kernel adapte
 | Test | Behavior checked |
 | --- | --- |
 | `tcp_ipv4_and_ipv6_transfer_and_preserve_half_closes` | Handshake, source/destination metadata, bidirectional bytes, response after client FIN |
+| `disabled_ipv6_drops_tcp_and_udp_without_consuming_ipv4_capacity` | Disabled IPv6 cannot create sessions or replies; IPv4 TCP and UDP still work with a one-session limit |
 | `concurrent_tcp_clients_can_use_the_same_destination` | Independent flows sharing a remote endpoint |
 | `udp_keeps_each_destination_and_original_reply_source_for_both_families` | Multiple destinations on one session, reply ports/IPs/checksums, unspecified outbound bind address |
 | `fakeip_restores_tcp_before_routing_and_each_udp_packet_and_reply` | Custom fake pools, restored router context, per-datagram translation, fake reply addresses |
 | `udp_idle_cleanup_releases_capacity_and_discards_late_replies` | Capacity admission, paused-time expiration, ignored replies from a retired session |
 | `unmapped_fake_destinations_are_rejected_before_routing` | TCP and initial UDP rejection through the shared restoration wrapper |
 | `tun_configuration_is_validated_without_opening_a_device` | Config defaults, routing preference, tag, invalid fields/values |
+| `tun_ipv6_defaults_to_enabled_and_null_disables_it` | Omitted IPv6 keeps the default address, explicit CIDRs are accepted, and `null` disables IPv6 |
 | `invalid_or_fragmented_packets_and_oversize_replies_are_rejected` | Truncated IP, IPv4 fragmentation, reply MTU and family checks |
 
 A separate ignored `kernel_tun_device_can_start_and_shutdown` test creates a real

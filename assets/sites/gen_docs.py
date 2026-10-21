@@ -522,11 +522,15 @@ _PARSED_STRING_EXPR_RE = re.compile(r'^"([^"\\]*)"\.parse\(\)\.unwrap\(\)$')
 def render_default_value(expr: str, ctx: RenderContext) -> str:
     """Pretty-print a default expression for display in the YAML schema.
 
-    Rewrite enum constructors into their serde tags and parsed string literals
-    into the literal value (for example, a CIDR). Other expressions are unchanged.
+    Unwrap Some defaults, rewrite enum constructors into their serde tags, and
+    render parsed string literals as their value (for example, a CIDR).
+    Other expressions are unchanged.
     """
     if not expr:
         return expr
+    optional = re.fullmatch(r"Some\((.*)\)", expr.strip())
+    if optional:
+        return render_default_value(optional.group(1), ctx)
     parsed = _PARSED_STRING_EXPR_RE.fullmatch(expr.strip())
     if parsed:
         return parsed.group(1)
