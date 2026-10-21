@@ -2565,7 +2565,7 @@ Only takes effect when <code>user-store</code> is set.</p>
 <ul>
 <li><strong>Type:</strong> <code>u32</code></li>
 <li><strong>Required:</strong> no</li>
-<li><strong>Default:</strong> <code>crate::config::default_inbound_max_streams()</code></li>
+<li><strong>Default:</strong> <code>1000</code></li>
 </ul>
 <p>Streams the peer may hold open concurrently. Each proxied request and
 each UDP association holds one for its whole lifetime, so this is also
@@ -2576,7 +2576,7 @@ buffering is this multiplied by <code>stream-receive-window</code>. Default 1000
 <ul>
 <li><strong>Type:</strong> <code>u32</code></li>
 <li><strong>Required:</strong> no</li>
-<li><strong>Default:</strong> <code>crate::config::default_inbound_max_streams()</code></li>
+<li><strong>Default:</strong> <code>1000</code></li>
 </ul>
 <p>Unidirectional streams the peer may hold open concurrently. With
 <code>over-stream</code> on, this side's UDP replies travel over these. Default 1000.</p>
@@ -2584,7 +2584,7 @@ buffering is this multiplied by <code>stream-receive-window</code>. Default 1000
 <ul>
 <li><strong>Type:</strong> <code>u64</code></li>
 <li><strong>Required:</strong> no</li>
-<li><strong>Default:</strong> <code>crate::config::default_stream_receive_window()</code></li>
+<li><strong>Default:</strong> <code>crate::quic::MAX_STREAM_WINDOW</code></li>
 </ul>
 <p>Bytes the peer may have in flight on one stream, and therefore the most
 this side can be made to buffer for it. The default is a 400 Mbit/s
