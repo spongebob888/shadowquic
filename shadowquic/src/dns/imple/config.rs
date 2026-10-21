@@ -103,6 +103,7 @@ impl DnsTlsServerCfg {
 }
 
 /// Local UDP/TCP DNS listener using a certificate-verified DNS over QUIC upstream.
+/// DNS over QUIC supports connection reuse and zero-rtt and is generally faster than DNS over TCP/TLS.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct DnsQuicServerCfg {
