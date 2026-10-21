@@ -205,7 +205,9 @@ impl UserManager for SunnyQuicClient {
 #[async_trait]
 impl Outbound for SunnyQuicClient {
     async fn handle(&self, req: crate::ProxyRequest) -> Result<(), crate::error::SError> {
-        let conn = self.prepare_conn().await?;
+        let conn = tokio::time::timeout(std::time::Duration::from_secs(10), self.prepare_conn())
+            .await
+            .map_err(std::io::Error::from)??;
 
         let over_stream = self.config.over_stream;
         outbound::handle_request(req, conn, over_stream, self.config.half_close_timeout).await?;
