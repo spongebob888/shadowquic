@@ -516,17 +516,20 @@ class RenderContext:
 
 
 _ENUM_VARIANT_EXPR_RE = re.compile(r"^([A-Z][A-Za-z0-9_]*)::([A-Z][A-Za-z0-9_]*)$")
+_PARSED_STRING_EXPR_RE = re.compile(r'^"([^"\\]*)"\.parse\(\)\.unwrap\(\)$')
 
 
 def render_default_value(expr: str, ctx: RenderContext) -> str:
     """Pretty-print a default expression for display in the YAML schema.
 
-    Currently only rewrites `EnumName::VariantName` constructors into their
-    serde tag value (`CongestionControl::Bbr` -> `bbr`). Anything else is
-    returned unchanged.
+    Rewrite enum constructors into their serde tags and parsed string literals
+    into the literal value (for example, a CIDR). Other expressions are unchanged.
     """
     if not expr:
         return expr
+    parsed = _PARSED_STRING_EXPR_RE.fullmatch(expr.strip())
+    if parsed:
+        return parsed.group(1)
     m = _ENUM_VARIANT_EXPR_RE.match(expr.strip())
     if m:
         key = f"{m.group(1)}::{m.group(2)}"

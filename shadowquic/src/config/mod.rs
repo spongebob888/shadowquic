@@ -39,7 +39,7 @@ use crate::tproxy::inbound::TproxyServer;
         target_os = "android"
     )
 ))]
-mod tun;
+pub mod tun;
 pub use selector::SelectorOutCfg;
 #[cfg(all(
     feature = "tun",

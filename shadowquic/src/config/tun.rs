@@ -3,19 +3,24 @@ use serde::Deserialize;
 
 use crate::error::SError;
 
-fn default_ipv4() -> Ipv4Net {
+/// Default IPv4 address and prefix for the TUN interface.
+pub fn default_ipv4() -> Ipv4Net {
     "172.19.0.1/30".parse().unwrap()
 }
-fn default_ipv6() -> Ipv6Net {
+/// Default IPv6 address and prefix for the TUN interface.
+pub fn default_ipv6() -> Ipv6Net {
     "fdfe:dcba:9876::1/126".parse().unwrap()
 }
-fn default_mtu() -> u16 {
+/// Default TUN interface MTU in bytes.
+pub fn default_mtu() -> u16 {
     1500
 }
-fn default_max_sessions() -> usize {
+/// Default shared limit for TCP connections and UDP client sessions.
+pub fn default_max_sessions() -> usize {
     1024
 }
-fn default_idle_timeout() -> u64 {
+/// Default session idle timeout in seconds.
+pub fn default_idle_timeout() -> u64 {
     300
 }
 

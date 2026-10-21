@@ -5,7 +5,8 @@ import unittest
 from pathlib import Path
 
 from gen_docs import (
-    DNS_CONFIG_SRC, REPO_ROOT, Item, SourceAttrs, config_sources,
+    DNS_CONFIG_SRC, REPO_ROOT, Item, RenderContext, SourceAttrs, collect_default_fn_values,
+    config_sources, emit_struct_page,
     parse_container_serde, parse_field_serde, parse_source_attrs, plan_pages, render_nav,
 )
 
@@ -61,6 +62,38 @@ class DnsDocsTests(unittest.TestCase):
         server = parse_container_serde(attrs.container["DnsUdpServerCfg"])
         self.assertEqual(server.rename_all, "kebab-case")
         self.assertTrue(server.deny_unknown_fields)
+
+
+class TunDocsTests(unittest.TestCase):
+    def test_tun_defaults_render_as_values_from_public_helpers(self):
+        filename = "shadowquic/src/config/tun.rs"
+        fields = [
+            ("ipv4", {"resolved_path": {"path": "Ipv4Net"}}, "172.19.0.1/30"),
+            ("ipv6", {"resolved_path": {"path": "Ipv6Net"}}, "fdfe:dcba:9876::1/126"),
+            ("mtu", {"primitive": "u16"}, "1500"),
+            ("max_sessions", {"primitive": "usize"}, "1024"),
+            ("idle_timeout", {"primitive": "u64"}, "300"),
+        ]
+        config = Item(dict(
+            id=0, name="TunServerCfg", span=dict(filename=filename),
+            inner={"struct": {"kind": {"plain": {"fields": list(range(1, 6))}}}},
+        ))
+        index = {config.id: config}
+        for id, (name, ty, _) in enumerate(fields, start=1):
+            index[str(id)] = Item(dict(
+                id=id, name=name, span=dict(filename=filename), inner={"struct_field": ty},
+            ))
+        ctx = RenderContext(
+            index=index, page_for_type={}, pages_dir_for={},
+            default_values=collect_default_fn_values(REPO_ROOT),
+            src_attrs=parse_source_attrs(REPO_ROOT),
+        )
+        rendered = emit_struct_page(config, Path("configuration/inbound/tun.md"), "Tun server", ctx)
+        for name, _, expected in fields:
+            with self.subTest(field=name):
+                section = rendered.split(f"### `{name.replace('_', '-')}`\n", 1)[1].split("\n### ", 1)[0]
+                self.assertIn(f"- **Default:** `{expected}`", section)
+                self.assertNotIn("default_", section)
 
 
 class RestApiDocsTests(unittest.TestCase):
