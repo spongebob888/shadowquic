@@ -8,9 +8,10 @@ use crate::config::{
     default_alpn, default_blackhole_detection, default_brutal_ack_compensate,
     default_brutal_bandwidth, default_brutal_cwnd_gain, default_brutal_min_ack_rate,
     default_brutal_min_sample_count, default_brutal_min_window, default_congestion_control,
-    default_gso, default_half_close_timeout, default_initial_mtu, default_keep_alive_interval,
-    default_min_mtu, default_mtu_discovery, default_over_stream, default_store_flush_interval,
-    default_zero_rtt,
+    default_gso, default_half_close_timeout, default_inbound_max_streams, default_initial_mtu,
+    default_keep_alive_interval, default_min_mtu, default_mtu_discovery,
+    default_outbound_max_streams, default_over_stream, default_store_flush_interval,
+    default_stream_receive_window, default_zero_rtt,
 };
 
 pub fn default_rate_limit() -> u64 {
@@ -115,18 +116,18 @@ pub struct ShadowQuicServerCfg {
     /// the ceiling on concurrent sessions over a single connection; a peer that
     /// reaches it waits in `open_bi` until this side frees a stream. Worst-case
     /// buffering is this multiplied by `stream-receive-window`. Default 1000.
-    #[serde(default = "crate::config::default_inbound_max_streams")]
+    #[serde(default = "default_inbound_max_streams")]
     pub max_concurrent_bidi_streams: u32,
 
     /// Unidirectional streams the peer may hold open concurrently. With
     /// `over-stream` on, this side's UDP replies travel over these. Default 1000.
-    #[serde(default = "crate::config::default_inbound_max_streams")]
+    #[serde(default = "default_inbound_max_streams")]
     pub max_concurrent_uni_streams: u32,
 
     /// Bytes the peer may have in flight on one stream, and therefore the most
     /// this side can be made to buffer for it. The default is a 400 Mbit/s
     /// bandwidth-delay product over a 100 ms path. Default 5000000.
-    #[serde(default = "crate::config::default_stream_receive_window")]
+    #[serde(default = "default_stream_receive_window")]
     pub stream_receive_window: u64,
 
     /// Bytes the peer may have in flight across every stream at once. Left out,
@@ -279,18 +280,18 @@ pub struct ShadowQuicClientCfg {
     /// the ceiling on concurrent sessions over a single connection; a peer that
     /// reaches it waits in `open_bi` until this side frees a stream. Worst-case
     /// buffering is this multiplied by `stream-receive-window`. Default 500.
-    #[serde(default = "crate::config::default_outbound_max_streams")]
+    #[serde(default = "default_outbound_max_streams")]
     pub max_concurrent_bidi_streams: u32,
 
     /// Unidirectional streams the peer may hold open concurrently. With
     /// `over-stream` on, the peer's UDP replies travel over these. Default 500.
-    #[serde(default = "crate::config::default_outbound_max_streams")]
+    #[serde(default = "default_outbound_max_streams")]
     pub max_concurrent_uni_streams: u32,
 
     /// Bytes the peer may have in flight on one stream, and therefore the most
     /// this side can be made to buffer for it. The default is a 400 Mbit/s
     /// bandwidth-delay product over a 100 ms path. Default 5000000.
-    #[serde(default = "crate::config::default_stream_receive_window")]
+    #[serde(default = "default_stream_receive_window")]
     pub stream_receive_window: u64,
 
     /// Bytes the peer may have in flight across every stream at once. Left out,
