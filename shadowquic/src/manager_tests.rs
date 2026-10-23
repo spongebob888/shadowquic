@@ -233,6 +233,9 @@ async fn api_bind_failure_prevents_inbound_initialization() {
     manager.api_config = Some(crate::config::ApiConfig {
         bind_addr: occupied.local_addr().unwrap(),
         secret: None,
+        tag: crate::config::default_api_tag(),
+        ui_path: None,
+        ui_download_url: crate::config::default_ui_download_url(),
     });
     let error = manager.run_until(std::future::pending()).await.unwrap_err();
     assert!(matches!(error, SError::Io(_)));

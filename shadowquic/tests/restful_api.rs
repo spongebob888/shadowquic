@@ -57,6 +57,184 @@ async fn unused_address() -> SocketAddr {
         .unwrap()
 }
 
+struct DashboardSource {
+    html: Vec<u8>,
+    requests: tokio::sync::mpsc::UnboundedSender<String>,
+}
+
+#[tokio::test]
+#[ignore = "downloads Squirrelboard v0.1.2 from GitHub"]
+async fn dashboard_downloads_default_squirrelboard_release() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let temp = tempfile::tempdir().unwrap();
+        let api_addr = unused_address().await;
+        let root = temp.path().join("ui");
+        let config: Config = serde_saphyr::from_str(&format!(
+            "inbounds: [{{tag: inbound, type: socks, bind-addr: '127.0.0.1:0'}}]\n\
+             outbounds: [{{tag: direct, type: direct}}]\n\
+             restful-api:\n  bind-addr: '{api_addr}'\n  ui-path: '{}'",
+            root.display()
+        ))
+        .unwrap();
+        let manager = config.build_manager().await.unwrap();
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(manager.run_until(async {
+            let _ = stopped.await;
+        }));
+        loop {
+            assert!(!task.is_finished(), "manager exited before serving UI");
+            if TcpStream::connect(api_addr).await.is_ok()
+                && fetch_dashboard(api_addr, "GET", "/").await.0 == StatusCode::OK
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let (_, _, html) = fetch_dashboard(api_addr, "GET", "/").await;
+        let html = std::str::from_utf8(&html).unwrap();
+        assert!(html.contains("<script"));
+        assert!(html.contains("<style"));
+        assert_eq!(
+            html.as_bytes(),
+            std::fs::read(root.join("index.html")).unwrap()
+        );
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        stop.send(()).unwrap();
+        task.await.unwrap().unwrap();
+    })
+    .await
+    .unwrap();
+}
+
+#[async_trait::async_trait]
+impl shadowquic::Outbound for DashboardSource {
+    async fn handle(
+        &self,
+        request: shadowquic::ProxyRequest,
+    ) -> Result<(), shadowquic::error::SError> {
+        assert_eq!(request.user_context().inbound_tag, "dashboard-download");
+        assert!(request.user_context().observer.upgrade().is_none());
+        assert_eq!(request.dst().to_string(), "dashboard.test:80");
+        let shadowquic::ProxyRequest::Tcp(mut session) = request else {
+            panic!()
+        };
+        let mut head = Vec::new();
+        while !head.ends_with(b"\r\n\r\n") {
+            head.push(session.stream.read_u8().await?);
+        }
+        let head = String::from_utf8(head).unwrap();
+        assert!(!head.to_ascii_lowercase().contains("authorization:"));
+        let target = head.split_whitespace().nth(1).unwrap();
+        self.requests.send(target.into()).unwrap();
+        if target == "/start" {
+            session
+                .stream
+                .write_all(
+                    b"HTTP/1.1 302 Found\r\nLocation: /index.html\r\nContent-Length: 0\r\n\r\n",
+                )
+                .await?;
+        } else {
+            assert_eq!(target, "/index.html");
+            session
+                .stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
+                        self.html.len()
+                    )
+                    .as_bytes(),
+                )
+                .await?;
+            session.stream.write_all(&self.html).await?;
+        }
+        Ok(())
+    }
+}
+
+async fn fetch_dashboard(
+    address: SocketAddr,
+    method: &str,
+    path: &str,
+) -> (StatusCode, hyper::HeaderMap, Bytes) {
+    let stream = TcpStream::connect(address).await.unwrap();
+    let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .unwrap();
+    let task = tokio::spawn(connection);
+    let response = sender
+        .send_request(
+            Request::builder()
+                .method(method)
+                .uri(path)
+                .header("host", "localhost")
+                .body(Full::new(Bytes::new()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (head, body) = response.into_parts();
+    let body = body.collect().await.unwrap().to_bytes();
+    task.abort();
+    (head.status, head.headers, body)
+}
+
+#[tokio::test]
+async fn dashboard_startup_routes_redirects_serves_html_and_reuses_cached_file() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("ui");
+        let html = b"<html>dashboard</html>".to_vec();
+        let (requests, mut received) = tokio::sync::mpsc::unbounded_channel();
+        for startup in 0..2 {
+            let api_addr = unused_address().await;
+            let router = if cfg!(feature = "plugin") {
+                "default-outbound: blocked\n  src: 'return function(ctx) if ctx.inbound_tag == \"dashboard-download\" then return \"download\" end return \"blocked\" end'"
+            } else { "default-outbound: download" };
+            let config: Config = serde_saphyr::from_str(&format!(
+                "inbounds: [{{tag: inbound, type: socks, bind-addr: '127.0.0.1:0'}}]\n\
+                 outbounds: [{{tag: blocked, type: drop}}, {{tag: download, type: direct}}]\n\
+                 router:\n  {router}\n\
+                 restful-api:\n  bind-addr: '{api_addr}'\n  tag: dashboard-download\n  secret: test-secret\n  ui-path: '{}'\n  ui-download-url: http://dashboard.test/start",
+                root.display()
+            )).unwrap();
+            let mut manager = config.build_manager().await.unwrap();
+            assert!(manager.inbounds.contains_key("dashboard-download"));
+            assert!(!manager.observers.contains_key("dashboard-download"));
+            manager.outbounds.insert("download".into(), std::sync::Arc::new(DashboardSource { html: html.clone(), requests: requests.clone() }));
+            let (stop, stopped) = tokio::sync::oneshot::channel();
+            let task = tokio::spawn(manager.run_until(async { let _ = stopped.await; }));
+            loop {
+                assert!(!task.is_finished(), "manager exited before serving UI");
+                if TcpStream::connect(api_addr).await.is_ok()
+                    && fetch_dashboard(api_addr, "GET", "/").await.0 == StatusCode::OK { break; }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            let (status, headers, body) = fetch_dashboard(api_addr, "GET", "/").await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(headers["content-type"], "text/html; charset=utf-8");
+            assert_eq!(body.as_ref(), b"<html>dashboard</html>");
+            assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+            let (_, headers, body) = fetch_dashboard(api_addr, "HEAD", "/").await;
+            assert_eq!(headers["content-length"], "22");
+            assert!(body.is_empty());
+            assert_eq!(call(api_addr, "GET", "/api/v1/traffic", Value::Null).await.0, StatusCode::UNAUTHORIZED);
+            let (status, traffic) = call_with_authorization(api_addr, "GET", "/api/v1/traffic", Value::Null, Some("Bearer test-secret")).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(traffic["inbounds"].as_array().unwrap().len(), 1);
+            if startup == 0 {
+                assert_eq!(received.recv().await.unwrap(), "/start");
+                assert_eq!(received.recv().await.unwrap(), "/index.html");
+            }
+            assert!(received.try_recv().is_err());
+            stop.send(()).unwrap();
+            task.await.unwrap().unwrap();
+        }
+        // Omitting ui-path never registers a download inbound.
+        let config: Config = serde_saphyr::from_str("inbounds: [{tag: inbound, type: socks, bind-addr: '127.0.0.1:0'}]\noutbounds: [{tag: direct, type: direct}]\nrestful-api: {bind-addr: '127.0.0.1:0', tag: dashboard-download}").unwrap();
+        assert!(!config.build_manager().await.unwrap().inbounds.contains_key("dashboard-download"));
+    }).await.unwrap();
+}
+
 #[tokio::test]
 async fn configured_selector_switches_proxy_sessions_and_probes() {
     tokio::time::timeout(Duration::from_secs(10), async {

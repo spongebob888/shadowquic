@@ -12,13 +12,15 @@ Enable it in your proxy configuration:
 
 ```yaml
 restful-api:
+  tag: restful-api
   bind-addr: "127.0.0.1:9090"
+  # ui-path: ./ui
   # secret: "choose-a-secret"
 ```
 
 Any bind address is allowed, including `0.0.0.0` and `::`, with or without a
 secret. A nonempty `secret` requires `Authorization: Bearer <secret>` on every
-request except CORS preflights. Omit `secret` or set it to `""` to disable
+API request except CORS preflights. Omit `secret` or set it to `""` to disable
 authentication. Omit `restful-api` to leave the HTTP listener disabled. Configuring
 the listener without compiling `restful-api` produces a configuration error.
 A bind failure prevents manager startup.
@@ -34,6 +36,56 @@ Missing or invalid credentials return `401` with error code `unauthorized` and
 
 A complete local SOCKS/direct example is available in
 [restful-api.yaml](../shadowquic/config_examples/restful-api.yaml).
+
+## Local dashboard
+
+Set `ui-path` to a directory to serve a dashboard at the API listener's root,
+for example `http://127.0.0.1:9090/`:
+
+```yaml
+restful-api:
+  tag: dashboard-download
+  bind-addr: "127.0.0.1:9090"
+  ui-path: ./ui
+  # ui-download-url: https://github.com/spongebob888/squirrelboard/releases/download/v0.1.2/index.html
+```
+
+If `ui-path/index.html` is missing, startup downloads Squirrelboard v0.1.2's
+standalone `index.html`, with JavaScript and CSS bundled into that file. Override
+`ui-download-url` with another HTTP(S) HTML file. The directory is created if
+needed, and other existing files are preserved. Existing dashboards with an
+`index.html` are served without downloading again. Omit `ui-path` to disable
+both local UI serving and its startup download.
+
+Downloads run in the background while the proxy and API start. The dashboard
+root returns `503` until it is available. Download failures are logged and leave
+the API running; restart to retry. Installation writes a temporary file and
+publishes the complete `index.html` without replacing an existing page. Downloads
+are limited to 32 MiB and ten HTTP requests through redirects.
+
+The optional `tag` defaults to `restful-api` and must be nonempty and unique
+among endpoint and database tags. Dashboard downloads, including each redirect,
+carry it as `ctx.inbound_tag` through normal routing. For example:
+
+```yaml
+router:
+  src: |
+    return function(ctx)
+      if ctx.inbound_tag == "dashboard-download" then
+        return "direct"
+      end
+      return "proxy"
+    end
+```
+
+Without a routing script, downloads use the global default outbound. Background
+downloads do not appear in client connection or traffic statistics. Shutdown
+cancels unfinished downloads.
+
+Dashboard files accept unauthenticated `GET` and `HEAD` requests so the browser
+can load the UI. API routes under `/api/` still require the configured secret;
+enter that secret in the dashboard to connect. Extensionless dashboard routes
+fall back to `index.html` for client-side navigation.
 
 ## Browser access (CORS)
 

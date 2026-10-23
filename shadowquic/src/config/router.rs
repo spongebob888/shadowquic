@@ -16,6 +16,7 @@ use std::sync::Arc;
 /// flowchart TD
 ///     inbound["Inbound listeners"]
 ///     downloader["Database downloader"]
+///     dashboard["Dashboard downloader"]
 ///     router["Router / dispatcher"]
 ///     outbound["Selected outbound: direct / proxy"]
 ///     destination["Destination"]
@@ -25,6 +26,7 @@ use std::sync::Arc;
 ///
 ///     inbound -->|"TCP/UDP; inbound_tag = listener tag"| router
 ///     downloader -->|"HTTP(S) over TCP; inbound_tag = database tag"| router
+///     dashboard -->|"HTTP(S) over TCP; inbound_tag = REST API tag"| router
 ///     router -->|"Outbound tag"| outbound
 ///     outbound --> destination
 ///
@@ -36,7 +38,7 @@ use std::sync::Arc;
 ///     upstream -->|"UDP/TCP, including TLS; inbound_tag = DNS service tag; dns_query metadata"| router
 /// ```
 ///
-/// All three request sources use the same router. Returning an outbound tag
+/// All request sources use the same router. Returning an outbound tag
 /// sends the session to that outbound. Returning a DNS service tag sends a UDP
 /// DNS session back into that service, which answers locally or creates a new
 /// upstream request that passes through the router again. Cache hits, fake-IP

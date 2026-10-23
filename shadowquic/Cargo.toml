@@ -14,7 +14,7 @@ default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", 
 dns-server = ["dep:ipnet", "dep:quick_cache", "dep:simple-dns", "dep:tokio-rustls-jls", "dep:rustls_jls", "dep:quinn"]
 # cost 200k
 statistics = ["dep:portable-atomic"]
-restful-api = ["statistics", "dep:hyper", "hyper/server", "dep:hyper-util", "dep:http-body-util", "dep:serde_json", "dep:url", "dep:percent-encoding", "dep:subtle", "time/formatting"]
+restful-api = ["statistics", "dep:hyper", "hyper/server", "dep:hyper-util", "dep:http-body-util", "dep:serde_json", "dep:url", "dep:percent-encoding", "dep:subtle", "time/formatting", "tokio/fs", "dep:tokio-rustls-jls", "dep:rustls_jls", "tokio-rustls-jls/tls12", "dep:tempfile"]
 jemalloc = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-sys"]
 mem-profile = ["restful-api", "jemalloc", "tikv-jemalloc-sys/profiling", "dep:tempfile"]
 # cost 200k

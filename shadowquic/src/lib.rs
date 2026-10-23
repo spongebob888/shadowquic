@@ -441,27 +441,32 @@ impl Manager {
             }
         }
         #[cfg(feature = "restful-api")]
-        let api_manager = Arc::new(api::ApiManager::new(
-            self.api_config.and_then(|config| config.secret),
-            self.outbounds
-                .iter()
-                .filter(|(_tag, _)| {
-                    #[cfg(feature = "dns-server")]
-                    if let Some(resolvers) = &self.resolver_manager {
-                        return resolvers.resolver(_tag).is_none();
-                    }
-                    true
-                })
-                .map(|(tag, outbound)| (tag.clone(), outbound.clone()))
-                .collect(),
-            self.sq_outbounds,
-            self.selectable_outbounds,
-            self.observers,
-            #[cfg(feature = "dns-server")]
-            self.resolver_manager
-                .as_ref()
-                .map(|manager| manager.cache()),
-        ));
+        let api_manager = Arc::new(
+            api::ApiManager::new(
+                self.api_config
+                    .as_ref()
+                    .and_then(|config| config.secret.clone()),
+                self.outbounds
+                    .iter()
+                    .filter(|(_tag, _)| {
+                        #[cfg(feature = "dns-server")]
+                        if let Some(resolvers) = &self.resolver_manager {
+                            return resolvers.resolver(_tag).is_none();
+                        }
+                        true
+                    })
+                    .map(|(tag, outbound)| (tag.clone(), outbound.clone()))
+                    .collect(),
+                self.sq_outbounds,
+                self.selectable_outbounds,
+                self.observers,
+                #[cfg(feature = "dns-server")]
+                self.resolver_manager
+                    .as_ref()
+                    .map(|manager| manager.cache()),
+            )
+            .with_ui_path(self.api_config.and_then(|config| config.ui_path)),
+        );
         let dispatcher = Arc::new(RequestDispatcher {
             outbounds: self.outbounds,
             default_outbound: self.default_outbound,

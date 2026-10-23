@@ -409,7 +409,7 @@ impl Databases {
             if !existing {
                 inbounds.insert(
                     cfg.tag().to_owned(),
-                    Box::new(download::DownloadInbound::new(cfg.clone(), slot.clone())),
+                    Box::new(download::inbound(cfg.clone(), slot.clone())),
                 );
             }
             manager.slots.insert(cfg.tag().to_owned(), slot);
@@ -470,5 +470,7 @@ fn config_error(error: impl std::fmt::Display) -> SError {
     SError::InvalidConfig(format!("router database: {error}"))
 }
 pub(crate) fn validate_url(url: &str) -> std::result::Result<(), SError> {
-    download::parse_url(url).map(|_| ()).map_err(config_error)
+    crate::utils::download::parse_url(url)
+        .map(|_| ())
+        .map_err(config_error)
 }
