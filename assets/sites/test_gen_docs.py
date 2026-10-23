@@ -103,6 +103,28 @@ class TunDocsTests(unittest.TestCase):
 
 
 class RestApiDocsTests(unittest.TestCase):
+    def test_dashboard_defaults_are_rendered_from_public_helpers(self):
+        filename = "shadowquic/src/config/mod.rs"
+        config = Item(dict(
+            id=0, name="ApiConfig", span=dict(filename=filename),
+            inner={"struct": {"kind": {"plain": {"fields": [1, 2]}}}},
+        ))
+        index = {config.id: config}
+        for id, name in enumerate(["tag", "ui_download_url"], start=1):
+            index[str(id)] = Item(dict(
+                id=id, name=name, span=dict(filename=filename),
+                inner={"struct_field": {"resolved_path": {"path": "String"}}},
+            ))
+        ctx = RenderContext(
+            index=index, page_for_type={}, pages_dir_for={},
+            default_values=collect_default_fn_values(REPO_ROOT),
+            src_attrs=parse_source_attrs(REPO_ROOT),
+        )
+        rendered = emit_struct_page(config, Path("configuration/restful-api.md"), "REST API", ctx)
+        self.assertIn("- **Default:** `restful-api`", rendered)
+        self.assertIn("- **Default:** `https://github.com/spongebob888/squirrelboard/releases/download/v0.1.2/index.html`", rendered)
+        self.assertNotIn(".into()", rendered)
+
     def index(self, include_api=True):
         def item(id, name, inner):
             return Item(dict(id=id, name=name, inner=inner,

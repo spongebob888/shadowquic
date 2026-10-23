@@ -40,6 +40,7 @@ mod memory;
 #[cfg(feature = "mem-profile")]
 mod memory_profile;
 pub(crate) mod quality;
+pub(crate) mod ui;
 pub use quality::SQStatsTrait;
 
 use quality::{ConnQuality, ProbeResult};
@@ -54,6 +55,7 @@ struct ApiOutbound {
 
 pub struct ApiManager {
     secret: Option<String>,
+    ui_path: Option<std::path::PathBuf>,
     outbounds: HashMap<String, ApiOutbound>,
     sq_outbounds: HashMap<String, Arc<dyn SQStatsTrait>>,
     selectable_outbounds: HashMap<String, Arc<dyn Selectable>>,
@@ -125,6 +127,11 @@ pub(crate) async fn bind(config: &ApiConfig) -> Result<TcpListener, SError> {
 }
 
 impl ApiManager {
+    pub(crate) fn with_ui_path(mut self, path: Option<std::path::PathBuf>) -> Self {
+        self.ui_path = path;
+        self
+    }
+
     pub(crate) fn new(
         secret: Option<String>,
         outbounds: HashMap<String, Arc<dyn Outbound>>,
@@ -135,6 +142,7 @@ impl ApiManager {
     ) -> Self {
         Self {
             secret: secret.filter(|secret| !secret.is_empty()),
+            ui_path: None,
             outbounds: outbounds
                 .into_iter()
                 .map(|(tag, outbound)| {
@@ -231,6 +239,13 @@ impl ApiManager {
     }
 
     async fn route(&self, request: Request<Incoming>) -> Result<HttpResponse, ApiError> {
+        let path = request.uri().path();
+        if let Some(root) = &self.ui_path
+            && path != "/api"
+            && !path.starts_with("/api/")
+        {
+            return ui::serve(root, request.method(), path).await;
+        }
         if !self.authorized(request.headers()) {
             return Err(ApiError::new(
                 StatusCode::UNAUTHORIZED,

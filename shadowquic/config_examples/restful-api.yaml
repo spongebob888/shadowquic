@@ -15,7 +15,11 @@ outbounds:
 router:
   default-outbound: choice
 restful-api:
+  tag: restful-api
   bind-addr: "127.0.0.1:9090"
+  # Serve the dashboard locally; download Squirrelboard v0.1.2 when index.html is missing.
+  # ui-path: ./ui
+  # ui-download-url: https://github.com/spongebob888/squirrelboard/releases/download/v0.1.2/index.html
   # secret: "choose-a-secret"
 log-level: info
 # Switch new sessions to blocked:

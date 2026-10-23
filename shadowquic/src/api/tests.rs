@@ -87,6 +87,9 @@ async fn server(
     let listener = bind(&ApiConfig {
         bind_addr: "127.0.0.1:0".parse().unwrap(),
         secret: None,
+        tag: crate::config::default_api_tag(),
+        ui_path: None,
+        ui_download_url: crate::config::default_ui_download_url(),
     })
     .await
     .unwrap();
@@ -698,6 +701,9 @@ async fn api_binding_allows_wildcard_addresses_without_a_secret() {
         let listener = bind(&ApiConfig {
             bind_addr: addr.parse().unwrap(),
             secret: None,
+            tag: crate::config::default_api_tag(),
+            ui_path: None,
+            ui_download_url: crate::config::default_ui_download_url(),
         })
         .await
         .unwrap();

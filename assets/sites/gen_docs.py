@@ -517,6 +517,7 @@ class RenderContext:
 
 _ENUM_VARIANT_EXPR_RE = re.compile(r"^([A-Z][A-Za-z0-9_]*)::([A-Z][A-Za-z0-9_]*)$")
 _PARSED_STRING_EXPR_RE = re.compile(r'^"([^"\\]*)"\.parse\(\)\.unwrap\(\)$')
+_OWNED_STRING_EXPR_RE = re.compile(r'^"([^"\\]*)"\.(?:into|to_owned|to_string)\(\)$')
 
 
 def render_default_value(expr: str, ctx: RenderContext) -> str:
@@ -531,7 +532,8 @@ def render_default_value(expr: str, ctx: RenderContext) -> str:
     optional = re.fullmatch(r"Some\((.*)\)", expr.strip())
     if optional:
         return render_default_value(optional.group(1), ctx)
-    parsed = _PARSED_STRING_EXPR_RE.fullmatch(expr.strip())
+    parsed = (_PARSED_STRING_EXPR_RE.fullmatch(expr.strip())
+              or _OWNED_STRING_EXPR_RE.fullmatch(expr.strip()))
     if parsed:
         return parsed.group(1)
     m = _ENUM_VARIANT_EXPR_RE.match(expr.strip())

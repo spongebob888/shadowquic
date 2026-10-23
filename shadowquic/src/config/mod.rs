@@ -4,6 +4,7 @@ use shadowquic_macros::{SDecode, SEncode};
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
+    path::PathBuf,
     sync::Arc,
 };
 use tracing::{Instrument, Level, info_span, warn};
@@ -140,9 +141,17 @@ pub struct Config {
 ///
 /// ```yaml
 /// restful-api:
+///   tag: restful-api
 ///   bind-addr: 127.0.0.1:9090
 ///   secret: choose-a-secret
+///   ui-path: ./ui
 /// ```
+///
+/// `ui-path` enables local dashboard serving at `/`. If `index.html` is missing,
+/// startup downloads Squirrelboard v0.1.2's standalone index.html. Existing files are
+/// reused. Downloads follow normal routing with `tag` as the inbound tag.
+/// Omit `ui-path` to disable dashboard serving and downloading. Dashboard files
+/// are public; API endpoints still require the configured bearer token.
 ///
 /// A nonempty `secret` requires `Authorization: Bearer <secret>` on API requests.
 /// Omit `secret` or set it to an empty string to disable authentication.
@@ -173,13 +182,35 @@ pub struct Config {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ApiConfig {
+    /// Inbound tag for dashboard downloads, available to routing scripts.
+    #[serde(default = "default_api_tag")]
+    pub tag: String,
     /// HTTP listener address. Wildcard addresses such as `0.0.0.0:9090` and
     /// `[::]:9090` are allowed. A bind failure prevents manager startup.
     pub bind_addr: SocketAddr,
-    /// Require `Authorization: Bearer <secret>` when nonempty, except on CORS preflights.
+    /// Require `Authorization: Bearer <secret>` on API requests when nonempty,
+    /// except on CORS preflights. Dashboard files remain public.
     /// Omit this field or set it to an empty string to disable authentication.
     #[serde(default)]
     pub secret: Option<String>,
+    /// Serve the dashboard from this directory. If index.html is missing,
+    /// download ui-download-url as index.html on startup. Omit to disable the UI.
+    #[serde(default)]
+    pub ui_path: Option<PathBuf>,
+    /// Standalone dashboard HTML URL. Used only when ui-path is configured and
+    /// index.html is missing. Downloads follow redirects through normal routing.
+    #[serde(default = "default_ui_download_url")]
+    pub ui_download_url: String,
+}
+
+/// Default inbound tag for REST API dashboard downloads.
+pub fn default_api_tag() -> String {
+    "restful-api".into()
+}
+
+/// Default standalone dashboard HTML release.
+pub fn default_ui_download_url() -> String {
+    "https://github.com/spongebob888/squirrelboard/releases/download/v0.1.2/index.html".into()
 }
 impl Config {
     /// Explicit outbounds come first, followed by automatically registered DNS services.
@@ -246,6 +277,24 @@ impl Config {
                     "invalid or duplicate router database tag: {}",
                     db.tag()
                 )));
+            }
+        }
+        if let Some(api) = &self.restful_api {
+            if api.tag.trim().is_empty() || api.tag == "default-system" || !seen.insert(&api.tag) {
+                return Err(SError::InvalidConfig(format!(
+                    "invalid or duplicate restful-api tag: {}",
+                    api.tag
+                )));
+            }
+            #[cfg(feature = "restful-api")]
+            if let Some(path) = &api.ui_path {
+                if path.as_os_str().is_empty() {
+                    return Err(SError::InvalidConfig(
+                        "restful-api ui-path must not be empty".into(),
+                    ));
+                }
+                crate::utils::download::parse_url(&api.ui_download_url)
+                    .map_err(|error| SError::InvalidConfig(error.to_string()))?;
             }
         }
         if let Some(tag) = &self.router.default_outbound
@@ -333,6 +382,15 @@ impl Config {
         let mut selectable_outbounds: HashMap<String, Arc<dyn crate::Selectable>> = HashMap::new();
         #[cfg(feature = "restful-api")]
         let mut sq_outbounds = HashMap::new();
+        #[cfg(feature = "restful-api")]
+        if let Some(api) = &self.restful_api
+            && api.ui_path.is_some()
+        {
+            inbounds.insert(
+                api.tag.clone(),
+                Box::new(crate::api::ui::download_inbound(api.clone())) as Box<dyn Inbound>,
+            );
+        }
         #[cfg(feature = "dns-server")]
         let mut resolver_manager = Arc::new(ResolverManager::new());
         #[cfg(not(feature = "dns-server"))]
@@ -1374,6 +1432,9 @@ outbounds:
                 cfg.restful_api = Some(super::ApiConfig {
                     bind_addr: addr.parse().unwrap(),
                     secret,
+                    tag: super::default_api_tag(),
+                    ui_path: None,
+                    ui_download_url: super::default_ui_download_url(),
                 });
                 assert_eq!(cfg.validate().is_ok(), cfg!(feature = "restful-api"));
             }
@@ -1382,11 +1443,34 @@ outbounds:
         let config =
             serde_saphyr::from_str::<super::ApiConfig>("bind-addr: '0.0.0.0:9090'").unwrap();
         assert!(config.secret.is_none());
+        assert_eq!(config.tag, "restful-api");
+        assert!(config.ui_path.is_none());
+        assert_eq!(config.ui_download_url, super::default_ui_download_url());
         let config = serde_saphyr::from_str::<super::ApiConfig>(
             "bind-addr: '[::]:9090'\nsecret: test-secret",
         )
         .unwrap();
         assert_eq!(config.secret.as_deref(), Some("test-secret"));
+    }
+
+    #[cfg(feature = "restful-api")]
+    #[test]
+    fn dashboard_configuration_rejects_colliding_tags_and_invalid_sources() {
+        for fields in [
+            "tag: ''",
+            "tag: one",
+            "tag: z-first",
+            "tag: default-system",
+            "ui-path: ''",
+            "ui-path: ui\nui-download-url: ftp://example.test/index.html",
+            "ui-path: ui\nui-download-url: https://user:pass@example.test/index.html",
+        ] {
+            let mut cfg = multi_config();
+            cfg.restful_api = Some(
+                serde_saphyr::from_str(&format!("bind-addr: '127.0.0.1:0'\n{fields}")).unwrap(),
+            );
+            assert!(cfg.validate().is_err(), "{fields}");
+        }
     }
 
     #[cfg(feature = "restful-api")]

@@ -15,7 +15,7 @@ traffic counters, Tokio runtime metrics, memory statistics, and outbound probing
 - Require `bind-addr` and allow any address, including wildcard addresses,
   whether or not a secret is configured.
 - Accept an optional `secret`. If nonempty, require `Authorization: Bearer <secret>`
-  on every request except CORS preflights before route validation or probe execution.
+  on every API request except CORS preflights before route validation or probe execution.
   Compare tokens in constant time. Reject missing, malformed, duplicate, or incorrect credentials
   with `401`, error code `unauthorized`, and `WWW-Authenticate: Bearer`.
   Omitted or empty secrets disable authentication. Never return the secret in errors.
@@ -24,9 +24,38 @@ traffic counters, Tokio runtime metrics, memory statistics, and outbound probing
 
 ```yaml
 restful-api:
+  tag: restful-api
   bind-addr: "127.0.0.1:9090"
+  # ui-path: ./ui
   # secret: "choose-a-secret"
 ```
+
+## Local dashboard
+
+The optional `ui-path` directory enables static dashboard serving on the same
+HTTP listener. Omission disables UI serving and downloading. If `index.html`
+already exists, reuse the directory without network access. Otherwise download
+`ui-download-url`, defaulting to
+`https://github.com/spongebob888/squirrelboard/releases/download/v0.1.2/index.html`,
+on startup. Support HTTP(S), certificate verification with JLS and TLS early data
+disabled, and relative or absolute redirects through the normal proxy router.
+Every download connection uses `restful-api.tag` as its inbound tag; this tag
+defaults to `restful-api`, is validated for uniqueness, and has no client observer.
+
+Start downloading in a managed internal inbound while the API and proxy run.
+Bound the download to 120 seconds and 32 MiB and follow at most ten requests.
+Download standalone HTML with its JavaScript and CSS bundled into the page;
+archive support and ZIP dependencies are unnecessary. Create `ui-path` if
+needed, write a temporary file inside it, then atomically publish `index.html`
+without replacing an existing page or modifying other files. Log failures
+without stopping the proxy. Cancel pending network I/O at shutdown and join
+installation before shutdown returns.
+
+Serve public GET/HEAD dashboard files with MIME types at `/` and fall back to
+`index.html` for extensionless SPA paths. Reject traversal and symlink escapes.
+Keep `/api` and `/api/*` on the authenticated API route path, including unknown
+routes. UI responses never contain the API secret. Return `503` while the
+dashboard is unavailable. Existing API behavior is unchanged without `ui-path`.
 
 ## Observer coverage and metric semantics
 
