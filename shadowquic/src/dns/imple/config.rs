@@ -135,7 +135,7 @@ impl DnsQuicServerCfg {
         let client = super::quic::DoqClient::new(
             self.upstream,
             self.server_name,
-            tls_connector()?.config().as_ref().clone(),
+            crate::utils::tls::quic_client_config()?,
             self.zero_rtt,
         )?;
         DnsServer::new(

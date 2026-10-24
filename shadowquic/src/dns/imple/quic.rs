@@ -17,7 +17,7 @@ use quinn::{
     AsyncUdpSocket, UdpSender,
     udp::{RecvMeta, Transmit},
 };
-use tokio::sync::{Mutex, OnceCell, mpsc};
+use tokio::sync::{Mutex, mpsc};
 
 use super::{Result, dns_error, parse_query, read_frame, validate_response, write_frame};
 use crate::{
@@ -62,30 +62,29 @@ impl Drop for Endpoint {
 struct Session {
     _endpoint: Arc<Endpoint>,
     connection: quinn::Connection,
-    acceptance: Option<Mutex<quinn::ZeroRttAccepted>>,
-    accepted: OnceCell<bool>,
+    zero_rtt: bool,
 }
 
-impl Session {
-    async fn early_data_accepted(&self) -> bool {
-        *self
-            .accepted
-            .get_or_init(|| async {
-                match &self.acceptance {
-                    // Keep the future in place so cancellation cannot lose it.
-                    Some(acceptance) => (&mut *acceptance.lock().await).await,
-                    None => true,
-                }
-            })
-            .await
-    }
+fn zero_rtt_rejected(error: &SError) -> bool {
+    let SError::Io(error) = error else {
+        return false;
+    };
+    error.get_ref().is_some_and(|error| {
+        matches!(
+            error.downcast_ref::<quinn::ReadError>(),
+            Some(quinn::ReadError::ZeroRttRejected)
+        ) || matches!(
+            error.downcast_ref::<quinn::WriteError>(),
+            Some(quinn::WriteError::ZeroRttRejected)
+        )
+    })
 }
 
 impl DoqClient {
     pub(super) fn new(
         upstream: SocketAddr,
         server_name: String,
-        mut tls: rustls_jls::ClientConfig,
+        mut tls: quinn::rustls::ClientConfig,
         zero_rtt: bool,
     ) -> Result<Self> {
         tls.jls_config.enable = false;
@@ -177,22 +176,21 @@ impl DoqClient {
                     return Err(dns_error(error));
                 }
             };
-        let (connection, acceptance) = if self.zero_rtt {
+        let (connection, zero_rtt) = if self.zero_rtt {
             match connecting.into_0rtt() {
-                Ok((connection, acceptance)) => {
+                Ok(connection) => {
                     tracing::debug!("attempting DNS over QUIC 0-RTT");
-                    (connection, Some(Mutex::new(acceptance)))
+                    (connection, true)
                 }
-                Err(connecting) => (connecting.await.map_err(dns_error)?, None),
+                Err(connecting) => (connecting.await.map_err(dns_error)?, false),
             }
         } else {
-            (connecting.await.map_err(dns_error)?, None)
+            (connecting.await.map_err(dns_error)?, false)
         };
         let session = Arc::new(Session {
             _endpoint: endpoint,
             connection,
-            acceptance,
-            accepted: OnceCell::new(),
+            zero_rtt,
         });
         *cached = Some(session.clone());
         Ok(session)
@@ -206,16 +204,17 @@ impl DoqClient {
         // Retry once if a cached connection closes while opening/using a stream.
         for attempt in 0..2 {
             let session = self.connection(query, requests).await?;
-            let early = session.acceptance.is_some() && session.accepted.get().is_none();
             let mut result = exchange_stream(&session.connection, query).await;
-            if early {
-                let accepted = session.early_data_accepted().await;
-                tracing::debug!(accepted, "DNS over QUIC 0-RTT handshake completed");
-                if !accepted && result.is_err() && session.connection.close_reason().is_none() {
-                    // Rejected early streams cannot be reused. Repeat the query on
-                    // a fresh 1-RTT stream of the authenticated connection.
-                    result = exchange_stream(&session.connection, query).await;
-                }
+            if session.zero_rtt && result.as_ref().is_err_and(zero_rtt_rejected) {
+                // Rejected early streams cannot be reused. Wait for authentication
+                // before retrying on a fresh 1-RTT stream.
+                session
+                    .connection
+                    .authenticated()
+                    .await
+                    .map_err(dns_error)?;
+                tracing::debug!("retrying rejected DNS over QUIC 0-RTT query");
+                result = exchange_stream(&session.connection, query).await;
             }
             match result {
                 Ok(reply) => return Ok(reply),
