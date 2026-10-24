@@ -189,11 +189,15 @@ impl QuicClient for EndClient {
         let conn = self.inner.connect(addr, server_name)?;
         let conn = if self.zero_rtt {
             match conn.into_0rtt() {
-                Ok((x, accepted)) => {
+                Ok(x) => {
                     let conn_clone = x.clone();
                     tokio::spawn(
                         async move {
-                            debug!("zero rtt accepted: {}", accepted.await);
+                            if let Err(error) = conn_clone.authenticated().await {
+                                debug!(%error, "0-RTT handshake failed");
+                                return;
+                            }
+                            debug!("0-RTT handshake completed");
                             if conn_clone.is_jls() == Some(false) {
                                 error!("JLS hijacked or wrong pwd/iv");
                                 conn_clone.close(0u8.into(), b"");
@@ -418,11 +422,15 @@ impl QuicServer for EndServer {
                 let conn = conn.accept()?;
                 let connection = if self.zero_rtt.load(Relaxed) {
                     match conn.into_0rtt() {
-                        Ok((conn, accepted)) => {
+                        Ok(conn) => {
                             let conn_clone = conn.clone();
                             tokio::spawn(
                                 async move {
-                                    debug!("zero rtt accepted:{}", accepted.await);
+                                    if let Err(error) = conn_clone.authenticated().await {
+                                        debug!(%error, "0-RTT handshake failed");
+                                        return;
+                                    }
+                                    debug!("0-RTT handshake completed");
                                     if conn_clone.is_jls() == Some(false) {
                                         error!("JLS hijacked or wrong pwd/iv");
                                         conn_clone.close(0u8.into(), b"");

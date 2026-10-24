@@ -15,6 +15,21 @@ fn query(id: u16) -> Vec<u8> {
     packet.build_bytes_vec().unwrap()
 }
 
+#[test]
+fn zero_rtt_retry_recognizes_only_quinn_rejection_errors() {
+    for error in [
+        io::Error::from(quinn::ReadError::ZeroRttRejected),
+        io::Error::from(quinn::WriteError::ZeroRttRejected),
+    ] {
+        assert!(zero_rtt_rejected(&SError::Io(error)));
+    }
+    assert!(!zero_rtt_rejected(&SError::Io(io::Error::new(
+        io::ErrorKind::ConnectionReset,
+        "upstream reset",
+    ))));
+    assert!(!zero_rtt_rejected(&dns_error("invalid DNS response")));
+}
+
 fn fixture(trusted: bool, name: &str) -> (quinn::Endpoint, DoqClient) {
     let (endpoint, client, _) = fixture_with_zero_rtt(trusted, name, true);
     (endpoint, client)
@@ -26,19 +41,19 @@ fn fixture_with_zero_rtt(
     zero_rtt: bool,
 ) -> (quinn::Endpoint, DoqClient, quinn::ServerConfig) {
     let cert = rcgen::generate_simple_self_signed(vec!["dns.test".into()]).unwrap();
-    let connector = crate::utils::tls::tls_connector().unwrap();
-    let provider = connector.config().crypto_provider().clone();
-    let mut tls = rustls_jls::ServerConfig::builder_with_provider(provider.clone())
-        .with_protocol_versions(&[&rustls_jls::version::TLS13])
+    let config = crate::utils::tls::quic_client_config().unwrap();
+    let provider = config.crypto_provider().clone();
+    let mut tls = quinn::rustls::ServerConfig::builder_with_provider(provider.clone())
+        .with_protocol_versions(&[&quinn::rustls::version::TLS13])
         .unwrap()
         .with_no_client_auth()
         .with_single_cert(
             vec![cert.cert.der().clone()],
-            rustls_jls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der())
+            quinn::rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der())
                 .into(),
         )
         .unwrap();
-    tls.jls_config = rustls_jls::jls::JlsServerConfig::default()
+    tls.jls_config = quinn::rustls::jls::JlsServerConfig::default()
         .enable(false)
         .into();
     tls.alpn_protocols = vec![b"doq".to_vec()];
@@ -51,12 +66,12 @@ fn fixture_with_zero_rtt(
         quinn::crypto::rustls::QuicServerConfig::try_from(tls).unwrap(),
     ));
     let endpoint = quinn::Endpoint::server(server, "127.0.0.1:0".parse().unwrap()).unwrap();
-    let mut roots = rustls_jls::RootCertStore::empty();
+    let mut roots = quinn::rustls::RootCertStore::empty();
     if trusted {
         roots.add(cert.cert.der().clone()).unwrap();
     }
-    let tls = rustls_jls::ClientConfig::builder_with_provider(provider)
-        .with_protocol_versions(&[&rustls_jls::version::TLS13])
+    let tls = quinn::rustls::ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(&[&quinn::rustls::version::TLS13])
         .unwrap()
         .with_root_certificates(roots)
         .with_no_client_auth();
@@ -455,10 +470,7 @@ async fn doq_resumes_with_early_data_and_retries_rejected_early_queries() {
             });
             client.exchange(&query(1), &requests).await.unwrap();
             let old = client.session.lock().await.as_ref().unwrap().clone();
-            assert!(
-                old.acceptance.is_none(),
-                "the first connection cannot use 0-RTT"
-            );
+            assert!(!old.zero_rtt, "the first connection cannot use 0-RTT");
             reconnect.send(()).unwrap();
             old.connection.closed().await;
             let q1 = query(2);
@@ -472,10 +484,7 @@ async fn doq_resumes_with_early_data_and_retries_rejected_early_queries() {
             {
                 let cached = client.session.lock().await;
                 let session = cached.as_ref().unwrap();
-                assert_eq!(session.acceptance.is_some(), enabled);
-                if enabled {
-                    assert_eq!(session.accepted.get(), Some(&accepted));
-                }
+                assert_eq!(session.zero_rtt, enabled);
             }
             assert_eq!(
                 count.load(Ordering::SeqCst),
@@ -503,10 +512,19 @@ async fn cancelled_handshake_preserves_endpoint_and_udp_source_port() {
         let serving = tokio::spawn(async move {
             let incoming = server.accept().await.unwrap();
             let remote = incoming.remote_address();
+            let cancelled_id = incoming.orig_dst_cid();
             arrived.send(()).unwrap();
             resumed.await.unwrap();
             incoming.refuse();
-            let connection = server.accept().await.unwrap().await.unwrap();
+            let connection = loop {
+                let incoming = server.accept().await.unwrap();
+                // Cancellation can leave more Initial packets queued for this CID.
+                if incoming.orig_dst_cid() == cancelled_id {
+                    incoming.refuse();
+                    continue;
+                }
+                break incoming.await.unwrap();
+            };
             assert_eq!(connection.remote_address(), remote);
             let (send, recv) = connection.accept_bi().await.unwrap();
             answer(send, recv).await;
@@ -652,17 +670,13 @@ async fn alidns_reuses_cached_quic_connection() {
     result.unwrap();
 }
 
-/// Proves 0-RTT negotiation on replacement AliDNS connections, rather than
-/// merely reusing an already established connection. No DNS response cache is used.
+/// Exercises 0-RTT attempts and fallback on replacement AliDNS connections.
+/// No DNS response cache is used.
 #[tokio::test]
 #[ignore = "requires Internet access to AliDNS over UDP port 853"]
 async fn alidns_resumes_with_zero_rtt_attempt_and_fallback() {
     timeout(Duration::from_secs(12), async {
-        let tls = crate::utils::tls::tls_connector()
-            .unwrap()
-            .config()
-            .as_ref()
-            .clone();
+        let tls = crate::utils::tls::quic_client_config().unwrap();
         let client = DoqClient::new(
             "223.5.5.5:853".parse().unwrap(),
             "dns.alidns.com".into(),
@@ -702,19 +716,10 @@ async fn alidns_resumes_with_zero_rtt_attempt_and_fallback() {
             );
             let cached = client.session.lock().await;
             let session = cached.as_ref().unwrap();
-            assert_eq!(session.acceptance.is_some(), resumed);
+            assert_eq!(session.zero_rtt, resumed);
             if resumed {
-                let accepted = session
-                    .accepted
-                    .get()
-                    .expect("0-RTT handshake result must be observed");
-                assert!(
-                    accepted,
-                    "AliDNS must accept 0-RTT with a stable UDP session"
-                );
-                eprintln!(
-                    "AliDNS resumed connection: 0-RTT accepted={accepted}; DNS query succeeded"
-                );
+                session.connection.authenticated().await.unwrap();
+                eprintln!("AliDNS resumed connection: DNS query succeeded");
             }
             session.connection.close(0u32.into(), b"resumption test");
             session.connection.closed().await;

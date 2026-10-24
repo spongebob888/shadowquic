@@ -1300,11 +1300,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
- "js-sys",
  "libc",
  "r-efi 5.3.0",
  "wasip2",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -2791,9 +2789,9 @@ dependencies = [
 
 [[package]]
 name = "quinn-jls"
-version = "0.3.8"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06575428b476c2672be58db56c48d517c2b469b3083eeb9f51dc4f61de541be4"
+checksum = "ea00596eb53fa6f29899b0e48014ff4804bcfeda4aae5a228df25b9b64e315cf"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2811,15 +2809,16 @@ dependencies = [
 
 [[package]]
 name = "quinn-proto-jls"
-version = "0.3.8"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfff8bfe6190cc5e06e722680afbe1ec5cf3c6e8b62d026b1551bb68c63f0fb3"
+checksum = "383da615650985c5b656c7a9b6642bf74c27003e02f9aaac917ce8e81eb791e4"
 dependencies = [
  "aws-lc-rs",
  "bytes",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "lru-slab",
- "rand 0.9.5",
+ "rand 0.10.2",
+ "rand_pcg",
  "ring",
  "rustc-hash",
  "rustls-jls",
@@ -2833,9 +2832,9 @@ dependencies = [
 
 [[package]]
 name = "quinn-udp-jls"
-version = "0.3.8"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c5f833e7fb0eefb2f80fb857c0873f60aa3e9dafd0b63c680e7ac14b178091b"
+checksum = "5d5749a7be268ab1c4fb36b2d6011bffb2c692a7d668c0116663289aa2e91b6d"
 dependencies = [
  "cfg_aliases",
  "libc",
