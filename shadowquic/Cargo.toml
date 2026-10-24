@@ -87,7 +87,7 @@ rustls_jls = { package = "rustls-jls", version = "1.3.7", default-features = fal
 rcgen = { version = "0.14", default-features = false, features = ["crypto"] }
 bytes = "1.11.0"
 async-trait = "0.1.89"
-webpki-roots = "1.0.7"
+webpki-roots = "1.0.11"
 shadowquic-macros = { path = "../shadowquic-macros", version = ">=0.3.11" }
 yaml-rust2 = "0.13.0"
 serde = { version = "1.0.228", features = ["derive"]}
