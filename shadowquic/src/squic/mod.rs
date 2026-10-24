@@ -217,15 +217,22 @@ where
 
 impl IDStore {
     async fn feed_datagram(&self, id: u16, packet: Bytes) -> SResult<()> {
-        if let Some(Ok((socket, addr))) = self.inner.read().await.get(&id) {
+        let lock = self.inner.read().await;
+        if let Some(Ok((socket, addr))) = lock.get(&id) {
+            let (socket, addr) = (socket.clone(), addr.clone());
+            drop(lock);
             socket.send_to(packet, addr.clone()).await?;
             Ok(())
         } else {
+            drop(lock);
+            let mut lock = self.inner.write().await;
             // Need to recheck
             // During change from read lock to write lock, hashmap may be modified
-            match self.inner.write().await.entry(id) {
+            match lock.entry(id) {
                 Entry::Occupied(mut entry) => match entry.get_mut() {
                     Ok((socket, addr)) => {
+                        let (socket, addr) = (socket.clone(), addr.clone());
+                        drop(lock);
                         socket.send_to(packet, addr.clone()).await?;
                         Ok(())
                     }
