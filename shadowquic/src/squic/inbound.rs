@@ -190,8 +190,9 @@ impl<C: QuicConnection> SQServerConn<C> {
             SQReq::SQExtension(ext_opcode) => {
                 self.handle_extension(ext_opcode, send, recv).await?;
             }
-            _ => {
-                unimplemented!()
+            SQReq::SQBind(_) => {
+                tracing::error!("bind cmd is not implemented");
+                return Err(SError::ProtocolUnimpl);
             }
         }
         Ok(())
