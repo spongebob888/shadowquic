@@ -837,6 +837,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#blackhole-threshold" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>blackhole-threshold</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#user-store" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -2313,6 +2324,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#blackhole-threshold" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>blackhole-threshold</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#user-store" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -2540,6 +2562,15 @@ previously discovered MTU is kept after a black hole is detected.
 Controls quinn-jls <code>MtuDiscoveryConfig::blackhole_reset_mtu</code>.
 Only takes effect when <code>mtu_discovery</code> is enabled.</p>
 <p>In high packet loss network, it's better to disable black hole detection to avoid unnecessary mtu reset.</p>
+<h3 id="blackhole-threshold"><code>blackhole-threshold</code><a class="headerlink" href="#blackhole-threshold" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>usize</code></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <code>15</code></li>
+</ul>
+<p>Maximum suspicious packet loss bursts tolerated before detecting an MTU black hole.
+Defaults to 15; 0 triggers detection on the first suspicious burst.
+Only takes effect when <code>mtu_discovery</code> is enabled.</p>
 <h3 id="user-store"><code>user-store</code><a class="headerlink" href="#user-store" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Type:</strong> <code>path</code> <em>(optional)</em></li>
