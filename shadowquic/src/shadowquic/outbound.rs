@@ -13,7 +13,7 @@ use crate::{
     error::SError,
     msgs::squic::{SQExtError, UserStats},
     quic::QuicClient,
-    squic::{inbound::UserManager, outbound},
+    squic::{inbound::UserManager, outbound, within_acquire_timeout},
     utils::socket_opt::{SocketFactory, UdpSocketFactory},
 };
 
@@ -60,6 +60,10 @@ impl ShadowQuicClient {
     }
 
     pub async fn get_conn(&self) -> Result<ShadowQuicConn, SError> {
+        within_acquire_timeout(self.connect_once()).await
+    }
+
+    async fn connect_once(&self) -> Result<ShadowQuicConn, SError> {
         let addr =
             crate::dns::resolve_destination(&*self.addr_resolver, &self.config.addr.parse()?, None)
                 .await?;
@@ -93,19 +97,22 @@ impl ShadowQuicClient {
         Ok(conn)
     }
     async fn prepare_conn(&self) -> Result<ShadowQuicConn, SError> {
-        // Serialize cache refreshes so concurrent requests reuse one connection.
-        let mut quic_conn = self.quic_conn.lock().await;
-        // delete connection if closed.
-        quic_conn.take_if(|x| {
-            x.close_reason().is_some_and(|x| {
-                info!("quic connection closed due to {}", x);
-                true
-            })
-        });
-        if quic_conn.is_none() {
-            *quic_conn = Some(self.get_conn().await?);
-        }
-        Ok(quic_conn.as_ref().unwrap().clone())
+        within_acquire_timeout(async {
+            // Serialize cache refreshes so concurrent requests reuse one connection.
+            let mut quic_conn = self.quic_conn.lock().await;
+            // delete connection if closed.
+            quic_conn.take_if(|x| {
+                x.close_reason().is_some_and(|x| {
+                    info!("quic connection closed due to {}", x);
+                    true
+                })
+            });
+            if quic_conn.is_none() {
+                *quic_conn = Some(self.get_conn().await?);
+            }
+            Ok(quic_conn.as_ref().unwrap().clone())
+        })
+        .await
     }
 }
 

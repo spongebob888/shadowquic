@@ -13,7 +13,7 @@ use crate::{
     error::SError,
     msgs::squic::{SQExtError, UserStats},
     quic::{QuicClient, QuicConnection},
-    squic::{auth_sunny, inbound::UserManager, outbound},
+    squic::{auth_sunny, inbound::UserManager, outbound, within_acquire_timeout},
     sunnyquic::gen_sunny_user_hash,
     utils::socket_opt::{SocketFactory, UdpSocketFactory},
 };
@@ -61,6 +61,10 @@ impl SunnyQuicClient {
     }
 
     pub async fn get_conn(&self) -> Result<SunnyQuicConn, SError> {
+        within_acquire_timeout(self.connect_once()).await
+    }
+
+    async fn connect_once(&self) -> Result<SunnyQuicConn, SError> {
         let addr =
             crate::dns::resolve_destination(&*self.addr_resolver, &self.config.addr.parse()?, None)
                 .await?;
@@ -103,19 +107,22 @@ impl SunnyQuicClient {
         Ok(conn)
     }
     async fn prepare_conn(&self) -> Result<SunnyQuicConn, SError> {
-        // Serialize cache refreshes so concurrent requests reuse one connection.
-        let mut quic_conn = self.quic_conn.lock().await;
-        // delete connection if closed.
-        quic_conn.take_if(|x| {
-            QuicConnection::close_reason(&x.conn).is_some_and(|x| {
-                info!("quic connection closed due to {}", x);
-                true
-            })
-        });
-        if quic_conn.is_none() {
-            *quic_conn = Some(self.get_conn().await?);
-        }
-        Ok(quic_conn.as_ref().unwrap().clone())
+        within_acquire_timeout(async {
+            // Serialize cache refreshes so concurrent requests reuse one connection.
+            let mut quic_conn = self.quic_conn.lock().await;
+            // delete connection if closed.
+            quic_conn.take_if(|x| {
+                QuicConnection::close_reason(&x.conn).is_some_and(|x| {
+                    info!("quic connection closed due to {}", x);
+                    true
+                })
+            });
+            if quic_conn.is_none() {
+                *quic_conn = Some(self.get_conn().await?);
+            }
+            Ok(quic_conn.as_ref().unwrap().clone())
+        })
+        .await
     }
 }
 

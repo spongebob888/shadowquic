@@ -7,6 +7,7 @@ use std::{
         HashMap,
         hash_map::{self, Entry},
     },
+    future::Future,
     io::Cursor,
     mem::replace,
     ops::Deref,
@@ -22,7 +23,7 @@ use tokio::{
         watch::{Receiver, Sender, channel},
     },
 };
-use tracing::{Instrument, Level, debug, error, event, info, trace};
+use tracing::{Instrument, Level, debug, error, event, info, trace, warn};
 
 use crate::{
     AnyUdpRecv, AnyUdpSend, UdpSend,
@@ -37,6 +38,37 @@ use crate::{
 
 pub mod inbound;
 pub mod outbound;
+
+/// Upper bound on getting a usable connection out of a squic outbound: waiting for a
+/// concurrent handshake to finish, resolving the server address, and the handshake
+/// itself.
+///
+/// None of that is naturally bounded, so an unreachable server makes every request wait
+/// one full handshake timeout per request ahead of it in the queue, while it keeps its
+/// accepted inbound stream open. Callers time their own requests out long before that,
+/// so the abandoned streams pile up as CLOSE-WAIT — thousands of them, and a matching
+/// number of file descriptors — until the server comes back.
+pub(crate) const CONN_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Runs a connection acquisition under [`CONN_ACQUIRE_TIMEOUT`].
+///
+/// Dropping the inner future also drops the cached-connection lock, so a timeout hands
+/// the queue over to the next request instead of stacking behind the same stalled
+/// handshake.
+pub(crate) async fn within_acquire_timeout<T>(
+    acquire: impl Future<Output = SResult<T>>,
+) -> SResult<T> {
+    match tokio::time::timeout(CONN_ACQUIRE_TIMEOUT, acquire).await {
+        Ok(result) => result,
+        Err(_) => {
+            warn!(
+                "gave up acquiring the outbound connection after {:?}",
+                CONN_ACQUIRE_TIMEOUT
+            );
+            Err(SError::OutboundUnavailable)
+        }
+    }
+}
 
 /// SQuic connection, it is shared by shadowquic and sunnyquic and is a wrapper of quic connection.
 /// It contains a connection object and two ID store for managing UDP sockets.
