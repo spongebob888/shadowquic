@@ -1035,6 +1035,10 @@ pub fn default_blackhole_detection() -> bool {
     false
 }
 
+pub fn default_blackhole_threshold() -> usize {
+    15
+}
+
 pub fn default_brutal_bandwidth() -> u64 {
     10_000_000
 }
