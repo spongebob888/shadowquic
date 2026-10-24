@@ -249,6 +249,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn download_completion_closes_inbound_after_installing_dashboard() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for existing in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().join("ui");
+            if existing {
+                install(b"existing", &root).unwrap();
+            }
+            let mut cfg: ApiConfig = serde_saphyr::from_str(
+                "bind-addr: '127.0.0.1:0'\nui-download-url: http://example.test/index.html",
+            )
+            .unwrap();
+            cfg.ui_path = Some(root.clone());
+            let mut inbound = download_inbound(cfg);
+            inbound.init().await.unwrap();
+            tokio::time::timeout(Duration::from_secs(2), async {
+                if !existing {
+                    let ProxyRequest::Tcp(mut session) = inbound.accept().await.unwrap() else {
+                        panic!("expected TCP")
+                    };
+                    let mut headers = Vec::new();
+                    while !headers.ends_with(b"\r\n\r\n") {
+                        headers.push(session.stream.read_u8().await.unwrap());
+                    }
+                    session
+                        .stream
+                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nindex")
+                        .await
+                        .unwrap();
+                }
+                assert!(matches!(
+                    inbound.accept().await,
+                    Err(crate::error::SError::InboundClosed)
+                ));
+            })
+            .await
+            .expect("dashboard download inbound stayed open");
+            assert_eq!(
+                std::fs::read(root.join("index.html")).unwrap(),
+                if existing {
+                    b"existing".as_slice()
+                } else {
+                    b"index".as_slice()
+                }
+            );
+            inbound.shutdown().await.unwrap();
+        }
+    }
+
+    #[tokio::test]
     async fn shutdown_cancels_a_pending_routed_download() {
         use tokio::io::AsyncReadExt;
         let temp = tempfile::tempdir().unwrap();

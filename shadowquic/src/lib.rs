@@ -254,11 +254,12 @@ impl TcpTrait for TcpStream {
 #[async_trait]
 pub trait Inbound<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend>: Send + Sync + Unpin {
     /// Return a request with its inbound tag and routing preference populated.
+    /// Return `SError::InboundClosed` when no more requests will be produced.
     async fn accept(&mut self) -> Result<ProxyRequest<T, I, O>, SError>;
     async fn init(&self) -> Result<(), SError> {
         Ok(())
     }
-    /// Called once on graceful shutdown, flush persistent state here.
+    /// Called once on graceful shutdown or inbound completion; flush persistent state here.
     async fn shutdown(&self) -> Result<(), SError> {
         Ok(())
     }
@@ -556,6 +557,7 @@ impl Manager {
                                 dispatcher.dispatch(req).await;
                             }.instrument(span));
                         }
+                        Err(SError::InboundClosed) => break,
                         Err(error) => {
                             error!(inbound = %tag, %error, "error accepting request");
                             tokio::select! {
@@ -572,16 +574,21 @@ impl Manager {
         }
         tokio::pin!(shutdown);
         let mut result = Ok(());
-        tokio::select! {
-            _ = &mut shutdown => {
-                info!("shutdown requested, persisting users and stats");
-            }
-            task = tasks.join_next() => {
-                result = match task {
-                    Some(Ok(Err(error))) => Err(error),
-                    Some(Err(error)) => Err(SError::Io(std::io::Error::other(error))),
-                    _ => Err(SError::InboundUnavailable),
-                };
+        loop {
+            tokio::select! {
+                _ = &mut shutdown => {
+                    info!("shutdown requested, persisting users and stats");
+                    break;
+                }
+                task = tasks.join_next() => {
+                    match task {
+                        Some(Ok(Ok(()))) => continue,
+                        Some(Ok(Err(error))) => result = Err(error),
+                        Some(Err(error)) => result = Err(SError::Io(std::io::Error::other(error))),
+                        None => break,
+                    }
+                    break;
+                }
             }
         }
         let _ = stop.send(true);

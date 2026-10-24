@@ -202,19 +202,7 @@ async fn country_mmdb_download_publishes_original_bytes_and_reports_invalid_data
                 .unwrap();
             session.stream.write_all(body).await.unwrap();
             session.stream.shutdown().await.unwrap();
-            loop {
-                let pending = manager.slots["db"]
-                    .value
-                    .read()
-                    .unwrap()
-                    .as_ref()
-                    .err()
-                    .is_some_and(|e| e == "download pending");
-                if !pending {
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
+            assert!(matches!(inbound.accept().await, Err(SError::InboundClosed)));
         })
         .await
         .unwrap();
@@ -885,12 +873,7 @@ async fn download_uses_tagged_inbound_for_redirects_and_publishes_database() {
         session.stream.shutdown().await.unwrap();
     }
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        loop {
-            if manager.slots["db"].value.read().unwrap().is_ok() {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
+        assert!(matches!(inbound.accept().await, Err(SError::InboundClosed)));
     })
     .await
     .unwrap();
@@ -1002,23 +985,20 @@ async fn failed_http_download_reports_error_without_publishing() {
         .await
         .unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        loop {
-            if databases.slots["db"]
-                .value
-                .read()
-                .unwrap()
-                .as_ref()
-                .err()
-                .unwrap()
-                .contains("404")
-            {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
+        assert!(matches!(inbound.accept().await, Err(SError::InboundClosed)));
     })
     .await
     .unwrap();
+    assert!(
+        databases.slots["db"]
+            .value
+            .read()
+            .unwrap()
+            .as_ref()
+            .err()
+            .unwrap()
+            .contains("404")
+    );
     assert!(!cfg.path().exists());
     inbound.shutdown().await.unwrap();
 }

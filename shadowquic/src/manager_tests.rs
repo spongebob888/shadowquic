@@ -212,6 +212,95 @@ async fn initialization_failure_cleans_up_listeners() {
     check_manager(true, false).await;
 }
 
+struct CompletedInbound {
+    stopped: Arc<AtomicUsize>,
+    fail_shutdown: bool,
+}
+
+#[async_trait]
+impl Inbound for CompletedInbound {
+    async fn accept(&mut self) -> Result<ProxyRequest, SError> {
+        Err(SError::InboundClosed)
+    }
+
+    async fn shutdown(&self) -> Result<(), SError> {
+        self.stopped.fetch_add(1, Ordering::SeqCst);
+        if self.fail_shutdown {
+            Err(SError::InboundUnavailable)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[tokio::test]
+async fn completed_inbound_shuts_down_once_and_leaves_other_listeners_running() {
+    let completed = Arc::new(AtomicUsize::new(0));
+    let stopped = Arc::new(AtomicUsize::new(0));
+    let (send, recv) = mpsc::channel(1);
+    let called = Arc::new(Barrier::new(2));
+    let mut manager = Manager::single(
+        Box::new(TestInbound {
+            tag: "inbound".into(),
+            requests: recv,
+            initialized: Arc::new(AtomicUsize::new(0)),
+            stopped: stopped.clone(),
+            fail_init: false,
+            fail_shutdown: false,
+        }),
+        Arc::new(TestOutbound {
+            called: called.clone(),
+        }),
+    );
+    manager.inbounds.insert(
+        "completed".into(),
+        Box::new(CompletedInbound {
+            stopped: completed.clone(),
+            fail_shutdown: false,
+        }),
+    );
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        manager.run_until(async {
+            while completed.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+            assert_eq!(stopped.load(Ordering::SeqCst), 0);
+            send.send(request()).await.unwrap();
+            called.wait().await;
+        }),
+    )
+    .await
+    .expect("completed inbound stopped the manager or kept accepting")
+    .unwrap();
+    assert_eq!(completed.load(Ordering::SeqCst), 1);
+    assert_eq!(stopped.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn all_inbounds_completed_returns_their_shutdown_result() {
+    for fail_shutdown in [false, true] {
+        let stopped = Arc::new(AtomicUsize::new(0));
+        let manager = Manager::single(
+            Box::new(CompletedInbound {
+                stopped: stopped.clone(),
+                fail_shutdown,
+            }),
+            Arc::new(TestOutbound {
+                called: Arc::new(Barrier::new(1)),
+            }),
+        );
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            manager.run_until(std::future::pending()),
+        )
+        .await
+        .expect("manager stalled after its last inbound completed");
+        assert_eq!(result.is_err(), fail_shutdown);
+        assert_eq!(stopped.load(Ordering::SeqCst), 1);
+    }
+}
+
 #[cfg(feature = "restful-api")]
 #[tokio::test]
 async fn api_bind_failure_prevents_inbound_initialization() {

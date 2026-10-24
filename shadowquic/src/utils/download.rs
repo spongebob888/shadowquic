@@ -33,14 +33,15 @@ pub(crate) fn parse_url(value: &str) -> Result<Url> {
 struct State {
     job: Option<Job>,
     task: Option<tokio::task::JoinHandle<()>>,
+    tx: Option<mpsc::Sender<ProxyRequest>>,
 }
 
 /// Runs one startup job and exposes its HTTP connections to the normal router.
 /// Graceful shutdown cancels network I/O and joins the job, including any
 /// awaited blocking installation/import. Background work has no client observer.
+/// Completing the job closes the inbound so the manager can shut it down.
 pub(crate) struct DownloadInbound {
     tag: String,
-    tx: mpsc::Sender<ProxyRequest>,
     rx: mpsc::Receiver<ProxyRequest>,
     state: Mutex<State>,
     stop: watch::Sender<bool>,
@@ -55,11 +56,11 @@ impl DownloadInbound {
         let (tx, rx) = mpsc::channel(1);
         Self {
             tag,
-            tx,
             rx,
             state: Mutex::new(State {
                 job: Some(Box::new(move |client| Box::pin(job(client)))),
                 task: None,
+                tx: Some(tx),
             }),
             stop: watch::channel(false).0,
         }
@@ -80,18 +81,24 @@ impl Inbound for DownloadInbound {
     async fn init(&self) -> std::result::Result<(), SError> {
         let mut state = self.state.lock().unwrap();
         if let Some(job) = state.job.take() {
+            let tx = state.tx.take().unwrap();
             let client = DownloadClient {
                 tag: self.tag.clone(),
-                tx: self.tx.clone(),
+                tx: tx.clone(),
                 stopped: self.stop.subscribe(),
             };
-            state.task = Some(tokio::spawn(job(client)));
+            state.task = Some(tokio::spawn(async move {
+                job(client).await;
+                // Keep the channel open until installation/import finishes,
+                // even if the job drops its client before postprocessing.
+                drop(tx);
+            }));
         }
         Ok(())
     }
 
     async fn accept(&mut self) -> std::result::Result<ProxyRequest, SError> {
-        self.rx.recv().await.ok_or(SError::InboundUnavailable)
+        self.rx.recv().await.ok_or(SError::InboundClosed)
     }
 
     async fn shutdown(&self) -> std::result::Result<(), SError> {
@@ -259,6 +266,12 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(2), inbound.accept())
+                .await
+                .expect("finished download kept its inbound open"),
+            Err(SError::InboundClosed)
+        ));
         inbound.shutdown().await.unwrap();
         result
     }
@@ -312,6 +325,33 @@ mod tests {
                 .is::<tokio::time::error::Elapsed>()
         );
         assert!(session.stream.read_u8().await.is_err());
+        inbound.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn completion_waits_for_postprocessing_after_client_is_dropped() {
+        let (started, ready) = oneshot::channel();
+        let (release, released) = oneshot::channel();
+        let mut inbound = DownloadInbound::new("download-test".into(), move |client| async move {
+            drop(client);
+            started.send(()).unwrap();
+            released.await.unwrap();
+        });
+        inbound.init().await.unwrap();
+        ready.await.unwrap();
+        let mut accept = Box::pin(inbound.accept());
+        std::future::poll_fn(|cx| {
+            assert!(accept.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        release.send(()).unwrap();
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(2), accept)
+                .await
+                .unwrap(),
+            Err(SError::InboundClosed)
+        ));
         inbound.shutdown().await.unwrap();
     }
 
