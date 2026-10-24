@@ -5,13 +5,13 @@ use serde::{Deserialize, Serialize};
 use super::deserialize_bps;
 use crate::config::{
     AuthUser, CipherSuitePreference, CongestionControl, HasCipherSuitePreference, SocketOpt,
-    default_alpn, default_blackhole_detection, default_brutal_ack_compensate,
-    default_brutal_bandwidth, default_brutal_cwnd_gain, default_brutal_min_ack_rate,
-    default_brutal_min_sample_count, default_brutal_min_window, default_congestion_control,
-    default_gso, default_half_close_timeout, default_inbound_max_streams, default_initial_mtu,
-    default_keep_alive_interval, default_min_mtu, default_mtu_discovery,
-    default_outbound_max_streams, default_over_stream, default_store_flush_interval,
-    default_stream_receive_window, default_zero_rtt,
+    default_alpn, default_blackhole_detection, default_blackhole_threshold,
+    default_brutal_ack_compensate, default_brutal_bandwidth, default_brutal_cwnd_gain,
+    default_brutal_min_ack_rate, default_brutal_min_sample_count, default_brutal_min_window,
+    default_congestion_control, default_gso, default_half_close_timeout,
+    default_inbound_max_streams, default_initial_mtu, default_keep_alive_interval, default_min_mtu,
+    default_mtu_discovery, default_outbound_max_streams, default_over_stream,
+    default_store_flush_interval, default_stream_receive_window, default_zero_rtt,
 };
 
 pub fn default_rate_limit() -> u64 {
@@ -95,6 +95,11 @@ pub struct ShadowQuicServerCfg {
     /// In high packet loss network, it's better to disable black hole detection to avoid unnecessary mtu reset.
     #[serde(default = "default_blackhole_detection")]
     pub blackhole_detection: bool,
+    /// Maximum suspicious packet loss bursts tolerated before detecting an MTU black hole.
+    /// Defaults to 15; 0 triggers detection on the first suspicious burst.
+    /// Only takes effect when `mtu_discovery` is enabled.
+    #[serde(default = "default_blackhole_threshold")]
+    pub blackhole_threshold: usize,
     /// Path of a YAML file persisting users and their traffic statistics.
     /// Loaded and merged with `users` at startup; written on every user
     /// change via API, periodically and on graceful shutdown.
@@ -180,6 +185,7 @@ impl Default for ShadowQuicServerCfg {
             gso: default_gso(),
             mtu_discovery: default_mtu_discovery(),
             blackhole_detection: default_blackhole_detection(),
+            blackhole_threshold: default_blackhole_threshold(),
             user_store: None,
             store_flush_interval: default_store_flush_interval(),
             max_concurrent_bidi_streams: crate::config::default_inbound_max_streams(),
@@ -219,6 +225,7 @@ impl Default for ShadowQuicClientCfg {
             gso: default_gso(),
             mtu_discovery: default_mtu_discovery(),
             blackhole_detection: default_blackhole_detection(),
+            blackhole_threshold: default_blackhole_threshold(),
             cipher_suite_preference: None,
             socket_opt: Default::default(),
             protect_path: Default::default(),
@@ -377,6 +384,11 @@ pub struct ShadowQuicClientCfg {
     /// In high packet loss network, it's better to disable black hole detection to avoid unnecessary mtu reset.
     #[serde(default = "default_blackhole_detection")]
     pub blackhole_detection: bool,
+    /// Maximum suspicious packet loss bursts tolerated before detecting an MTU black hole.
+    /// Defaults to 15; 0 triggers detection on the first suspicious burst.
+    /// Only takes effect when `mtu_discovery` is enabled.
+    #[serde(default = "default_blackhole_threshold")]
+    pub blackhole_threshold: usize,
 
     /// Optional TLS 1.3 cipher suite preference.
     /// If unset, use rustls/ring default preference order.
@@ -397,5 +409,48 @@ impl HasCipherSuitePreference for ShadowQuicClientCfg {
         self.cipher_suite_preference
             .as_ref()
             .is_some_and(|preferences| !preferences.is_empty())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CLIENT: &str = "tag: client\naddr: localhost:443\nusername: user\npassword: pass\nserver-name: localhost\n";
+    const SERVER: &str =
+        "tag: server\nbind-addr: 127.0.0.1:443\nusers: []\njls-upstream:\n  addr: localhost:443\n";
+
+    #[test]
+    fn blackhole_threshold_defaults_and_parses_on_client_and_server() {
+        assert_eq!(ShadowQuicClientCfg::default().blackhole_threshold, 15);
+        assert_eq!(ShadowQuicServerCfg::default().blackhole_threshold, 15);
+
+        for (field, expected) in [
+            ("", 15),
+            ("blackhole-threshold: 0\n", 0),
+            ("blackhole-threshold: 12\n", 12),
+        ] {
+            let client: ShadowQuicClientCfg =
+                serde_saphyr::from_str(&format!("{CLIENT}{field}")).unwrap();
+            let server: ShadowQuicServerCfg =
+                serde_saphyr::from_str(&format!("{SERVER}{field}")).unwrap();
+            assert_eq!(client.blackhole_threshold, expected);
+            assert_eq!(server.blackhole_threshold, expected);
+        }
+    }
+
+    #[test]
+    fn blackhole_threshold_rejects_invalid_values_on_client_and_server() {
+        for value in ["-1", "1.5", "true", "invalid", "null"] {
+            let field = format!("blackhole-threshold: {value}\n");
+            assert!(
+                serde_saphyr::from_str::<ShadowQuicClientCfg>(&format!("{CLIENT}{field}")).is_err(),
+                "client accepted {value}"
+            );
+            assert!(
+                serde_saphyr::from_str::<ShadowQuicServerCfg>(&format!("{SERVER}{field}")).is_err(),
+                "server accepted {value}"
+            );
+        }
     }
 }

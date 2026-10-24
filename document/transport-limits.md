@@ -54,3 +54,23 @@ that are already open. None of them is a timeout, and none of them cuts off a
 transfer that is still making progress — but a window below the path's
 bandwidth-delay product does limit throughput. `0` is accepted and leaves that
 direction unable to make progress.
+
+## MTU black-hole detection
+
+Both `shadowquic` outbounds (clients) and inbounds (servers) accept
+`blackhole-threshold`, a nonnegative integer that defaults to `15`. A black hole
+is detected when the number of suspicious packet loss bursts exceeds this
+value. `0` triggers detection on the first suspicious burst. Higher values
+reduce false positives on lossy networks but delay detection of actual MTU
+reductions. Each endpoint applies its own threshold to its outgoing path.
+
+```yaml
+mtu-discovery: true
+blackhole-detection: true
+blackhole-threshold: 10
+```
+
+The threshold only applies when `mtu-discovery` is enabled (the default).
+`blackhole-detection` controls whether detection resets the discovered MTU to
+`min-mtu`. With that setting disabled (the default), detection keeps the current
+MTU and still starts the cooldown before another MTU discovery run.
