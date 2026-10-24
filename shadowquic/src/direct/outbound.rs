@@ -54,7 +54,7 @@ impl Outbound for DirectOut {
                     trace!("direct tcp to {}", tcp_session.dst);
                     // If dns field is resolved, Direct outbound will be wrapped with ResolvingOutbound.
                     // Here is mainly for backward compatibilty if dns-servers feature is disabled.
-                    let dst = resolve(&tcp_session.dst,&dns_strategy).await?;
+                    let dst = resolve(&tcp_session.dst, &dns_strategy).await?;
                     trace!("resolved to {}", dst);
 
                     let mut upstream = self_clone.connect_tcp(dst).await?;
