@@ -1303,6 +1303,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#tag" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>tag</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#bind-addr" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1318,6 +1329,28 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         <code>secret</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ui-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>ui-path</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ui-download-url" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>ui-download-url</code>
       </span>
     </span>
   </a>
@@ -1950,6 +1983,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#tag" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>tag</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#bind-addr" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1965,6 +2009,28 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         <code>secret</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ui-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>ui-path</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ui-download-url" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>ui-download-url</code>
       </span>
     </span>
   </a>
@@ -2001,9 +2067,16 @@
 Configuring this section without the feature produces a configuration error.
 Omit <code>restful-api</code> to leave the HTTP listener disabled.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">restful-api</span><span class="p">:</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">bind-addr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">127.0.0.1:9090</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">secret</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">choose-a-secret</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">tag</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">restful-api</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">bind-addr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">127.0.0.1:9090</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="nt">secret</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">choose-a-secret</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="nt">ui-path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./ui</span>
 </code></pre></div>
+<p><code>ui-path</code> enables local dashboard serving at <code>/</code>. If <code>index.html</code> is missing,
+startup downloads Squirrelboard v0.1.2's standalone index.html. Existing files are
+reused. Downloads follow normal routing with <code>tag</code> as the inbound tag.
+Omit <code>ui-path</code> to disable dashboard serving and downloading. Dashboard files
+are public; API endpoints still require the configured bearer token.</p>
 <p>A nonempty <code>secret</code> requires <code>Authorization: Bearer &lt;secret&gt;</code> on API requests.
 Omit <code>secret</code> or set it to an empty string to disable authentication.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-H<span class="w"> </span><span class="s1">&#39;Authorization: Bearer choose-a-secret&#39;</span><span class="w"> </span>http://127.0.0.1:9090/api/v1/traffic
@@ -2071,6 +2144,13 @@ fields are <code>null</code>. Collections are sorted by tag or session ID.</p>
 </tbody>
 </table>
 <h2 id="fields">Fields<a class="headerlink" href="#fields" title="Permanent link">&para;</a></h2>
+<h3 id="tag"><code>tag</code><a class="headerlink" href="#tag" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>string</code></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <code>restful-api</code></li>
+</ul>
+<p>Inbound tag for dashboard downloads, available to routing scripts.</p>
 <h3 id="bind-addr"><code>bind-addr</code><a class="headerlink" href="#bind-addr" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Type:</strong> <code>SocketAddr</code></li>
@@ -2083,8 +2163,24 @@ fields are <code>null</code>. Collections are sorted by tag or session ID.</p>
 <li><strong>Type:</strong> <code>string</code> <em>(optional)</em></li>
 <li><strong>Required:</strong> no</li>
 </ul>
-<p>Require <code>Authorization: Bearer &lt;secret&gt;</code> when nonempty, except on CORS preflights.
+<p>Require <code>Authorization: Bearer &lt;secret&gt;</code> on API requests when nonempty,
+except on CORS preflights. Dashboard files remain public.
 Omit this field or set it to an empty string to disable authentication.</p>
+<h3 id="ui-path"><code>ui-path</code><a class="headerlink" href="#ui-path" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>path</code> <em>(optional)</em></li>
+<li><strong>Required:</strong> no</li>
+</ul>
+<p>Serve the dashboard from this directory. If index.html is missing,
+download ui-download-url as index.html on startup. Omit to disable the UI.</p>
+<h3 id="ui-download-url"><code>ui-download-url</code><a class="headerlink" href="#ui-download-url" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>string</code></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <code>https://github.com/spongebob888/squirrelboard/releases/download/v0.1.2/index.html</code></li>
+</ul>
+<p>Standalone dashboard HTML URL. Used only when ui-path is configured and
+index.html is missing. Downloads follow redirects through normal routing.</p>
 
 
 
