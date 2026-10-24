@@ -549,7 +549,7 @@ impl Manager {
                             if let Some(addr) = req.src_addr() {
                                 span.record("src", tracing::field::display(addr));
                             }
-                            if let Some(stats) = req.user_context().stats.as_ref() {
+                            if let Some(stats) = req.user_context().stats.as_ref() && !stats.username.is_empty() {
                                 span.record("user", tracing::field::display(&stats.username));
                             }
                             let dispatcher = dispatcher.clone();
