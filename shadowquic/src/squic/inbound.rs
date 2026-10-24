@@ -14,11 +14,11 @@ use crate::{
     config::AuthUser,
     error::{SError, SResult},
     msgs::{
-        SDecode, SEncode,
+        SEncode,
         socks5::SocksAddr,
         squic::{
-            ExtOpcodeConn, ExtOpcodeUser, SQExtError, SQExtOpcode, SQReq, SunnyCredential,
-            UserStats,
+            ExtOpcodeConn, ExtOpcodeUser, SQ_REQ_AUTHENTICATE, SQExtError, SQExtOpcode, SQReq,
+            SunnyCredential, UserStats,
         },
     },
     quic::QuicConnection,
@@ -84,7 +84,16 @@ impl<C: QuicConnection> SQServerConn<C> {
         req_send: Sender<ProxyRequest>,
         inbound_span: tracing::Span,
     ) -> Result<(), SError> {
-        let req = SQReq::decode(&mut recv).await?;
+        // We can direct decode the whole SQReq.
+        // Attackers may create malicious extention with long vector
+        // to exhaust server memory
+        let cmd = SQReq::decode_tag(&mut recv).await?;
+        let mut user = None;
+        if cmd != SQ_REQ_AUTHENTICATE {
+            user = Some(wait_sunny_auth(&self.inner).await?);
+        }
+
+        let req = SQReq::decode_with_tag(cmd, &mut recv).await?;
 
         // let rate: f32 = (self.0.conn.stats().path.lost_packets as f32)
         //     / ((self.0.conn.stats().path.sent_packets + 1) as f32);
@@ -96,7 +105,7 @@ impl<C: QuicConnection> SQServerConn<C> {
         // );
         match req {
             SQReq::SQConnect(dst) => {
-                let user = wait_sunny_auth(&self.inner).await?;
+                let user = user.unwrap();
                 info!(dst = %dst, "tcp connect request accepted");
                 let tcp: TcpSession = TcpSession {
                     stream: Box::new(Unsplit { s: send, r: recv }),
@@ -121,7 +130,7 @@ impl<C: QuicConnection> SQServerConn<C> {
             }
             ref req @ (SQReq::SQAssociatOverDatagram(ref dst)
             | SQReq::SQAssociatOverStream(ref dst)) => {
-                let user = wait_sunny_auth(&self.inner).await?;
+                let user = user.unwrap();
                 info!(bind_addr = %dst, "udp associate request accepted");
                 let (local_send, udp_recv) = channel::<(Bytes, SocksAddr)>(10);
                 let (udp_send, local_recv) = channel::<(Bytes, SocksAddr)>(10);
@@ -179,7 +188,6 @@ impl<C: QuicConnection> SQServerConn<C> {
                 }
             }
             SQReq::SQExtension(ext_opcode) => {
-                wait_sunny_auth(&self.inner).await?;
                 self.handle_extension(ext_opcode, send, recv).await?;
             }
             _ => {

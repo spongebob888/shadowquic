@@ -1,26 +1,45 @@
 use std::sync::Arc;
 
 use crate::UserName;
-use crate::error::SError;
+use crate::error::{SError, SResult};
 
 use super::socks5::SocksAddr;
 use super::{SDecode, SEncode};
 use crate::config::AuthUser;
 use shadowquic_macros::{SDecode, SEncode};
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 pub static SUNNY_QUIC_AUTH_LEN: usize = 64;
 pub(crate) type SunnyCredential = Arc<[u8; SUNNY_QUIC_AUTH_LEN]>;
+
+pub const SQ_REQ_CONNECT: u8 = 0x1;
+pub const SQ_REQ_BIND: u8 = 0x2;
+pub const SQ_REQ_ASSOCIATE_OVER_DATAGRAM: u8 = 0x3;
+pub const SQ_REQ_ASSOCIATE_OVER_STREAM: u8 = 0x4;
+pub const SQ_REQ_AUTHENTICATE: u8 = 0x5;
+pub const SQ_REQ_EXTENSION: u8 = 0xFF;
 
 #[derive(PartialEq)]
 #[repr(u8)]
 #[derive(SEncode, SDecode)]
 pub enum SQReq {
-    SQConnect(SocksAddr) = 0x1,
-    SQBind(SocksAddr) = 0x2,
-    SQAssociatOverDatagram(SocksAddr) = 0x3,
-    SQAssociatOverStream(SocksAddr) = 0x4,
-    SQAuthenticate(SunnyCredential) = 0x5,
-    SQExtension(SQExtOpcode) = 0xFF,
+    SQConnect(SocksAddr) = SQ_REQ_CONNECT,
+    SQBind(SocksAddr) = SQ_REQ_BIND,
+    SQAssociatOverDatagram(SocksAddr) = SQ_REQ_ASSOCIATE_OVER_DATAGRAM,
+    SQAssociatOverStream(SocksAddr) = SQ_REQ_ASSOCIATE_OVER_STREAM,
+    SQAuthenticate(SunnyCredential) = SQ_REQ_AUTHENTICATE,
+    SQExtension(SQExtOpcode) = SQ_REQ_EXTENSION,
+}
+
+impl SQReq {
+    pub async fn decode_tag<T: AsyncRead + Unpin + Send>(s: &mut T) -> SResult<u8> {
+        u8::decode(s).await
+    }
+    pub async fn decode_with_tag<T: AsyncRead + Unpin + Send>(tag: u8, s: &mut T) -> SResult<Self> {
+        let prefix = [tag];
+        let mut s = prefix.chain(s);
+        Self::decode(&mut s).await
+    }
 }
 
 #[derive(PartialEq)]
