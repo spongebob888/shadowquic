@@ -91,3 +91,22 @@ pub fn to_ipv4_mapped(mut addr: SocketAddr) -> SocketAddr {
     addr.set_ip(ip);
     addr
 }
+
+pub trait ToCanonical {
+    fn to_canonical(&self) -> Self;
+}
+
+impl ToCanonical for SocketAddr {
+    fn to_canonical(&self) -> Self {
+        match self {
+            SocketAddr::V4(_) => *self,
+            SocketAddr::V6(addr) => {
+                if let Some(v4) = addr.ip().to_ipv4_mapped() {
+                    SocketAddr::new(std::net::IpAddr::V4(v4), addr.port())
+                } else {
+                    *self
+                }
+            }
+        }
+    }
+}

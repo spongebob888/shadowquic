@@ -23,6 +23,7 @@ use crate::{
     },
     quic::QuicConnection,
     squic::wait_sunny_auth,
+    utils::dual_socket::ToCanonical,
 };
 
 use super::{SQConn, handle_udp_packet_recv, handle_udp_recv_ctrl, handle_udp_send};
@@ -110,7 +111,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                 let tcp: TcpSession = TcpSession {
                     stream: Box::new(Unsplit { s: send, r: recv }),
                     dst,
-                    src_addr: Some(self.inner.conn.remote_address()),
+                    src_addr: Some(self.inner.conn.remote_address().to_canonical()),
                     user_context: UserContext {
                         inbound_tag: String::new(),
                         preferred_outbound: None,
@@ -141,7 +142,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                         stream: None,
                         bind_addr: dst.clone(),
                         dst: dst.clone(),
-                        src_addr: Some(self.inner.conn.remote_address()),
+                        src_addr: Some(self.inner.conn.remote_address().to_canonical()),
                         user_context: UserContext {
                             inbound_tag: String::new(),
                             preferred_outbound: None,

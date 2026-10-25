@@ -15,7 +15,7 @@ use crate::{
     observe::Observer,
     quic::{AuthedConn, QuicConnection},
     squic::inbound::{SQServerConn, UserManager},
-    utils::user_store,
+    utils::{dual_socket::ToCanonical, user_store},
 };
 
 use crate::squic::{IDStore, SQConn};
@@ -247,7 +247,7 @@ impl ShadowQuicServer {
         let span = tracing::Span::current();
         span.record(
             "src",
-            tracing::field::display(sq_conn.inner.remote_address()),
+            tracing::field::display(sq_conn.inner.remote_address().to_canonical()),
         );
         span.record("id", sq_conn.inner.peer_id());
         span.record("user", tracing::field::display(user));

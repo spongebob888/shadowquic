@@ -17,7 +17,7 @@ use crate::{
     quic::QuicConnection,
     squic::inbound::{SQServerConn, SunnyQuicUsers, UserManager},
     sunnyquic::EndServer,
-    utils::user_store,
+    utils::{dual_socket::ToCanonical, user_store},
 };
 
 use crate::squic::{IDStore, SQConn};
@@ -258,7 +258,7 @@ impl SunnyQuicServer {
         let span = tracing::Span::current();
         span.record(
             "src",
-            tracing::field::display(sq_conn.inner.remote_address()),
+            tracing::field::display(sq_conn.inner.remote_address().to_canonical()),
         );
         span.record("id", sq_conn.inner.peer_id());
         span.in_scope(|| {
