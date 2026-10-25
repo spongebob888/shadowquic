@@ -24,6 +24,21 @@ use crate::{
 };
 use async_trait::async_trait;
 
+#[cfg(all(test, feature = "shadowquic-quinn"))]
+#[path = "udp_failure_tests.rs"]
+mod udp_failure_tests;
+
+#[cfg(all(
+    test,
+    target_os = "linux",
+    feature = "tproxy",
+    feature = "shadowquic-quinn",
+    feature = "dns-server",
+    feature = "statistics"
+))]
+#[path = "tproxy_udp_failure_tests.rs"]
+mod tproxy_udp_failure_tests;
+
 #[derive(Clone)]
 pub struct DirectOut {
     pub cfg: DirectOutCfg,
@@ -128,31 +143,6 @@ impl DnsResolve {
             (*addr).into()
         }
     }
-}
-
-#[cfg(not(feature = "dns-server"))]
-#[deprecated]
-async fn resolve(socks: &SocksAddr, strategy: &DnsStrategy) -> Result<SocketAddr, SError> {
-    let mut s = match socks.addr.clone() {
-        crate::msgs::socks5::AddrOrDomain::V4(x) => {
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::from(x)), 0)
-        }
-        crate::msgs::socks5::AddrOrDomain::V6(x) => {
-            SocketAddr::new(IpAddr::V6(Ipv6Addr::from(x)), 0)
-        }
-        crate::msgs::socks5::AddrOrDomain::Domain(var_vec) => {
-            let ip_list = lookup_host((
-                String::from_utf8(var_vec.contents)
-                    .map_err(|_| SError::DomainResolveFailed(socks.to_string()))?,
-                socks.port,
-            ))
-            .await?;
-            crate::dns::apply_dns_strategy(ip_list, strategy)
-                .ok_or(SError::DomainResolveFailed(socks.to_string()))?
-        }
-    };
-    s.set_port(socks.port);
-    Ok(s)
 }
 
 impl DirectOut {
