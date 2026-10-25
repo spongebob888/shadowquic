@@ -65,6 +65,7 @@ impl Outbound for ResolvingOutbound {
                         }
                         ProxyRequest::Udp(mut session) => {
                             let mapping = Arc::new(Mutex::new(HashMap::new()));
+                            session.dst = resolve(&*resolver, &session.dst, &strategy).await?;
                             session.recv = Box::new(ResolvingRecv {
                                 inner: session.recv,
                                 resolver,

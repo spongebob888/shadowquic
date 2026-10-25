@@ -108,6 +108,7 @@ impl DnsResolve {
                 Ok(*v)
             } else {
                 let s = resolve(&socks, strategy).await?;
+                tracing::trace!("{} resolved to {}", socks, s);
                 self.0.lock().await.insert(socks, s);
                 Ok(s)
             }
