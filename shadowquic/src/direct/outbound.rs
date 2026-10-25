@@ -5,9 +5,10 @@ use std::{
 };
 
 use bytes::BytesMut;
-use quinn::udp;
 use tokio::{
-    io::AsyncReadExt, net::{TcpSocket, TcpStream}, sync::Mutex,
+    io::AsyncReadExt,
+    net::{TcpSocket, TcpStream},
+    sync::Mutex,
 };
 use tracing::{Instrument, error, trace};
 
@@ -242,11 +243,13 @@ impl DirectOut {
         };
         let fut3 = async {
             let Some(mut s) = udp_session.stream else {
-                return Ok(())
+                return Ok(());
             };
             let mut buf = [0u8];
             s.read_exact(&mut buf).await?;
-            Err(SError::UDPSessionClosed("udp session closed by control stream".into()))
+            Err(SError::UDPSessionClosed(
+                "udp session closed by control stream".into(),
+            ))
         };
         // We can use spawn, but it requirs communication to shutdown the other
         // Flatten spawn handle using try_join! doesn't work. Don't know why
