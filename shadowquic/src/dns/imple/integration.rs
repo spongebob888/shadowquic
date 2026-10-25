@@ -28,15 +28,13 @@ use super::{DnsService, Result, dns_error};
 ))]
 use crate::Inbound;
 use crate::{
-    AnyUdpRecv, AnyUdpSend, Outbound, ProxyRequest, UdpRecv, UdpSend,
-    config::DnsStrategy,
-    msgs::socks5::{AddrOrDomain, SocksAddr},
+    AnyUdpRecv, AnyUdpSend, Outbound, ProxyRequest, UdpRecv, UdpSend, config::DnsStrategy,
+    dns::resolve_destination, msgs::socks5::SocksAddr,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
 use std::{
     collections::HashMap,
-    net::SocketAddr,
     sync::{Arc, Mutex},
 };
 use tracing::Instrument;
@@ -60,12 +58,18 @@ impl Outbound for ResolvingOutbound {
                 let result = async {
                     let req = match req {
                         ProxyRequest::Tcp(mut session) => {
-                            session.dst = resolve(&*resolver, &session.dst, &strategy).await?;
+                            session.dst =
+                                resolve_destination(&*resolver, &session.dst, Some(&strategy))
+                                    .await?
+                                    .into();
                             ProxyRequest::Tcp(session)
                         }
                         ProxyRequest::Udp(mut session) => {
                             let mapping = Arc::new(Mutex::new(HashMap::new()));
-                            session.dst = resolve(&*resolver, &session.dst, &strategy).await?;
+                            session.dst =
+                                resolve_destination(&*resolver, &session.dst, Some(&strategy))
+                                    .await?
+                                    .into();
                             session.recv = Box::new(ResolvingRecv {
                                 inner: session.recv,
                                 resolver,
@@ -93,24 +97,6 @@ impl Outbound for ResolvingOutbound {
     }
 }
 
-async fn resolve(
-    resolver: &dyn DnsService,
-    addr: &SocksAddr,
-    strategy: &DnsStrategy,
-) -> Result<SocksAddr> {
-    let AddrOrDomain::Domain(domain) = &addr.addr else {
-        return Ok(addr.clone());
-    };
-    let domain = std::str::from_utf8(&domain.contents).map_err(dns_error)?;
-    let ips = resolver.resolve(domain).await?;
-    crate::direct::outbound::apply_dns_strategy(
-        ips.into_iter().map(|ip| SocketAddr::new(ip, addr.port)),
-        strategy,
-    )
-    .map(Into::into)
-    .ok_or_else(|| dns_error(format!("no address matching DNS strategy for {domain}")))
-}
-
 type Mapping = Arc<Mutex<HashMap<SocksAddr, SocksAddr>>>;
 struct ResolvingRecv {
     inner: AnyUdpRecv,
@@ -122,7 +108,9 @@ struct ResolvingRecv {
 impl UdpRecv for ResolvingRecv {
     async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr)> {
         let (bytes, original) = self.inner.recv_from().await?;
-        let resolved = resolve(&*self.resolver, &original, &self.strategy).await?;
+        let resolved = resolve_destination(&*self.resolver, &original, Some(&self.strategy))
+            .await?
+            .into();
         remember(&self.mapping, &resolved, original)?;
         Ok((bytes, resolved))
     }
