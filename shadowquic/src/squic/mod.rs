@@ -268,6 +268,7 @@ impl IDStore {
                 Err(_) => {
                     let (socket, addr) = val.clone();
                     let notify = replace(s, Ok(val));
+                    drop(h);
                     //let _ = notify.map_err(|x| x.notify_one());
                     match notify {
                         Ok(_) => {
