@@ -95,9 +95,9 @@ impl TunServerCfg {
             ("udp-idle-timeout", self.udp_idle_timeout(), 1),
         ] {
             if !(min..=86400).contains(&timeout) {
-                return Err(SError::InvalidConfig(
-                    format!("TUN {name} must be {min}..=86400 seconds").into(),
-                ));
+                return Err(SError::InvalidConfig(format!(
+                    "TUN {name} must be {min}..=86400 seconds"
+                )));
             }
         }
         if self.ipv4.addr().is_unspecified()
