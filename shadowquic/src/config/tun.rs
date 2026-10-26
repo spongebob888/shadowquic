@@ -19,7 +19,7 @@ pub fn default_mtu() -> u16 {
 pub fn default_max_sessions() -> usize {
     1024
 }
-/// Default session idle timeout in seconds.
+/// Default shared session idle timeout in seconds.
 pub fn default_idle_timeout() -> u64 {
     300
 }
@@ -49,11 +49,26 @@ pub struct TunServerCfg {
     /// Shared limit for TCP connections and UDP client sessions.
     #[serde(default = "default_max_sessions")]
     pub max_sessions: usize,
+    /// Shared idle timeout in seconds, used when a protocol-specific setting is omitted.
     #[serde(default = "default_idle_timeout")]
     pub idle_timeout: u64,
+    /// TCP socket timeout in seconds, managed by smoltcp. Set to 0 to disable.
+    /// Defaults to idle-timeout when omitted.
+    pub tcp_idle_timeout: Option<u64>,
+    /// UDP session inactivity timeout in seconds, refreshed by either direction.
+    /// Defaults to idle-timeout when omitted.
+    pub udp_idle_timeout: Option<u64>,
 }
 
 impl TunServerCfg {
+    pub fn tcp_idle_timeout(&self) -> u64 {
+        self.tcp_idle_timeout.unwrap_or(self.idle_timeout)
+    }
+
+    pub fn udp_idle_timeout(&self) -> u64 {
+        self.udp_idle_timeout.unwrap_or(self.idle_timeout)
+    }
+
     pub fn validate(&self) -> Result<(), SError> {
         if self
             .name
@@ -69,10 +84,21 @@ impl TunServerCfg {
                 "TUN mtu must be at least 1280 for IPv6".into(),
             ));
         }
-        if !(1..=65536).contains(&self.max_sessions) || !(1..=86400).contains(&self.idle_timeout) {
+        if !(1..=65536).contains(&self.max_sessions) {
             return Err(SError::InvalidConfig(
-                "TUN max-sessions must be 1..=65536 and idle-timeout 1..=86400 seconds".into(),
+                "TUN max-sessions must be 1..=65536".into(),
             ));
+        }
+        for (name, timeout, min) in [
+            ("idle-timeout", self.idle_timeout, 1),
+            ("tcp-idle-timeout", self.tcp_idle_timeout(), 0),
+            ("udp-idle-timeout", self.udp_idle_timeout(), 1),
+        ] {
+            if !(min..=86400).contains(&timeout) {
+                return Err(SError::InvalidConfig(
+                    format!("TUN {name} must be {min}..=86400 seconds").into(),
+                ));
+            }
         }
         if self.ipv4.addr().is_unspecified()
             || self.ipv4.addr().is_multicast()

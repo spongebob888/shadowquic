@@ -534,17 +534,65 @@ fn tun_ipv6_defaults_to_enabled_and_null_disables_it() {
 }
 
 #[test]
+fn tun_idle_timeouts_default_and_configure_independently() {
+    for (fields, tcp, udp) in [
+        ("", 300, 300),
+        ("tcp-idle-timeout: 3600", 3600, 300),
+        ("udp-idle-timeout: 30", 300, 30),
+        ("tcp-idle-timeout: 0", 0, 300),
+        ("tcp-idle-timeout: 86400\nudp-idle-timeout: 1", 86400, 1),
+        ("tcp-idle-timeout: 1\nudp-idle-timeout: 86400", 1, 86400),
+    ] {
+        let cfg: TunServerCfg = serde_saphyr::from_str(&format!("tag: tun\n{fields}")).unwrap();
+        cfg.validate().unwrap();
+        assert_eq!(cfg.tcp_idle_timeout(), tcp, "{fields}");
+        assert_eq!(cfg.udp_idle_timeout(), udp, "{fields}");
+    }
+}
+
+#[test]
+fn tun_legacy_idle_timeout_is_overridden_per_protocol_regardless_of_field_order() {
+    for (overrides, tcp, udp) in [
+        ("", 120, 120),
+        ("tcp-idle-timeout: 3600", 3600, 120),
+        ("udp-idle-timeout: 30", 120, 30),
+        ("tcp-idle-timeout: 0", 0, 120),
+        ("tcp-idle-timeout: 300\nudp-idle-timeout: 300", 300, 300),
+    ] {
+        for fields in [
+            format!("idle-timeout: 120\n{overrides}"),
+            format!("{overrides}\nidle-timeout: 120"),
+        ] {
+            let cfg: TunServerCfg = serde_saphyr::from_str(&format!("tag: tun\n{fields}")).unwrap();
+            cfg.validate().unwrap();
+            assert_eq!(cfg.idle_timeout, 120, "{fields}");
+            assert_eq!(cfg.tcp_idle_timeout(), tcp, "{fields}");
+            assert_eq!(cfg.udp_idle_timeout(), udp, "{fields}");
+        }
+    }
+}
+
+#[test]
 fn tun_configuration_is_validated_without_opening_a_device() {
     use crate::config::{Config, InboundCfg};
-    let cfg: Config = serde_saphyr::from_str("inbounds: [{tag: tun-in, type: tun, default-outbound: direct}]\noutbounds: [{tag: direct, type: direct}]").unwrap();
+    let cfg: Config = serde_saphyr::from_str("inbounds: [{tag: tun-in, type: tun, default-outbound: direct, idle-timeout: 120}]\noutbounds: [{tag: direct, type: direct}]").unwrap();
     cfg.validate().unwrap();
     assert_eq!(cfg.inbounds[0].tag(), "tun-in");
     assert_eq!(cfg.inbounds[0].default_outbound(), Some("direct"));
-    assert!(matches!(cfg.inbounds[0], InboundCfg::Tun(_)));
+    let InboundCfg::Tun(tun) = &cfg.inbounds[0] else {
+        panic!("expected TUN inbound")
+    };
+    assert_eq!(tun.tcp_idle_timeout(), 120);
+    assert_eq!(tun.udp_idle_timeout(), 120);
     for fields in [
         "mtu: 1279",
         "max-sessions: 0",
         "idle-timeout: 0",
+        "idle-timeout: 86401",
+        "idle-timeout: 0\ntcp-idle-timeout: 60\nudp-idle-timeout: 60",
+        "tcp-idle-timeout: 86401",
+        "udp-idle-timeout: 0",
+        "udp-idle-timeout: 86401",
         "ipv4: 0.0.0.0/30",
         "ipv6: '::/64'",
         "ipv6: 'ff00::1/64'",
@@ -613,10 +661,91 @@ async fn concurrent_tcp_clients_can_use_the_same_destination() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn zero_tcp_idle_timeout_keeps_an_inactive_connection_open() {
+    let mut cfg = config();
+    cfg.tcp_idle_timeout = Some(0);
+    cfg.udp_idle_timeout = Some(2);
+    let mut harness = Harness::new(cfg);
+    let client = "192.0.2.1:40000".parse().unwrap();
+    let destination = "198.51.100.1:22".parse().unwrap();
+    let ack = connect(&mut harness, client, destination).await;
+    let ProxyRequest::Tcp(mut tcp) = harness.accept().await else {
+        panic!("expected TCP session")
+    };
+
+    // Exceed both the UDP setting and the default TCP timeout without traffic.
+    tokio::time::advance(Duration::from_secs(301)).await;
+    harness
+        .input
+        .send(tcp_packet(client, destination, TcpControl::Psh, 101, Some(ack), b"ssh").into())
+        .await
+        .unwrap();
+    let mut bytes = [0; 3];
+    tokio::time::timeout(Duration::from_secs(2), tcp.stream.read_exact(&mut bytes))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&bytes, b"ssh");
+}
+
+#[tokio::test(start_paused = true)]
+async fn tcp_timeout_does_not_expire_an_idle_udp_session() {
+    let mut cfg = config();
+    cfg.tcp_idle_timeout = Some(2);
+    cfg.udp_idle_timeout = Some(60);
+    let mut harness = Harness::new(cfg);
+    let client = "192.0.2.1:40000".parse().unwrap();
+    let destination = "198.51.100.1:443".parse().unwrap();
+    connect(&mut harness, client, destination).await;
+    let ProxyRequest::Tcp(mut tcp) = harness.accept().await else {
+        panic!("expected TCP session")
+    };
+    harness
+        .input
+        .send(
+            udp_packet(client, destination, b"first", 1500)
+                .unwrap()
+                .into(),
+        )
+        .await
+        .unwrap();
+    let ProxyRequest::Udp(mut udp) = harness.accept().await else {
+        panic!("expected UDP session")
+    };
+    udp.recv.recv_from().await.unwrap();
+
+    tokio::time::advance(Duration::from_secs(3)).await;
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(2), tcp.stream.read(&mut [0; 1]))
+            .await
+            .unwrap()
+            .unwrap(),
+        0,
+    );
+    // The original UDP session remains usable beyond the TCP timeout.
+    harness
+        .input
+        .send(
+            udp_packet(client, destination, b"still active", 1500)
+                .unwrap()
+                .into(),
+        )
+        .await
+        .unwrap();
+    let (bytes, dst) = tokio::time::timeout(Duration::from_secs(2), udp.recv.recv_from())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(bytes.as_ref(), b"still active");
+    assert_eq!(dst, destination.into());
+}
+
+#[tokio::test(start_paused = true)]
 async fn udp_idle_cleanup_releases_capacity_and_discards_late_replies() {
     let mut cfg = config();
     cfg.max_sessions = 1;
-    cfg.idle_timeout = 2;
+    cfg.tcp_idle_timeout = Some(60);
+    cfg.udp_idle_timeout = Some(2);
     let mut harness = Harness::new(cfg);
     let destination = "198.51.100.1:53".parse().unwrap();
     let first = "192.0.2.1:40000".parse().unwrap();

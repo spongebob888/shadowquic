@@ -67,6 +67,11 @@ class DnsDocsTests(unittest.TestCase):
 class TunDocsTests(unittest.TestCase):
     def test_tun_defaults_render_as_values_from_public_helpers(self):
         filename = "shadowquic/src/config/tun.rs"
+        optional_u64 = {"resolved_path": {
+            "path": "Option", "args": {"angle_bracketed": {"args": [
+                {"type": {"primitive": "u64"}},
+            ]}},
+        }}
         fields = [
             ("ipv4", {"resolved_path": {"path": "Ipv4Net"}}, "172.19.0.1/30"),
             ("ipv6", {"resolved_path": {
@@ -77,10 +82,12 @@ class TunDocsTests(unittest.TestCase):
             ("mtu", {"primitive": "u16"}, "1500"),
             ("max_sessions", {"primitive": "usize"}, "1024"),
             ("idle_timeout", {"primitive": "u64"}, "300"),
+            ("tcp_idle_timeout", optional_u64, None),
+            ("udp_idle_timeout", optional_u64, None),
         ]
         config = Item(dict(
             id=0, name="TunServerCfg", span=dict(filename=filename),
-            inner={"struct": {"kind": {"plain": {"fields": list(range(1, 6))}}}},
+            inner={"struct": {"kind": {"plain": {"fields": list(range(1, len(fields) + 1))}}}},
         ))
         index = {config.id: config}
         for id, (name, ty, _) in enumerate(fields, start=1):
@@ -96,7 +103,11 @@ class TunDocsTests(unittest.TestCase):
         for name, _, expected in fields:
             with self.subTest(field=name):
                 section = rendered.split(f"### `{name.replace('_', '-')}`\n", 1)[1].split("\n### ", 1)[0]
-                self.assertIn(f"- **Default:** `{expected}`", section)
+                if expected is None:
+                    self.assertIn("*(optional)*", section)
+                    self.assertNotIn("- **Default:**", section)
+                else:
+                    self.assertIn(f"- **Default:** `{expected}`", section)
                 self.assertNotIn("default_", section)
                 if name == "ipv6":
                     self.assertIn("*(optional)*", section)

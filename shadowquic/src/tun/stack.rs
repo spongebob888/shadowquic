@@ -270,9 +270,10 @@ impl Stack {
                         tcp::SocketBuffer::new(vec![0; TCP_BUFFER_SIZE]),
                         tcp::SocketBuffer::new(vec![0; TCP_BUFFER_SIZE]),
                     );
-                    socket.set_timeout(Some(smoltcp::time::Duration::from_secs(
-                        self.cfg.idle_timeout,
-                    )));
+                    let timeout = self.cfg.tcp_idle_timeout();
+                    socket.set_timeout(
+                        (timeout != 0).then(|| smoltcp::time::Duration::from_secs(timeout)),
+                    );
                     if socket
                         .listen(IpEndpoint::new(packet.dst, repr.dst_port))
                         .is_err()
@@ -374,7 +375,7 @@ impl Stack {
 
     fn poll(&mut self, now: Instant) {
         self.iface.poll(now, &mut self.device, &mut self.sockets);
-        let timeout = Duration::from_secs(self.cfg.idle_timeout);
+        let timeout = Duration::from_secs(self.cfg.udp_idle_timeout());
         self.udp
             .retain(|_, flow| !flow.packets.is_closed() && flow.last_active.elapsed() < timeout);
         self.tcp.retain(|_, flow| {

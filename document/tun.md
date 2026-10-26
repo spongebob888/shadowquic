@@ -18,7 +18,8 @@ inbounds:
     ipv6: fdfe:dcba:9876::1/126
     mtu: 1500
     max-sessions: 1024
-    idle-timeout: 300
+    tcp-idle-timeout: 300
+    udp-idle-timeout: 300
     default-outbound: proxy
 ```
 
@@ -31,9 +32,18 @@ The device is brought up when the inbound is created and closed on shutdown.
 
 `mtu` defaults to 1500 and must be at least 1280. `max-sessions` defaults to 1024
 and bounds the combined TCP connections and UDP client sessions (1–65,536).
-`idle-timeout` defaults to 300 seconds (1–86,400). Queues and TCP buffers are
-bounded. At capacity, new flows are dropped; congested UDP queues drop packets
-without blocking other flows. Idle or closed UDP sessions and closed TCP sockets
+`idle-timeout` defaults to 300 seconds (1–86,400) and remains supported for
+compatibility. `tcp-idle-timeout` and `udp-idle-timeout` each inherit its value
+when omitted. An explicit protocol-specific value takes precedence.
+The TCP setting controls smoltcp's socket timeout and accepts 0–86,400 seconds;
+set it to `0` to disable the timeout for connections such as idle SSH sessions.
+The UDP setting accepts 1–86,400 seconds and expires a
+session after no client packets or accepted replies for that duration.
+For example, `idle-timeout: 300` with `tcp-idle-timeout: 0` disables the TCP
+timeout and keeps the UDP timeout at 300 seconds.
+Queues and TCP buffers are bounded. At capacity, new
+flows are dropped; congested UDP queues drop packets without blocking other
+flows. Idle or closed UDP sessions and closed TCP sockets
 release their capacity. TCP preserves half-closes. UDP sessions are grouped by
 client socket address and retain the destination of every packet.
 
