@@ -352,27 +352,25 @@ impl Outbound for Resolver {
             ));
         }
         let resolver = self.clone();
-        tokio::spawn(async move {
-            match req {
-                ProxyRequest::Tcp(mut session) => {
-                    resolver.serve_tcp(&mut session.stream).await;
-                }
-                ProxyRequest::Udp(mut session) => {
-                    while let Ok(Ok((query, dst))) =
-                        tokio::time::timeout(Duration::from_secs(60), session.recv.recv_from())
-                            .await
+
+        match req {
+            ProxyRequest::Tcp(mut session) => {
+                resolver.serve_tcp(&mut session.stream).await;
+            }
+            ProxyRequest::Udp(mut session) => {
+                while let Ok(Ok((query, dst))) =
+                    tokio::time::timeout(Duration::from_secs(60), session.recv.recv_from()).await
+                {
+                    // Preserve the intercepted destination as the response source.
+                    if let Ok(reply) = resolver.answer(&query).await
+                        && let Ok(reply) = udp_reply(&query, reply)
+                        && session.send.send_to(reply.into(), dst).await.is_err()
                     {
-                        // Preserve the intercepted destination as the response source.
-                        if let Ok(reply) = resolver.answer(&query).await
-                            && let Ok(reply) = udp_reply(&query, reply)
-                            && session.send.send_to(reply.into(), dst).await.is_err()
-                        {
-                            break;
-                        }
+                        break;
                     }
                 }
             }
-        });
+        }
         Ok(())
     }
 }

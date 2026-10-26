@@ -10,7 +10,7 @@ use tokio::{
     net::{TcpSocket, TcpStream},
     sync::Mutex,
 };
-use tracing::{Instrument, error, trace};
+use tracing::trace;
 
 use crate::{
     Outbound, UdpSession,
@@ -87,12 +87,7 @@ impl Outbound for DirectOut {
                     .await?;
                     Ok(()) as Result<(), SError>
                 };
-                tokio::spawn(
-                    async {
-                        let _ = fut.await.map_err(|x| error!("{}", x));
-                    }
-                    .in_current_span(),
-                );
+                fut.await?;
             }
 
             crate::ProxyRequest::Udp(udp_session) => {
@@ -100,12 +95,7 @@ impl Outbound for DirectOut {
                     self_clone.handle_udp(udp_session).await?;
                     Ok(()) as Result<(), SError>
                 };
-                tokio::spawn(
-                    async {
-                        let _ = fut.await.map_err(|x| error!("{}", x));
-                    }
-                    .in_current_span(),
-                );
+                fut.await?;
             }
         }
 
