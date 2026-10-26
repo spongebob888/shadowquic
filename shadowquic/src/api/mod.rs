@@ -5,7 +5,7 @@
 use std::{
     collections::HashMap,
     convert::Infallible,
-    net::IpAddr,
+    net::{IpAddr, SocketAddr},
     sync::{Arc, atomic::Ordering},
     time::{Duration, Instant, SystemTime},
 };
@@ -46,6 +46,28 @@ pub use quality::SQStatsTrait;
 use quality::{ConnQuality, ProbeResult};
 
 type HttpResponse = Response<Full<Bytes>>;
+
+#[derive(Serialize)]
+struct ConnectionsSnapshot<'a> {
+    connections: Vec<ConnectionSnapshot<'a>>,
+}
+
+#[derive(Serialize)]
+struct ConnectionSnapshot<'a> {
+    id: String,
+    protocol: &'static str,
+    inbound: &'a str,
+    half_closed: bool,
+    outbound: Option<String>,
+    src: Option<SocketAddr>,
+    dst_ip: Option<IpAddr>,
+    dst_domain: Option<String>,
+    dst_port: Option<u16>,
+    upload_bytes: Option<u64>,
+    download_bytes: Option<u64>,
+    duration_ms: Option<u64>,
+    first_response_ms: Option<u64>,
+}
 
 struct ApiOutbound {
     outbound: Arc<dyn Outbound>,
@@ -102,8 +124,9 @@ impl ApiError {
     }
 }
 
-fn response(status: StatusCode, value: Value) -> HttpResponse {
-    let mut response = Response::new(Full::new(Bytes::from(value.to_string())));
+fn response(status: StatusCode, value: impl Serialize) -> HttpResponse {
+    let body = serde_json::to_vec(&value).expect("API response is serializable");
+    let mut response = Response::new(Full::new(Bytes::from(body)));
     *response.status_mut() = status;
     response.headers_mut().insert(
         hyper::header::CONTENT_TYPE,
@@ -264,12 +287,10 @@ impl ApiManager {
             }
             return memory_profile::dump().await;
         }
-        self.route_json(request)
-            .await
-            .map(|value| response(StatusCode::OK, value))
+        self.route_api(request).await
     }
 
-    async fn route_json(&self, request: Request<Incoming>) -> Result<Value, ApiError> {
+    async fn route_api(&self, request: Request<Incoming>) -> Result<HttpResponse, ApiError> {
         let path = request.uri().path();
         let method = request.method();
         let require = |expected: Method| {
@@ -286,34 +307,38 @@ impl ApiManager {
         match path {
             "/api/v1/outbounds" => {
                 require(Method::GET)?;
-                Ok(self.get_outbounds().await)
+                Ok(response(StatusCode::OK, self.get_outbounds().await))
             }
             "/api/v1/connections" => {
                 require(Method::GET)?;
-                Ok(self.get_connections().await)
+                Ok(response(StatusCode::OK, self.get_connections().await))
             }
             "/api/v1/traffic" => {
                 require(Method::GET)?;
-                Ok(self.get_traffic().await)
+                Ok(response(StatusCode::OK, self.get_traffic().await))
             }
             "/api/v1/tokio_metric" => {
                 require(Method::GET)?;
-                Ok(self.get_tokio_metric())
+                Ok(response(StatusCode::OK, self.get_tokio_metric()))
             }
             #[cfg(feature = "jemalloc")]
             "/api/v1/memory" => {
                 require(Method::GET)?;
-                memory::get()
+                memory::get().map(|value| response(StatusCode::OK, value))
             }
             #[cfg(feature = "mem-profile")]
             "/api/v1/memory/profile/status" => {
                 require(Method::GET)?;
-                memory_profile::get_active().await
+                memory_profile::get_active()
+                    .await
+                    .map(|value| response(StatusCode::OK, value))
             }
             #[cfg(feature = "mem-profile")]
             "/api/v1/memory/profile/activate" | "/api/v1/memory/profile/deactivate" => {
                 require(Method::POST)?;
-                memory_profile::set_active(path == "/api/v1/memory/profile/activate").await
+                memory_profile::set_active(path == "/api/v1/memory/profile/activate")
+                    .await
+                    .map(|value| response(StatusCode::OK, value))
             }
             _ => {
                 let (tag, action) = path
@@ -352,7 +377,7 @@ impl ApiManager {
                 if let Some(selector) = selector
                     && method == Method::GET
                 {
-                    return Ok(json!(selector.state()));
+                    return Ok(response(StatusCode::OK, selector.state()));
                 }
                 let content_type = request
                     .headers()
@@ -377,7 +402,7 @@ impl ApiManager {
                     let state = selector
                         .select(&input.selected)
                         .map_err(ApiError::invalid)?;
-                    return Ok(json!(state));
+                    return Ok(response(StatusCode::OK, state));
                 }
                 let input: ProbeRequest =
                     serde_json::from_slice(&body).map_err(ApiError::invalid)?;
@@ -416,7 +441,7 @@ impl ApiManager {
                 };
                 *outbound.probe.lock().unwrap() = Some(probe.clone());
                 result?;
-                Ok(json!(probe))
+                Ok(response(StatusCode::OK, probe))
             }
         }
     }
@@ -464,13 +489,14 @@ impl ApiManager {
         json!({"outbounds": outbounds})
     }
 
-    async fn get_connections(&self) -> Value {
+    async fn get_connections(&self) -> ConnectionsSnapshot<'_> {
         let mut connections = Vec::new();
         for (inbound, observer) in &self.observers {
             for (protocol, scoreboard) in [
                 ("tcp", &observer.tcp_scoreboard),
                 ("udp", &observer.udp_scoreboard),
             ] {
+                // Release the scoreboard lock before formatting entries or reading the DNS cache.
                 let entries = scoreboard.lock().await.clone();
                 for (send, recv) in entries {
                     let (send, recv) = (send.upgrade(), recv.upgrade());
@@ -482,38 +508,55 @@ impl ApiManager {
                         continue;
                     };
                     let half_closed = send.is_none() || recv.is_none();
-                    let dst = send.as_ref().map(|send| send.dst.read().unwrap().clone());
                     #[allow(unused_mut)]
-                    let (dst_ip, mut dst_domain) = match dst.as_ref().map(|dst| &dst.addr) {
-                        Some(AddrOrDomain::V4(ip)) => (Some(IpAddr::from(*ip)), None),
-                        Some(AddrOrDomain::V6(ip)) => (Some(IpAddr::from(*ip)), None),
-                        Some(AddrOrDomain::Domain(domain)) => {
-                            (None, String::from_utf8(domain.contents.clone()).ok())
+                    let (dst_ip, mut dst_domain, dst_port) = match &send {
+                        Some(send) => {
+                            let dst = send.dst.read().unwrap();
+                            let (ip, domain) = match &dst.addr {
+                                AddrOrDomain::V4(ip) => (Some(IpAddr::from(*ip)), None),
+                                AddrOrDomain::V6(ip) => (Some(IpAddr::from(*ip)), None),
+                                AddrOrDomain::Domain(domain) => {
+                                    (None, String::from_utf8(domain.contents.clone()).ok())
+                                }
+                            };
+                            (ip, domain, Some(dst.port))
                         }
-                        None => (None, None),
+                        None => (None, None, None),
                     };
                     #[cfg(feature = "dns-server")]
                     if let (Some(ip), Some(cache)) = (dst_ip, &self.dns_cache) {
                         dst_domain = cache.reverse_lookup_cache(ip);
                     }
-                    connections.push(json!({
-                        "id": id.to_string(), "protocol": protocol, "inbound": inbound,
-                        "half_closed": half_closed,
-                        "outbound": send.as_ref().map(|send| &send.outbound),
-                        "src": recv.as_ref().and_then(|recv| recv.src_addr).map(|addr| addr.to_string()),
-                        "dst_ip": dst_ip.map(|ip| ip.to_string()), "dst_domain": dst_domain,
-                        "dst_port": dst.as_ref().map(|dst| dst.port),
-                        "upload_bytes": recv.as_ref().map(|recv| recv.bytes_recv.load(Ordering::Relaxed)),
-                        "download_bytes": send.as_ref().map(|send| send.bytes_send.load(Ordering::Relaxed)),
-                        "duration_ms": recv.as_ref().map(|recv| millis(recv.created.elapsed())),
-                        "first_response_ms": send.as_ref().zip(recv.as_ref()).and_then(|(send, recv)|
-                            send.first_send.get().map(|first| millis(first.saturating_duration_since(recv.created)))),
-                    }));
+                    connections.push(ConnectionSnapshot {
+                        id: id.to_string(),
+                        protocol,
+                        inbound,
+                        half_closed,
+                        outbound: send.as_ref().map(|send| send.outbound.clone()),
+                        src: recv.as_ref().and_then(|recv| recv.src_addr),
+                        dst_ip,
+                        dst_domain,
+                        dst_port,
+                        upload_bytes: recv
+                            .as_ref()
+                            .map(|recv| recv.bytes_recv.load(Ordering::Relaxed)),
+                        download_bytes: send
+                            .as_ref()
+                            .map(|send| send.bytes_send.load(Ordering::Relaxed)),
+                        duration_ms: recv.as_ref().map(|recv| millis(recv.created.elapsed())),
+                        first_response_ms: send.as_ref().zip(recv.as_ref()).and_then(
+                            |(send, recv)| {
+                                send.first_send.get().map(|first| {
+                                    millis(first.saturating_duration_since(recv.created))
+                                })
+                            },
+                        ),
+                    });
                 }
             }
         }
-        connections.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
-        json!({"connections": connections})
+        connections.sort_unstable_by(|a, b| a.id.cmp(&b.id));
+        ConnectionsSnapshot { connections }
     }
 
     fn get_tokio_metric(&self) -> Value {
