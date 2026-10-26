@@ -16,6 +16,8 @@ use tokio::{
 
 use async_trait::async_trait;
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::watch;
+use tokio::task::JoinSet;
 use tracing::{Instrument, error, info, info_span};
 
 #[cfg(all(
@@ -443,17 +445,7 @@ impl Manager {
             Some(config) => Some(api::bind(config).await?),
             None => None,
         };
-        for (tag, inbound) in &self.inbounds {
-            if let Err(error) = inbound.init().await {
-                error!(inbound = %tag, %error, "inbound initialization failed");
-                for (tag, inbound) in &self.inbounds {
-                    if let Err(error) = inbound.shutdown().await {
-                        error!(inbound = %tag, %error, "inbound shutdown failed");
-                    }
-                }
-                return Err(error);
-            }
-        }
+        self.init_inbounds().await?;
         #[cfg(feature = "restful-api")]
         let api_manager = Arc::new(
             api::ApiManager::new(
@@ -487,8 +479,8 @@ impl Manager {
             #[cfg(feature = "plugin")]
             router: self.router,
         });
-        let (stop, stopped) = tokio::sync::watch::channel(false);
-        let mut tasks = tokio::task::JoinSet::new();
+        let (stop, stopped) = watch::channel(false);
+        let mut tasks = JoinSet::new();
         #[cfg(feature = "restful-api")]
         if let Some(listener) = api_listener {
             let stopped = stopped.clone();
@@ -499,124 +491,148 @@ impl Manager {
                     .map_err(SError::Io)
             });
         }
-        for (tag, mut inbound) in self.inbounds {
-            // Only the tag: per-request and per-connection fields belong on the
-            // spans that end with them, or they accumulate here (see below).
-            let inbound_span = info_span!("inbound", tag = %tag);
-            let dispatcher = dispatcher.clone();
-            let mut stopped = stopped.clone();
-            tasks.spawn(async move {
-                let mut requests = tokio::task::JoinSet::new();
-                'accepting: loop {
-                    // Completing a dispatch must not cancel a partially accepted request.
-                    let req = {
-                        let accept = inbound.accept();
-                        tokio::pin!(accept);
-                        loop {
-                            tokio::select! {
-                                biased;
-                                _ = stopped.changed() => break 'accepting,
-                                Some(result) = requests.join_next(), if !requests.is_empty() => {
-                                    if let Err(error) = result {
-                                        error!(inbound = %tag, %error, "request task failed");
-                                    }
-                                }
-                                req = &mut accept => break req,
-                            }
-                        }
-                    };
-                    match req {
-                        Ok(req) => {
-                            assert!(req.user_context().inbound_tag == tag);
-                            // A span's recorded fields are *appended* to the ones
-                            // it was created with (the fmt layer's
-                            // `FormattedFields::add_fields`), so recording the
-                            // request's address and user onto the listener span
-                            // would grow that span — and every line logged under
-                            // it — for as long as the listener lives. They belong
-                            // on a span that ends with the request.
-                            // Both fields are declared empty and only recorded
-                            // when they are known, so a request without them logs
-                            // without them — anonymous requests use an empty
-                            // username, and dns and database download inbounds have no
-                            // peer address.
-                            let span = match &req {
-                                    ProxyRequest::Tcp(_) => {
-                                                          info_span!(
-                                "tcp_req",
-                                src = tracing::field::Empty,
-                                user = tracing::field::Empty,
-                                dst = %req.dst()
-                            )
-                                    }
-                                    ProxyRequest::Udp(_) => {
-                                                            info_span!(
-                                "udp_req",
-                                src = tracing::field::Empty,
-                                user = tracing::field::Empty,
-                                dst = %req.dst()
-                            )
-                                    }
-                                };
-
-                            if let Some(addr) = req.src_addr() {
-                                span.record("src", tracing::field::display(addr));
-                            }
-                            if let Some(stats) = req.user_context().stats.as_ref() && !stats.username.is_empty() {
-                                span.record("user", tracing::field::display(&stats.username));
-                            }
-                            let dispatcher = dispatcher.clone();
-                            requests.spawn(async move {
-                                dispatcher.dispatch(req).await;
-                            }.instrument(span));
-                        }
-                        Err(SError::InboundClosed) => break,
-                        Err(error) => {
-                            error!(inbound = %tag, %error, "error accepting request");
-                            tokio::select! {
-                                biased;
-                                _ = stopped.changed() => break,
-                                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
-                            }
-                        }
-                    }
-                }
-                requests.shutdown().await;
-                inbound.shutdown().await
-            }.instrument(inbound_span));
+        for (tag, inbound) in self.inbounds {
+            let span = info_span!("inbound", tag = %tag);
+            tasks.spawn(
+                run_inbound(tag, inbound, dispatcher.clone(), stopped.clone()).instrument(span),
+            );
         }
-        tokio::pin!(shutdown);
-        let mut result = Ok(());
-        loop {
-            tokio::select! {
-                _ = &mut shutdown => {
-                    info!("shutdown requested, persisting users and stats");
-                    break;
-                }
-                task = tasks.join_next() => {
-                    match task {
-                        Some(Ok(Ok(()))) => continue,
-                        Some(Ok(Err(error))) => result = Err(error),
-                        Some(Err(error)) => result = Err(SError::Io(std::io::Error::other(error))),
-                        None => break,
-                    }
-                    break;
-                }
-            }
-        }
-        let _ = stop.send(true);
-        while let Some(task) = tasks.join_next().await {
-            let task_result = match task {
-                Ok(result) => result,
-                Err(error) => Err(SError::Io(std::io::Error::other(error))),
-            };
-            if let Err(error) = task_result {
-                error!(%error, "inbound shutdown failed");
-                if result.is_ok() {
-                    result = Err(error);
-                }
-            }
-        }
-        result
+        supervise_tasks(tasks, stop, shutdown).await
     }
+
+    /// Roll back all inbounds if any initialization fails, including the failed one.
+    async fn init_inbounds(&self) -> Result<(), SError> {
+        for (tag, inbound) in &self.inbounds {
+            if let Err(error) = inbound.init().await {
+                error!(inbound = %tag, %error, "inbound initialization failed");
+                for (tag, inbound) in &self.inbounds {
+                    if let Err(error) = inbound.shutdown().await {
+                        error!(inbound = %tag, %error, "inbound shutdown failed");
+                    }
+                }
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Own one listener's requests so they are cancelled before its shutdown hook runs.
+async fn run_inbound(
+    tag: String,
+    mut inbound: Box<dyn Inbound>,
+    dispatcher: Arc<RequestDispatcher>,
+    mut stopped: watch::Receiver<bool>,
+) -> Result<(), SError> {
+    let mut requests = JoinSet::new();
+    'accepting: loop {
+        // Keep accept pinned while reaping requests: cancelling it can lose a
+        // partially accepted request. Only shutdown may interrupt it.
+        let req = {
+            let accept = inbound.accept();
+            tokio::pin!(accept);
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = stopped.changed() => break 'accepting,
+                    Some(result) = requests.join_next(), if !requests.is_empty() => {
+                        if let Err(error) = result {
+                            error!(inbound = %tag, %error, "request task failed");
+                        }
+                    }
+                    req = &mut accept => break req,
+                }
+            }
+        };
+        match req {
+            Ok(req) => {
+                assert!(req.user_context().inbound_tag == tag);
+                let span = request_span(&req);
+                let dispatcher = dispatcher.clone();
+                requests.spawn(async move { dispatcher.dispatch(req).await }.instrument(span));
+            }
+            Err(SError::InboundClosed) => break,
+            Err(error) => {
+                error!(inbound = %tag, %error, "error accepting request");
+                tokio::select! {
+                    biased;
+                    _ = stopped.changed() => break,
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
+                }
+            }
+        }
+    }
+    requests.shutdown().await;
+    inbound.shutdown().await
+}
+
+fn request_span(req: &ProxyRequest) -> tracing::Span {
+    // Recorded fields are appended by the fmt layer. Keep them on a request
+    // span so they cannot accumulate on the long-lived inbound span.
+    let span = match req {
+        ProxyRequest::Tcp(_) => info_span!(
+            "tcp_req",
+            src = tracing::field::Empty,
+            user = tracing::field::Empty,
+            dst = %req.dst()
+        ),
+        ProxyRequest::Udp(_) => info_span!(
+            "udp_req",
+            src = tracing::field::Empty,
+            user = tracing::field::Empty,
+            dst = %req.dst()
+        ),
+    };
+    // Leave absent addresses and anonymous users out of the formatted fields.
+    if let Some(addr) = req.src_addr() {
+        span.record("src", tracing::field::display(addr));
+    }
+    if let Some(stats) = req.user_context().stats.as_ref()
+        && !stats.username.is_empty()
+    {
+        span.record("user", tracing::field::display(&stats.username));
+    }
+    span
+}
+
+/// Stop on a signal, the first task failure, or completion of all tasks, then
+/// join every remaining task while preserving the first error.
+async fn supervise_tasks(
+    mut tasks: JoinSet<Result<(), SError>>,
+    stop: watch::Sender<bool>,
+    shutdown: impl Future<Output = ()>,
+) -> Result<(), SError> {
+    tokio::pin!(shutdown);
+    let mut result = Ok(());
+    loop {
+        tokio::select! {
+            _ = &mut shutdown => {
+                info!("shutdown requested, persisting users and stats");
+                break;
+            }
+            task = tasks.join_next() => {
+                match task {
+                    Some(Ok(Ok(()))) => continue,
+                    Some(Ok(Err(error))) => result = Err(error),
+                    Some(Err(error)) => result = Err(SError::Io(std::io::Error::other(error))),
+                    None => break,
+                }
+                break;
+            }
+        }
+    }
+    let _ = stop.send(true);
+    while let Some(task) = tasks.join_next().await {
+        let task_result = match task {
+            Ok(result) => result,
+            Err(error) => Err(SError::Io(std::io::Error::other(error))),
+        };
+        if let Err(error) = task_result {
+            error!(%error, "inbound shutdown failed");
+            if result.is_ok() {
+                result = Err(error);
+            }
+        }
+    }
+    result
 }
