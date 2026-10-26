@@ -164,6 +164,7 @@ impl DirectOut {
     async fn connect_tcp(&self, dst: SocketAddr) -> Result<TcpStream, SError> {
         let socket = TcpSocketFactory {
             addr: dst.to_string(),
+            keep_alive: self.cfg.tcp_keep_alive,
             interface: self.cfg.socket_opt.bind_interface.clone(),
             fw_mark: self.cfg.socket_opt.fw_mark,
             protect_path: None,
@@ -260,6 +261,37 @@ impl DirectOut {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[tokio::test]
+    async fn tcp_keep_alive_defaults_to_disabled_and_applies_to_connected_sockets() {
+        assert!(!DirectOutCfg::default().tcp_keep_alive);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        for (field, expected) in [
+            ("", false),
+            ("tcp-keep-alive: false", false),
+            ("tcp-keep-alive: true", true),
+        ] {
+            let crate::config::OutboundCfg::Direct(cfg) =
+                serde_saphyr::from_str(&format!("type: direct\ntag: direct\n{field}")).unwrap()
+            else {
+                panic!("expected direct outbound")
+            };
+            assert_eq!(cfg.tcp_keep_alive, expected);
+            let direct = DirectOut::new(cfg, Arc::new(ResolverManager::new()));
+            let stream = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                direct.connect_tcp(listener.local_addr().unwrap()),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(
+                socket2::SockRef::from(&stream).keepalive().unwrap(),
+                expected
+            );
+            listener.accept().await.unwrap();
+        }
+    }
 
     #[tokio::test]
     async fn udp_domain_cache_preserves_each_destination_port() {
