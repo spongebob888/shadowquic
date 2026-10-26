@@ -126,6 +126,8 @@ impl SocketFactory for UdpSocketFactory {
 
 pub struct TcpSocketFactory {
     pub addr: String,
+    /// Enable SO_KEEPALIVE using the operating system's probe timings.
+    pub keep_alive: bool,
     pub interface: Option<Interface>,
     pub fw_mark: Option<u32>,
     pub protect_path: Option<PathBuf>,
@@ -184,6 +186,7 @@ impl SocketFactory for TcpSocketFactory {
                 socket
             }
         };
+        socket.set_keepalive(self.keep_alive)?;
         socket.set_nonblocking(true)?;
 
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
@@ -430,9 +433,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_tcp_socket_factory_keep_alive() {
+        for addr in ["127.0.0.1:0", "[::1]:0"] {
+            for bind in [false, true] {
+                for keep_alive in [false, true] {
+                    let factory = TcpSocketFactory {
+                        addr: addr.into(),
+                        keep_alive,
+                        interface: bind.then(|| Interface::Address(addr.parse().unwrap())),
+                        fw_mark: None,
+                        protect_path: None,
+                        resolver: test_resolver(),
+                    };
+                    let socket = factory.create_socket().await.unwrap();
+                    assert_eq!(
+                        socket.keepalive().unwrap(),
+                        keep_alive,
+                        "{addr}, bind={bind}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn test_tcp_socket_factory_creation() {
         // Create factory with no special options
         let factory = TcpSocketFactory {
+            keep_alive: false,
             addr: "127.0.0.1:0".to_string(),
             interface: None,
             fw_mark: None,
@@ -444,6 +472,7 @@ mod tests {
 
         // Create factory with interface address
         let factory_ip = TcpSocketFactory {
+            keep_alive: false,
             addr: "127.0.0.1:0".to_string(),
             interface: Some(Interface::Address("127.0.0.1:0".parse().unwrap())),
             fw_mark: None,
@@ -458,6 +487,7 @@ mod tests {
 
         // Create factory with firewall mark (only on supported platforms)
         let factory_mark = TcpSocketFactory {
+            keep_alive: false,
             addr: "127.0.0.1:0".to_string(),
             interface: None,
             fw_mark: Some(123),
@@ -556,6 +586,7 @@ mod tests {
         let listen_addr = listener.local_addr().unwrap();
 
         let factory = TcpSocketFactory {
+            keep_alive: false,
             addr: listen_addr.to_string(),
             interface: Some(Interface::Device(iface.clone())),
             fw_mark: None,
@@ -603,6 +634,7 @@ mod tests {
     #[tokio::test]
     async fn test_tcp_socket_factory_device_loopback() {
         let factory = TcpSocketFactory {
+            keep_alive: false,
             addr: "127.0.0.1:0".to_string(),
             interface: Some(Interface::Device("nonexistent_device_name_123".to_string())),
             fw_mark: None,
@@ -677,6 +709,7 @@ mod tests {
         };
 
         let factory = TcpSocketFactory {
+            keep_alive: false,
             addr: "1.1.1.1:80".to_string(),
             interface: Some(Interface::Address(SocketAddr::new(local_ip, 0))),
             fw_mark: None,
@@ -767,6 +800,7 @@ mod tests {
         };
 
         let factory = TcpSocketFactory {
+            keep_alive: false,
             addr: "1.1.1.1:80".to_string(),
             interface: Some(Interface::Device(iface.clone())),
             fw_mark: None,
@@ -849,6 +883,7 @@ mod tests {
         };
 
         let factory = TcpSocketFactory {
+            keep_alive: false,
             addr: "1.1.1.1:80".to_string(),
             interface: Some(Interface::Device(iface.clone())),
             fw_mark: None,
@@ -931,6 +966,7 @@ mod tests {
         };
 
         let factory = TcpSocketFactory {
+            keep_alive: false,
             addr: "1.1.1.1:80".to_string(),
             interface: Some(Interface::Device(iface.clone())),
             fw_mark: None,

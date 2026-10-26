@@ -18,6 +18,7 @@ inbounds:
 outbounds:
   - tag: direct-outbound
     type: direct
+    tcp-keep-alive: false # Enable TCP keepalive using OS probe timings; default false
     dns-strategy: prefer-ipv4 # or prefer-ipv6, ipv4-only, ipv6-only
 log-level: "trace"
 

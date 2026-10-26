@@ -80,6 +80,7 @@ impl SocksClient {
             .unwrap_or_else(|| panic!("dns resolver not found: {}", tag));
         let tcp_socket_factory = Arc::new(TcpSocketFactory {
             addr: cfg.addr.clone(),
+            keep_alive: false,
             interface: cfg.socket_opt.bind_interface.clone(),
             fw_mark: cfg.socket_opt.fw_mark,
             protect_path: None,
