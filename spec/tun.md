@@ -93,7 +93,8 @@ inbounds:
     ipv6: fdfe:dcba:9876::1/126
     mtu: 1500
     max-sessions: 1024
-    idle-timeout: 300
+    tcp-idle-timeout: 300
+    udp-idle-timeout: 300
     default-outbound: direct
 outbounds:
   - tag: direct
@@ -109,7 +110,13 @@ outbounds:
 | `ipv6` | `Option<Ipv6Net>` | `fdfe:dcba:9876::1/126` | Adapter's IPv6 address and prefix; `null` disables IPv6 |
 | `mtu` | `u16` | `1500` | `1280..=65535`; IPv6 determines the minimum |
 | `max-sessions` | `usize` | `1024` | `1..=65536`; combined TCP-flow and UDP-client-session limit |
-| `idle-timeout` | `u64` | `300` seconds | `1..=86400`; strict UDP inactivity threshold and smoltcp TCP timeout setting |
+| `idle-timeout` | `u64` | `300` seconds | `1..=86400`; shared fallback retained for compatibility |
+| `tcp-idle-timeout` | `Option<u64>` | Inherits `idle-timeout` | `0..=86400`; smoltcp TCP timeout setting; `0` disables the timeout |
+| `udp-idle-timeout` | `Option<u64>` | Inherits `idle-timeout` | `1..=86400`; strict UDP inactivity threshold |
+
+Each explicit protocol-specific timeout takes precedence over `idle-timeout`,
+regardless of YAML field order. Existing configurations that specify only
+`idle-timeout` continue to apply that timeout to both protocols.
 
 `ipv4` and `ipv6` are interface addresses: host bits are expected and preserved.
 They are different from the network-aligned `ipv4-range`/`ipv6-range` fields of a
@@ -298,7 +305,8 @@ For a validated SYN with no ACK number and no existing key:
 
 1. Check the combined TCP/UDP session limit. At capacity, drop the new SYN.
 2. Create a smoltcp TCP socket with separate 65,536-byte RX and TX buffers.
-3. Set its timeout to the configured `idle-timeout` in smoltcp seconds.
+3. Set its timeout to the configured `tcp-idle-timeout` in smoltcp seconds,
+   or `None` when the setting is `0`.
 4. Listen on the packet's destination IP and TCP port.
 5. Add the socket to the owned socket set.
 6. Create `tokio::io::duplex(65536)`.
@@ -383,12 +391,12 @@ not retain a separate TIME-WAIT tombstone.
 
 ### Timeout semantics
 
-The field name `idle-timeout` does not implement a separate unconditional TCP
-inactivity timer. It is passed to `tcp::Socket::set_timeout`; smoltcp controls
-when that timeout applies, including connection progress and pending transmit
-data. This code does not enable TCP keep-alive. An established connection with
-no pending traffic is not guaranteed to be removed merely because the configured
-number of idle seconds elapsed. UDP has the explicit idle policy below.
+`tcp-idle-timeout` is passed to `tcp::Socket::set_timeout`; setting it to `0`
+passes `None` and disables the timeout. For a nonzero setting, smoltcp 0.12
+tracks the last accepted packet from the client, including ACKs. Queuing data
+into an empty transmit buffer restarts the timeout window. An established
+connection with no traffic can therefore expire even without pending data.
+This code does not enable TCP keep-alive. UDP has the explicit idle policy below.
 
 ## 10. UDP session lifecycle
 
@@ -462,7 +470,7 @@ prove that the packet was subsequently injected or received by the client.
 
 A UDP entry's last-activity time advances on input datagrams and on replies that
 the stack accepts for that generation. During polling, entries are removed when
-the receive channel is closed or inactivity is at least `idle-timeout`.
+the receive channel is closed or inactivity is at least `udp-idle-timeout`.
 
 Dropping the map's channel sender lets an outbound observe session closure after
 any already queued datagrams drain. Old reply handles may still exist; the

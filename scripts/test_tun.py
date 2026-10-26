@@ -89,7 +89,8 @@ def write_config():
     name: {DEVICE}
     mtu: 1500
     max-sessions: 128
-    idle-timeout: 30
+    tcp-idle-timeout: 30
+    udp-idle-timeout: 30
 dns:
   - tag: fake
     type: dns-fakeip

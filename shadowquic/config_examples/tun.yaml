@@ -8,7 +8,8 @@ inbounds:
     ipv6: fdfe:dcba:9876::1/126 # Set null to disable IPv6.
     mtu: 1500
     max-sessions: 1024
-    idle-timeout: 300
+    tcp-idle-timeout: 300
+    udp-idle-timeout: 300
     default-outbound: direct
 dns:
   - tag: fake
