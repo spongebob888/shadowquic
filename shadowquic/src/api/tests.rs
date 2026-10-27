@@ -31,9 +31,7 @@ impl Outbound for FixtureOutbound {
         assert!(session.user_context.observer.upgrade().is_none());
         self.calls.fetch_add(1, Ordering::Relaxed);
         let mut upstream = TcpStream::connect(self.destination).await?;
-        tokio::spawn(async move {
-            let _ = tokio::io::copy_bidirectional(&mut session.stream, &mut upstream).await;
-        });
+        tokio::io::copy_bidirectional(&mut session.stream, &mut upstream).await?;
         Ok(())
     }
 }
@@ -508,6 +506,33 @@ async fn tokio_metric_reports_current_thread_runtime() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tokio_metric_reports_multi_thread_runtime() {
     assert_tokio_metric_route(2).await;
+}
+
+#[tokio::test]
+async fn probe_drives_blocking_direct_outbound_and_closes_session_after_response() {
+    let (target, mut requests, fixture_task) = fixture().await;
+    let _fixture = AbortOnDrop(fixture_task);
+    let outbound = crate::direct::outbound::DirectOut::default();
+    let url = url::Url::parse(&format!("http://{target}/health?q=probe")).unwrap();
+    let respond = async {
+        let (request, mut peer) = requests.recv().await.unwrap();
+        assert!(request.starts_with("GET /health?q=probe HTTP/1.1\r\n"));
+        peer.write_all(b"HTTP/1.1 204 No Content\r\n\r\n")
+            .await
+            .unwrap();
+        // Keep the server side open: the probe must finish and close its relay
+        // after receiving the response, without waiting for an upstream EOF.
+        assert_eq!(peer.read(&mut [0]).await.unwrap(), 0);
+    };
+    tokio::time::timeout(Duration::from_secs(3), async {
+        let (result, ()) = tokio::join!(
+            probe_http_outbound(&url, &outbound, Duration::from_secs(1)),
+            respond
+        );
+        result.unwrap_or_else(|error| panic!("HTTP probe failed: {}", error.body.message));
+    })
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
