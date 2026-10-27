@@ -663,35 +663,46 @@ async fn probe_http_outbound(
         let dst = http::destination(url).map_err(ApiError::invalid)?;
         let started = Instant::now();
         let (stream, request, _request_guard) = tcp_request(dst, Default::default(), 16 * 1024);
-        outbound
-            .handle(request)
-            .await
-            .map_err(|error| match error {
-                SError::ProtocolUnimpl => {
-                    ApiError::new(StatusCode::NOT_IMPLEMENTED, "probe_unsupported", error)
-                }
-                _ => ApiError::new(StatusCode::BAD_GATEWAY, "probe_failed", error),
-            })?;
-        let mut connection = HttpConnection::new(stream, Some(32 * 1024))
-            .await
-            .map_err(|error| ApiError::new(StatusCode::BAD_GATEWAY, "probe_failed", error))?;
-        let request = http::get_request(url)
-            .header(hyper::header::CONNECTION, "close")
-            .body(Empty::<Bytes>::new())
-            .map_err(ApiError::invalid)?;
-        let response = connection
-            .send_request(request)
-            .await
-            .map_err(|error| ApiError::new(StatusCode::BAD_GATEWAY, "probe_failed", error))?;
-        let latency = started.elapsed();
-        if !response.status().is_success() {
-            return Err(ApiError::new(
-                StatusCode::BAD_GATEWAY,
-                "probe_failed",
-                format!("HTTP status {}", response.status()),
-            ));
+        let handle = outbound.handle(request);
+        let exchange = async {
+            let mut connection = HttpConnection::new(stream, Some(32 * 1024))
+                .await
+                .map_err(|error| ApiError::new(StatusCode::BAD_GATEWAY, "probe_failed", error))?;
+            let request = http::get_request(url)
+                .header(hyper::header::CONNECTION, "close")
+                .body(Empty::<Bytes>::new())
+                .map_err(ApiError::invalid)?;
+            let response = connection
+                .send_request(request)
+                .await
+                .map_err(|error| ApiError::new(StatusCode::BAD_GATEWAY, "probe_failed", error))?;
+            let latency = started.elapsed();
+            if !response.status().is_success() {
+                return Err(ApiError::new(
+                    StatusCode::BAD_GATEWAY,
+                    "probe_failed",
+                    format!("HTTP status {}", response.status()),
+                ));
+            }
+            Ok(latency)
+        };
+        tokio::pin!(exchange);
+        // Drive session relays alongside HTTP, and still support outbounds
+        // which return after spawning their own relay. Both futures stay scoped
+        // to the probe so completion, timeout, or cancellation closes the session.
+        tokio::select! {
+            biased;
+            result = handle => {
+                result.map_err(|error| match error {
+                    SError::ProtocolUnimpl => {
+                        ApiError::new(StatusCode::NOT_IMPLEMENTED, "probe_unsupported", error)
+                    }
+                    _ => ApiError::new(StatusCode::BAD_GATEWAY, "probe_failed", error),
+                })?;
+                exchange.await
+            }
+            result = &mut exchange => result,
         }
-        Ok(latency)
     };
     tokio::time::timeout(timeout, probe).await.map_err(|_| {
         ApiError::new(
