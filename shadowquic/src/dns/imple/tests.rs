@@ -499,16 +499,20 @@ async fn hijacked_dns_keeps_original_reply_source() {
     .wait_first_packet()
     .await
     .unwrap();
-    manager.outbounds["fake"]
-        .handle(ProxyRequest::Udp(session))
-        .await
-        .unwrap();
-    let (bytes, source) = tokio::time::timeout(Duration::from_secs(1), reply_recv.recv_from())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(source, dst);
-    assert_eq!(Packet::parse(&bytes).unwrap().id(), 42);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        let (handled, ()) = tokio::join!(
+            manager.outbounds["fake"].handle(ProxyRequest::Udp(session)),
+            async {
+                let (bytes, source) = reply_recv.recv_from().await.unwrap();
+                assert_eq!(source, dst);
+                assert_eq!(Packet::parse(&bytes).unwrap().id(), 42);
+                drop(send);
+            }
+        );
+        handled.unwrap();
+    })
+    .await
+    .unwrap();
 }
 
 fn tcp_hijack_request(stream: tokio::io::DuplexStream, inbound_tag: &str) -> ProxyRequest {
@@ -550,11 +554,7 @@ async fn hijacked_tcp_dns_handles_fragmented_and_pipelined_queries_without_trunc
     }
     resolver.cache.insert(&first, reply);
     let (mut client, stream) = tokio::io::duplex(4096);
-    resolver
-        .handle(tcp_hijack_request(stream, "socks"))
-        .await
-        .unwrap();
-    tokio::time::timeout(Duration::from_secs(1), async {
+    let exchange = async {
         // Split both the length prefix and query body across writes.
         let length = (first.len() as u16).to_be_bytes();
         client.write_all(&length[..1]).await.unwrap();
@@ -576,6 +576,13 @@ async fn hijacked_tcp_dns_handles_fragmented_and_pipelined_queries_without_trunc
             assert!(!reply.has_flags(PacketFlag::TRUNCATION));
         }
         assert_eq!(client.read(&mut [0]).await.unwrap(), 0);
+    };
+    tokio::time::timeout(Duration::from_secs(1), async {
+        let (handled, ()) = tokio::join!(
+            resolver.handle(tcp_hijack_request(stream, "socks")),
+            exchange
+        );
+        handled.unwrap();
     })
     .await
     .unwrap();
@@ -597,19 +604,19 @@ async fn hijacked_tcp_dns_closes_on_invalid_or_incomplete_frames() {
     for bytes in [&[0, 1][..], &[0, 12, 0], &[0]] {
         let resolver = hijack_resolver();
         let (mut client, stream) = tokio::io::duplex(64);
-        resolver
-            .handle(tcp_hijack_request(stream, "socks"))
-            .await
-            .unwrap();
-        client.write_all(bytes).await.unwrap();
-        client.shutdown().await.unwrap();
-        assert_eq!(
-            tokio::time::timeout(Duration::from_secs(1), client.read(&mut [0]))
-                .await
-                .unwrap()
-                .unwrap(),
-            0
-        );
+        tokio::time::timeout(Duration::from_secs(1), async {
+            let (handled, ()) = tokio::join!(
+                resolver.handle(tcp_hijack_request(stream, "socks")),
+                async {
+                    client.write_all(bytes).await.unwrap();
+                    client.shutdown().await.unwrap();
+                    assert_eq!(client.read(&mut [0]).await.unwrap(), 0);
+                }
+            );
+            handled.unwrap();
+        })
+        .await
+        .unwrap();
     }
 }
 

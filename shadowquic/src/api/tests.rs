@@ -1461,7 +1461,11 @@ async fn connections_use_cached_domains_without_resolving_on_a_miss() {
         let mut dns = dns;
         let direct = crate::direct::outbound::DirectOut::default();
         while let Ok(request) = crate::Inbound::accept(&mut dns).await {
-            direct.handle(request).await.unwrap();
+            // The resolver closes the request channel after receiving its reply.
+            match direct.handle(request).await {
+                Ok(()) | Err(SError::OutboundUnavailable) => {}
+                Err(error) => panic!("DNS relay failed: {error}"),
+            }
         }
     }));
     tokio::time::timeout(Duration::from_secs(3), resolver.resolve("cached.test"))
