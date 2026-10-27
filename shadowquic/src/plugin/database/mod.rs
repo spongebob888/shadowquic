@@ -155,10 +155,11 @@ impl RedbDatabase {
         if meta.get("type")?.as_ref().map(|entry| entry.value()) != Some("geosite") {
             return Ok(None);
         }
+        let current_schema = GEOSITE_SCHEMA.parse::<u32>()?;
         Ok(meta
             .get("schema")?
             .and_then(|entry| entry.value().parse::<u32>().ok())
-            .filter(|version| *version < 3))
+            .filter(|version| *version < current_schema))
     }
 
     /// Open a converted database, checking format and source identity.
