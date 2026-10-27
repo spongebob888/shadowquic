@@ -425,8 +425,8 @@ impl Resolver {
             ..UserContext::default()
         };
         if !tcp {
-            let (send_query, recv_query) = mpsc::channel(1);
-            let (send_reply, mut recv_reply) = mpsc::channel(1);
+            let (send_query, recv_query) = mpsc::channel(5);
+            let (send_reply, mut recv_reply) = mpsc::channel(5);
             send_query
                 .send((Bytes::copy_from_slice(query), dst.clone()))
                 .await
@@ -646,7 +646,7 @@ impl ResolverManager {
             Arc::new(Resolver {
                 tag: DEFAULT_SYSTEM_DNS_TAG.to_string(),
                 backend: Backend::System,
-                requests: mpsc::channel(1).0,
+                requests: mpsc::channel(5).0,
                 fake_ip: None,
                 cache: cache.clone(),
                 bypass_cache: false,

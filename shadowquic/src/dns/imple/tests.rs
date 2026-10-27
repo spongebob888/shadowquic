@@ -78,7 +78,7 @@ fn run(
 async fn upstream_requests_include_dns_query_context() {
     for tcp in [false, true] {
         for ty in [TYPE::A, TYPE::AAAA] {
-            let (requests, mut received) = mpsc::channel(1);
+            let (requests, mut received) = mpsc::channel(5);
             let resolver = Resolver {
                 bypass_cache: false,
                 tag: "dns".into(),
@@ -245,7 +245,7 @@ async fn fakeip_bypasses_shared_cache() {
         bypass_cache: true,
         tag: "fake".into(),
         backend: Backend::FakeIp(fake.clone()),
-        requests: mpsc::channel(1).0,
+        requests: mpsc::channel(5).0,
         fake_ip: Some(fake.clone()),
         cache: cache.clone(),
     };
@@ -481,8 +481,8 @@ async fn hijacked_dns_keeps_original_reply_source() {
     let manager = config.build_manager().await.unwrap();
     assert_eq!(manager.default_outbound, "fake");
     assert_eq!(manager.outbounds.len(), 1);
-    let (send, recv) = mpsc::channel(1);
-    let (reply_send, mut reply_recv) = mpsc::channel(1);
+    let (send, recv) = mpsc::channel(5);
+    let (reply_send, mut reply_recv) = mpsc::channel(5);
     let dst: SocksAddr = "192.0.2.53:53".parse::<SocketAddr>().unwrap().into();
     send.send((query("hijacked.test", TYPE::A, 42).into(), dst.clone()))
         .await
@@ -528,7 +528,7 @@ fn tcp_hijack_request(stream: tokio::io::DuplexStream, inbound_tag: &str) -> Pro
 }
 
 fn hijack_resolver() -> Resolver {
-    let (requests, _) = mpsc::channel(1);
+    let (requests, _) = mpsc::channel(5);
     Resolver {
         tag: "dns".into(),
         backend: Backend::System,
@@ -712,7 +712,7 @@ async fn tls_exchange(trusted: bool, server_name: &str) -> Result<Vec<u8>> {
         .with_root_certificates(roots)
         .with_no_client_auth();
     client.jls_config.enable = false;
-    let (requests, mut received) = mpsc::channel(1);
+    let (requests, mut received) = mpsc::channel(5);
     let resolver = Resolver {
         bypass_cache: false,
         tag: "dns".into(),
@@ -782,7 +782,7 @@ async fn resolving_outbound_preserves_request_span_in_spawned_task() {
     let span = tracing::info_span!(parent: None, "request");
     let expected = span.id();
     assert!(expected.is_some());
-    let (tx, mut rx) = mpsc::channel(1);
+    let (tx, mut rx) = mpsc::channel(5);
     let outbound = ResolvingOutbound {
         inner: Arc::new(CaptureSpan(tx)),
         resolver: Arc::new(hijack_resolver()),
