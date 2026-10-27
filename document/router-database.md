@@ -80,9 +80,13 @@ subdomains on label boundaries. Both use redb indexes. `keyword` and `regexp`
 rules are scanned within the requested list. Regular expressions use Rust's
 `regex` syntax and are validated during import. Attributes remain part of the
 base list. Regexes are compiled to DFAs during import and stored in redb values.
-The supported attribute filters are `list@ads`, `list@!cn`, and
-`list@cn`; other attribute filters return false. Rules carrying only unsupported
-attributes remain in the base list.
+The supported attribute filters are `list@ads`, `list@!cn`, `list@cn`, and
+`list@telemetry`; other attribute filters return false. A source rule can carry
+multiple comma-separated attributes, for example `domain:example.com:@ads,@telemetry`.
+That rule matches both `list@ads` and `list@telemetry`. Unknown source attributes
+produce a warning once per attribute name per import and are ignored; known
+attributes and base-list membership are retained. Repeated rules merge their
+attribute bits, including across repeated list names.
 
 On startup, an existing MMDB or redb is opened without downloading. When the file is
 missing, an internal inbound with the database tag sends download connections
@@ -108,9 +112,14 @@ with an omitted or empty `list`.
 
 Each redb stores a format version, the creating Shadowquic version, source URL,
 database type, and SHA-256 of the downloaded source bytes. Schema versions are
-independent: Country and Geosite both use schema `2`. Country schema `1` and
-Geosite schema `1` are unsupported; remove old converted files and restart to
-download and rebuild them.
+independent: Country uses schema `2`, and Geosite uses schema `3`. Country schema
+`1` is unsupported; remove old converted files and restart to download and
+rebuild them. Geosite databases with a numeric schema below `3` are rebuilt
+automatically: startup queues the configured source download, then the importer
+deletes every regular and multimap table and recreates the selected lists and
+metadata in one transaction. A failed download or import leaves the old tables
+intact and a later restart retries the upgrade. Old data is unavailable to
+membership queries while the upgrade is pending.
 
 Converted Country redb databases store inclusive IP ranges in two tables per lowercase ISO code:
 `country_v4_us` and `country_v6_us`, for example. Records without a country ISO
@@ -127,17 +136,17 @@ for the query's address family and the greatest start key no larger than the
 query, then checks the inclusive end. Missing tables
 and gaps between ranges return false.
 
-Geosite schema `2` stores each base list in a table named `geosite_<lowercase-name>`,
+Geosite schema `3` stores each base list in a table named `geosite_<lowercase-name>`,
 including empty lists. Keys are `(SiteMatchType, Vec<u8>)`; domains and
-fallback regex patterns use UTF-8 bytes. Values are `u8` attribute enums.
+fallback regex patterns use UTF-8 bytes. Values are `u32` attribute bitmasks.
 Match types are
 `Full = 0`, `Domain = 1`, `Regex = 2`, `Keyword = 3`, `CompiledRegex = 4`;
 attributes are
-`Nil = 0`, `Ads = 1`, `NotCn = 2`, `Cn = 3`. Each rule has one row and at most
-one attribute. Rules with no supported attributes use `Nil`. `CompiledRegex = 4`
+`Ads = 1 << 0`, `NotCn = 1 << 1`, `Cn = 1 << 2`, `Telemetry = 1 << 3`.
+Each rule has one row whose mask combines all of its supported attributes with
+bitwise OR. A zero mask means no supported attributes. `CompiledRegex = 4`
 keys store serialized little-endian sparse DFA bytes; their values store the
-attribute enum directly. Existing schema `2` files with byte-slice values or
-dense `CompiledRegex` records must be rebuilt. Patterns that cannot compile to
+attribute mask directly. Patterns that cannot compile to
 a sparse DFA use the existing `Regex = 2` key with the UTF-8 source pattern.
 Compiled DFAs are decoded directly from keys during lookup, and fallback
 regexes are compiled during lookup; there is no runtime regex cache.
@@ -151,8 +160,8 @@ startup; record decoding errors are reported by the lookup. Direct MMDB uses the
 source's IPv6 alias behavior, while legacy redb conversion continues to skip
 aliased ranges.
 
-Incompatible, corrupt, or mismatched existing redb files fail startup. There is no
-automatic refresh: stop
+Except for the geosite schema upgrade above, incompatible, corrupt, or mismatched
+existing redb files fail startup. There is no automatic refresh: stop
 Shadowquic and remove the database file to download again. Paths must be distinct
 and writable. To switch an existing redb configuration to direct MMDB, choose a
 new `.mmdb` path; renaming a redb file does not convert it into MMDB.

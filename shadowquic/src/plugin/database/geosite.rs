@@ -1,13 +1,13 @@
 use super::Result;
-use redb::TableDefinition;
+use redb::{ReadableTable, TableDefinition};
 use regex_automata::{
     Input,
     dfa::{Automaton, StartKind, dense, sparse},
 };
 use serde::Deserialize;
-use std::path::Path;
+use std::{collections::HashSet, path::Path};
 
-// Schema 2 uses byte-slice keys and values; compiled regexes are DFA keys.
+// Schema 3 stores u32 attribute masks; compiled regexes are DFA keys.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 enum SiteMatchType {
@@ -19,12 +19,13 @@ enum SiteMatchType {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
+#[repr(u32)]
 enum AttrType {
     Nil = 0,
-    Ads = 1,
-    NotCn = 2,
-    Cn = 3,
+    Ads = 1 << 0,
+    NotCn = 1 << 1,
+    Cn = 1 << 2,
+    Telemetry = 1 << 3,
 }
 
 impl AttrType {
@@ -33,12 +34,17 @@ impl AttrType {
             "ads" => Some(Self::Ads),
             "!cn" => Some(Self::NotCn),
             "cn" => Some(Self::Cn),
+            "telemetry" => Some(Self::Telemetry),
             _ => None,
         }
     }
+
+    fn matches(self, attributes: u32) -> bool {
+        self == Self::Nil || attributes & self as u32 != 0
+    }
 }
 
-pub(super) type GeositeTable<'a> = TableDefinition<'a, (u8, &'static [u8]), u8>;
+pub(super) type GeositeTable<'a> = TableDefinition<'a, (u8, &'static [u8]), u32>;
 
 pub(super) fn geosite_table_name(list: &str) -> String {
     format!("geosite_{}", list.to_ascii_lowercase())
@@ -67,7 +73,7 @@ pub(super) fn find_domain(read: &redb::ReadTransaction, list: &str, domain: &str
     let indexed = |kind: SiteMatchType, value: &str| -> Result<bool> {
         Ok(table
             .get((kind as u8, value.as_bytes()))?
-            .is_some_and(|stored| attribute == AttrType::Nil || stored.value() == attribute as u8))
+            .is_some_and(|stored| attribute.matches(stored.value())))
     };
     let domain = domain.trim_end_matches('.').to_ascii_lowercase();
     if indexed(SiteMatchType::Full, &domain)? {
@@ -87,7 +93,7 @@ pub(super) fn find_domain(read: &redb::ReadTransaction, list: &str, domain: &str
         (SiteMatchType::Keyword as u8, &b""[..])..((SiteMatchType::Keyword as u8 + 1), &b""[..]),
     )? {
         let (key, stored_attribute) = entry?;
-        if attribute != AttrType::Nil && stored_attribute.value() != attribute as u8 {
+        if !attribute.matches(stored_attribute.value()) {
             continue;
         }
         let (_, pattern) = key.value();
@@ -104,7 +110,7 @@ pub(super) fn find_domain(read: &redb::ReadTransaction, list: &str, domain: &str
             ..((SiteMatchType::CompiledRegex as u8 + 1), &b""[..]),
     )? {
         let (key, stored_attribute) = entry?;
-        if attribute != AttrType::Nil && stored_attribute.value() != attribute as u8 {
+        if !attribute.matches(stored_attribute.value()) {
             continue;
         }
         let (_, dfa_bytes) = key.value();
@@ -117,7 +123,7 @@ pub(super) fn find_domain(read: &redb::ReadTransaction, list: &str, domain: &str
         (SiteMatchType::Regex as u8, &b""[..])..((SiteMatchType::Regex as u8 + 1), &b""[..]),
     )? {
         let (key, stored_attribute) = entry?;
-        if attribute != AttrType::Nil && stored_attribute.value() != attribute as u8 {
+        if !attribute.matches(stored_attribute.value()) {
             continue;
         }
         let (_, pattern) = key.value();
@@ -172,6 +178,7 @@ pub(super) fn import_geosite(
             return Err(format!("geosite list not found: {name}").into());
         }
     }
+    let mut warned_attributes = HashSet::new();
     for list in data.lists {
         if !selected.is_empty()
             && !selected
@@ -199,9 +206,23 @@ pub(super) fn import_geosite(
                 "keyword" => SiteMatchType::Keyword,
                 _ => return Err(format!("unsupported geosite rule type: {kind}").into()),
             };
-            assert!(!attribute.contains("@"));
-            let attribute =
-                AttrType::parse(&attribute.to_ascii_lowercase()).unwrap_or(AttrType::Nil);
+            let mut attributes = 0u32;
+            for attribute in attribute.split(',') {
+                let attribute = attribute
+                    .trim()
+                    .trim_start_matches('@')
+                    .to_ascii_lowercase();
+                if attribute.is_empty() {
+                    continue;
+                }
+                match AttrType::parse(&attribute) {
+                    Some(attribute) => attributes |= attribute as u32,
+                    None if warned_attributes.insert(attribute.clone()) => {
+                        tracing::warn!(%attribute, list = %list.name, "ignoring unknown geosite attribute");
+                    }
+                    None => {}
+                }
+            }
             let (kind, key_value) = if kind == SiteMatchType::Regex {
                 let compiled = dense::Builder::new()
                     .configure(dense::Config::new().start_kind(StartKind::Unanchored))
@@ -218,7 +239,12 @@ pub(super) fn import_geosite(
             } else {
                 (kind, value.to_ascii_lowercase().into_bytes())
             };
-            table.insert((kind as u8, key_value.as_slice()), attribute as u8)?;
+            let key = (kind as u8, key_value.as_slice());
+            // Repeated rules and case-insensitive list aliases retain every attribute.
+            let attributes = table
+                .get(key)?
+                .map_or(attributes, |old| old.value() | attributes);
+            table.insert(key, attributes)?;
         }
     }
     Ok(())

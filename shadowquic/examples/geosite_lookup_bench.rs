@@ -106,7 +106,7 @@ fn memory_find(rules: &[Rule], list: &str, domain: &str) -> bool {
         .map(|(_, attr)| attr.to_ascii_lowercase());
     if requested_attribute
         .as_deref()
-        .is_some_and(|attribute| !["ads", "!cn", "cn"].contains(&attribute))
+        .is_some_and(|attribute| !["ads", "!cn", "cn", "telemetry"].contains(&attribute))
     {
         return false;
     }
@@ -114,9 +114,11 @@ fn memory_find(rules: &[Rule], list: &str, domain: &str) -> bool {
     for kind in [Kind::Full, Kind::Domain, Kind::Keyword, Kind::Regex] {
         for rule in rules.iter().filter(|rule| {
             rule.kind == kind
-                && requested_attribute
-                    .as_ref()
-                    .is_none_or(|attribute| attribute == &rule.attribute)
+                && requested_attribute.as_ref().is_none_or(|attribute| {
+                    rule.attribute
+                        .split(',')
+                        .any(|value| value.trim().trim_start_matches('@') == attribute)
+                })
         }) {
             let found = match kind {
                 Kind::Full => domain == rule.value,
@@ -330,10 +332,14 @@ fn main() -> Result<()> {
     }
     let source = fs::read_to_string(&args.source)?;
     let data: Geosite = serde_saphyr::from_str(&source)?;
+    let base_list = args
+        .list
+        .split_once('@')
+        .map_or(args.list.as_str(), |(list, _)| list);
     let mut lists = data
         .lists
         .into_iter()
-        .filter(|list| list.name.eq_ignore_ascii_case(&args.list));
+        .filter(|list| list.name.eq_ignore_ascii_case(base_list));
     let mut list = lists
         .next()
         .ok_or_else(|| format!("geosite list not found: {}", args.list))?;
