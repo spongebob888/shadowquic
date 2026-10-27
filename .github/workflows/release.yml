@@ -43,7 +43,7 @@ jobs:
             release-name: x86_64-linux
             tool: cross
             # extra-args: "--features jemallocator"
-          - os: ubuntu-latest
+          - os: ubuntu-26.04
             target: i686-unknown-linux-gnu
             release-name: i686-linux
             tool: cross
@@ -54,7 +54,7 @@ jobs:
             release-name: x86_64-linux-musl
             tool: cross
             # extra-args: "--features jemallocator"
-          - os: ubuntu-latest
+          - os: ubuntu-26.04
             target: i686-unknown-linux-musl
             release-name: i686-linux-musl
             tool: cross
@@ -225,6 +225,16 @@ jobs:
           toolchain: ${{ matrix.toolchain || env.RUST_TOOLCHAIN }}
           targets: ${{ matrix.install-target != false && matrix.target || '' }}
           components: ${{ matrix.components || 'rustfmt, clippy' }}
+
+      # Ubuntu 26.04's Docker 29.4.2 returns ENOSYS for socketcall, which
+      # Cross's i686 glibc uses for socket/socketpair. Use a fixed engine.
+      # https://github.com/moby/moby/issues/52506
+      - name: Set up Docker for i686 socket compatibility
+        if: startsWith(matrix.target, 'i686-unknown-linux-')
+        uses: docker/setup-docker-action@v4
+        with:
+          version: v29.9.1
+          set-host: true
 
       - name: Install rust targets & cross
         if: matrix.tool == 'cross'
