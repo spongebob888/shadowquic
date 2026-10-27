@@ -689,6 +689,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#tcp-idle-timeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>tcp-idle-timeout</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#udp-idle-timeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>udp-idle-timeout</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2103,6 +2125,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#tcp-idle-timeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>tcp-idle-timeout</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#udp-idle-timeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>udp-idle-timeout</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2178,6 +2222,21 @@ omitting this field enables IPv6 with the default address.</p>
 <li><strong>Required:</strong> no</li>
 <li><strong>Default:</strong> <code>300</code></li>
 </ul>
+<p>Shared idle timeout in seconds, used when a protocol-specific setting is omitted.</p>
+<h3 id="tcp-idle-timeout"><code>tcp-idle-timeout</code><a class="headerlink" href="#tcp-idle-timeout" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>u64</code> <em>(optional)</em></li>
+<li><strong>Required:</strong> no</li>
+</ul>
+<p>TCP socket timeout in seconds, managed by smoltcp. Set to 0 to disable.
+Defaults to idle-timeout when omitted.</p>
+<h3 id="udp-idle-timeout"><code>udp-idle-timeout</code><a class="headerlink" href="#udp-idle-timeout" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>u64</code> <em>(optional)</em></li>
+<li><strong>Required:</strong> no</li>
+</ul>
+<p>UDP session inactivity timeout in seconds, refreshed by either direction.
+Defaults to idle-timeout when omitted.</p>
 
 
 
