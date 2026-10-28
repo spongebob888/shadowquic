@@ -24,7 +24,11 @@ use std::{
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 const META: TableDefinition<&str, &str> = TableDefinition::new("metadata");
 const COUNTRY_SCHEMA: &str = "2";
-const GEOSITE_SCHEMA: &str = "2";
+const GEOSITE_SCHEMA: &str = "3";
+
+#[derive(Debug, thiserror::Error)]
+#[error("geosite schema {0} requires rebuilding to schema 3")]
+struct GeositeRebuildRequired(u32);
 
 fn schema(kind: RouterDBKind) -> &'static str {
     match kind {
@@ -142,11 +146,30 @@ fn kind_name(kind: RouterDBKind) -> &'static str {
     }
 }
 impl RedbDatabase {
+    fn legacy_geosite_schema(cfg: &RouterDatabaseCfg, db: &Database) -> Result<Option<u32>> {
+        if cfg.kind() != RouterDBKind::Geosite {
+            return Ok(None);
+        }
+        let read = db.begin_read()?;
+        let meta = read.open_table(META)?;
+        if meta.get("type")?.as_ref().map(|entry| entry.value()) != Some("geosite") {
+            return Ok(None);
+        }
+        let current_schema = GEOSITE_SCHEMA.parse::<u32>()?;
+        Ok(meta
+            .get("schema")?
+            .and_then(|entry| entry.value().parse::<u32>().ok())
+            .filter(|version| *version < current_schema))
+    }
+
     /// Open a converted database, checking format and source identity.
     pub fn open(cfg: &RouterDatabaseCfg) -> Result<Self> {
         let db = Database::builder()
             .set_cache_size(8 * 1024 * 1024)
             .open(cfg.path())?;
+        if let Some(version) = Self::legacy_geosite_schema(cfg, &db)? {
+            return Err(GeositeRebuildRequired(version).into());
+        }
         {
             let read = db.begin_read()?;
             let meta = read.open_table(META)?;
@@ -221,7 +244,7 @@ impl RedbDatabase {
         })
     }
 
-    /// Convert a source into a new redb, then publish the complete file atomically.
+    /// Import a source atomically, rebuilding tables in a legacy geosite database.
     pub fn import(cfg: &RouterDatabaseCfg, source: &Path) -> Result<Self> {
         let parent = cfg
             .path()
@@ -229,11 +252,42 @@ impl RedbDatabase {
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
         std::fs::create_dir_all(parent)?;
-        let temporary = tempfile::NamedTempFile::new_in(parent)?;
-        let db = Database::builder()
-            .set_cache_size(8 * 1024 * 1024)
-            .create(temporary.path())?;
+        let legacy = if cfg.kind() == RouterDBKind::Geosite && cfg.path().try_exists()? {
+            let db = Database::builder()
+                .set_cache_size(8 * 1024 * 1024)
+                .open(cfg.path())?;
+            if Self::legacy_geosite_schema(cfg, &db)?.is_none() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    "refusing to replace an existing non-legacy database",
+                )
+                .into());
+            }
+            Some(db)
+        } else {
+            None
+        };
+        let temporary = if legacy.is_none() {
+            Some(tempfile::NamedTempFile::new_in(parent)?)
+        } else {
+            None
+        };
+        let rebuilding = legacy.is_some();
+        let db = match legacy {
+            Some(db) => db,
+            None => Database::builder()
+                .set_cache_size(8 * 1024 * 1024)
+                .create(temporary.as_ref().unwrap().path())?,
+        };
         let write = db.begin_write()?;
+        if rebuilding {
+            for table in write.list_tables()?.collect::<Vec<_>>() {
+                write.delete_table(table)?;
+            }
+            for table in write.list_multimap_tables()?.collect::<Vec<_>>() {
+                write.delete_multimap_table(table)?;
+            }
+        }
         {
             match cfg {
                 RouterDatabaseCfg::Geosite(site) => {
@@ -273,7 +327,9 @@ impl RedbDatabase {
         }
         write.commit()?;
         drop(db);
-        temporary.persist_noclobber(cfg.path())?;
+        if let Some(temporary) = temporary {
+            temporary.persist_noclobber(cfg.path())?;
+        }
         Self::open(cfg)
     }
 }
@@ -396,17 +452,24 @@ impl Databases {
     ) -> std::result::Result<Arc<Self>, SError> {
         let mut manager = Self::default();
         for cfg in configs {
-            let existing = cfg.path().try_exists()?;
-            let value = if existing {
-                Ok(open_database(cfg).map_err(config_error)?)
+            let value = if cfg.path().try_exists()? {
+                match open_database(cfg) {
+                    Ok(db) => Ok(db),
+                    Err(error) if error.is::<GeositeRebuildRequired>() => {
+                        tracing::warn!(tag = %cfg.tag(), path = ?cfg.path(), %error, "rebuilding legacy geosite database");
+                        Err("schema upgrade download pending".into())
+                    }
+                    Err(error) => return Err(config_error(error)),
+                }
             } else {
                 Err("download pending".into())
             };
+            let download = value.is_err();
             let slot = Arc::new(Slot {
                 kind: cfg.kind(),
                 value: RwLock::new(value),
             });
-            if !existing {
+            if download {
                 inbounds.insert(
                     cfg.tag().to_owned(),
                     Box::new(download::inbound(cfg.clone(), slot.clone())),

@@ -28,7 +28,8 @@ It creates hit candidates from each rule type where possible, including common
 domains for regular expressions. Use `--domains domains.txt` for real traffic or
 a controlled workload. That file accepts one domain per line, blank lines, and
 `#` comments; order and duplicates are preserved, and `--queries` is ignored.
-For example, benchmark an attribute list with `--list google@ads`.
+For example, benchmark an attribute list with `--list google@ads` or
+`--list cn@telemetry`. The reference scan recognizes multiple attributes per rule.
 
 Each backend runs in its own process, replays the same corpus serially, and
 verifies every answer against the precompiled in-memory reference before

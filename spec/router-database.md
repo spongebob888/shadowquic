@@ -21,7 +21,14 @@ We use redb as underlying database for each router db.
 
 Each redb should has a version string noting which shadowquic version created it and a sha256 of its downloading source file(Not itself ).
 
-Schema versions are independent for each database type: Country and Geosite use schema `2`. Country schema `1` and Geosite schema `1` are unsupported.
+Schema versions are independent: Country uses schema `2`, and Geosite uses
+schema `3`. Country schema `1` is unsupported. A Geosite database with a numeric
+schema below `3` queues a fresh download at startup. On successful import, every
+regular and multimap table, including metadata, is deleted and recreated in one
+transaction. Failed downloads/imports preserve the old tables for a retry on
+restart. Queries remain unavailable until rebuilding finishes. Future schema
+versions, missing or nonnumeric schema markers, and mismatched database types
+are not rebuilt.
 
 
 ## Supported RouterDB
@@ -53,7 +60,8 @@ The [published YAML export](https://raw.githubusercontent.com/v2fly/domain-list-
 
 Full search should use indexed based fast searching, domain type searching like a.b.c should search a.b.c/b.c/c one by one.  The keyword/regex type should search one by one.
 
-Each name corresponds to a table. The key of each table is (SiteMatchType, Vec<u8>), The value is AttrType
+Each name corresponds to a table. The key is (SiteMatchType, Vec<u8>), and the
+value is a `u32` bitmask combining zero or more `AttrType` bits.
 enum SiteMatchType {
     Full,
     Domain,
@@ -62,27 +70,28 @@ enum SiteMatchType {
     CompiledRegex,
 }
 enum AttrType {
-    Nil,
-    Ads,
-    NotCn,
-    Cn,
+    Ads = 1 << 0,
+    NotCn = 1 << 1,
+    Cn = 1 << 2,
+    Telemetry = 1 << 3,
 }
 
-Schema `2` names each table `geosite_<lowercase-name>`, including empty lists.
-The tuple key uses `(u8, Vec<u8>)` and each value uses `u8`. Domain and
+Schema `3` names each table `geosite_<lowercase-name>`, including empty lists.
+The tuple key uses `(u8, Vec<u8>)` and each value uses `u32`. Domain and
 pattern keys are UTF-8 bytes. Match
 types are encoded in declaration order, starting at zero. Attribute values are
-`Nil = 0`, `Ads = 1`, `NotCn = 2`, and `Cn = 3`. `Ads`, `NotCn`, and `Cn`
-correspond to source attributes `ads`, `!cn`, and `cn`. Each rule has one row
-and at most one attribute. `CompiledRegex = 4` keys store serialized
-little-endian sparse DFA bytes; values store the attribute. Existing schema `2`
-files with byte-slice values or dense `CompiledRegex` records must be rebuilt.
+`Ads = 1`, `NotCn = 2`, `Cn = 4`, and `Telemetry = 8`, corresponding to source
+attributes `ads`, `!cn`, `cn`, and `telemetry`. A zero mask means no supported
+attributes. Source attributes such as `:@ads,@telemetry` are combined with
+bitwise OR; repeated identical rules also OR their attributes together.
+Unknown attributes log a warning once per normalized name per import and are
+ignored without discarding known bits or base-list membership.
+`CompiledRegex = 4` keys store serialized little-endian sparse DFA bytes; values
+store the attribute mask.
 Patterns that cannot compile to a sparse DFA use the existing `Regex = 2` key with the UTF-8 source pattern.
 Lookups deserialize compiled DFAs from keys or compile fallback source regexes.
 There is no runtime regex cache.
-A rule with no supported attributes has a `Nil` value. Unknown
-attributes preserve base-list membership but cannot be queried as filters.
-Unfiltered lookup accepts any attribute; `list@attribute` selects only that
-attribute in the same table. Full and domain lookups use the tuple index, and
-keyword/regex lookups scan only their match-type range. Old schema `1` files
-must be removed and rebuilt.
+A rule with no supported attributes has a zero mask. Unknown attributes cannot
+be queried as filters. Unfiltered lookup accepts any mask; `list@attribute`
+checks that attribute's bit in the stored mask. Full and domain lookups use the
+tuple index, and keyword/regex lookups scan only their match-type range.
