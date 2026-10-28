@@ -463,7 +463,20 @@ fn geosite_unknown_attributes_warn_once_and_keep_known_bits() {
         .with_ansi(false)
         .with_writer(Arc::new(logs.reopen().unwrap()))
         .finish();
+    // Keep two dispatchers alive so tracing registers callsites against both,
+    // rather than caching the default of a parallel test that has no subscriber.
+    let _other_dispatch = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
     tracing::subscriber::with_default(subscriber, || {
+        // Register the same warning callsite from an unsubscribed thread first,
+        // reproducing the order that previously lost the captured warning in CI.
+        let other_source = source.clone();
+        std::thread::spawn(move || {
+            let dir = tempfile::tempdir().unwrap();
+            RedbDatabase::import(&config(dir.path(), RouterDBKind::Geosite), &other_source)
+                .unwrap();
+        })
+        .join()
+        .unwrap();
         let db = RedbDatabase::import(&cfg, &source).unwrap();
         assert!(db.find_domain("test", "unknown.example").unwrap());
         assert!(!db.find_domain("test@telemetry", "unknown.example").unwrap());

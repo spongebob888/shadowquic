@@ -13,7 +13,9 @@ async fn relay_udp(request: ProxyRequest) {
 }
 
 async fn finish_relays(mut relays: JoinSet<()>) {
-    timeout(Duration::from_secs(3), async {
+    // Quinn retains its socket during the closing/draining period. A cancelled
+    // handshake can leave a longer PTO, especially on loaded Windows runners.
+    timeout(Duration::from_secs(10), async {
         while let Some(result) = relays.join_next().await {
             result.unwrap();
         }
@@ -525,7 +527,7 @@ async fn doq_resumes_with_early_data_and_retries_rejected_early_queries() {
 
 #[tokio::test]
 async fn cancelled_handshake_preserves_endpoint_and_udp_source_port() {
-    timeout(Duration::from_secs(5), async {
+    timeout(Duration::from_secs(15), async {
         let (server, client) = fixture(true, "dns.test");
         let (requests, count, routing) = route(&client);
         let (arrived, arrival) = tokio::sync::oneshot::channel();

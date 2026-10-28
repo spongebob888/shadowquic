@@ -38,30 +38,19 @@ async fn main() {
     .unwrap();
     let sendbuf: Vec<u8> = (0..(CHUNK_LEN * ROUND)).map(|_| rand::random()).collect();
     let mut recvbuf = vec![0u8; CHUNK_LEN * ROUND];
-    let mut ii = 0;
-    let mut jj = 0;
     let fut = async {
-        loop {
-            tokio::select! {
-                r = async {
-                    if ii == ROUND {
-                        tokio::time::sleep(Duration::from_millis(200000)).await;
-                    }
-                    socks.send_to(&sendbuf[ii*CHUNK_LEN..(ii+1)*CHUNK_LEN], target_addr).await
-                 } => {
-                    r.unwrap();
-                    ii += 1;
-                    tokio::time::sleep(Duration::from_millis(2)).await;
-                }
-                r = socks.recv_from(&mut recvbuf[jj*CHUNK_LEN..(jj+1)*CHUNK_LEN]) => {
-                    let (len, _addr) = r.unwrap();
-                    assert!(len == CHUNK_LEN);
-                    jj += 1;
-                    if jj == ROUND {
-                        break;
-                    }
-                }
-            }
+        // Wait for each echo so slow emulated targets do not overflow the
+        // proxy's bounded UDP channel while the QUIC handshake is pending.
+        for (sent, received) in sendbuf
+            .as_chunks::<CHUNK_LEN>()
+            .0
+            .iter()
+            .zip(recvbuf.as_chunks_mut::<CHUNK_LEN>().0)
+        {
+            socks.send_to(sent, target_addr).await.unwrap();
+            let (len, _addr) = socks.recv_from(received).await.unwrap();
+            assert_eq!(len, CHUNK_LEN);
+            assert_eq!(sent, received);
         }
     };
     tokio::time::timeout(Duration::from_secs(60), fut)
