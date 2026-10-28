@@ -221,48 +221,6 @@ impl Default for SunnyQuicClientCfg {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SunnyQuicClientCfg {
-    /// Inactivity timeout after either TCP source reaches EOF, in milliseconds.
-    /// Defaults to 60 seconds. Zero disables the timeout.
-    #[serde(default = "default_half_close_timeout")]
-    pub half_close_timeout: u64,
-
-    /// Streams the peer may hold open concurrently. Each proxied request and
-    /// each UDP association holds one for its whole lifetime, so this is also
-    /// the ceiling on concurrent sessions over a single connection; a peer that
-    /// reaches it waits in `open_bi` until this side frees a stream. Worst-case
-    /// buffering is this multiplied by `stream-receive-window`. Default 500.
-    #[serde(default = "default_outbound_max_streams")]
-    pub max_concurrent_bidi_streams: u32,
-
-    /// Unidirectional streams the peer may hold open concurrently. With
-    /// `over-stream` on, the peer's UDP replies travel over these. Default 500.
-    #[serde(default = "default_outbound_max_streams")]
-    pub max_concurrent_uni_streams: u32,
-
-    /// Bytes the peer may have in flight on one stream, and therefore the most
-    /// this side can be made to buffer for it. The default is a 400 Mbit/s
-    /// bandwidth-delay product over a 100 ms path. Default 5000000.
-    #[serde(default = "default_stream_receive_window")]
-    pub stream_receive_window: u64,
-
-    /// Bytes the peer may have in flight across every stream at once. Left out,
-    /// the transport's own default is kept, which is unlimited — so the only
-    /// bound on buffering is `max-concurrent-bidi-streams` multiplied by
-    /// `stream-receive-window`. Setting it caps that independently of the
-    /// stream count.
-    #[serde(default)]
-    pub receive_window: Option<u64>,
-
-    /// Bytes this side may have in flight before it stalls waiting for
-    /// acknowledgement. Left out, the transport's own default is kept.
-    #[serde(default)]
-    pub send_window: Option<u64>,
-    /// DNS service used to resolve destination domains after routing.
-    #[cfg(feature = "dns-server")]
-    pub dns: Option<String>,
-    /// DNS resolver used to resolve the server address.
-    #[cfg(feature = "dns-server")]
-    pub addr_resolver: Option<String>,
     /// Required label for this endpoint.
     pub tag: String,
     /// username, must be the same as the server
@@ -328,6 +286,49 @@ pub struct SunnyQuicClientCfg {
     /// For stable udp network, it's better to disable it and set a proper initial mtu
     #[serde(default = "default_mtu_discovery")]
     pub mtu_discovery: bool,
+
+    /// Inactivity timeout after either TCP source reaches EOF, in milliseconds.
+    /// Defaults to 60 seconds. Zero disables the timeout.
+    #[serde(default = "default_half_close_timeout")]
+    pub half_close_timeout: u64,
+
+    /// Streams the peer may hold open concurrently. Each proxied request and
+    /// each UDP association holds one for its whole lifetime, so this is also
+    /// the ceiling on concurrent sessions over a single connection; a peer that
+    /// reaches it waits in `open_bi` until this side frees a stream. Worst-case
+    /// buffering is this multiplied by `stream-receive-window`. Default 500.
+    #[serde(default = "default_outbound_max_streams")]
+    pub max_concurrent_bidi_streams: u32,
+
+    /// Unidirectional streams the peer may hold open concurrently. With
+    /// `over-stream` on, the peer's UDP replies travel over these. Default 500.
+    #[serde(default = "default_outbound_max_streams")]
+    pub max_concurrent_uni_streams: u32,
+
+    /// Bytes the peer may have in flight on one stream, and therefore the most
+    /// this side can be made to buffer for it. The default is a 400 Mbit/s
+    /// bandwidth-delay product over a 100 ms path. Default 5000000.
+    #[serde(default = "default_stream_receive_window")]
+    pub stream_receive_window: u64,
+
+    /// Bytes the peer may have in flight across every stream at once. Left out,
+    /// the transport's own default is kept, which is unlimited — so the only
+    /// bound on buffering is `max-concurrent-bidi-streams` multiplied by
+    /// `stream-receive-window`. Setting it caps that independently of the
+    /// stream count.
+    #[serde(default)]
+    pub receive_window: Option<u64>,
+
+    /// Bytes this side may have in flight before it stalls waiting for
+    /// acknowledgement. Left out, the transport's own default is kept.
+    #[serde(default)]
+    pub send_window: Option<u64>,
+    /// DNS service used to resolve destination domains after routing.
+    #[cfg(feature = "dns-server")]
+    pub dns: Option<String>,
+    /// DNS resolver used to resolve the server address.
+    #[cfg(feature = "dns-server")]
+    pub addr_resolver: Option<String>,
 
     /// Optional TLS 1.3 cipher suite preference.
     /// If unset, use rustls/ring default preference order.
