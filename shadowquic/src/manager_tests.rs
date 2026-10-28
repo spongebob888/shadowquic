@@ -317,7 +317,7 @@ async fn api_bind_failure_prevents_inbound_initialization() {
             fail_init: false,
             fail_shutdown: false,
         }),
-        Arc::new(crate::drop_outbound::DropOutbound),
+        Arc::new(crate::drop_outbound::DropOutbound::default()),
     );
     manager.api_config = Some(crate::config::ApiConfig {
         bind_addr: occupied.local_addr().unwrap(),

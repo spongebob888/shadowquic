@@ -13,6 +13,7 @@ use serde::Serialize;
 use crate::{Outbound, ProxyRequest, config::SelectorOutCfg, error::SError};
 
 pub struct SelectorOutbound {
+    tag: String,
     members: Vec<(String, Arc<dyn Outbound>)>,
     selected: AtomicUsize,
 }
@@ -58,6 +59,7 @@ impl SelectorOutbound {
             })
             .collect::<Result<_, SError>>()?;
         Ok(Self {
+            tag: cfg.tag,
             members,
             selected: AtomicUsize::new(selected),
         })
@@ -91,6 +93,7 @@ impl Selectable for SelectorOutbound {
 
 #[async_trait::async_trait]
 impl Outbound for SelectorOutbound {
+    #[tracing::instrument(name = "outbound", skip_all, fields(tag = %self.tag))]
     async fn handle(&self, req: ProxyRequest) -> Result<(), SError> {
         let (tag, outbound) = &self.members[self.selected.load(Ordering::Relaxed)];
         tracing::debug!(outbound = %tag, "dispatching selector session");

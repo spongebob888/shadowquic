@@ -821,7 +821,7 @@ impl OutboundCfg {
                 outbound
             }
             OutboundCfg::Direct(cfg) => Arc::new(DirectOut::new(cfg, resolver_manager)),
-            OutboundCfg::Drop(_) => Arc::new(DropOutbound),
+            OutboundCfg::Drop(cfg) => Arc::new(DropOutbound { tag: cfg.tag }),
             OutboundCfg::Selector(_) => {
                 return Err(SError::InvalidConfig(
                     "selectors must be built after their member outbounds".into(),

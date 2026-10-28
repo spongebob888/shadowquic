@@ -339,12 +339,14 @@ impl DnsService for DnsServer {
 }
 #[async_trait]
 impl Outbound for DnsServer {
+    #[instrument(name = "outbound", skip_all, fields(tag = %self.resolver.tag))]
     async fn handle(&self, req: ProxyRequest) -> Result<()> {
         self.resolver.handle(req).await
     }
 }
 #[async_trait]
 impl Outbound for Resolver {
+    #[instrument(name = "outbound", skip_all, fields(tag = %self.tag))]
     async fn handle(&self, req: ProxyRequest) -> Result<()> {
         if req.user_context().inbound_tag == self.tag {
             return Err(dns_error(

@@ -1,10 +1,14 @@
 use crate::{Outbound, ProxyRequest, error::SError};
 
 /// Outbound that closes TCP sessions and discards UDP sessions.
-pub(crate) struct DropOutbound;
+#[derive(Default)]
+pub(crate) struct DropOutbound {
+    pub tag: String,
+}
 
 #[async_trait::async_trait]
 impl Outbound for DropOutbound {
+    #[tracing::instrument(name = "outbound", skip_all, fields(tag = %self.tag))]
     async fn handle(&self, req: ProxyRequest) -> Result<(), SError> {
         drop(req);
         Ok(())
@@ -36,7 +40,7 @@ mod tests {
         .await
         .unwrap();
 
-        DropOutbound
+        DropOutbound::default()
             .handle(ProxyRequest::Udp(session))
             .await
             .unwrap();

@@ -194,7 +194,7 @@ impl UserManager for ShadowQuicClient {
 
 #[async_trait]
 impl Outbound for ShadowQuicClient {
-    #[instrument(name="outbound",skip_all,fields(ta = %self.config.tag))]
+    #[instrument(name = "outbound", skip_all, fields(tag = %self.config.tag))]
     async fn handle(&self, req: crate::ProxyRequest) -> Result<(), crate::error::SError> {
         let conn = tokio::time::timeout(std::time::Duration::from_secs(10), self.prepare_conn())
             .await

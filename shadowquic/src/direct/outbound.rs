@@ -10,7 +10,7 @@ use tokio::{
     net::{TcpSocket, TcpStream},
     sync::Mutex,
 };
-use tracing::trace;
+use tracing::{instrument, trace};
 
 use crate::{
     Outbound, UdpSession,
@@ -60,6 +60,7 @@ impl Default for DirectOut {
 
 #[async_trait]
 impl Outbound for DirectOut {
+    #[instrument(name = "outbound", skip_all, fields(tag = %self.cfg.tag))]
     async fn handle(&self, req: crate::ProxyRequest) -> Result<(), crate::error::SError> {
         let dns_strategy = self.cfg.dns_strategy.clone();
         let self_clone = self.clone();

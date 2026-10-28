@@ -375,11 +375,7 @@ impl RequestDispatcher {
             req = observer.wrap_request(req, outbound_tag.clone()).await;
         }
         tracing::debug!(outbound = %outbound_tag, dst = %req.dst(), "routing request");
-        if let Err(error) = outbound
-            .handle(req)
-            .instrument(info_span!("outbound", tag = %outbound_tag))
-            .await
-        {
+        if let Err(error) = outbound.handle(req).await {
             error!(outbound = %outbound_tag, %error, "error handling request");
         }
     }

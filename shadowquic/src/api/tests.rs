@@ -815,11 +815,11 @@ async fn selector_api_lists_switches_and_rejects_invalid_updates() {
     let mut outbounds: HashMap<String, Arc<dyn Outbound>> = HashMap::from([
         (
             "a".into(),
-            Arc::new(crate::drop_outbound::DropOutbound) as Arc<dyn Outbound>,
+            Arc::new(crate::drop_outbound::DropOutbound::default()) as Arc<dyn Outbound>,
         ),
         (
             "b".into(),
-            Arc::new(crate::drop_outbound::DropOutbound) as Arc<dyn Outbound>,
+            Arc::new(crate::drop_outbound::DropOutbound::default()) as Arc<dyn Outbound>,
         ),
     ]);
     let selector = Arc::new(
@@ -1378,7 +1378,7 @@ async fn invalid_and_unsupported_probe_requests_leave_cached_results_unchanged()
             ("proxy".into(), outbound.clone() as Arc<dyn Outbound>),
             (
                 "drop".into(),
-                Arc::new(crate::drop_outbound::DropOutbound) as Arc<dyn Outbound>,
+                Arc::new(crate::drop_outbound::DropOutbound::default()) as Arc<dyn Outbound>,
             ),
             (
                 "unsupported".into(),
