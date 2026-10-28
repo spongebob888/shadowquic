@@ -189,7 +189,7 @@ async fn spawn_mixed_proxy_chain(entry_port: u16, upstream_port: u16) {
             dns: None,
             #[cfg(feature = "dns-server")]
             addr_resolver: None,
-            tag: String::new(),
+            tag: "outbound".into(),
             addr: format!("[::1]:{}", upstream_port),
             username: Some("test".into()),
             password: Some("test".into()),

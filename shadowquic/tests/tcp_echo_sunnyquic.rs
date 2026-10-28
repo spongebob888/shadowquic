@@ -100,6 +100,7 @@ async fn test_shadowquic() {
     .unwrap();
     let sq_client = SunnyQuicClient::new(
         SunnyQuicClientCfg {
+            tag: "outbound".into(),
             password: "123".into(),
             username: "123".into(),
             addr: "127.0.0.1:4444".parse().unwrap(),

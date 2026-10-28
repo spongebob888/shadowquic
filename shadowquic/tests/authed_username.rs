@@ -38,6 +38,7 @@ async fn shadowquic_client_sqconn_records_authenticated_username() {
 
     let client = ShadowQuicClient::new(
         ShadowQuicClientCfg {
+            tag: "outbound".into(),
             addr: bind_addr.to_string(),
             username: username.into(),
             password: password.into(),
@@ -83,6 +84,7 @@ async fn sunnyquic_client_sqconn_records_authenticated_username() {
 
     let client = SunnyQuicClient::new(
         SunnyQuicClientCfg {
+            tag: "outbound".into(),
             addr: bind_addr.to_string(),
             username: username.into(),
             password: password.into(),

@@ -146,6 +146,7 @@ async fn bad_password_client_does_not_block_valid_client_handshake() {
 fn client(server_addr: SocketAddr, password: &str) -> ShadowQuicClient {
     ShadowQuicClient::new(
         ShadowQuicClientCfg {
+            tag: "outbound".into(),
             addr: server_addr.to_string(),
             username: "user".into(),
             password: password.into(),

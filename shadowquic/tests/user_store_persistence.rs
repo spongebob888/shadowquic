@@ -63,6 +63,7 @@ fn server_cfg(addr: &str, store: PathBuf, flush_interval: u64) -> ShadowQuicServ
 fn client_at(addr: &str, username: &str, password: &str) -> ShadowQuicClient {
     ShadowQuicClient::new(
         ShadowQuicClientCfg {
+            tag: "outbound".into(),
             username: username.into(),
             password: password.into(),
             addr: addr.into(),

@@ -103,6 +103,7 @@ async fn test_shadowquic() {
     .unwrap();
     let sq_client = ShadowQuicClient::new(
         ShadowQuicClientCfg {
+            tag: "outbound".into(),
             password: "123".into(),
             username: "123".into(),
             addr: "[::1]:4448".parse().unwrap(),

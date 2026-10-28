@@ -482,6 +482,7 @@ fn client(username: &str, password: &str) -> ShadowQuicClient {
 fn client_at(addr: &str, username: &str, password: &str) -> ShadowQuicClient {
     ShadowQuicClient::new(
         ShadowQuicClientCfg {
+            tag: "outbound".into(),
             username: username.into(),
             password: password.into(),
             addr: addr.into(),

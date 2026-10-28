@@ -81,6 +81,7 @@ async fn spawn_proxies() {
     .unwrap();
     let sq_client = ShadowQuicClient::new(
         ShadowQuicClientCfg {
+            tag: "outbound".into(),
             password: "123".into(),
             username: "123".into(),
             addr: QUIC_SERVER.parse().unwrap(),

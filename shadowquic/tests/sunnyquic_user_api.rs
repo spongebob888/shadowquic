@@ -205,6 +205,7 @@ fn client(username: &str, password: &str) -> SunnyQuicClient {
 fn client_at(addr: &str, username: &str, password: &str) -> SunnyQuicClient {
     SunnyQuicClient::new(
         SunnyQuicClientCfg {
+            tag: "outbound".into(),
             username: username.into(),
             password: password.into(),
             addr: addr.into(),

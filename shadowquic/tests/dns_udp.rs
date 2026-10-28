@@ -252,6 +252,7 @@ async fn shadowquic_client_server(over_stream: bool, port: u16) {
     .unwrap();
     let sq_client = ShadowQuicClient::new(
         ShadowQuicClientCfg {
+            tag: "outbound".into(),
             password: "123".into(),
             username: "123".into(),
             addr: format!("127.0.0.1:{}", port + 10),

@@ -139,6 +139,7 @@ async fn test_auto_reload_cert() {
 
     let sq_client_1 = SunnyQuicClient::new(
         SunnyQuicClientCfg {
+            tag: "outbound".into(),
             password: "password".into(),
             username: "user".into(),
             addr: quic_addr.parse().unwrap(),
@@ -226,6 +227,7 @@ async fn test_auto_reload_cert() {
 
     let sq_client_2 = SunnyQuicClient::new(
         SunnyQuicClientCfg {
+            tag: "outbound".into(),
             password: "password".into(),
             username: "user".into(),
             addr: quic_addr.parse().unwrap(),

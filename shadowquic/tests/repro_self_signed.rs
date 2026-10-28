@@ -136,6 +136,7 @@ async fn test_self_signed_cert() {
 
     let sq_client = SunnyQuicClient::new(
         SunnyQuicClientCfg {
+            tag: "outbound".into(),
             password: "password".into(),
             username: "user".into(),
             addr: quic_addr.parse().unwrap(),

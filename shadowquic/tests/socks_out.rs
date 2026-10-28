@@ -123,7 +123,7 @@ async fn spawn_socks() {
             dns: None,
             #[cfg(feature = "dns-server")]
             addr_resolver: None,
-            tag: String::new(),
+            tag: "outbound".into(),
             addr: "[::1]:1094".into(),
             username: Some("test".into()),
             password: Some("test".into()),
