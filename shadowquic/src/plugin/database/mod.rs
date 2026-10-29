@@ -273,7 +273,7 @@ impl RedbDatabase {
             None
         };
         let rebuilding = legacy.is_some();
-        let db = match legacy {
+        let mut db = match legacy {
             Some(db) => db,
             None => Database::builder()
                 .set_cache_size(8 * 1024 * 1024)
@@ -326,6 +326,7 @@ impl RedbDatabase {
             }
         }
         write.commit()?;
+        db.compact()?;
         drop(db);
         if let Some(temporary) = temporary {
             temporary.persist_noclobber(cfg.path())?;

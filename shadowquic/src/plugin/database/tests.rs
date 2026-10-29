@@ -538,6 +538,45 @@ fn geosite_legacy_schemas_recreate_all_tables_with_u32_attribute_masks() {
 }
 
 #[test]
+fn geosite_rebuild_reclaims_space_from_legacy_tables() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(dir.path(), RouterDBKind::Geosite);
+    legacy_geosite(&cfg, "2");
+    {
+        let db = Database::open(cfg.path()).unwrap();
+        let write = db.begin_write().unwrap();
+        {
+            let mut table = write.open_table(RULES).unwrap();
+            let padding = "x".repeat(1024);
+            for index in 0..2048 {
+                table
+                    .insert(format!("{padding}{index:04}").as_str(), ())
+                    .unwrap();
+            }
+        }
+        write.commit().unwrap();
+    }
+    let old_size = cfg.path().metadata().unwrap().len();
+    let source = dir.path().join("source.yml");
+    std::fs::write(&source, YAML).unwrap();
+    let db = RedbDatabase::import(&cfg, &source).unwrap();
+    let new_size = cfg.path().metadata().unwrap().len();
+    assert!(
+        new_size < old_size / 4,
+        "rebuilding must reclaim legacy pages: {old_size} -> {new_size} bytes"
+    );
+    assert!(db.find_domain("test@ads", "tree.example").unwrap());
+    assert!(!db.find_domain("test", "old.example").unwrap());
+    drop(db);
+    assert!(
+        RedbDatabase::open(&cfg)
+            .unwrap()
+            .find_domain("test", "exact.example")
+            .unwrap()
+    );
+}
+
+#[test]
 fn failed_geosite_upgrade_preserves_old_tables_and_is_retried_on_restart() {
     let dir = tempfile::tempdir().unwrap();
     let cfg = config(dir.path(), RouterDBKind::Geosite);

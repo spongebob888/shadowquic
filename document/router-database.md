@@ -94,9 +94,11 @@ through the ordinary router and outbounds. HTTP redirects also pass through the
 router. HTTPS validates certificates using the bundled public root store.
 Downloads have a five-minute timeout, at most ten requests including redirects,
 and a 512 MiB source limit. On a blocking worker, country `.mmdb` downloads are
-validated and saved unchanged; redb sources are converted. The completed file is
-published atomically without replacing an existing file. Failed downloads/imports are logged;
-lookups report the failure and a restart retries a missing database.
+validated and saved unchanged; redb sources are converted. New redb databases and
+rebuilt legacy databases are compacted after import to reclaim unused file space.
+The completed file is published atomically without replacing an existing file.
+Failed downloads/imports are logged; lookups report the failure and a restart
+retries a missing database.
 
 Lookups before import finishes raise an error, including calls made while loading
 the script. Put lookups inside the returned routing function and handle startup
