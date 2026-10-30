@@ -38,6 +38,8 @@ use crate::{
 
 pub(super) const QUEUE_CAPACITY: usize = 64;
 const TCP_BUFFER_SIZE: usize = 5000;
+const INPUT_BATCH_SIZE: usize = 32;
+const CLEANUP_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Default)]
 pub(super) struct PacketDevice {
@@ -259,6 +261,16 @@ impl Stack {
                     client: SocketAddr::new(packet.src.into(), repr.src_port),
                     destination: SocketAddr::new(packet.dst.into(), repr.dst_port),
                 };
+                // Reuse a closed tuple immediately, without waiting for the
+                // periodic full-table cleanup (including RST/SYN in one batch).
+                if self
+                    .tcp
+                    .get(&key)
+                    .is_some_and(|flow| !self.sockets.get::<tcp::Socket>(flow.handle).is_open())
+                {
+                    let flow = self.tcp.remove(&key).unwrap();
+                    self.sockets.remove(flow.handle);
+                }
                 if repr.control == TcpControl::Syn
                     && repr.ack_number.is_none()
                     && !self.tcp.contains_key(&key)
@@ -375,6 +387,9 @@ impl Stack {
 
     fn poll(&mut self, now: Instant) {
         self.iface.poll(now, &mut self.device, &mut self.sockets);
+    }
+
+    fn cleanup(&mut self) {
         let timeout = Duration::from_secs(self.cfg.udp_idle_timeout());
         self.udp
             .retain(|_, flow| !flow.packets.is_closed() && flow.last_active.elapsed() < timeout);
@@ -481,9 +496,15 @@ pub(super) async fn run(
     let (reply_tx, mut replies) = mpsc::channel(QUEUE_CAPACITY);
     let mut stack = Stack::new(cfg, requests, reply_tx);
     let epoch = TokioInstant::now();
+    let mut next_cleanup = epoch + CLEANUP_INTERVAL;
+    let mut packets = Vec::with_capacity(INPUT_BATCH_SIZE);
     loop {
         let now = Instant::from_millis(epoch.elapsed().as_millis() as i64);
         stack.poll(now);
+        if TokioInstant::now() >= next_cleanup {
+            stack.cleanup();
+            next_cleanup = TokioInstant::now() + CLEANUP_INTERVAL;
+        }
         while let Some(packet) = stack.device.output.pop_front() {
             output
                 .send(packet)
@@ -496,11 +517,26 @@ pub(super) async fn run(
             .map_or(Duration::from_secs(1), |delay| {
                 Duration::from_millis(delay.total_millis())
             })
-            .min(Duration::from_secs(1));
+            .min(next_cleanup.saturating_duration_since(TokioInstant::now()));
+        // smoltcp can leave ingress queued when its output queue fills. Do not
+        // admit another batch until that backlog has been processed, and do not
+        // wait for a new packet or TCP timer to resume it.
+        if !stack.device.input.is_empty() {
+            tokio::task::yield_now().await;
+            continue;
+        }
         tokio::select! {
-            packet = input.recv() => {
-                let Some(packet) = packet else { return Ok(()); };
-                stack.ingest(packet);
+            count = input.recv_many(&mut packets, INPUT_BATCH_SIZE) => {
+                if count == 0 { return Ok(()); }
+                let now = Instant::from_millis(epoch.elapsed().as_millis() as i64);
+                for packet in packets.drain(..) {
+                    stack.ingest(packet);
+                    // Apply TCP control transitions before admitting the next
+                    // packet, without repeating egress and timer socket scans.
+                    stack.iface.poll_ingress_single(
+                        now, &mut stack.device, &mut stack.sockets,
+                    );
+                }
             }
             Some(reply) = replies.recv() => {
                 if let Some(flow) = stack.udp.get_mut(&reply.client)

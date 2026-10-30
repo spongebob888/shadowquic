@@ -44,7 +44,8 @@ timeout and keeps the UDP timeout at 300 seconds.
 Queues and TCP buffers are bounded. At capacity, new
 flows are dropped; congested UDP queues drop packets without blocking other
 flows. Idle or closed UDP sessions and closed TCP sockets
-release their capacity. TCP preserves half-closes. UDP sessions are grouped by
+release their capacity during a cleanup sweep scheduled once per second. A closed
+TCP tuple can be reused immediately. TCP preserves half-closes. UDP sessions are grouped by
 client socket address and retain the destination of every packet.
 
 Requests carry `tag`, `default-outbound`, the client's source address, and the
@@ -159,3 +160,20 @@ traverses the proxy in both directions. UDP's idle drain grace is excluded from
 the measurement. There is no speed threshold; compare runs on the same machine.
 The Python client and echo servers also consume CPU and can limit measured rates.
 The benchmark runs separately from the default correctness suite.
+
+For a development measurement without root, Docker, or a kernel TUN device, run
+the ignored Rust packet-stack throughput tests:
+
+```sh
+cargo test -p shadowquic --release --features tun --lib tun::tests::throughput:: -- --ignored --nocapture --test-threads=1
+```
+
+Each test transfers and verifies 16 MiB of echoed payload over IPv4 and IPv6,
+reporting elapsed seconds and payload Mbps. Set `SHADOWQUIC_TUN_BENCH_BYTES` to
+change the byte count (1 byte through 1 GiB). TCP streams concurrently in both
+directions and checks the echoed data and half-close; UDP uses bounded batches
+and checks payloads, checksums, and reply addresses. Rates count echoed bytes
+once. These measurements include packet construction, verification, the TUN
+stack, and application bridges; they exclude kernel device I/O, routing, and the
+direct outbound. Use the Docker benchmark above to measure that complete path.
+There is no throughput pass/fail threshold.

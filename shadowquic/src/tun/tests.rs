@@ -23,6 +23,9 @@ use tokio::{
     task::JoinHandle,
 };
 
+mod scheduling;
+mod throughput;
+
 fn config() -> TunServerCfg {
     serde_saphyr::from_str("tag: tun-in\ndefault-outbound: direct").unwrap()
 }
