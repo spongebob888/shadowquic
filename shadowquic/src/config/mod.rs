@@ -484,15 +484,13 @@ impl Config {
             #[cfg(not(feature = "dns-server"))]
             outbounds.insert(
                 tag,
-                Arc::from(
-                    cfg.build_outbound(
-                        resolver_manager.clone(),
-                        #[cfg(feature = "restful-api")]
-                        &mut sq_outbounds,
-                    )
-                    .instrument(span)
-                    .await?,
-                ),
+                cfg.build_outbound(
+                    resolver_manager.clone(),
+                    #[cfg(feature = "restful-api")]
+                    &mut sq_outbounds,
+                )
+                .instrument(span)
+                .await?,
             );
         }
         // Build selectors after their dependencies, independent of config order.
