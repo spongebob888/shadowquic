@@ -57,7 +57,9 @@ impl<C: QuicConnection> SQServerConn<C> {
         let conn_clone = self.inner.clone();
         tokio::spawn(
             async move {
-                let _ = handle_udp_packet_recv(conn_clone).await;
+                let _ = handle_udp_packet_recv(conn_clone)
+                    .await
+                    .map_err(|x| format!("udp packet receive stopped:{}", x));
             }
             .in_current_span(),
         );
@@ -157,6 +159,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                     }
                     .wait_first_packet()
                     .await?;
+                    tracing::trace!(dst = %udp.dst,"udp request accepted");
                     req_send
                         .send(ProxyRequest::Udp(udp))
                         .await

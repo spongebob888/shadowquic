@@ -284,6 +284,7 @@ impl UdpSend for Sender<(Bytes, SocksAddr)> {
             Ok(()) => {}
             Err(TrySendError::Full(_)) => {
                 tracing::warn!(dst = %&addr,"drop udp packet due to full channel");
+                return Ok(0);
             }
             Err(TrySendError::Closed(_)) => {
                 return Err(SError::UDPSessionClosed(format!(
