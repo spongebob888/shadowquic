@@ -134,6 +134,13 @@ impl ProxyRequest {
 #[async_trait]
 pub trait UdpSend: Send + Sync + Unpin {
     async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError>; // addr is proxy addr
+    /// Resolves when the receiver this sender feeds is gone, i.e. the
+    /// association that owns this socket has ended. A sender whose lifetime is
+    /// not tied to a channel never resolves, so a relay that selects on this
+    /// keeps running until its stream ends.
+    async fn closed(&self) {
+        std::future::pending::<()>().await
+    }
 }
 #[async_trait]
 pub trait UdpRecv: Send + Sync + Unpin {
@@ -294,6 +301,9 @@ impl UdpSend for Sender<(Bytes, SocksAddr)> {
             }
         }
         Ok(siz)
+    }
+    async fn closed(&self) {
+        Sender::closed(self).await
     }
 }
 #[async_trait]

@@ -456,6 +456,9 @@ impl UdpSend for TrackedUdpSend {
         self.tracked_send_local.sent(len);
         Ok(len)
     }
+    async fn closed(&self) {
+        self.inner.closed().await
+    }
 }
 
 impl Observer {
