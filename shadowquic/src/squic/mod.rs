@@ -443,6 +443,7 @@ pub async fn handle_udp_send<C: QuicConnection>(
             // A lonely datagram without sending the control header will causing
             // memoryleak in the peer.
             ctl_header.encode(&mut send).await?;
+            tracing::trace!(context_id = id, dst = %dst, "udp control header sent");
         }
         {
             let mut head = Vec::<u8>::new();
