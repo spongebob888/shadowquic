@@ -53,31 +53,28 @@ impl<C: QuicConnection> SQServerConn<C> {
         self: Arc<Self>,
         req_send: Sender<ProxyRequest>,
     ) -> Result<(), SError> {
-        let conn = &self.inner;
         let conn_clone = self.inner.clone();
-        tokio::spawn(
-            async move {
-                let _ = handle_udp_packet_recv(conn_clone)
-                    .await
-                    .map_err(|x| format!("udp packet receive stopped:{}", x));
-            }
-            .in_current_span(),
-        );
+        let fut1 = async move { handle_udp_packet_recv(conn_clone).await };
 
-        while conn.close_reason().is_none() {
-            select! {
-                bi = conn.accept_bi() => {
-                    let (send, recv, id) = bi?;
-                    let span = info_span!("bistream", id = id);
-                    trace!("bistream accepted");
-                    tokio::spawn(
-                        self.clone()
-                            .handle_bistream(send, recv, req_send.clone(), tracing::Span::current())
-                            .instrument(span),
-                    );
-                },
+        let fut2 = async move {
+            let conn = &self.inner;
+            while conn.close_reason().is_none() {
+                select! {
+                        bi = conn.accept_bi() => {
+                            let (send, recv, id) = bi?;
+                            let span = info_span!("bistream", id = id);
+                            trace!("bistream accepted");
+                let self_clone = self.clone();
+                            tokio::spawn(
+                                    self_clone.handle_bistream(send, recv, req_send.clone(), tracing::Span::current())
+                                    .instrument(span),
+                            );
+                        },
+                    }
             }
-        }
+            Ok(())
+        };
+        tokio::try_join!(fut1, fut2)?;
         Ok(())
     }
     async fn handle_bistream(

@@ -268,7 +268,9 @@ impl IDStore {
                 Err(_) => {
                     let (socket, addr) = val.clone();
                     let notify = replace(s, Ok(val));
-                    drop(h);
+                    // Do not drop here, socket may be release
+                    // too early and udp packet order may be changed
+                    // drop(h);
                     //let _ = notify.map_err(|x| x.notify_one());
                     match notify {
                         Ok(_) => {
@@ -407,9 +409,21 @@ pub async fn handle_udp_send<C: QuicConnection>(
         unistream_map: Default::default(),
     };
     let quic_conn = conn.conn.clone();
+    let mut trace_seq = 0_u64;
     loop {
         let (bytes, dst) = down_stream.recv_from().await?;
+        let should_trace = tracing::enabled!(target: "shadowquic::squic::udp", Level::TRACE) && {
+            let n = trace_seq;
+            trace_seq = trace_seq.wrapping_add(1);
+            n & 1023 == 0 // Trace the first packet, then every 1,024 packets.
+        };
+        if should_trace {
+            trace!(target: "shadowquic::squic::udp", dst = %dst, "udp datagram received from down_stream");
+        }
         let (id, is_new) = session.get_id_or_insert(&dst).await;
+        if should_trace {
+            trace!(target: "shadowquic::squic::udp", context_id = id, dst = %dst, "session id resolved,is_new_id:{}", is_new);
+        }
         //let span = trace_span!("udp", id = id);
         let ctl_header = SQUdpControlHeader {
             dst: dst.clone(),
@@ -447,6 +461,9 @@ pub async fn handle_udp_send<C: QuicConnection>(
                 content.put(bytes);
                 let content = content.freeze();
                 quic_conn.send_datagram(content).await?;
+                if should_trace {
+                    trace!(target: "shadowquic::squic::udp", context_id = id, dst = %dst, "quic unreliable datagram sent to upstream");
+                }
             }
         };
     }
@@ -485,6 +502,7 @@ pub async fn handle_udp_recv_ctrl<C: QuicConnection>(
 pub async fn handle_udp_packet_recv<C: QuicConnection>(conn: SQConn<C>) -> Result<(), SError> {
     let id_store = conn.recv_id_store.clone();
     wait_sunny_auth(&conn).await?;
+    let mut trace_seq = 0_u64;
     loop {
         tokio::select! {
             b = conn.read_datagram() => {
@@ -492,8 +510,21 @@ pub async fn handle_udp_packet_recv<C: QuicConnection>(conn: SQConn<C>) -> Resul
                 let b = BytesMut::from(b);
                 let mut cur = Cursor::new(b);
                 let SQPacketDatagramHeader{id} = SQPacketDatagramHeader::decode(&mut cur).await?;
+
+                let should_trace = tracing::enabled!(target: "shadowquic::squic::udp", Level::TRACE) && {
+                    let n = trace_seq;
+                    trace_seq = trace_seq.wrapping_add(1);
+                    n & 1023 == 0 // Trace the first packet, then every 1,024 packets.
+                };
+                if should_trace {
+                    trace!(target: "shadowquic::squic::udp", context_id = id, "quic unreliable datagram received");
+                }
+
                 let pos = cur.position() as usize;
                 id_store.feed_datagram(id, cur.into_inner().split_off(pos).freeze()).await?;
+                if should_trace {
+                    trace!(target: "shadowquic::squic::udp", context_id = id, "quic unreliable datagram received sent to upstream");
+                }
             }
 
             r = async {
