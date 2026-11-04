@@ -38,6 +38,9 @@ use crate::{
 pub mod inbound;
 pub mod outbound;
 
+#[cfg(test)]
+mod udp_recv_tests;
+
 /// SQuic connection, it is shared by shadowquic and sunnyquic and is a wrapper of quic connection.
 /// It contains a connection object and two ID store for managing UDP sockets.
 /// The IDStore stores the mapping between ids and the destionation addresses as well as associated sockets
@@ -521,7 +524,12 @@ pub async fn handle_udp_packet_recv<C: QuicConnection>(conn: SQConn<C>) -> Resul
                 }
 
                 let pos = cur.position() as usize;
-                id_store.feed_datagram(id, cur.into_inner().split_off(pos).freeze()).await?;
+                if let Err(error) = id_store.feed_datagram(id, cur.into_inner().split_off(pos).freeze()).await {
+                    // A failed association must not stop UDP reception for the
+                    // other associations sharing this QUIC connection.
+                    tracing::warn!(context_id = id, %error, "dropping UDP datagram after delivery failure");
+                    continue;
+                }
                 if should_trace {
                     trace!(target: "shadowquic::squic::udp", context_id = id, "quic unreliable datagram received sent to upstream");
                 }
