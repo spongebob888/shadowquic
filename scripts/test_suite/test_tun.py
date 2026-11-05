@@ -3,14 +3,26 @@
 import argparse
 import os
 import platform
+import shutil
 from pathlib import Path
 import subprocess
 
 WORKSPACE = Path(__file__).resolve().parents[2]
-FEATURES = "shadowquic-quinn,sunnyquic-noq,ring,plugin-vendored,dns-server,tun"
+FEATURES = "shadowquic-quinn,sunnyquic-noq,ring,plugin-vendored,dns-server,tun,sniffer"
 
 
-def main(throughput=False, duration=3, udp_mbps=100, udp_size=1200):
+def main(throughput=False, duration=3, udp_mbps=100, udp_size=1200, http3_sniffer=False):
+    extra_args = []
+    install = "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 iproute2 iptables && "
+    if http3_sniffer:
+        curl = Path(shutil.which("curl") or "curl").resolve(strict=True)
+        version = subprocess.run([str(curl), "--version"], check=True, capture_output=True, text=True).stdout
+        if "HTTP3" not in version or not str(curl).startswith("/nix/store/"):
+            raise RuntimeError("Run in nix develop with its HTTP3-enabled curl")
+        extra_args = ["--volume", "/nix/store:/nix/store:ro", "--env", f"CURL={curl}"]
+        install = ("apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "
+                   "python3 python3-venv iproute2 iptables openssl && "
+                   "python3 -m venv /tmp/http3-venv && /tmp/http3-venv/bin/pip -q install aioquic==1.3.0 && ")
     binary = os.environ.get("SHADOWQUIC_TUN_TEST_BINARY")
     if binary is None:
         target = {
@@ -27,8 +39,9 @@ def main(throughput=False, duration=3, udp_mbps=100, udp_size=1200):
         )
         binary = WORKSPACE / "target" / target / "release" / "shadowquic"
     binary = Path(binary).resolve(strict=True)
-    script = "bench_tun.py" if throughput else "test_tun.py"
-    command = f"python3 -u /tests/{script}"
+    script = "test_tun_http3_sniffer.py" if http3_sniffer else ("bench_tun.py" if throughput else "test_tun.py")
+    python = "/tmp/http3-venv/bin/python" if http3_sniffer else "python3"
+    command = f"{python} -u /tests/{script}"
     if throughput:
         command += f" --duration {float(duration)} --udp-mbps {float(udp_mbps)} --udp-size {int(udp_size)}"
     print(f"[*] Running TUN {'throughput' if throughput else 'integration'} tests in Docker...", flush=True)
@@ -40,10 +53,8 @@ def main(throughput=False, duration=3, udp_mbps=100, udp_size=1200):
          "--env", "SHADOWQUIC_BINARY=/shadowquic",
          "--volume", f"{binary}:/shadowquic:ro",
          "--volume", f"{WORKSPACE / 'scripts'}:/tests:ro",
-         "ubuntu:22.04", "bash", "-ec",
-         "apt-get update -qq && "
-         "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 iproute2 iptables && "
-         + command],
+         *extra_args, "ubuntu:22.04", "bash", "-ec",
+         install + command],
         cwd=WORKSPACE, check=True, timeout=max(240, duration * 4 + 180) if throughput else 240,
     )
     print(f"[+] TUN Docker {'throughput' if throughput else 'integration'} tests PASSED", flush=True)
@@ -51,7 +62,9 @@ def main(throughput=False, duration=3, udp_mbps=100, udp_size=1200):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--throughput", action="store_true", help="run the TCP/UDP echo benchmark")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--http3-sniffer", action="store_true", help="test QUIC hostname sniffing with curl --http3-only through TUN")
+    modes.add_argument("--throughput", action="store_true", help="run the TCP/UDP echo benchmark")
     parser.add_argument("--duration", type=float, default=3, help="benchmark seconds per protocol/address")
     parser.add_argument("--udp-mbps", type=float, default=100, help="offered UDP payload rate")
     parser.add_argument("--udp-size", type=int, default=1200, help="UDP payload bytes (8..1452)")

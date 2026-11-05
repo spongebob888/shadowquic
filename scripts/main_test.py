@@ -11,3 +11,5 @@ import test_tproxy
 import test_tun
 
 test_tun.main()
+
+test_tun.main(http3_sniffer=True)
