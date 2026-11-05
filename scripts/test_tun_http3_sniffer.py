@@ -136,7 +136,7 @@ log-level: debug
         assert result.returncode != 0 and BODY not in result.stdout, result
         content = tun.LOG.read_text()
         assert "HTTP3_SNI_ALLOWED" in content and "HTTP3_SNI_BLOCKED" in content, content
-        assert "sniff completed" in content and "elapsed_ms=" in content, content
+        assert "sniff completed" in content and "elapsed=" in content, content
         assert "routing request failed" not in content, content
         print("[PASS] Different sniffed SNI selects the blocked outbound", flush=True)
         tun.stop(proxy)

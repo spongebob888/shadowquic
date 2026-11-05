@@ -192,17 +192,15 @@ impl Sniffer {
             }
         }
         .await;
-        let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-        let network = if udp { "udp" } else { "tcp" };
+        let elapsed = started.elapsed();
         match &result {
-            Ok(request) => tracing::debug!(
-                network,
-                dst = %request.dst(),
-                result = ?request.user_context().sniffer,
-                elapsed_ms,
-                "sniff completed"
-            ),
-            Err(error) => tracing::debug!(network, %error, elapsed_ms, "sniff failed"),
+            Ok(request) => match request.user_context().sniffer {
+                Some(ref sniff) => {
+                    tracing::debug!(domain = %sniff.domain, protocol = %sniff.protocol,version = %sniff.version, ?elapsed, "sniff completed")
+                }
+                None => tracing::debug!(?elapsed, "sniffed nothing"),
+            },
+            Err(error) => tracing::warn!(%error, ?elapsed, "sniff failed"),
         }
         result
     }
