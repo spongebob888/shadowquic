@@ -7,7 +7,7 @@ sniffer is gated by sniffer feature gate.
 
 It supports plain http, TLS, QUIC.
 - For http, use Host as the sniffing target
-- For QUIC, only sniffer the first datagram and use it as sniffing result of the proxyrequest. You should
+- For QUIC, only sniffer the destination of the first datagram, buffer at most 5 datagrams for this destination and assemble the packets for extract client hello. If packets to other destination received before sniffer finished, abort the sniffing. No need to consider the disorder of udp packets for simplicity. And use it as sniffing result of the proxyrequest. You should
 first check the header to fast pass nonquic packet and avoid decrypting every udp packet.
 
 TCP sniffer and UDP sniffer should be seperated and they can optionally be triggered only on certain ports.

@@ -1,5 +1,7 @@
-//! RFC 9001 Initial protection; RFC 9369 QUIC v2. No state across datagrams.
-use super::{SniffResult, tls};
+//! RFC 9001 Initial protection; RFC 9369 QUIC v2. Bounded ClientHello assembly across datagrams.
+#[cfg(test)]
+use super::SniffResult;
+use super::tls;
 use rustls_jls::quic::{Suite, Version};
 
 pub(super) fn suite() -> Option<Suite> {
@@ -55,145 +57,174 @@ impl<'a> Cursor<'a> {
     }
 }
 
-pub(super) fn parse(mut datagram: &[u8], limit: usize, suite: &Suite) -> Option<SniffResult> {
-    if datagram.len() > limit {
-        return None;
+#[cfg(test)]
+pub(super) fn parse(datagram: &[u8], limit: usize, suite: &Suite) -> Option<SniffResult> {
+    match Parser::default().parse(datagram, limit, suite) {
+        tls::Parse::Done(result) => result,
+        tls::Parse::NeedMore => None,
     }
-    let mut crypto = Vec::new();
-    let mut present = Vec::new();
-    let mut identity: Option<(u32, Vec<u8>)> = None;
-    let mut expected_pn = 0u64;
-    // Bound crypto work even for adversarial coalesced packets.
-    for _ in 0..32 {
-        let mut c = Cursor(datagram);
-        let first = c.byte()?;
-        if first & 0xc0 != 0xc0 {
+}
+
+#[derive(Default)]
+pub(super) struct Parser {
+    crypto: Vec<u8>,
+    present: Vec<bool>,
+    identity: Option<(u32, Vec<u8>)>,
+    expected_pn: u64,
+    wire_bytes: usize,
+    packets: usize,
+}
+impl Parser {
+    pub(super) fn parse(&mut self, datagram: &[u8], limit: usize, suite: &Suite) -> tls::Parse {
+        self.parse_inner(datagram, limit, suite)
+            .unwrap_or(tls::Parse::Done(None))
+    }
+    fn parse_inner(
+        &mut self,
+        mut datagram: &[u8],
+        limit: usize,
+        suite: &Suite,
+    ) -> Option<tls::Parse> {
+        self.wire_bytes = self.wire_bytes.checked_add(datagram.len())?;
+        if datagram.is_empty() || self.wire_bytes > limit {
             return None;
         }
-        let wire_version = u32::from_be_bytes(c.take(4)?.try_into().ok()?);
-        let (version, label, initial_type) = match wire_version {
-            1 => (Version::V1, "1", 0),
-            0x6b3343cf => (Version::V2, "2", 1),
-            _ => return None,
-        };
-        if (first >> 4) & 3 != initial_type {
-            return None;
-        }
-        let dcid_len = c.byte()? as usize;
-        if dcid_len > 20 {
-            return None;
-        }
-        let dcid = c.take(dcid_len)?;
-        let scid_len = c.byte()? as usize;
-        if scid_len > 20 {
-            return None;
-        }
-        c.take(scid_len)?;
-        let token_len = c.length()?;
-        c.take(token_len)?;
-        let length = c.length()?;
-        let pn_offset = datagram.len() - c.0.len();
-        let packet_len = pn_offset.checked_add(length)?;
-        let packet = datagram.get(..packet_len)?;
-        // Header plausibility checks precede all key derivation and allocations.
-        let sample = packet.get(pn_offset.checked_add(4)?..pn_offset.checked_add(20)?)?;
-        if let Some((v, id)) = &identity {
-            if *v != wire_version || id != dcid {
+        // Bound decryption work even for adversarial coalesced packets.
+        while !datagram.is_empty() {
+            self.packets += 1;
+            if self.packets > 32 {
                 return None;
             }
-        } else {
-            identity = Some((wire_version, dcid.to_vec()));
-        }
-        let keys = suite.keys(dcid, rustls_jls::Side::Server, version).remote;
-        let mut first = first;
-        let mut pn_bytes: [u8; 4] = packet.get(pn_offset..pn_offset + 4)?.try_into().ok()?;
-        keys.header
-            .decrypt_in_place(sample, &mut first, &mut pn_bytes)
-            .ok()?;
-        if first & 0x0c != 0 {
-            return None;
-        }
-        let pn_len = (first & 3) as usize + 1;
-        let truncated = pn_bytes[..pn_len]
-            .iter()
-            .fold(0u64, |n, b| (n << 8) | u64::from(*b));
-        let window = 1u64 << (8 * pn_len);
-        let mut pn = (expected_pn & !(window - 1)) | truncated;
-        if pn + window / 2 <= expected_pn {
-            pn += window;
-        } else if pn > expected_pn + window / 2 && pn >= window {
-            pn -= window;
-        }
-        let mut decrypted = packet.to_vec();
-        decrypted[0] = first;
-        decrypted[pn_offset..pn_offset + pn_len].copy_from_slice(&pn_bytes[..pn_len]);
-        let (header, payload) = decrypted.split_at_mut(pn_offset + pn_len);
-        let payload = keys.packet.decrypt_in_place(pn, header, payload).ok()?;
-        expected_pn = expected_pn.max(pn + 1);
-        let mut frames = Cursor(payload);
-        for _ in 0..4096 {
-            if frames.0.is_empty() {
-                break;
+            let mut c = Cursor(datagram);
+            let first = c.byte()?;
+            if first & 0xc0 != 0xc0 {
+                return None;
             }
-            match frames.varint()? {
-                0 | 1 => {} // PADDING, PING
-                kind @ (2 | 3) => {
-                    frames.varint()?;
-                    frames.varint()?;
-                    let ranges = frames.varint()?;
-                    frames.varint()?;
-                    if ranges > 4096 {
-                        return None;
-                    }
-                    for _ in 0..ranges {
-                        frames.varint()?;
-                        frames.varint()?;
-                    }
-                    if kind == 3 {
-                        for _ in 0..3 {
-                            frames.varint()?;
-                        }
-                    }
+            let wire_version = u32::from_be_bytes(c.take(4)?.try_into().ok()?);
+            let (version, label, initial_type) = match wire_version {
+                1 => (Version::V1, "1", 0),
+                0x6b3343cf => (Version::V2, "2", 1),
+                _ => return None,
+            };
+            if (first >> 4) & 3 != initial_type {
+                return None;
+            }
+            let dcid_len = c.byte()? as usize;
+            if dcid_len > 20 {
+                return None;
+            }
+            let dcid = c.take(dcid_len)?;
+            let scid_len = c.byte()? as usize;
+            if scid_len > 20 {
+                return None;
+            }
+            c.take(scid_len)?;
+            let token_len = c.length()?;
+            c.take(token_len)?;
+            let length = c.length()?;
+            let pn_offset = datagram.len() - c.0.len();
+            let packet_len = pn_offset.checked_add(length)?;
+            let packet = datagram.get(..packet_len)?;
+            // Header plausibility checks precede all key derivation and allocations.
+            let sample = packet.get(pn_offset.checked_add(4)?..pn_offset.checked_add(20)?)?;
+            if let Some((v, id)) = &self.identity {
+                if *v != wire_version || id != dcid {
+                    return None;
                 }
-                6 => {
-                    let offset = frames.length()?;
-                    let len = frames.length()?;
-                    let end = offset.checked_add(len)?;
-                    if end > limit {
-                        return None;
-                    }
-                    let data = frames.take(len)?;
-                    if crypto.is_empty() {
-                        crypto = vec![0; limit];
-                        present = vec![false; limit];
-                    }
-                    for (i, byte) in (offset..end).zip(data) {
-                        if present[i] && crypto[i] != *byte {
+            } else {
+                self.identity = Some((wire_version, dcid.to_vec()));
+            }
+            let keys = suite.keys(dcid, rustls_jls::Side::Server, version).remote;
+            let mut first = first;
+            let mut pn_bytes: [u8; 4] = packet.get(pn_offset..pn_offset + 4)?.try_into().ok()?;
+            keys.header
+                .decrypt_in_place(sample, &mut first, &mut pn_bytes)
+                .ok()?;
+            if first & 0x0c != 0 {
+                return None;
+            }
+            let pn_len = (first & 3) as usize + 1;
+            let truncated = pn_bytes[..pn_len]
+                .iter()
+                .fold(0u64, |n, b| (n << 8) | u64::from(*b));
+            let window = 1u64 << (8 * pn_len);
+            let mut pn = (self.expected_pn & !(window - 1)) | truncated;
+            if pn + window / 2 <= self.expected_pn {
+                pn += window;
+            } else if pn > self.expected_pn + window / 2 && pn >= window {
+                pn -= window;
+            }
+            let mut decrypted = packet.to_vec();
+            decrypted[0] = first;
+            decrypted[pn_offset..pn_offset + pn_len].copy_from_slice(&pn_bytes[..pn_len]);
+            let (header, payload) = decrypted.split_at_mut(pn_offset + pn_len);
+            let payload = keys.packet.decrypt_in_place(pn, header, payload).ok()?;
+            self.expected_pn = self.expected_pn.max(pn + 1);
+            let mut frames = Cursor(payload);
+            for _ in 0..4096 {
+                if frames.0.is_empty() {
+                    break;
+                }
+                match frames.varint()? {
+                    0 | 1 => {} // PADDING, PING
+                    kind @ (2 | 3) => {
+                        frames.varint()?;
+                        frames.varint()?;
+                        let ranges = frames.varint()?;
+                        frames.varint()?;
+                        if ranges > 4096 {
                             return None;
                         }
-                        crypto[i] = *byte;
-                        present[i] = true;
+                        for _ in 0..ranges {
+                            frames.varint()?;
+                            frames.varint()?;
+                        }
+                        if kind == 3 {
+                            for _ in 0..3 {
+                                frames.varint()?;
+                            }
+                        }
                     }
+                    6 => {
+                        let offset = frames.length()?;
+                        let len = frames.length()?;
+                        let end = offset.checked_add(len)?;
+                        if end > limit {
+                            return None;
+                        }
+                        let data = frames.take(len)?;
+                        if self.crypto.is_empty() {
+                            self.crypto = vec![0; limit];
+                            self.present = vec![false; limit];
+                        }
+                        for (i, byte) in (offset..end).zip(data) {
+                            if self.present[i] && self.crypto[i] != *byte {
+                                return None;
+                            }
+                            self.crypto[i] = *byte;
+                            self.present[i] = true;
+                        }
+                    }
+                    _ => return None,
                 }
-                _ => return None,
+            }
+            if !frames.0.is_empty() {
+                return None;
+            }
+            if self.present.get(..4).is_some_and(|p| p.iter().all(|b| *b)) {
+                let len = tls::handshake_len(&self.crypto, limit)?;
+                if self.present[..len].iter().all(|b| *b) {
+                    let mut result = tls::client_hello(&self.crypto[4..len])?;
+                    result.protocol = "QUIC";
+                    result.version = label.into();
+                    return Some(tls::Parse::Done(Some(result)));
+                }
+            }
+            datagram = &datagram[packet_len..];
+            if datagram.is_empty() {
+                break;
             }
         }
-        if !frames.0.is_empty() {
-            return None;
-        }
-        if present.get(..4).is_some_and(|p| p.iter().all(|b| *b)) {
-            let len = tls::handshake_len(&crypto, limit)?;
-            if present[..len].iter().all(|b| *b) {
-                let mut result = tls::client_hello(&crypto[4..len])?;
-                result.protocol = "QUIC";
-                result.version = label.into();
-                return Some(result);
-            }
-        }
-        datagram = &datagram[packet_len..];
-        if datagram.is_empty() {
-            break;
-        }
+        Some(tls::Parse::NeedMore)
     }
-    None
 }

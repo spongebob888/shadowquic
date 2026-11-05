@@ -373,7 +373,7 @@ fn quic_v1_v2_authentication_reassembly_and_first_datagram_limit() {
 }
 
 #[tokio::test]
-async fn udp_inspects_only_first_datagram_and_replays_both_destinations() {
+async fn complete_first_datagram_finishes_inspection_before_other_destinations() {
     let sniffer = Sniffer::new(config()).unwrap();
     let (tx, rx) = tokio::sync::mpsc::channel(2);
     let dst: crate::SocksAddr = "192.0.2.1:443"
@@ -587,4 +587,130 @@ fn incremental_http_scan_handles_every_read_boundary() {
         assert!(matches!(parser.parse(&wire[..end]), Parse::NeedMore));
     }
     assert!(matches!(parser.parse(wire), Parse::Done(Some(_))));
+}
+
+#[tokio::test(start_paused = true)]
+async fn quic_assembles_up_to_five_datagrams_and_replays_every_packet() {
+    for version in [rustls_jls::quic::Version::V1, rustls_jls::quic::Version::V2] {
+        for (parts, changed_destination) in [(2, false), (5, false), (6, false), (3, true)] {
+            let sniffer = Sniffer::new(config()).unwrap();
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            let dst: crate::SocksAddr = "192.0.2.1:443"
+                .parse::<std::net::SocketAddr>()
+                .unwrap()
+                .into();
+            let other: crate::SocksAddr = "192.0.2.2:443"
+                .parse::<std::net::SocketAddr>()
+                .unwrap()
+                .into();
+            let hello = hello(b"split.example");
+            let mut packets = Vec::new();
+            for i in 0..parts {
+                let start = hello.len() * i / parts;
+                let end = hello.len() * (i + 1) / parts;
+                let packet = (
+                    bytes::Bytes::from(initial(
+                        version,
+                        &crypto_frame(start, &hello[start..end]),
+                        i as u8,
+                    )),
+                    if changed_destination && i == 1 {
+                        other.clone()
+                    } else {
+                        dst.clone()
+                    },
+                );
+                tx.send(packet.clone()).await.unwrap();
+                packets.push(packet);
+            }
+            let req: ProxyRequest = ProxyRequest::Udp(crate::UdpSession {
+                recv: Box::new(rx),
+                send: Arc::new(tx),
+                stream: None,
+                bind_addr: dst.clone(),
+                dst,
+                src_addr: None,
+                user_context: Default::default(),
+            });
+            let req = sniffer.sniff(req).await.unwrap();
+            assert_eq!(
+                req.user_context()
+                    .sniffer
+                    .as_ref()
+                    .map(|r| r.domain.as_str()),
+                if parts <= 5 && !changed_destination {
+                    Some("split.example")
+                } else {
+                    None
+                }
+            );
+            let ProxyRequest::Udp(mut session) = req else {
+                panic!()
+            };
+            let buffered = if changed_destination { 2 } else { parts.min(5) };
+            for (i, packet) in packets.into_iter().enumerate() {
+                assert_eq!(session.recv.recv_from().await.unwrap(), packet);
+                if i + 1 < buffered {
+                    assert!(sniffer.memory.available_permits() < sniffer.config.max_buffered_bytes);
+                } else {
+                    assert_eq!(
+                        sniffer.memory.available_permits(),
+                        sniffer.config.max_buffered_bytes
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn incomplete_quic_times_out_once_and_non_quic_bypasses_waiting() {
+    for non_quic in [false, true] {
+        let sniffer = Sniffer::new(config()).unwrap();
+        let (tx, rx) = tokio::sync::mpsc::channel(2);
+        let dst: crate::SocksAddr = "192.0.2.1:443"
+            .parse::<std::net::SocketAddr>()
+            .unwrap()
+            .into();
+        let hello = hello(b"split.example");
+        let data = if non_quic {
+            b"not QUIC".to_vec()
+        } else {
+            initial(
+                rustls_jls::quic::Version::V1,
+                &crypto_frame(0, &hello[..10]),
+                0,
+            )
+        };
+        let packet = (bytes::Bytes::from(data), dst.clone());
+        tx.send(packet.clone()).await.unwrap();
+        let req: ProxyRequest = ProxyRequest::Udp(crate::UdpSession {
+            recv: Box::new(rx),
+            send: Arc::new(tx),
+            stream: None,
+            bind_addr: dst.clone(),
+            dst,
+            src_addr: None,
+            user_context: Default::default(),
+        });
+        let started = tokio::time::Instant::now();
+        let req = sniffer.sniff(req).await.unwrap();
+        assert!(req.user_context().sniffer.is_none());
+        assert_eq!(
+            started.elapsed(),
+            if non_quic {
+                Duration::ZERO
+            } else {
+                Duration::from_millis(100)
+            }
+        );
+        let ProxyRequest::Udp(mut session) = req else {
+            panic!()
+        };
+        assert_eq!(session.recv.recv_from().await.unwrap(), packet);
+        assert_eq!(
+            sniffer.memory.available_permits(),
+            sniffer.config.max_buffered_bytes
+        );
+    }
 }

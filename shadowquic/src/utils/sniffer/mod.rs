@@ -12,6 +12,7 @@ use crate::{
     error::SError,
 };
 use std::{
+    collections::VecDeque,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -93,7 +94,7 @@ impl Sniffer {
         let Ok(memory) = self
             .memory
             .clone()
-            .try_acquire_many_owned((4 * self.config.max_bytes) as u32)
+            .try_acquire_many_owned(self.config.reservation_bytes(udp) as u32)
         else {
             return Ok(request);
         };
@@ -145,23 +146,47 @@ impl Sniffer {
                     Ok(ProxyRequest::Tcp(session))
                 }
                 ProxyRequest::Udp(mut session) => {
-                    let first = match tokio::time::timeout(deadline, session.recv.recv_from()).await
-                    {
-                        Ok(result) => result?,
-                        Err(_) => return Ok(ProxyRequest::Udp(session)),
-                    };
-                    if first.0.len() <= self.config.max_bytes {
-                        session.user_context.sniffer = quic::parse(
-                            &first.0,
+                    let expires = tokio::time::Instant::now() + deadline;
+                    let mut buffered = VecDeque::new();
+                    let mut parser = quic::Parser::default();
+                    for _ in 0..5 {
+                        let packet = match tokio::time::timeout_at(
+                            expires,
+                            session.recv.recv_from(),
+                        )
+                        .await
+                        {
+                            Ok(result) => result?,
+                            Err(_) => break,
+                        };
+                        let same_destination = buffered.front().is_none_or(
+                            |first: &(bytes::Bytes, crate::SocksAddr)| first.1 == packet.1,
+                        );
+                        buffered.push_back(packet);
+                        if !same_destination {
+                            break;
+                        }
+                        let packet = &buffered.back().expect("just buffered").0;
+                        match parser.parse(
+                            packet,
                             self.config.max_bytes,
                             self.quic_suite.as_ref().expect("validated UDP protocol"),
-                        );
+                        ) {
+                            tls::Parse::NeedMore => {}
+                            tls::Parse::Done(result) => {
+                                session.user_context.sniffer = result;
+                                break;
+                            }
+                        }
                     }
-                    session.recv = Box::new(ReplayDatagram {
-                        first: Some(first),
-                        inner: session.recv,
-                        permit: Some(memory),
-                    });
+                    drop(parser);
+                    if !buffered.is_empty() {
+                        session.recv = Box::new(ReplayDatagram {
+                            buffered,
+                            inner: session.recv,
+                            permit: Some(memory),
+                        });
+                    }
                     Ok(ProxyRequest::Udp(session))
                 }
             }
@@ -183,7 +208,7 @@ impl Sniffer {
     }
 }
 struct ReplayDatagram {
-    first: Option<(bytes::Bytes, crate::msgs::socks5::SocksAddr)>,
+    buffered: VecDeque<(bytes::Bytes, crate::msgs::socks5::SocksAddr)>,
     inner: AnyUdpRecv,
     permit: Option<OwnedSemaphorePermit>,
 }
@@ -192,8 +217,10 @@ impl UdpRecv for ReplayDatagram {
     async fn recv_from(
         &mut self,
     ) -> Result<(bytes::Bytes, crate::msgs::socks5::SocksAddr), SError> {
-        if let Some(first) = self.first.take() {
-            self.permit = None;
+        if let Some(first) = self.buffered.pop_front() {
+            if self.buffered.is_empty() {
+                self.permit = None;
+            }
             return Ok(first);
         }
         self.inner.recv_from().await

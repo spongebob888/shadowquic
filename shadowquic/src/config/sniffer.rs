@@ -41,14 +41,19 @@ impl Default for SnifferCfg {
     }
 }
 impl SnifferCfg {
+    /// UDP reserves room for the final datagram that can cross the wire-byte limit.
+    pub(crate) fn reservation_bytes(&self, udp: bool) -> usize {
+        4 * self.max_bytes + if udp { 65536 } else { 0 }
+    }
+
     pub fn validate(&self) -> Result<(), SError> {
         if !(1..=60000).contains(&self.timeout)
             || !(256..=1024 * 1024).contains(&self.max_bytes)
             || !(1..=65536).contains(&self.max_concurrent)
-            || self.max_buffered_bytes < 4 * self.max_bytes
+            || self.max_buffered_bytes < self.reservation_bytes(!self.udp.is_empty())
             || self.max_buffered_bytes > 256 * 1024 * 1024
         {
-            return Err(SError::InvalidConfig("sniffer requires timeout 1..60000 ms, max-bytes 256..1048576, max-concurrent 1..65536, and max-buffered-bytes between four times max-bytes and 268435456".into()));
+            return Err(SError::InvalidConfig("sniffer requires timeout 1..60000 ms, max-bytes 256..1048576, max-concurrent 1..65536, and max-buffered-bytes between four times max-bytes (plus 65536 for UDP) and 268435456".into()));
         }
         for (rules, udp) in [(&self.tcp, false), (&self.udp, true)] {
             for rule in rules {

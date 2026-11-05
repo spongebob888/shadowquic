@@ -67,13 +67,19 @@ TLS inspection handles the initial ClientHello, including fragmented reads and
 handshakes spanning records. STARTTLS and later handshakes are not inspected.
 
 QUIC v1 and v2 inspection checks the header before deriving Initial keys and
-decrypting. It inspects **only the first datagram of a proxy request**, including
-coalesced Initial packets and out-of-order CRYPTO frames within that datagram.
-It does not collect further datagrams or reroute later destinations in a UDP
-association. Unsupported versions, invalid authentication, incomplete handshakes,
-conflicting overlaps, or unsupported frames produce no result. At most 32 Initial
-packets and 4096 frames per packet are processed. Lost early packets or a handshake
-spanning datagrams can prevent detection.
+decrypting. It inspects the destination of the first datagram, collecting at most
+five datagrams in arrival order under one absolute timeout. ClientHello CRYPTO
+data and packet numbers are retained across datagrams and coalesced Initial
+packets. If a datagram for another destination arrives before inspection finishes,
+inspection aborts without a hostname. All consumed datagrams, including the one
+for another destination, are replayed in their original order and with their
+original destinations. Later traffic is not sniffed again.
+
+`max-bytes` bounds the aggregate inspected wire bytes and reassembled handshake.
+Unsupported versions, invalid authentication, incomplete handshakes, conflicting
+CRYPTO overlaps, or unsupported frames produce no result. At most 32 Initial
+packets total and 4096 frames per packet are processed. Missing packets or a
+handshake requiring more than five datagrams can prevent detection.
 
 Timeout, malformed input, missing hostname, size limits, and exhausted budgets
 fall back to routing with `ctx.sniffer == nil`. Stream/receiver I/O errors close
@@ -83,10 +89,11 @@ the outbound connects, so restrict ports where possible.
 
 Limits are global per configured router: `timeout` 1–60000 ms, `max-bytes`
 256–1048576, `max-concurrent` 1–65536, and `max-buffered-bytes` from four times
-`max-bytes` through 268435456. Each inspection reserves four times `max-bytes`
-for retained wire data, decryption, and reassembly storage. The reservation stays
+`max-bytes` (plus 65536 when UDP is configured) through 268435456. Each inspection reserves four times `max-bytes`
+for retained wire data, decryption, and reassembly storage. UDP reserves an extra
+65536 bytes for the final datagram that can cross the byte limit. The reservation stays
 held until the replay buffer is drained or dropped, including while waiting for
-an outbound. Default limits allow 64 simultaneous reservations. Budgets cover
+an outbound. Default limits allow 64 simultaneous TCP reservations or 42 UDP reservations. Budgets cover
 inspection buffers, excluding allocator overhead and existing transport buffers.
 
 Enable `RUST_LOG=shadowquic::utils::sniffer=debug` to log each admitted inspection's
