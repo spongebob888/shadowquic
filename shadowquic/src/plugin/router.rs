@@ -28,6 +28,8 @@ pub enum NetworkType {
 /// Request information exposed to a routing script.
 #[derive(Clone)]
 pub struct RouteContext {
+    #[cfg(feature = "sniffer")]
+    pub sniffer: Option<crate::utils::sniffer::SniffResult>,
     /// Destination domain. Scripts may update these for TCP requests only.
     /// Setting one of these clears the others.
     pub dst_domain: Option<String>,
@@ -56,6 +58,8 @@ pub struct RouteContext {
 }
 impl UserData for RouteContext {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
+        #[cfg(feature = "sniffer")]
+        fields.add_field_method_get("sniffer", |_, this| Ok(this.sniffer.clone()));
         fields.add_field_method_get("inbound_tag", |_, this| Ok(this.inbound_tag.clone()));
         fields.add_field_method_get("preferred_outbound", |_, this| {
             Ok(this.preferred_outbound.clone())
@@ -155,7 +159,8 @@ impl RouteContext {
     }
 
     pub(crate) fn from_request(req: &ProxyRequest) -> Self {
-        match req {
+        #[allow(unused_mut)]
+        let mut context = match req {
             ProxyRequest::Tcp(TcpSession {
                 dst,
                 src_addr,
@@ -184,7 +189,12 @@ impl RouteContext {
                 user_context.stats.clone(),
                 &user_context.dns_query,
             ),
+        };
+        #[cfg(feature = "sniffer")]
+        {
+            context.sniffer = req.user_context().sniffer.clone();
         }
+        context
     }
 
     fn from_dst(
@@ -208,6 +218,8 @@ impl RouteContext {
             AddrOrDomain::V6(bytes) => (None, None, Some(Ipv6Addr::from(*bytes))),
         };
         Self {
+            #[cfg(feature = "sniffer")]
+            sniffer: None,
             dst_domain,
             dst_ip_v4,
             dst_ip_v6,
@@ -234,6 +246,8 @@ impl RouteContext {
 /// A restricted Lua router. The script returns a function that accepts one
 /// RouteContext table and returns an outbound tag or nil plus an error message.
 pub struct Router {
+    #[cfg(feature = "sniffer")]
+    pub(crate) sniffer: Option<Arc<crate::utils::sniffer::Sniffer>>,
     // Dropping the router stops watching the directory. The callback holds only
     // a weak reference to the runtime so it cannot keep the router alive.
     _watcher: Option<notify::RecommendedWatcher>,
@@ -364,6 +378,8 @@ impl Router {
     ) -> mlua::Result<Self> {
         Ok(Self {
             _watcher: None,
+            #[cfg(feature = "sniffer")]
+            sniffer: None,
             inner: Arc::new(Mutex::new(Self::compile_inner(
                 source,
                 resolver_manager,
@@ -756,6 +772,8 @@ mod tests {
 
     fn context() -> RouteContext {
         RouteContext {
+            #[cfg(feature = "sniffer")]
+            sniffer: None,
             dst_domain: Some("api.example".into()),
             dst_ip_v4: None,
             dst_ip_v6: None,

@@ -108,6 +108,7 @@ use std::sync::Arc;
 /// | Field | Value |
 /// | --- | --- |
 /// | `inbound_tag` | Tag of the inbound listener |
+/// | `sniffer` | Read-only hostname metadata (`domain`, `type`, `version`), or nil; requires `sniffer` and `router.sniffer` |
 /// | `dns_query` | Array of tables with `name` and numeric `record_type`; empty when no DNS metadata is attached |
 /// | `network_type` | `"tcp"` or `"udp"` |
 /// | `dst_domain`, `dst_ip_v4`, `dst_ip_v6` | Destination name or IP string; unused fields are nil |
@@ -156,6 +157,9 @@ use std::sync::Arc;
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct RouterCfg {
+    /// Global pre-routing hostname inspection; requires `sniffer` and a script.
+    #[serde(default)]
+    pub sniffer: Option<super::SnifferCfg>,
     /// Outbound tag used when no routing script is configured. Defaults to the
     /// first configured outbound. Does not require the `plugin` feature.
     #[serde(default)]
@@ -176,6 +180,19 @@ pub struct RouterCfg {
 
 impl RouterCfg {
     pub(super) fn validate(&self) -> Result<(), SError> {
+        if let Some(config) = &self.sniffer {
+            config.validate()?;
+            if !cfg!(feature = "sniffer") {
+                return Err(SError::InvalidConfig(
+                    "router.sniffer requires the `sniffer` feature".into(),
+                ));
+            }
+            if self.src.is_none() && self.path.is_none() {
+                return Err(SError::InvalidConfig(
+                    "router.sniffer requires router.src or router.path".into(),
+                ));
+            }
+        }
         if self.src.is_some() && self.path.is_some() {
             return Err(SError::InvalidConfig(
                 "configure either `router.src` or `router.path`, not both".into(),
@@ -232,7 +249,7 @@ impl RouterCfg {
         self.validate()?;
         #[cfg(feature = "router-dhcp-lease")]
         let leases = crate::plugin::dhcp_lease::LeaseStore::build(&self.dhcp_lease)?;
-        match (self.src.as_deref(), self.path.as_deref()) {
+        let router = match (self.src.as_deref(), self.path.as_deref()) {
             (Some(source), None) => Router::from_source_with_databases(
                 source,
                 resolver_manager,
@@ -256,7 +273,20 @@ impl RouterCfg {
             .map(Some),
             (None, None) => Ok(None),
             (Some(_), Some(_)) => unreachable!("validated above"),
-        }
+        }?;
+        #[cfg(feature = "sniffer")]
+        let router = router
+            .map(|mut router| {
+                router.sniffer = self
+                    .sniffer
+                    .clone()
+                    .map(crate::utils::sniffer::Sniffer::new)
+                    .transpose()?
+                    .map(Arc::new);
+                Ok::<_, SError>(router)
+            })
+            .transpose()?;
+        Ok(router)
     }
 }
 

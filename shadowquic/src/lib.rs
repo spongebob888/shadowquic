@@ -212,6 +212,8 @@ pub struct DnsQuery {
 /// Per-session context, present even when statistics are not tracked.
 #[derive(Clone, Default)]
 pub struct UserContext {
+    #[cfg(feature = "sniffer")]
+    pub sniffer: Option<utils::sniffer::SniffResult>,
     pub inbound_tag: String,
     pub observer: Weak<Observer>,
     /// Outbound preference stamped by the accepting inbound on every request.
@@ -250,6 +252,12 @@ pub trait TcpTrait: AsyncRead + AsyncWrite + Unpin + Send + Sync {
         None
     }
 }
+impl<T: TcpTrait + ?Sized> TcpTrait for Box<T> {
+    fn peer_addr(&self) -> Option<SocketAddr> {
+        (**self).peer_addr()
+    }
+}
+
 impl TcpTrait for TcpStream {
     fn peer_addr(&self) -> Option<SocketAddr> {
         TcpStream::peer_addr(self).ok().map(to_ipv4_mapped)
@@ -342,6 +350,16 @@ impl RequestDispatcher {
         #[cfg(feature = "plugin")]
         let outbound_tag = match self.router.as_ref() {
             Some(router) => {
+                #[cfg(feature = "sniffer")]
+                if let Some(sniffer) = &router.sniffer {
+                    req = match sniffer.sniff(req).await {
+                        Ok(req) => req,
+                        Err(error) => {
+                            error!(%error, "sniffing request failed");
+                            return;
+                        }
+                    };
+                }
                 let mut context = plugin::router::RouteContext::from_request(&req);
                 match router
                     .route(&mut context)

@@ -26,6 +26,7 @@ plugin = ["dep:mlua", "mlua/send", "mlua/async", "dep:notify"]
 # cost about 2mb, requires plugin enabled
 router-db = ["plugin", "dep:redb", "dep:maxminddb", "dep:sha2", "dep:regex", "dep:regex-automata", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:tokio-rustls-jls", "dep:rustls_jls", "tokio-rustls-jls/tls12", "dep:url", "dep:tempfile"]
 router-dhcp-lease = ["plugin"]
+sniffer = ["plugin", "dep:rustls"]
 ring = [
     "dep:ring",
     "quinn?/rustls-ring",
