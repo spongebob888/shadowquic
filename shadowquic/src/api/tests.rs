@@ -45,10 +45,12 @@ impl SQStatsTrait for FixtureOutbound {
             rtt: 1.5,
             current_mtu: 1280,
         };
+        let sampled_at = Instant::now();
         Some(crate::squic::SQConnStats {
             uplink: stats.clone(),
             downlink: stats,
-            time: Instant::now(),
+            time: sampled_at,
+            birth_time: sampled_at - Duration::from_secs(60),
         })
     }
 }
@@ -577,6 +579,11 @@ async fn probes_preserve_http_target_cache_results_and_release_connections() {
     assert_eq!(sample["uplink"]["sent_packets"], 1);
     assert_eq!(sample["uplink"]["rtt"], 1.5);
     assert_eq!(sample["downlink"]["current_mtu"], 1280);
+    // Connection lifetime is measured from birth, independently of sample freshness.
+    assert_eq!(
+        sample["duration_ms"].as_u64().unwrap(),
+        sample["sample_age_ms"].as_u64().unwrap() + 60_000,
+    );
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(1), peer.read(&mut [0]))
             .await

@@ -268,7 +268,11 @@ may differ slightly as I/O progresses.
 ## Outbound quality and probes
 
 Each outbound has a `quality` object with nullable `sq_conn_stats` and `probe`
-fields. QUIC samples contain `uplink`, `downlink`, and `sample_age_ms`.
+fields. QUIC samples contain `uplink`, `downlink`, `sample_age_ms`, and `duration_ms`.
+`duration_ms` is the SQ connection's lifetime in milliseconds, measured from its
+birth time to the API snapshot using a monotonic clock. `sample_age_ms` measures
+time since the cached statistics were sampled. Connection lifetime continues
+increasing between samples and starts over when a new SQ connection is created.
 Each direction exposes `lost_packets`, `sent_packets`, `rtt` in milliseconds,
 and `current_mtu` in bytes. Samples are absent for unsupported, disconnected,
 and unsampled connections. Listing quality does not establish a connection or

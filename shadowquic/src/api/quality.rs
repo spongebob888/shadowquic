@@ -50,14 +50,17 @@ pub(super) struct ConnSample {
     uplink: ConnStats,
     downlink: ConnStats,
     sample_age_ms: u64,
+    duration_ms: u64,
 }
 
 impl From<SQConnStats> for ConnSample {
     fn from(stats: SQConnStats) -> Self {
+        let now = std::time::Instant::now();
         Self {
             uplink: stats.uplink,
             downlink: stats.downlink,
-            sample_age_ms: millis(stats.time.elapsed()),
+            sample_age_ms: millis(now.saturating_duration_since(stats.time)),
+            duration_ms: millis(now.saturating_duration_since(stats.birth_time)),
         }
     }
 }

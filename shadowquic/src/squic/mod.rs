@@ -98,6 +98,7 @@ pub struct SQConnStats {
     pub uplink: ConnStats,
     pub downlink: ConnStats,
     pub time: Instant,
+    pub birth_time: Instant,
 }
 
 async fn wait_sunny_auth<T: QuicConnection>(conn: &SQConn<T>) -> SResult<String> {

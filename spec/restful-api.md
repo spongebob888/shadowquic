@@ -173,7 +173,9 @@ listing and probing. Each entry contains `tag` and a `quality` object:
   unsupported, disconnected, or no sample exists. Expose `uplink` and `downlink`
   using the existing `ConnStats` fields (`lost_packets`, `sent_packets`, `rtt`,
   and `current_mtu`); `rtt` is in milliseconds and `current_mtu` is in bytes.
-  Replace the internal `Instant` with `sample_age_ms`.
+  Expose the sample timestamp as `sample_age_ms` and the connection birth time as
+  `duration_ms` (elapsed connection lifetime). Compute both against the same
+  current monotonic instant when constructing the API snapshot.
 - `probe`: `null` before any completed probe, otherwise the latest probe object
   described below. Keep it until another probe completes; its timestamp lets
   clients determine freshness.
