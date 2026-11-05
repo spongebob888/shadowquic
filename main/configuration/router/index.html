@@ -1276,6 +1276,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#sniffer" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>sniffer</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#default-outbound" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1410,6 +1421,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -1473,6 +1490,33 @@
     
   
   Log level
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shared/sniffercfg/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sniffer
 
     
   </span>
@@ -1735,6 +1779,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../shared/snifferrule/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sniffer rule
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../shared/countrydbcfg/" class="md-nav__link">
         
   
@@ -1851,6 +1922,33 @@
     
   
   Interface
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shared/sniffprotocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sniff protocol
 
     
   </span>
@@ -1981,6 +2079,17 @@
   
     <nav class="md-nav" aria-label="Fields">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sniffer" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>sniffer</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#default-outbound" class="md-nav__link">
@@ -2153,6 +2262,10 @@ when a reload occurs, while new calls use the replacement.</p>
 <td>Tag of the inbound listener</td>
 </tr>
 <tr>
+<td><code>sniffer</code></td>
+<td>Read-only hostname metadata (<code>domain</code>, <code>type</code>, <code>version</code>), or nil; requires <code>sniffer</code> and <code>router.sniffer</code></td>
+</tr>
+<tr>
 <td><code>dns_query</code></td>
 <td>Array of tables with <code>name</code> and numeric <code>record_type</code>; empty when no DNS metadata is attached</td>
 </tr>
@@ -2260,6 +2373,12 @@ errors; use <code>pcall</code> for an explicit fallback while downloading. Exist
 and redb files are reused, including across script reloads.</p>
 <p>The exposed router context to script can be seen in [<code>crate::plugin::router::RouteContext</code>]</p>
 <h2 id="fields">Fields<a class="headerlink" href="#fields" title="Permanent link">&para;</a></h2>
+<h3 id="sniffer"><code>sniffer</code><a class="headerlink" href="#sniffer" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <a href="../shared/sniffercfg/"><code>SnifferCfg</code></a> <em>(optional)</em></li>
+<li><strong>Required:</strong> no</li>
+</ul>
+<p>Global pre-routing hostname inspection; requires <code>sniffer</code> and a script.</p>
 <h3 id="default-outbound"><code>default-outbound</code><a class="headerlink" href="#default-outbound" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Type:</strong> <code>string</code> <em>(optional)</em></li>

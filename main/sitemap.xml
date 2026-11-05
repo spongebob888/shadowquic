@@ -79,6 +79,9 @@
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/loglevel/</loc>
       </url>
       <url>
+        <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/sniffercfg/</loc>
+      </url>
+      <url>
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/routerdatabasecfg/</loc>
       </url>
       <url>
@@ -106,6 +109,9 @@
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/dnsstrategy/</loc>
       </url>
       <url>
+        <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/snifferrule/</loc>
+      </url>
+      <url>
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/countrydbcfg/</loc>
       </url>
       <url>
@@ -119,6 +125,9 @@
       </url>
       <url>
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/interface/</loc>
+      </url>
+      <url>
+        <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/sniffprotocol/</loc>
       </url>
       <url>
         <loc>https://spongebob888.github.io/shadowquic/main/api/</loc>
