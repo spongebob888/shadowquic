@@ -1,0 +1,25 @@
+inbounds:
+  - tag: local
+    type: socks
+    bind-addr: 127.0.0.1:1080
+outbounds:
+  - {tag: direct, type: direct}
+  - {tag: blocked, type: drop}
+router:
+  sniffer:
+    tcp:
+      - {ports: [80, 8080], protocols: [http]}
+      - {ports: [443, 8443], protocols: [tls]}
+    udp:
+      - {ports: [443], protocols: [quic]}
+    timeout: 100
+    max-bytes: 32768
+    max-concurrent: 256
+    max-buffered-bytes: 8388608
+  src: |
+    return function(ctx)
+      if ctx.sniffer and ctx.sniffer.domain == "blocked.example" then
+        return "blocked"
+      end
+      return "direct"
+    end

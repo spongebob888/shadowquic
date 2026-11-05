@@ -9,7 +9,9 @@ description = { workspace = true }
 license = { workspace = true}
 readme = { workspace = true}
 [features]
-default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics", "tproxy", "mixed", "plugin-vendored", "router-db", "dns-server", "router-dhcp-lease","tun", "jemalloc","restful-api"]
+default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics",
+ "tproxy", "mixed", "plugin-vendored", "router-db", "dns-server", 
+ "router-dhcp-lease","tun", "jemalloc","restful-api", "sniffer"]
 # cost 1.4 mb
 dns-server = ["dep:ipnet", "dep:quick_cache", "dep:simple-dns", "dep:tokio-rustls-jls", "dep:rustls_jls", "dep:quinn"]
 # cost 200k
@@ -26,6 +28,7 @@ plugin = ["dep:mlua", "mlua/send", "mlua/async", "dep:notify"]
 # cost about 2mb, requires plugin enabled
 router-db = ["plugin", "dep:redb", "dep:maxminddb", "dep:sha2", "dep:regex", "dep:regex-automata", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:tokio-rustls-jls", "dep:rustls_jls", "tokio-rustls-jls/tls12", "dep:url", "dep:tempfile"]
 router-dhcp-lease = ["plugin"]
+sniffer = ["plugin", "dep:rustls_jls"]
 ring = [
     "dep:ring",
     "quinn?/rustls-ring",

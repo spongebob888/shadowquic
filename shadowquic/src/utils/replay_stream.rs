@@ -12,13 +12,29 @@ use crate::TcpTrait;
 pub struct ReplayStream<S> {
     prefix: io::Cursor<Vec<u8>>,
     inner: S,
+    #[cfg(feature = "sniffer")]
+    permit: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
 impl<S> ReplayStream<S> {
+    #[cfg(feature = "sniffer")]
+    pub(crate) fn with_permit(
+        prefix: Vec<u8>,
+        inner: S,
+        permit: tokio::sync::OwnedSemaphorePermit,
+    ) -> Self {
+        Self {
+            prefix: io::Cursor::new(prefix),
+            inner,
+            permit: Some(permit),
+        }
+    }
     pub fn new(prefix: Vec<u8>, inner: S) -> Self {
         Self {
             prefix: io::Cursor::new(prefix),
             inner,
+            #[cfg(feature = "sniffer")]
+            permit: None,
         }
     }
 }
@@ -40,6 +56,13 @@ where
             let n = remain.len().min(buf.remaining());
             buf.put_slice(&remain[..n]);
             self.prefix.set_position((pos + n) as u64);
+            if pos + n == self.prefix.get_ref().len() {
+                self.prefix = io::Cursor::new(Vec::new());
+                #[cfg(feature = "sniffer")]
+                {
+                    self.permit = None;
+                }
+            }
             return Poll::Ready(Ok(()));
         }
 

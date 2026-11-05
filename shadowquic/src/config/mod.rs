@@ -60,6 +60,8 @@ pub use crate::config::shadowquic::*;
 pub use crate::config::sunnyquic::*;
 mod dhcp_lease;
 pub use dhcp_lease::{DhcpLeaseCfg, DnsmasqLeaseCfg, OdhcpLeaseCfg};
+mod sniffer;
+pub use sniffer::{SniffProtocol, SnifferCfg, SnifferRule};
 mod router;
 mod router_database;
 pub use router::RouterCfg;

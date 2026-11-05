@@ -56,3 +56,26 @@ Offline validation checks:
 uv run --no-project --with aioquic==1.7.0 --with dnspython==2.9.0 \
   python -m unittest scripts.test_dns_0rtt_probe
 ```
+
+## QUIC sniffer through TUN with curl HTTP/3
+
+On Linux with Docker and `/dev/net/tun` available:
+
+```sh
+nix develop --command python3 scripts/test_suite/test_tun.py --http3-sniffer
+```
+
+The runner builds a static binary with `tun`, `sniffer`, and Lua routing enabled,
+then creates a TUN interface inside a disposable Docker network namespace. It
+mounts the Nix store read-only to use the development shell's HTTP/3-enabled curl.
+The container installs aioquic 1.3.0 and runs a local HTTP/3 server with a temporary
+certificate trusted explicitly by curl. No public HTTP server is contacted.
+
+The test uses `curl --http3-only --interface sq-tun0` with a fixed destination IP
+and checks the response body and negotiated HTTP version. Lua allows the request
+only after asserting the TUN inbound, original destination, QUIC version, and
+sniffed SNI. A second hostname selects the drop outbound and must fail. The test
+also checks debug timing output and that graceful shutdown removes the interface.
+
+Set `SHADOWQUIC_TUN_TEST_BINARY` to reuse a static binary built with the required
+features. Container setup needs access to the Ubuntu and Python package indexes.
