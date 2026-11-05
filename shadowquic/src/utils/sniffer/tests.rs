@@ -296,15 +296,15 @@ fn varint(value: usize) -> Vec<u8> {
         ((value as u16) | 0x4000).to_be_bytes().to_vec()
     }
 }
-fn initial(version: rustls::quic::Version, frames: &[u8], pn: u8) -> Vec<u8> {
+fn initial(version: rustls_jls::quic::Version, frames: &[u8], pn: u8) -> Vec<u8> {
     let (wire_version, first) = match version {
-        rustls::quic::Version::V2 => (0x6b3343cfu32, 0xd0),
+        rustls_jls::quic::Version::V2 => (0x6b3343cfu32, 0xd0),
         _ => (1, 0xc0),
     };
     let dcid = b"12345678";
     let keys = quic::suite()
         .unwrap()
-        .keys(dcid, rustls::Side::Client, version)
+        .keys(dcid, rustls_jls::Side::Client, version)
         .local;
     let mut packet = vec![first];
     packet.extend(wire_version.to_be_bytes());
@@ -341,7 +341,7 @@ fn crypto_frame(offset: usize, data: &[u8]) -> Vec<u8> {
 fn quic_v1_v2_authentication_reassembly_and_first_datagram_limit() {
     let suite = quic::suite().unwrap();
     let hello = hello(b"Quic.Example");
-    for v in [rustls::quic::Version::V1, rustls::quic::Version::V2] {
+    for v in [rustls_jls::quic::Version::V1, rustls_jls::quic::Version::V2] {
         let split = hello.len() / 2;
         let mut frames = crypto_frame(split, &hello[split..]);
         frames.extend(crypto_frame(0, &hello[..split]));
@@ -351,7 +351,7 @@ fn quic_v1_v2_authentication_reassembly_and_first_datagram_limit() {
         assert_eq!(result.protocol, "QUIC");
         assert_eq!(
             result.version,
-            if matches!(v, rustls::quic::Version::V2) {
+            if matches!(v, rustls_jls::quic::Version::V2) {
                 "2"
             } else {
                 "1"
@@ -385,7 +385,7 @@ async fn udp_inspects_only_first_datagram_and_replays_both_destinations() {
         .unwrap()
         .into();
     let packet = bytes::Bytes::from(initial(
-        rustls::quic::Version::V1,
+        rustls_jls::quic::Version::V1,
         &crypto_frame(0, &hello(b"quic.example")),
         0,
     ));
@@ -532,15 +532,16 @@ async fn exclusions_overlaps_and_size_limits() {
 #[cfg(feature = "ring")]
 #[test]
 fn actual_tls13_client_hello_reports_advertised_version() {
-    let config = rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
+    let config = rustls_jls::ClientConfig::builder_with_provider(Arc::new(
+        rustls_jls::crypto::ring::default_provider(),
     ))
     .with_safe_default_protocol_versions()
     .unwrap()
-    .with_root_certificates(rustls::RootCertStore::empty())
+    .with_root_certificates(rustls_jls::RootCertStore::empty())
     .with_no_client_auth();
     let mut conn =
-        rustls::ClientConnection::new(Arc::new(config), "example.com".try_into().unwrap()).unwrap();
+        rustls_jls::ClientConnection::new(Arc::new(config), "example.com".try_into().unwrap())
+            .unwrap();
     let mut wire = Vec::new();
     conn.write_tls(&mut wire).unwrap();
     let Parse::Done(Some(result)) = Parser::default().parse(&wire, 32768) else {

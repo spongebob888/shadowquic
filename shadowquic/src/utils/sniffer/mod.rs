@@ -36,7 +36,7 @@ pub(crate) struct Sniffer {
     config: SnifferCfg,
     concurrent: Semaphore,
     memory: Arc<Semaphore>,
-    quic_suite: Option<rustls::quic::Suite>,
+    quic_suite: Option<rustls_jls::quic::Suite>,
 }
 impl Sniffer {
     pub(crate) fn new(config: SnifferCfg) -> Result<Self, SError> {
@@ -46,7 +46,7 @@ impl Sniffer {
         } else {
             Some(quic::suite().ok_or_else(|| {
                 SError::InvalidConfig(
-                    "QUIC sniffing requires a rustls AES-128-GCM provider (ring or aws-lc-rs)"
+                    "QUIC sniffing requires a rustls-jls AES-128-GCM provider (ring or aws-lc-rs)"
                         .into(),
                 )
             })?)

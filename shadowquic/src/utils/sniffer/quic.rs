@@ -1,19 +1,21 @@
 //! RFC 9001 Initial protection; RFC 9369 QUIC v2. No state across datagrams.
 use super::{SniffResult, tls};
-use rustls::quic::{Suite, Version};
+use rustls_jls::quic::{Suite, Version};
 
 pub(super) fn suite() -> Option<Suite> {
-    let provider = rustls::crypto::CryptoProvider::get_default()
+    let provider = rustls_jls::crypto::CryptoProvider::get_default()
         .cloned()
         .or_else(|| {
             #[cfg(feature = "ring")]
             {
-                Some(std::sync::Arc::new(rustls::crypto::ring::default_provider()))
+                Some(std::sync::Arc::new(
+                    rustls_jls::crypto::ring::default_provider(),
+                ))
             }
             #[cfg(all(not(feature = "ring"), feature = "aws-lc-rs"))]
             {
                 Some(std::sync::Arc::new(
-                    rustls::crypto::aws_lc_rs::default_provider(),
+                    rustls_jls::crypto::aws_lc_rs::default_provider(),
                 ))
             }
             #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
@@ -24,7 +26,7 @@ pub(super) fn suite() -> Option<Suite> {
     provider
         .cipher_suites
         .iter()
-        .find(|s| s.suite() == rustls::CipherSuite::TLS13_AES_128_GCM_SHA256)?
+        .find(|s| s.suite() == rustls_jls::CipherSuite::TLS13_AES_128_GCM_SHA256)?
         .tls13()?
         .quic_suite()
 }
@@ -102,7 +104,7 @@ pub(super) fn parse(mut datagram: &[u8], limit: usize, suite: &Suite) -> Option<
         } else {
             identity = Some((wire_version, dcid.to_vec()));
         }
-        let keys = suite.keys(dcid, rustls::Side::Server, version).remote;
+        let keys = suite.keys(dcid, rustls_jls::Side::Server, version).remote;
         let mut first = first;
         let mut pn_bytes: [u8; 4] = packet.get(pn_offset..pn_offset + 4)?.try_into().ok()?;
         keys.header

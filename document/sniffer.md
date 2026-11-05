@@ -3,7 +3,7 @@
 Build with `cargo build --release --features sniffer`. The opt-in `sniffer`
 feature enables `plugin`; use `plugin-vendored` (already in the default features)
 or your platform's Lua library. QUIC inspection requires the `ring` or
-`aws-lc-rs` feature, or an installed rustls provider with AES-128-GCM support.
+`aws-lc-rs` feature, or an installed rustls-jls provider with AES-128-GCM support.
 
 Configure hostname inspection globally under `router.sniffer`. A Lua script
 (`router.src` or `router.path`) is required. Omitting `sniffer` disables inspection;
