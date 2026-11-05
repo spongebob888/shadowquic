@@ -89,6 +89,12 @@ held until the replay buffer is drained or dropped, including while waiting for
 an outbound. Default limits allow 64 simultaneous reservations. Budgets cover
 inspection buffers, excluding allocator overhead and existing transport buffers.
 
+Enable `RUST_LOG=shadowquic::utils::sniffer=debug` to log each admitted inspection's
+result and elapsed milliseconds, including waiting for input. Successful
+hostname extraction logs the domain, protocol, and version; unsuccessful
+inspection logs `result=None`, and I/O failures log the error. Requests skipped
+by port rules or exhausted budgets do not produce an inspection log.
+
 Run regression tests with:
 
 ```sh

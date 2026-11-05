@@ -11,7 +11,10 @@ use crate::{
     config::{SniffProtocol, SnifferCfg},
     error::SError,
 };
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::{
     io::AsyncReadExt,
     sync::{OwnedSemaphorePermit, Semaphore},
@@ -94,71 +97,89 @@ impl Sniffer {
         else {
             return Ok(request);
         };
+        let started = Instant::now();
         let deadline = Duration::from_millis(self.config.timeout);
-        match request {
-            ProxyRequest::Tcp(mut session) => {
-                let mut prefix = Vec::with_capacity(self.config.max_bytes);
-                let mut parser = tls::Parser::default();
-                let mut http_parser = http::Parser::default();
-                let result = tokio::time::timeout(deadline, async {
-                    loop {
-                        let parsed = if prefix.first() == Some(&22) && tls {
-                            parser.parse(&prefix, self.config.max_bytes)
-                        } else if http {
-                            http_parser.parse(&prefix)
-                        } else if prefix.is_empty() {
-                            tls::Parse::NeedMore
-                        } else {
-                            tls::Parse::Done(None)
-                        };
-                        match parsed {
-                            tls::Parse::Done(result) => return Ok::<_, std::io::Error>(result),
-                            tls::Parse::NeedMore => {}
+        let result: Result<ProxyRequest, SError> = async {
+            match request {
+                ProxyRequest::Tcp(mut session) => {
+                    let mut prefix = Vec::with_capacity(self.config.max_bytes);
+                    let mut parser = tls::Parser::default();
+                    let mut http_parser = http::Parser::default();
+                    let result = tokio::time::timeout(deadline, async {
+                        loop {
+                            let parsed = if prefix.first() == Some(&22) && tls {
+                                parser.parse(&prefix, self.config.max_bytes)
+                            } else if http {
+                                http_parser.parse(&prefix)
+                            } else if prefix.is_empty() {
+                                tls::Parse::NeedMore
+                            } else {
+                                tls::Parse::Done(None)
+                            };
+                            match parsed {
+                                tls::Parse::Done(result) => return Ok::<_, std::io::Error>(result),
+                                tls::Parse::NeedMore => {}
+                            }
+                            let remaining = self.config.max_bytes - prefix.len();
+                            if remaining == 0
+                                || (&mut session.stream)
+                                    .take(remaining as u64)
+                                    .read_buf(&mut prefix)
+                                    .await?
+                                    == 0
+                            {
+                                return Ok(None);
+                            }
                         }
-                        let remaining = self.config.max_bytes - prefix.len();
-                        if remaining == 0
-                            || (&mut session.stream)
-                                .take(remaining as u64)
-                                .read_buf(&mut prefix)
-                                .await?
-                                == 0
-                        {
-                            return Ok(None);
-                        }
+                    })
+                    .await;
+                    session.user_context.sniffer = match result {
+                        Ok(result) => result?,
+                        Err(_) => None,
+                    };
+                    drop(parser);
+                    if !prefix.is_empty() {
+                        session.stream =
+                            Box::new(ReplayStream::with_permit(prefix, session.stream, memory));
                     }
-                })
-                .await;
-                session.user_context.sniffer = match result {
-                    Ok(result) => result?,
-                    Err(_) => None,
-                };
-                drop(parser);
-                if !prefix.is_empty() {
-                    session.stream =
-                        Box::new(ReplayStream::with_permit(prefix, session.stream, memory));
+                    Ok(ProxyRequest::Tcp(session))
                 }
-                Ok(ProxyRequest::Tcp(session))
-            }
-            ProxyRequest::Udp(mut session) => {
-                let first = match tokio::time::timeout(deadline, session.recv.recv_from()).await {
-                    Ok(result) => result?,
-                    Err(_) => return Ok(ProxyRequest::Udp(session)),
-                };
-                if first.0.len() <= self.config.max_bytes {
-                    session.user_context.sniffer = quic::parse(
-                        &first.0,
-                        self.config.max_bytes,
-                        self.quic_suite.as_ref().expect("validated UDP protocol"),
-                    );
+                ProxyRequest::Udp(mut session) => {
+                    let first = match tokio::time::timeout(deadline, session.recv.recv_from()).await
+                    {
+                        Ok(result) => result?,
+                        Err(_) => return Ok(ProxyRequest::Udp(session)),
+                    };
+                    if first.0.len() <= self.config.max_bytes {
+                        session.user_context.sniffer = quic::parse(
+                            &first.0,
+                            self.config.max_bytes,
+                            self.quic_suite.as_ref().expect("validated UDP protocol"),
+                        );
+                    }
+                    session.recv = Box::new(ReplayDatagram {
+                        first: Some(first),
+                        inner: session.recv,
+                        permit: Some(memory),
+                    });
+                    Ok(ProxyRequest::Udp(session))
                 }
-                session.recv = Box::new(ReplayDatagram {
-                    first: Some(first),
-                    inner: session.recv,
-                    permit: Some(memory),
-                });
-                Ok(ProxyRequest::Udp(session))
             }
         }
+        .await;
+        let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let network = if udp { "udp" } else { "tcp" };
+        match &result {
+            Ok(request) => tracing::debug!(
+                network,
+                dst = %request.dst(),
+                result = ?request.user_context().sniffer,
+                elapsed_ms,
+                "sniff completed"
+            ),
+            Err(error) => tracing::debug!(network, %error, elapsed_ms, "sniff failed"),
+        }
+        result
     }
 }
 struct ReplayDatagram {
