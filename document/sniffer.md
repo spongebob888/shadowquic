@@ -51,7 +51,7 @@ hostname was obtained. Its fields are:
 | Field | Values |
 | --- | --- |
 | `domain` | Lowercase ASCII hostname; HTTP ports and one trailing dot are removed; IP literals are not hostnames |
-| `type` | `"http"`, `"TLS"`, or `"QUIC"` |
+| `type` | `"http"`, `"tls"`, or `"quic"` |
 | `version` | String: HTTP `"1.0"` / `"1.1"`, TLS `"1.0"`–`"1.3"`, QUIC `"1"` / `"2"` |
 
 TLS version means the highest recognized version advertised in ClientHello, not

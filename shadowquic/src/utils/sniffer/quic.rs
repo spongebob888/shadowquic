@@ -215,7 +215,7 @@ impl Parser {
                 let len = tls::handshake_len(&self.crypto, limit)?;
                 if self.present[..len].iter().all(|b| *b) {
                     let mut result = tls::client_hello(&self.crypto[4..len])?;
-                    result.protocol = "QUIC";
+                    result.protocol = "quic";
                     result.version = label.into();
                     return Some(tls::Parse::Done(Some(result)));
                 }

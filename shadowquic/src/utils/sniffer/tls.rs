@@ -161,7 +161,7 @@ pub(super) fn client_hello(bytes: &[u8]) -> Option<SniffResult> {
     }
     Some(SniffResult {
         domain: normalize_host(name?)?,
-        protocol: "TLS",
+        protocol: "tls",
         version: format!("1.{}", version - 0x0301),
     })
 }

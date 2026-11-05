@@ -216,7 +216,7 @@ async fn sniff_replays_bytes_and_exposes_read_only_lua_metadata() {
             "http",
             "1.1",
         ),
-        (records(&hello(b"Example.COM"), 11), "TLS", "1.2"),
+        (records(&hello(b"Example.COM"), 11), "tls", "1.2"),
     ] {
         let (mut client, req) = request(443);
         let dst = req.dst().clone();
@@ -348,7 +348,7 @@ fn quic_v1_v2_authentication_reassembly_and_first_datagram_limit() {
         let packet = initial(v, &frames, 0);
         let result = quic::parse(&packet, 32768, &suite).unwrap();
         assert_eq!(result.domain, "quic.example");
-        assert_eq!(result.protocol, "QUIC");
+        assert_eq!(result.protocol, "quic");
         assert_eq!(
             result.version,
             if matches!(v, rustls_jls::quic::Version::V2) {

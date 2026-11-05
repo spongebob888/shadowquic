@@ -13,7 +13,7 @@ first check the header to fast pass nonquic packet and avoid decrypting every ud
 TCP sniffer and UDP sniffer should be seperated and they can optionally be triggered only on certain ports.
 
 The exposed context is RouterContext.UserContext.Sniffer and exposed to lua as ctx.sniffer.domain and
-ctx.sniffer.type and ctx.sniffer.version. Type is http/TLS/QUIC. Domain is host or sni. version is tls/quic/http
+ctx.sniffer.type and ctx.sniffer.version. Type is http/tls/quic. Domain is host or sni. version is tls/quic/http
 version.
 
 The sniffer config is global under router.sniffer

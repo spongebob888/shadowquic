@@ -100,7 +100,7 @@ router:
       assert(ctx.dst_ip_v4 == "{tun.TEST_V4}" and ctx.dst_port == {PORT})
       assert(ctx.dst_domain == nil)
       assert(ctx.sniffer ~= nil, "QUIC hostname was not sniffed")
-      assert(ctx.sniffer.type == "QUIC" and ctx.sniffer.version == "1")
+      assert(ctx.sniffer.type == "quic" and ctx.sniffer.version == "1")
       if ctx.sniffer.domain == "{HOST}" then
         info("HTTP3_SNI_ALLOWED")
         return "direct"
