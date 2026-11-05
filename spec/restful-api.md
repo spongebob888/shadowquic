@@ -218,6 +218,7 @@ Each entry contains:
 | --- | --- |
 | `id` | Opaque session ID, stable and unique within this manager's lifetime |
 | `protocol` | `tcp` or `udp` |
+| `sniffer` | Object with `domain`, lowercase `protocol` (`http`/`tls`/`quic`), and `version`; `null` when unavailable or built without `sniffer`. Stored in receive stats and becomes `null` when the receive half expires. |
 | `half_closed` | `true` when exactly one scoreboard weak pointer can be upgraded |
 | `inbound` | Inbound tag |
 | `outbound` | Selected outbound tag, or `null` when send stats have expired |

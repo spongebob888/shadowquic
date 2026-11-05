@@ -1031,7 +1031,7 @@ async fn connections_http_response_preserves_schema_and_string_id_order_for_many
             .id;
         expected.push(json!({
             "id": id.to_string(), "protocol": "tcp", "inbound": inbound,
-            "half_closed": false, "outbound": outbound, "src": "[::1]:1234",
+            "half_closed": false, "outbound": outbound, "src": "[::1]:1234", "sniffer": null,
             "dst_ip": dst_ip, "dst_domain": dst_domain, "dst_port": 443,
             "upload_bytes": 0, "download_bytes": 0,
             "duration_ms": 0, "first_response_ms": null,
@@ -1526,4 +1526,100 @@ async fn connections_use_cached_domains_without_resolving_on_a_miss() {
         .find(|entry| entry["dst_ip"] == "192.0.2.8")
         .unwrap();
     assert!(miss["dst_domain"].is_null());
+}
+
+#[cfg(feature = "sniffer")]
+#[tokio::test]
+async fn connections_sniffer_metadata_follows_receive_half_lifetime() {
+    let observer = Arc::new(Observer::new());
+    let api = ApiManager::new(
+        None,
+        HashMap::new(),
+        HashMap::new(),
+        HashMap::new(),
+        HashMap::from([("local".into(), observer.clone())]),
+        #[cfg(feature = "dns-server")]
+        None,
+    );
+    let metadata = crate::utils::sniffer::SniffResult {
+        domain: "sniffed.example".into(),
+        protocol: "tls",
+        version: "1.3".into(),
+    };
+    let (mut request, _peer) = tcp_request(SocksAddr::from_domain("rewritten.example".into(), 443));
+    request.user_context_mut().sniffer = Some(metadata.clone());
+    let tracked = observer.wrap_request(request, "chosen".into()).await;
+    let snapshot = connections_json(&api).await;
+    assert_eq!(
+        snapshot["connections"][0]["sniffer"],
+        json!({
+            "domain": "sniffed.example", "protocol": "tls", "version": "1.3",
+        })
+    );
+    assert_eq!(snapshot["connections"][0]["protocol"], "tcp");
+    assert_eq!(
+        snapshot["connections"][0]["dst_domain"],
+        "rewritten.example"
+    );
+    drop(tracked);
+    assert!(
+        connections_json(&api).await["connections"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    for keep_sender in [false, true] {
+        let (_tx, rx) = mpsc::channel(1);
+        let (tx, _rx) = mpsc::channel(1);
+        let dst: SocksAddr = "192.0.2.1:443".parse::<SocketAddr>().unwrap().into();
+        let request: ProxyRequest = ProxyRequest::Udp(crate::UdpSession {
+            recv: Box::new(rx),
+            send: Arc::new(tx),
+            stream: None,
+            bind_addr: dst.clone(),
+            dst,
+            src_addr: None,
+            user_context: crate::UserContext {
+                sniffer: Some(crate::utils::sniffer::SniffResult {
+                    protocol: "quic",
+                    version: "1".into(),
+                    ..metadata.clone()
+                }),
+                ..Default::default()
+            },
+        });
+        let ProxyRequest::Udp(udp) = observer.wrap_request(request, "chosen".into()).await else {
+            unreachable!()
+        };
+        let initial = connections_json(&api).await;
+        let initial = &initial["connections"][0];
+        assert_eq!(initial["protocol"], "udp");
+        assert_eq!(
+            initial["sniffer"],
+            json!({
+                "domain": "sniffed.example", "protocol": "quic", "version": "1",
+            })
+        );
+        let crate::UdpSession { recv, send, .. } = udp;
+        if keep_sender {
+            drop(recv);
+            let snapshot = connections_json(&api).await;
+            assert_eq!(snapshot["connections"][0]["half_closed"], true);
+            assert_eq!(snapshot["connections"][0]["sniffer"], Value::Null);
+            drop(send);
+        } else {
+            drop(send);
+            let snapshot = connections_json(&api).await;
+            assert_eq!(snapshot["connections"][0]["half_closed"], true);
+            assert_eq!(snapshot["connections"][0]["sniffer"], initial["sniffer"]);
+            drop(recv);
+        }
+        assert!(
+            connections_json(&api).await["connections"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+    }
 }

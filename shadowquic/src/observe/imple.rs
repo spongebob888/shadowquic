@@ -289,6 +289,9 @@ impl TrackedSendStats {
 }
 
 pub struct TrackedRecvStats {
+    #[cfg(all(feature = "restful-api", feature = "sniffer"))]
+    pub sniffer: Option<crate::utils::sniffer::SniffResult>,
+
     conns: Arc<AtomicU64>,
     pub bytes_recv: AtomicU64,
     pub src_addr: Option<SocketAddr>,
@@ -298,10 +301,18 @@ pub struct TrackedRecvStats {
 }
 
 impl TrackedRecvStats {
-    fn new(src_addr: Option<SocketAddr>, conns: Arc<AtomicU64>) -> Self {
+    fn new(
+        src_addr: Option<SocketAddr>,
+        conns: Arc<AtomicU64>,
+        #[cfg(all(feature = "restful-api", feature = "sniffer"))] sniffer: Option<
+            crate::utils::sniffer::SniffResult,
+        >,
+    ) -> Self {
         conns.fetch_add(1, Ordering::Relaxed);
         Self {
             conns,
+            #[cfg(all(feature = "restful-api", feature = "sniffer"))]
+            sniffer,
             bytes_recv: AtomicU64::new(0),
             src_addr,
             created: Instant::now(),
@@ -335,9 +346,17 @@ impl TrackedTcp {
         src: Option<SocketAddr>,
         dst: SocksAddr,
         outbound: String,
+        #[cfg(all(feature = "restful-api", feature = "sniffer"))] sniffer: Option<
+            crate::utils::sniffer::SniffResult,
+        >,
     ) -> Self {
         let (global_bytes_recv, global_bytes_sent, tcp_conns) = stats.tcp_counters();
-        let recv = Arc::new(TrackedRecvStats::new(src, tcp_conns));
+        let recv = Arc::new(TrackedRecvStats::new(
+            src,
+            tcp_conns,
+            #[cfg(all(feature = "restful-api", feature = "sniffer"))]
+            sniffer,
+        ));
         Self {
             inner,
             global_bytes_recv,
@@ -474,8 +493,15 @@ impl Observer {
         };
         match req {
             ProxyRequest::Tcp(mut tcp) => {
-                let tracked =
-                    TrackedTcp::new(tcp.stream, &stats, tcp.src_addr, tcp.dst.clone(), outbound);
+                let tracked = TrackedTcp::new(
+                    tcp.stream,
+                    &stats,
+                    tcp.src_addr,
+                    tcp.dst.clone(),
+                    outbound,
+                    #[cfg(all(feature = "restful-api", feature = "sniffer"))]
+                    tcp.user_context.sniffer.clone(),
+                );
                 self.tcp_scoreboard.lock().await.push((
                     Arc::downgrade(&tracked.tracked_send_local),
                     Arc::downgrade(&tracked.tracked_recv_local),
@@ -486,7 +512,12 @@ impl Observer {
             ProxyRequest::Udp(mut udp) => {
                 let (udp_recv, udp_sent, udp_conns) = stats.udp_counters();
                 let mut scoreboard = self.udp_scoreboard.lock().await;
-                let recv = Arc::new(TrackedRecvStats::new(udp.src_addr, udp_conns));
+                let recv = Arc::new(TrackedRecvStats::new(
+                    udp.src_addr,
+                    udp_conns,
+                    #[cfg(all(feature = "restful-api", feature = "sniffer"))]
+                    udp.user_context.sniffer.clone(),
+                ));
                 let send = Arc::new(TrackedSendStats::new(udp.dst.clone(), outbound, &recv));
                 scoreboard.push((Arc::downgrade(&send), Arc::downgrade(&recv)));
                 udp.recv = Box::new(TrackedUdpRecv {

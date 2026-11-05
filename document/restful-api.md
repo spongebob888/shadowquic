@@ -224,11 +224,23 @@ an empty connection handle.
 
 Each connection contains `id`, `protocol`, `inbound`, `outbound`, `src`,
 `dst_ip`, `dst_domain`, `dst_port`, `upload_bytes`, `download_bytes`, `duration_ms`,
-`first_response_ms`, and `half_closed`. The opaque ID is stable during a
+`first_response_ms`, `half_closed`, and `sniffer`. The opaque ID is stable during a
 manager's lifetime.
 `src` includes the client port; IP fields do not include ports. Destinations
 reflect fake-IP restoration and router rewrites. IP destinations can have a
 cached domain alongside the IP; listing sessions never performs DNS queries.
+
+`sniffer` is `null` when hostname inspection is disabled, unavailable, or the
+binary was built without `sniffer`. Otherwise it contains the inspection result:
+
+```json
+{"domain":"example.com","protocol":"quic","version":"1"}
+```
+
+Its `protocol` is `http`, `tls`, or `quic`; the connection's top-level `protocol`
+remains `tcp` or `udp`. The sniffed hostname is independent of destination
+rewrites and DNS cache lookups. This metadata belongs to the receive half and
+becomes `null` once that half expires.
 
 `upload_bytes` counts client uploads, and `download_bytes` counts downloads to the
 client. Counters include payload bytes actually read or written, excluding
@@ -237,8 +249,8 @@ routing to the first nonempty response sent to the client; it is `null` before
 that event. A UDP entry describes the association's initial routed destination
 and remains active while either tracked half exists. `half_closed` is `true`
 when exactly one scoreboard weak pointer can be upgraded. Fields owned by an
-expired half become `null`: receive stats supply `src`, `upload_bytes`, and
-`duration_ms`; send stats supply `outbound`, destination fields, and `download_bytes`.
+expired half become `null`: receive stats supply `src`, `upload_bytes`, `duration_ms`, and
+`sniffer`; send stats supply `outbound`, destination fields, and `download_bytes`.
 `first_response_ms` requires both halves. The ID stays the same whichever half
 survives. Entries disappear once both weak pointers have expired.
 `duration_ms` is the elapsed time since tracking began, measured with `Instant`.

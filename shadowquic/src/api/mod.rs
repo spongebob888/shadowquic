@@ -54,6 +54,10 @@ struct ConnectionsSnapshot<'a> {
 
 #[derive(Serialize)]
 struct ConnectionSnapshot<'a> {
+    #[cfg(feature = "sniffer")]
+    sniffer: Option<crate::utils::sniffer::SniffResult>,
+    #[cfg(not(feature = "sniffer"))]
+    sniffer: Option<()>,
     id: String,
     protocol: &'static str,
     inbound: &'a str,
@@ -528,6 +532,10 @@ impl ApiManager {
                         dst_domain = cache.reverse_lookup_cache(ip);
                     }
                     connections.push(ConnectionSnapshot {
+                        #[cfg(feature = "sniffer")]
+                        sniffer: recv.as_ref().and_then(|recv| recv.sniffer.clone()),
+                        #[cfg(not(feature = "sniffer"))]
+                        sniffer: None,
                         id: id.to_string(),
                         protocol,
                         inbound,

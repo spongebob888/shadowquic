@@ -23,6 +23,7 @@ use tokio::{
 
 /// Client-provided metadata, not authentication of the destination.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "restful-api", derive(serde::Serialize))]
 pub struct SniffResult {
     pub domain: String,
     pub protocol: &'static str,
