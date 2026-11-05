@@ -45,15 +45,52 @@ mod udp_recv_tests;
 /// It contains a connection object and two ID store for managing UDP sockets.
 /// The IDStore stores the mapping between ids and the destionation addresses as well as associated sockets
 #[derive(Clone)]
-pub struct SQConn<T: QuicConnection> {
+pub struct SQConn<T: QuicConnection>(Arc<SQConnInner<T>>);
+
+pub struct SQConnInner<T: QuicConnection> {
     pub(crate) conn: T,
-    pub authed: Arc<SetOnce<SResult<String>>>,
+    pub authed: SetOnce<SResult<String>>,
     pub(crate) send_id_store: IDStore<()>,
     pub(crate) recv_id_store: IDStore<(AnyUdpSend, SocksAddr)>,
     /// Latest successful peer stats response and the time it was received.
-    pub stats: Arc<Mutex<Option<SQConnStats>>>,
+    pub stats: Mutex<Option<SQConnStats>>,
     /// Serialize remote refreshes without blocking readers of the cached sample.
-    pub(crate) stats_refresh: Arc<Mutex<()>>,
+    pub(crate) stats_refresh: Mutex<()>,
+    /// Instant the connection established.
+    pub birth_time: Instant,
+}
+
+impl<T: QuicConnection> SQConn<T> {
+    pub(crate) fn new(conn: T, authed: SetOnce<SResult<String>>) -> SQConn<T> {
+        SQConn(Arc::new(SQConnInner {
+            conn,
+            authed,
+            send_id_store: Default::default(),
+            recv_id_store: IDStore {
+                id_counter: Default::default(),
+                inner: Default::default(),
+            },
+            stats: Default::default(),
+            stats_refresh: Default::default(),
+            birth_time: Instant::now(),
+        }))
+    }
+}
+
+impl<T: QuicConnection> Deref for SQConn<T> {
+    type Target = SQConnInner<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T: QuicConnection> Deref for SQConnInner<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.conn
+    }
 }
 
 #[derive(Clone)]
@@ -80,7 +117,7 @@ pub(crate) async fn auth_sunny<T: QuicConnection>(
     user_hash: SunnyCredential,
 ) -> SResult<()> {
     if conn.authed.get().is_none() {
-        let (mut send, _recv, _id) = conn.open_bi().await?;
+        let (mut send, _recv, _id) = conn.conn.open_bi().await?;
         SQReq::SQAuthenticate(user_hash).encode(&mut send).await?;
         debug!("authentication request sent");
         conn.authed
@@ -88,14 +125,6 @@ pub(crate) async fn auth_sunny<T: QuicConnection>(
             .expect("repeated authentication");
     }
     Ok(())
-}
-
-impl<T: QuicConnection> Deref for SQConn<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.conn
-    }
 }
 
 pub(crate) struct NotifyBuffer {

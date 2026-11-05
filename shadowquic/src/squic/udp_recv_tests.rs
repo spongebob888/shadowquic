@@ -76,17 +76,10 @@ async fn delivery_errors_do_not_stop_shared_datagram_receiver() {
         packet.extend_from_slice(payload.as_bytes());
         packets.push_back(Bytes::from(packet));
     }
-    let conn = SQConn {
-        conn: DatagramConnection(Arc::new(Mutex::new(packets))),
-        authed: Arc::new(SetOnce::new_with(Some(Ok("test".into())))),
-        send_id_store: Default::default(),
-        recv_id_store: IDStore {
-            id_counter: Default::default(),
-            inner: Default::default(),
-        },
-        stats: Default::default(),
-        stats_refresh: Default::default(),
-    };
+    let conn = SQConn::new(
+        DatagramConnection(Arc::new(Mutex::new(packets))),
+        SetOnce::new_with(Some(Ok("test".into()))),
+    );
     let addr: SocksAddr = "127.0.0.1:53".parse().unwrap();
     let (closed, receiver) = tokio::sync::mpsc::channel(1);
     drop(receiver);

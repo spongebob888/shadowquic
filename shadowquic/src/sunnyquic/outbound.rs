@@ -18,7 +18,7 @@ use crate::{
     utils::socket_opt::{SocketFactory, UdpSocketFactory},
 };
 
-use crate::squic::{IDStore, SQConn, handle_udp_packet_recv};
+use crate::squic::{SQConn, handle_udp_packet_recv};
 
 pub type SunnyQuicConn = SQConn<<EndClient as QuicClient>::C>;
 
@@ -70,17 +70,7 @@ impl SunnyQuicClient {
             .await?;
         let conn = QuicClient::connect(end, addr, &self.config.server_name).await?;
 
-        let conn = SQConn {
-            conn,
-            authed: Arc::new(SetOnce::new()),
-            send_id_store: Default::default(),
-            stats: Default::default(),
-            stats_refresh: Default::default(),
-            recv_id_store: IDStore {
-                id_counter: Default::default(),
-                inner: Default::default(),
-            },
-        };
+        let conn = SQConn::new(conn, SetOnce::new());
 
         let username = self.config.username.clone();
         let password = self.config.password.clone();

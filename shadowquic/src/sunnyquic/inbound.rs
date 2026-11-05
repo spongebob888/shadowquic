@@ -20,7 +20,7 @@ use crate::{
     utils::{dual_socket::ToCanonical, user_store},
 };
 
-use crate::squic::{IDStore, SQConn};
+use crate::squic::SQConn;
 
 use crate::quic::QuicServer;
 pub struct SunnyQuicServer {
@@ -241,17 +241,7 @@ impl SunnyQuicServer {
         user_manager: Arc<dyn UserManager>,
     ) -> Result<(), SError> {
         let sq_conn = SQServerConn {
-            inner: SQConn {
-                conn: incom,
-                authed: Arc::new(SetOnce::new()),
-                send_id_store: Default::default(),
-                stats: Default::default(),
-                stats_refresh: Default::default(),
-                recv_id_store: IDStore {
-                    id_counter: Default::default(),
-                    inner: Default::default(),
-                },
-            },
+            inner: SQConn::new(incom, SetOnce::new()),
             users: user_hash,
             user_manager: Some(user_manager),
         };

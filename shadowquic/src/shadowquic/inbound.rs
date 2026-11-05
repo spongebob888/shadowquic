@@ -18,7 +18,7 @@ use crate::{
     utils::{dual_socket::ToCanonical, user_store},
 };
 
-use crate::squic::{IDStore, SQConn};
+use crate::squic::SQConn;
 
 use super::quinn_wrapper::EndServer;
 use crate::quic::QuicServer;
@@ -230,17 +230,7 @@ impl ShadowQuicServer {
             .authed_user()
             .ok_or(SError::SunnyAuthError("User not authenticated".into()))?;
         let sq_conn = SQServerConn {
-            inner: SQConn {
-                conn: incom,
-                authed: Arc::new(SetOnce::new_with(Some(Ok(user.clone())))),
-                send_id_store: Default::default(),
-                stats: Default::default(),
-                stats_refresh: Default::default(),
-                recv_id_store: IDStore {
-                    id_counter: Default::default(),
-                    inner: Default::default(),
-                },
-            },
+            inner: SQConn::new(incom, SetOnce::new_with(Some(Ok(user.clone())))),
             users: Arc::new(Default::default()),
             user_manager: Some(user_manager),
         };
