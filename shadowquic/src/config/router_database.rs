@@ -52,6 +52,7 @@ pub struct GeositeDbCfg {
 }
 
 impl RouterDatabaseCfg {
+    #[cfg(any(test, feature = "router-db"))]
     pub(crate) fn uses_mmdb(&self) -> bool {
         self.kind() == RouterDBKind::Country
             && self

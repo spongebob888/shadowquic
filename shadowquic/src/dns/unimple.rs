@@ -13,13 +13,15 @@ pub struct ResolverManager {}
 pub struct DnsCache {}
 pub struct Resolver {}
 
+impl Default for ResolverManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ResolverManager {
     pub fn new() -> Self {
         Self {}
-    }
-
-    pub(crate) fn cache(&self) -> Arc<DnsCache> {
-        Arc::new(DnsCache {})
     }
 
     pub(crate) fn resolver(&self, _tag: &str) -> Option<Arc<Resolver>> {
