@@ -126,9 +126,24 @@ class RestApiDocsTests(unittest.TestCase):
                 id=id, name=name, span=dict(filename=filename),
                 inner={"struct_field": {"resolved_path": {"path": "String"}}},
             ))
+        # Exercise extraction and rendering without pinning the test to the
+        # dashboard release currently selected by the application.
+        with tempfile.TemporaryDirectory() as directory:
+            repo_root = Path(directory)
+            source = repo_root / filename
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                'pub fn default_api_tag() -> String {\n'
+                '    "restful-api".into()\n'
+                '}\n'
+                'pub fn default_ui_download_url() -> String {\n'
+                '    "https://github.com/spongebob888/squirrelboard/releases/download/v0.1.2/index.html".into()\n'
+                '}\n'
+            )
+            default_values = collect_default_fn_values(repo_root)
         ctx = RenderContext(
             index=index, page_for_type={}, pages_dir_for={},
-            default_values=collect_default_fn_values(REPO_ROOT),
+            default_values=default_values,
             src_attrs=parse_source_attrs(REPO_ROOT),
         )
         rendered = emit_struct_page(config, Path("configuration/restful-api.md"), "REST API", ctx)
