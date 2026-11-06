@@ -14,13 +14,16 @@ pub enum SniffProtocol {
 pub struct SnifferRule {
     /// Empty means every destination port. Overlapping rules combine protocols.
     pub ports: Vec<u16>,
+    /// supported protocols for sniffing. TCP supports http/tls; UDP supports quic.
     pub protocols: Vec<SniffProtocol>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SnifferCfg {
+    /// TCP sniffer rules. Empty means no sniffing. Supports HTTP and TLS.
     pub tcp: Vec<SnifferRule>,
+    /// UDP sniffer rules. Empty means no sniffing. Supports QUIC.
     pub udp: Vec<SnifferRule>,
     /// Absolute inspection deadline in milliseconds.
     pub timeout: u64,
