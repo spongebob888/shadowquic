@@ -372,6 +372,72 @@ fn quic_v1_v2_authentication_reassembly_and_first_datagram_limit() {
     assert!(quic::parse(b"not QUIC", 32768, &suite).is_none());
 }
 
+#[test]
+fn quic_reassembles_client_hello_with_trailing_datagram_padding() {
+    let suite = quic::suite().unwrap();
+    let hello = hello(b"accounts.google.com");
+    for version in [rustls_jls::quic::Version::V1, rustls_jls::quic::Version::V2] {
+        let mut parser = quic::Parser::default();
+        for i in 0..3 {
+            let start = hello.len() * i / 3;
+            let end = hello.len() * (i + 1) / 3;
+            let mut packet = initial(version, &crypto_frame(start, &hello[start..end]), i as u8);
+            // Padding is outside the packet's declared length and AEAD tag.
+            packet.resize(packet.len() + 299, 0);
+            let result = parser.parse(&packet, 32768, &suite);
+            if i < 2 {
+                assert!(matches!(result, Parse::NeedMore));
+            } else {
+                let Parse::Done(Some(result)) = result else {
+                    panic!("padded Initials should yield a complete ClientHello");
+                };
+                assert_eq!(result.domain, "accounts.google.com");
+                assert_eq!(result.protocol, "quic");
+            }
+        }
+    }
+}
+
+#[test]
+fn quic_trailing_padding_requires_authenticated_initial_and_respects_byte_limit() {
+    let suite = quic::suite().unwrap();
+    for version in [rustls_jls::quic::Version::V1, rustls_jls::quic::Version::V2] {
+        let hello = hello(b"accounts.google.com");
+        let partial = initial(version, &crypto_frame(0, &hello[..10]), 0);
+        let mut padded = partial.clone();
+        padded.resize(padded.len() + 299, 0);
+        let mut parser = quic::Parser::default();
+        assert!(matches!(
+            parser.parse(&padded, padded.len(), &suite),
+            Parse::NeedMore
+        ));
+        // A separate all-zero datagram is still non-QUIC, even after an Initial.
+        assert!(matches!(
+            parser.parse(&[0; 299], 32768, &suite),
+            Parse::Done(None)
+        ));
+        assert!(matches!(
+            quic::Parser::default().parse(&padded, padded.len() - 1, &suite),
+            Parse::Done(None)
+        ));
+        for invalid in [
+            vec![0; 299],
+            [vec![0], partial.clone()].concat(),
+            [padded.clone(), vec![1]].concat(),
+            {
+                let mut corrupted = padded;
+                corrupted[partial.len() - 1] ^= 1;
+                corrupted
+            },
+        ] {
+            assert!(matches!(
+                quic::Parser::default().parse(&invalid, 32768, &suite),
+                Parse::Done(None)
+            ));
+        }
+    }
+}
+
 #[tokio::test]
 async fn complete_first_datagram_finishes_inspection_before_other_destinations() {
     let sniffer = Sniffer::new(config()).unwrap();
@@ -592,7 +658,16 @@ fn incremental_http_scan_handles_every_read_boundary() {
 #[tokio::test(start_paused = true)]
 async fn quic_assembles_up_to_five_datagrams_and_replays_every_packet() {
     for version in [rustls_jls::quic::Version::V1, rustls_jls::quic::Version::V2] {
-        for (parts, changed_destination) in [(2, false), (5, false), (6, false), (3, true)] {
+        for (parts, changed_destination, padding) in [
+            (2, false, 0),
+            (5, false, 0),
+            (6, false, 0),
+            (3, true, 0),
+            (3, false, 299),
+            (5, false, 299),
+            (6, false, 299),
+            (3, true, 299),
+        ] {
             let sniffer = Sniffer::new(config()).unwrap();
             let (tx, rx) = tokio::sync::mpsc::channel(8);
             let dst: crate::SocksAddr = "192.0.2.1:443"
@@ -608,12 +683,12 @@ async fn quic_assembles_up_to_five_datagrams_and_replays_every_packet() {
             for i in 0..parts {
                 let start = hello.len() * i / parts;
                 let end = hello.len() * (i + 1) / parts;
+                let mut data = initial(version, &crypto_frame(start, &hello[start..end]), i as u8);
+                if i == 0 {
+                    data.resize(data.len() + padding, 0);
+                }
                 let packet = (
-                    bytes::Bytes::from(initial(
-                        version,
-                        &crypto_frame(start, &hello[start..end]),
-                        i as u8,
-                    )),
+                    bytes::Bytes::from(data),
                     if changed_destination && i == 1 {
                         other.clone()
                     } else {

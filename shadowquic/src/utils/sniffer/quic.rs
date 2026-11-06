@@ -221,7 +221,10 @@ impl Parser {
                 }
             }
             datagram = &datagram[packet_len..];
-            if datagram.is_empty() {
+            // Some clients append zero padding outside the protected Initial.
+            // Only tolerate an all-zero remainder after authenticating a packet
+            // in this datagram; preserve its CRYPTO fragments for the next one.
+            if datagram.iter().all(|byte| *byte == 0) {
                 break;
             }
         }
