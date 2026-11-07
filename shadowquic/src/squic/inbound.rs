@@ -23,7 +23,7 @@ use crate::{
     },
     quic::QuicConnection,
     squic::wait_sunny_auth,
-    utils::dual_socket::ToCanonical,
+    utils::{dual_socket::ToCanonical, log::fetch_add_req_cnt},
 };
 
 use super::{SQConn, handle_udp_packet_recv, handle_udp_recv_ctrl, handle_udp_send};
@@ -40,6 +40,15 @@ pub trait UserManager: Send + Sync {
     async fn kill_user_conns(&self, username: &str) -> Result<(), SQExtError>;
     async fn clear_user_stats(&self, username: &str) -> Result<(), SQExtError>;
     async fn clear_all_stats(&self) -> Result<(), SQExtError>;
+}
+
+struct TraceCtx {
+    req_id: u32,
+    inbound_span: tracing::Span,
+}
+
+tokio::task_local! {
+    static TRACE_CTX: TraceCtx;
 }
 
 #[derive(Clone)]
@@ -60,17 +69,18 @@ impl<C: QuicConnection> SQServerConn<C> {
             let conn = &self.inner;
             while conn.close_reason().is_none() {
                 select! {
-                        bi = conn.accept_bi() => {
-                            let (send, recv, id) = bi?;
-                            let span = info_span!("bistream", id = id);
-                            trace!(event = "squic:bidirectional_stream_accepted", "bistream accepted");
-                let self_clone = self.clone();
-                            tokio::spawn(
-                                    self_clone.handle_bistream(send, recv, req_send.clone(), tracing::Span::current())
-                                    .instrument(span),
-                            );
-                        },
-                    }
+                    bi = conn.accept_bi() => {
+                        let (send, recv, id) = bi?;
+                        let req_id = fetch_add_req_cnt();
+                        let span = info_span!("bistream", id = id, req_id);
+                        trace!(event = "squic:bidirectional_stream_accepted", "bistream accepted");
+                        let self_clone = self.clone();
+                        tokio::spawn(
+                                TRACE_CTX.scope(TraceCtx { req_id, inbound_span: tracing::Span::current() }, self_clone.handle_bistream(send, recv, req_send.clone()))
+                                .instrument(span),
+                        );
+                    },
+                }
             }
             Ok(())
         };
@@ -82,7 +92,6 @@ impl<C: QuicConnection> SQServerConn<C> {
         send: C::SendStream,
         mut recv: C::RecvStream,
         req_send: Sender<ProxyRequest>,
-        inbound_span: tracing::Span,
     ) -> Result<(), SError> {
         // We can direct decode the whole SQReq.
         // Attackers may create malicious extention with long vector
@@ -94,7 +103,7 @@ impl<C: QuicConnection> SQServerConn<C> {
         }
 
         let req = SQReq::decode_with_tag(cmd, &mut recv).await?;
-
+        let (req_id, inbound_span) = TRACE_CTX.with(|ctx| (ctx.req_id, ctx.inbound_span.clone()));
         // let rate: f32 = (self.0.conn.stats().path.lost_packets as f32)
         //     / ((self.0.conn.stats().path.sent_packets + 1) as f32);
         // info!(
@@ -120,6 +129,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                             conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),
                             conn_id: self.inner.conn.peer_id(),
                         }),
+                        req_id: req_id,
                         ..Default::default()
                     },
                 };
@@ -151,6 +161,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                                 conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),
                                 conn_id: self.inner.conn.peer_id(),
                             }),
+                            req_id: req_id,
                             ..Default::default()
                         },
                     }

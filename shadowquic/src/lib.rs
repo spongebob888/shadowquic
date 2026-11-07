@@ -88,7 +88,7 @@ pub use msgs::SDecode;
 pub use msgs::SEncode;
 pub use selector::Selectable;
 
-use crate::{observe::Observer, utils::dual_socket::to_ipv4_mapped};
+use crate::{observe::Observer, utils::{dual_socket::to_ipv4_mapped, log::fetch_add_req_cnt}};
 #[cfg(test)]
 mod manager_tests;
 pub enum ProxyRequest<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend> {
@@ -210,7 +210,7 @@ pub struct DnsQuery {
 }
 
 /// Per-session context, present even when statistics are not tracked.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct UserContext {
     #[cfg(feature = "sniffer")]
     pub sniffer: Option<utils::sniffer::SniffResult>,
@@ -222,6 +222,21 @@ pub struct UserContext {
     pub preferred_outbound: Option<String>,
     pub dns_query: Vec<DnsQuery>,
     pub stats: Option<StatsContext>,
+    pub req_id: u32,
+}
+impl Default for UserContext {
+    fn default() -> Self {
+        Self {
+            #[cfg(feature = "sniffer")]
+            sniffer: None,
+            inbound_tag: Default::default(),
+            observer: Weak::new(),
+            preferred_outbound: None,
+            dns_query: Vec::new(),
+            stats: None,
+            req_id: fetch_add_req_cnt(),
+        }
+    }
 }
 
 impl Stoppable for () {
