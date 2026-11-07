@@ -103,7 +103,7 @@ async fn socks_server_accepts_after_client_closes_before_accept() {
         let names = events.lock().unwrap().clone();
         assert!(names.iter().any(|name| matches!(
             name.as_str(),
-            "socks:connection_failed" | "connectivity:connection_accept_failed"
+            "socks:connection_failed" | "socks:connection_accept_failed"
         )));
         assert!(
             names.ends_with(&[

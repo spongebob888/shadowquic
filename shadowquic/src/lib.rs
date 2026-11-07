@@ -581,6 +581,9 @@ async fn run_inbound(
             Ok(req) => {
                 assert!(req.user_context().inbound_tag == tag);
                 let span = request_span(&req);
+                span.in_scope(|| {
+                    tracing::info!(event = "proxy:request_accepted", "accepted request");
+                });
                 let dispatcher = dispatcher.clone();
                 requests.spawn(async move { dispatcher.dispatch(req).await }.instrument(span));
             }

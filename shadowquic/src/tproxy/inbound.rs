@@ -156,7 +156,10 @@ impl Inbound for TproxyServer {
                     stream: Box::new(stream),
                     dst,
                     src_addr,
-                    user_context: Default::default(),
+                    user_context: UserContext {
+                        req_id,
+                        ..Default::default()
+                    },
                 })
             }
             Some(req) = self.udp_req_rx.recv() => {
