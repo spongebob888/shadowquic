@@ -457,7 +457,7 @@ impl Databases {
                 match open_database(cfg) {
                     Ok(db) => Ok(db),
                     Err(error) if error.is::<GeositeRebuildRequired>() => {
-                        tracing::warn!(tag = %cfg.tag(), path = ?cfg.path(), %error, "rebuilding legacy geosite database");
+                        tracing::warn!(event = "database:rebuild_started", tag = %cfg.tag(), path = ?cfg.path(), %error, "rebuilding legacy geosite database");
                         Err("schema upgrade download pending".into())
                     }
                     Err(error) => return Err(config_error(error)),

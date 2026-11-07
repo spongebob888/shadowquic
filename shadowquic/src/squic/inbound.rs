@@ -23,7 +23,7 @@ use crate::{
     },
     quic::QuicConnection,
     squic::wait_sunny_auth,
-    utils::dual_socket::ToCanonical,
+    utils::{dual_socket::ToCanonical, log::fetch_add_req_cnt},
 };
 
 use super::{SQConn, handle_udp_packet_recv, handle_udp_recv_ctrl, handle_udp_send};
@@ -40,6 +40,15 @@ pub trait UserManager: Send + Sync {
     async fn kill_user_conns(&self, username: &str) -> Result<(), SQExtError>;
     async fn clear_user_stats(&self, username: &str) -> Result<(), SQExtError>;
     async fn clear_all_stats(&self) -> Result<(), SQExtError>;
+}
+
+struct TraceCtx {
+    req_id: u32,
+    inbound_span: tracing::Span,
+}
+
+tokio::task_local! {
+    static TRACE_CTX: TraceCtx;
 }
 
 #[derive(Clone)]
@@ -60,17 +69,18 @@ impl<C: QuicConnection> SQServerConn<C> {
             let conn = &self.inner;
             while conn.close_reason().is_none() {
                 select! {
-                        bi = conn.accept_bi() => {
-                            let (send, recv, id) = bi?;
-                            let span = info_span!("bistream", id = id);
-                            trace!("bistream accepted");
-                let self_clone = self.clone();
-                            tokio::spawn(
-                                    self_clone.handle_bistream(send, recv, req_send.clone(), tracing::Span::current())
-                                    .instrument(span),
-                            );
-                        },
-                    }
+                    bi = conn.accept_bi() => {
+                        let (send, recv, id) = bi?;
+                        let req_id = fetch_add_req_cnt();
+                        let span = info_span!("bistream", id = id, req_id);
+                        trace!(event = "squic:bidirectional_stream_accepted", "bistream accepted");
+                        let self_clone = self.clone();
+                        tokio::spawn(
+                                TRACE_CTX.scope(TraceCtx { req_id, inbound_span: tracing::Span::current() }, self_clone.handle_bistream(send, recv, req_send.clone()))
+                                .instrument(span),
+                        );
+                    },
+                }
             }
             Ok(())
         };
@@ -82,7 +92,6 @@ impl<C: QuicConnection> SQServerConn<C> {
         send: C::SendStream,
         mut recv: C::RecvStream,
         req_send: Sender<ProxyRequest>,
-        inbound_span: tracing::Span,
     ) -> Result<(), SError> {
         // We can direct decode the whole SQReq.
         // Attackers may create malicious extention with long vector
@@ -94,7 +103,7 @@ impl<C: QuicConnection> SQServerConn<C> {
         }
 
         let req = SQReq::decode_with_tag(cmd, &mut recv).await?;
-
+        let (req_id, inbound_span) = TRACE_CTX.with(|ctx| (ctx.req_id, ctx.inbound_span.clone()));
         // let rate: f32 = (self.0.conn.stats().path.lost_packets as f32)
         //     / ((self.0.conn.stats().path.sent_packets + 1) as f32);
         // info!(
@@ -106,7 +115,7 @@ impl<C: QuicConnection> SQServerConn<C> {
         match req {
             SQReq::SQConnect(dst) => {
                 let user = user.unwrap();
-                info!(dst = %dst, "tcp connect request accepted");
+                info!(event = "squic:tcp_request_accepted", dst = %dst, "tcp connect request accepted");
                 let tcp: TcpSession = TcpSession {
                     stream: Box::new(Unsplit { s: send, r: recv }),
                     dst,
@@ -120,6 +129,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                             conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),
                             conn_id: self.inner.conn.peer_id(),
                         }),
+                        req_id,
                         ..Default::default()
                     },
                 };
@@ -131,7 +141,7 @@ impl<C: QuicConnection> SQServerConn<C> {
             ref req @ (SQReq::SQAssociatOverDatagram(ref dst)
             | SQReq::SQAssociatOverStream(ref dst)) => {
                 let user = user.unwrap();
-                info!(bind_addr = %dst, "udp associate request accepted");
+                info!(event = "squic:udp_associate_request_accepted", bind_addr = %dst, "udp associate request accepted");
                 let (local_send, udp_recv) = channel::<(Bytes, SocksAddr)>(10);
                 let (udp_send, local_recv) = channel::<(Bytes, SocksAddr)>(10);
                 let publish_request = async {
@@ -151,12 +161,13 @@ impl<C: QuicConnection> SQServerConn<C> {
                                 conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),
                                 conn_id: self.inner.conn.peer_id(),
                             }),
+                            req_id,
                             ..Default::default()
                         },
                     }
                     .wait_first_packet()
                     .await?;
-                    tracing::trace!(dst = %udp.dst,"udp request accepted");
+                    tracing::trace!(event = "squic:udp_request_accepted", dst = %udp.dst,"udp request accepted");
                     req_send
                         .send(ProxyRequest::Udp(udp))
                         .await
@@ -175,13 +186,19 @@ impl<C: QuicConnection> SQServerConn<C> {
             SQReq::SQAuthenticate(passwd_hash) => {
                 if let Some(name) = self.users.get(passwd_hash.as_ref()) {
                     inbound_span.record("user", name.as_str());
-                    tracing::debug!("sunnyquic authentication succeeded");
+                    tracing::debug!(
+                        event = "squic:authentication_succeeded",
+                        "sunnyquic authentication succeeded"
+                    );
                     self.inner
                         .authed
                         .set(Ok(name.clone()))
                         .expect("repeated authentication!");
                 } else {
-                    tracing::error!("authentication failed");
+                    tracing::error!(
+                        event = "squic:authentication_failed",
+                        "authentication failed"
+                    );
                     // 263 is tested result by connecting with sunnyquic client to
                     // cloudflare.com:443
                     self.inner.close(263, &[]);
@@ -192,7 +209,10 @@ impl<C: QuicConnection> SQServerConn<C> {
                 self.handle_extension(ext_opcode, send, recv).await?;
             }
             SQReq::SQBind(_) => {
-                tracing::error!("bind cmd is not implemented");
+                tracing::error!(
+                    event = "squic:unsupported_command",
+                    "bind cmd is not implemented"
+                );
                 return Err(SError::ProtocolUnimpl);
             }
         }
@@ -242,11 +262,11 @@ impl<C: QuicConnection> SQServerConn<C> {
         };
         match user_opcode {
             ExtOpcodeUser::AddUser(user) => {
-                info!(username = %user.username, "adding user");
+                info!(event = "user_api:user_add_requested", username = %user.username, "adding user");
                 user_manager.add_user(user).await.encode(send).await?;
             }
             ExtOpcodeUser::RemoveUser(username) => {
-                info!(username = %username, "removing user");
+                info!(event = "user_api:user_remove_requested", username = %username, "removing user");
                 user_manager
                     .remove_user(&username)
                     .await
@@ -257,7 +277,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                 user_manager.list_users().await.encode(send).await?;
             }
             ExtOpcodeUser::GetUserStats(username) => {
-                info!(username = %username, "getting user stats");
+                info!(event = "user_api:user_stats_requested", username = %username, "getting user stats");
                 user_manager
                     .get_user_stats(&username)
                     .await
@@ -265,11 +285,14 @@ impl<C: QuicConnection> SQServerConn<C> {
                     .await?;
             }
             ExtOpcodeUser::GetAllStats => {
-                info!("getting all user stats");
+                info!(
+                    event = "user_api:all_user_stats_requested",
+                    "getting all user stats"
+                );
                 user_manager.get_all_stats().await.encode(send).await?;
             }
             ExtOpcodeUser::KillUserConn(username) => {
-                info!(username = %username, "killing user connections");
+                info!(event = "user_api:user_connections_close_requested", username = %username, "killing user connections");
                 user_manager
                     .kill_user_conns(&username)
                     .await
@@ -277,7 +300,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                     .await?;
             }
             ExtOpcodeUser::ClearUserStats(username) => {
-                info!(username = %username, "clearing user stats");
+                info!(event = "user_api:user_stats_clear_requested", username = %username, "clearing user stats");
                 user_manager
                     .clear_user_stats(&username)
                     .await
@@ -285,7 +308,10 @@ impl<C: QuicConnection> SQServerConn<C> {
                     .await?;
             }
             ExtOpcodeUser::ClearAllStats => {
-                info!("clearing all user stats");
+                info!(
+                    event = "user_api:all_user_stats_clear_requested",
+                    "clearing all user stats"
+                );
                 user_manager.clear_all_stats().await.encode(send).await?;
             }
         }

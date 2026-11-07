@@ -67,7 +67,10 @@ impl SocketFactory for UdpSocketFactory {
             if self.try_dual_stack
                 && let Ok(socket) = try_create_dual_stack()
             {
-                tracing::trace!("dual stack udp socket created");
+                tracing::trace!(
+                    event = "connectivity:socket_created",
+                    "dual stack udp socket created"
+                );
                 socket
             } else if ipv6 {
                 let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
@@ -92,12 +95,17 @@ impl SocketFactory for UdpSocketFactory {
         if let Some(Interface::Device(ref device_name)) = self.interface {
             if addr.ip().is_loopback() {
                 tracing::trace!(
+                    event = "connectivity:interface_binding_skipped",
                     "skipping bind_device for udp socket to loopback destination {}",
                     addr
                 );
             } else {
                 crate::utils::platform::bind_device(&socket, device_name)?;
-                tracing::debug!("udp socket bound to device {}", device_name);
+                tracing::debug!(
+                    event = "connectivity:interface_bound",
+                    "udp socket bound to device {}",
+                    device_name
+                );
             }
         }
 
@@ -106,7 +114,10 @@ impl SocketFactory for UdpSocketFactory {
             use crate::utils::protect_socket::protect_socket_with_retry;
             use std::os::fd::AsRawFd;
 
-            tracing::debug!("trying protect socket");
+            tracing::debug!(
+                event = "connectivity:socket_protection_started",
+                "trying protect socket"
+            );
             tokio::time::timeout(
                 tokio::time::Duration::from_secs(5),
                 protect_socket_with_retry(path, socket.as_raw_fd()),
@@ -115,7 +126,11 @@ impl SocketFactory for UdpSocketFactory {
             .map_err(|_| io::Error::other("protecting socket timeout"))
             .and_then(|x| x)
             .map_err(|e| {
-                tracing::error!("error during protecing socket:{}", e);
+                tracing::error!(
+                    event = "connectivity:socket_protection_failed",
+                    "error during protecing socket:{}",
+                    e
+                );
                 e
             })?;
         }
@@ -199,12 +214,17 @@ impl SocketFactory for TcpSocketFactory {
         if let Some(Interface::Device(ref device_name)) = self.interface {
             if addr.ip().is_loopback() {
                 tracing::trace!(
+                    event = "connectivity:interface_binding_skipped",
                     "skipping bind_device for tcp socket to loopback destination {}",
                     addr
                 );
             } else {
                 crate::utils::platform::bind_device(&socket, device_name)?;
-                tracing::debug!("tcp socket bound to device {}", device_name);
+                tracing::debug!(
+                    event = "connectivity:interface_bound",
+                    "tcp socket bound to device {}",
+                    device_name
+                );
             }
         }
 
@@ -213,7 +233,10 @@ impl SocketFactory for TcpSocketFactory {
             use crate::utils::protect_socket::protect_socket_with_retry;
             use std::os::fd::AsRawFd;
 
-            tracing::debug!("trying protect socket");
+            tracing::debug!(
+                event = "connectivity:socket_protection_started",
+                "trying protect socket"
+            );
             tokio::time::timeout(
                 tokio::time::Duration::from_secs(5),
                 protect_socket_with_retry(path, socket.as_raw_fd()),
@@ -222,7 +245,11 @@ impl SocketFactory for TcpSocketFactory {
             .map_err(|_| io::Error::other("protecting socket timeout"))
             .and_then(|x| x)
             .map_err(|e| {
-                tracing::error!("error during protecing socket:{}", e);
+                tracing::error!(
+                    event = "connectivity:socket_protection_failed",
+                    "error during protecing socket:{}",
+                    e
+                );
                 e
             })?;
         }

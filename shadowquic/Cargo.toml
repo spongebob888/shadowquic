@@ -16,7 +16,7 @@ default = ["shadowquic-quinn", "sunnyquic-noq", "ring", "statistics",
 dns-server = ["dep:ipnet", "dep:quick_cache", "dep:simple-dns", "dep:tokio-rustls-jls", "dep:rustls_jls", "dep:quinn"]
 # cost 200k
 statistics = ["dep:portable-atomic"]
-restful-api = ["statistics", "dep:hyper", "hyper/server", "dep:hyper-util", "dep:http-body-util", "dep:serde_json", "dep:url", "dep:percent-encoding", "dep:subtle", "time/formatting", "tokio/fs", "dep:tokio-rustls-jls", "dep:rustls_jls", "tokio-rustls-jls/tls12", "dep:tempfile"]
+restful-api = ["statistics", "dep:hyper", "hyper/server", "dep:hyper-util", "dep:http-body-util", "dep:serde_json", "dep:url", "dep:percent-encoding", "dep:subtle", "time/formatting", "tokio/fs", "dep:tokio-rustls-jls", "dep:rustls_jls", "tokio-rustls-jls/tls12", "dep:tempfile", "dep:tokio-tungstenite", "dep:futures-util"]
 jemalloc = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-sys"]
 mem-profile = ["restful-api", "jemalloc", "tikv-jemalloc-sys/profiling", "dep:tempfile"]
 # cost 200k
@@ -59,6 +59,8 @@ tproxy = ["dep:etherparse", "dep:libc"]
 tun = ["dep:tun-rs", "dep:smoltcp", "dep:ipnet"]
 
 [dependencies]
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"], optional = true }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"], optional = true }
 tempfile = { version = "3", optional = true }
 redb = { version = "4", optional = true }
 maxminddb = { version = "0.32", features = ["mmap"], optional = true }

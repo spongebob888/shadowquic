@@ -179,7 +179,10 @@ impl DoqClient {
         let (connection, zero_rtt) = if self.zero_rtt {
             match connecting.into_0rtt() {
                 Ok(connection) => {
-                    tracing::debug!("attempting DNS over QUIC 0-RTT");
+                    tracing::debug!(
+                        event = "dns:zero_rtt_attempted",
+                        "attempting DNS over QUIC 0-RTT"
+                    );
                     (connection, true)
                 }
                 Err(connecting) => (connecting.await.map_err(dns_error)?, false),
@@ -213,7 +216,10 @@ impl DoqClient {
                     .authenticated()
                     .await
                     .map_err(dns_error)?;
-                tracing::debug!("retrying rejected DNS over QUIC 0-RTT query");
+                tracing::debug!(
+                    event = "dns:zero_rtt_retried",
+                    "retrying rejected DNS over QUIC 0-RTT query"
+                );
                 result = exchange_stream(&session.connection, query).await;
             }
             match result {

@@ -88,7 +88,10 @@ pub use msgs::SDecode;
 pub use msgs::SEncode;
 pub use selector::Selectable;
 
-use crate::{observe::Observer, utils::dual_socket::to_ipv4_mapped};
+use crate::{
+    observe::Observer,
+    utils::{dual_socket::to_ipv4_mapped, log::fetch_add_req_cnt},
+};
 #[cfg(test)]
 mod manager_tests;
 pub enum ProxyRequest<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend> {
@@ -210,7 +213,7 @@ pub struct DnsQuery {
 }
 
 /// Per-session context, present even when statistics are not tracked.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct UserContext {
     #[cfg(feature = "sniffer")]
     pub sniffer: Option<utils::sniffer::SniffResult>,
@@ -222,6 +225,21 @@ pub struct UserContext {
     pub preferred_outbound: Option<String>,
     pub dns_query: Vec<DnsQuery>,
     pub stats: Option<StatsContext>,
+    pub req_id: u32,
+}
+impl Default for UserContext {
+    fn default() -> Self {
+        Self {
+            #[cfg(feature = "sniffer")]
+            sniffer: None,
+            inbound_tag: Default::default(),
+            observer: Weak::new(),
+            preferred_outbound: None,
+            dns_query: Vec::new(),
+            stats: None,
+            req_id: fetch_add_req_cnt(),
+        }
+    }
 }
 
 impl Stoppable for () {
@@ -291,7 +309,7 @@ impl UdpSend for Sender<(Bytes, SocksAddr)> {
         match self.try_send((buf, addr.clone())) {
             Ok(()) => {}
             Err(TrySendError::Full(_)) => {
-                tracing::warn!(dst = %&addr,"drop udp packet due to full channel");
+                tracing::warn!(event = "proxy:datagram_dropped", dst = %&addr,"drop udp packet due to full channel");
                 return Ok(0);
             }
             Err(TrySendError::Closed(_)) => {
@@ -355,7 +373,7 @@ impl RequestDispatcher {
                     req = match sniffer.sniff(req).await {
                         Ok(req) => req,
                         Err(error) => {
-                            error!(%error, "sniffing request failed");
+                            error!(event = "sniffer:request_failed", %error, "sniffing request failed");
                             return;
                         }
                     };
@@ -372,12 +390,12 @@ impl RequestDispatcher {
                             outbound_tag
                         }
                         Err(error) => {
-                            error!(%error, "invalid rewritten destination");
+                            error!(event = "routing:invalid_destination", %error, "invalid rewritten destination");
                             return;
                         }
                     },
                     Err(error) => {
-                        error!(%error, "routing request failed");
+                        error!(event = "routing:request_failed", %error, "routing request failed");
                         return;
                     }
                 }
@@ -387,15 +405,15 @@ impl RequestDispatcher {
         #[cfg(not(feature = "plugin"))]
         let outbound_tag = self.fallback_outbound_tag(&req);
         let Some(outbound) = self.outbounds.get(&outbound_tag).cloned() else {
-            error!(outbound = %outbound_tag, "selected an unknown outbound");
+            error!(event = "routing:unknown_outbound", outbound = %outbound_tag, "selected an unknown outbound");
             return;
         };
         if let Some(observer) = req.user_context().observer.upgrade() {
             req = observer.wrap_request(req, outbound_tag.clone()).await;
         }
-        tracing::debug!(outbound = %outbound_tag, dst = %req.dst(), "routing request");
+        tracing::debug!(event = "routing:outbound_selected", outbound = %outbound_tag, dst = %req.dst(), "routing request");
         if let Err(error) = outbound.handle(req).await {
-            error!(outbound = %outbound_tag, %error, "error handling request");
+            error!(event = "proxy:request_failed", outbound = %outbound_tag, %error, "error handling request");
         }
     }
 
@@ -519,10 +537,10 @@ impl Manager {
     async fn init_inbounds(&self) -> Result<(), SError> {
         for (tag, inbound) in &self.inbounds {
             if let Err(error) = inbound.init().await {
-                error!(inbound = %tag, %error, "inbound initialization failed");
+                error!(event = "proxy:inbound_initialization_failed", inbound = %tag, %error, "inbound initialization failed");
                 for (tag, inbound) in &self.inbounds {
                     if let Err(error) = inbound.shutdown().await {
-                        error!(inbound = %tag, %error, "inbound shutdown failed");
+                        error!(event = "proxy:inbound_shutdown_failed", inbound = %tag, %error, "inbound shutdown failed");
                     }
                 }
                 return Err(error);
@@ -552,7 +570,7 @@ async fn run_inbound(
                     _ = stopped.changed() => break 'accepting,
                     Some(result) = requests.join_next(), if !requests.is_empty() => {
                         if let Err(error) = result {
-                            error!(inbound = %tag, %error, "request task failed");
+                            error!(event = "proxy:request_task_failed", inbound = %tag, %error, "request task failed");
                         }
                     }
                     req = &mut accept => break req,
@@ -563,12 +581,15 @@ async fn run_inbound(
             Ok(req) => {
                 assert!(req.user_context().inbound_tag == tag);
                 let span = request_span(&req);
+                span.in_scope(|| {
+                    tracing::info!(event = "proxy:request_accepted", "accepted request");
+                });
                 let dispatcher = dispatcher.clone();
                 requests.spawn(async move { dispatcher.dispatch(req).await }.instrument(span));
             }
             Err(SError::InboundClosed) => break,
             Err(error) => {
-                error!(inbound = %tag, %error, "error accepting request");
+                error!(event = "proxy:request_accept_failed", inbound = %tag, %error, "error accepting request");
                 tokio::select! {
                     biased;
                     _ = stopped.changed() => break,
@@ -589,13 +610,15 @@ fn request_span(req: &ProxyRequest) -> tracing::Span {
             "tcp_req",
             src = tracing::field::Empty,
             user = tracing::field::Empty,
-            dst = %req.dst()
+            dst = %req.dst(),
+            req_id = %req.user_context().req_id,
         ),
         ProxyRequest::Udp(_) => info_span!(
             "udp_req",
             src = tracing::field::Empty,
             user = tracing::field::Empty,
-            dst = %req.dst()
+            dst = %req.dst(),
+            req_id = %req.user_context().req_id,
         ),
     };
     // Leave absent addresses and anonymous users out of the formatted fields.
@@ -622,7 +645,7 @@ async fn supervise_tasks(
     loop {
         tokio::select! {
             _ = &mut shutdown => {
-                info!("shutdown requested, persisting users and stats");
+                info!(event = "application:shutdown_requested", "shutdown requested, persisting users and stats");
                 break;
             }
             task = tasks.join_next() => {
@@ -643,7 +666,7 @@ async fn supervise_tasks(
             Err(error) => Err(SError::Io(std::io::Error::other(error))),
         };
         if let Err(error) = task_result {
-            error!(%error, "inbound shutdown failed");
+            error!(event = "proxy:inbound_shutdown_failed", %error, "inbound shutdown failed");
             if result.is_ok() {
                 result = Err(error);
             }

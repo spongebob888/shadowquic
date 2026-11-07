@@ -86,9 +86,17 @@ async fn main() {
                 .await
                 .expect("creating inbound/outbound failed");
 
-            info!("shadowquic {} running", env!("CARGO_PKG_VERSION"));
-            let _ =
-                std::env::current_dir().inspect(|x| info!("current working directory: {:?}", x));
+            info!(
+                event = "application:started",
+                "shadowquic {} running",
+                env!("CARGO_PKG_VERSION")
+            );
+            let _ = std::env::current_dir().inspect(|x| {
+                info!(
+                    event = "application:working_directory",
+                    "current working directory: {:?}", x
+                )
+            });
             manager.run().await.expect("shadowquic stopped");
         }
         Command::Api { outbound, command } => {
@@ -263,6 +271,9 @@ fn setup_log(level: LogLevel) {
         .with_writer(std::io::stdout)
         .with_filter(filter);
     let sub = tracing_subscriber::registry().with(fmt);
+    #[cfg(feature = "restful-api")]
+    let sub = sub
+        .with(shadowquic::api::logs::LogLayer.with_filter(shadowquic::api::logs::trace_filter()));
     #[cfg(feature = "tokio-console")]
     let sub = sub.with(console_layer);
     sub.init();

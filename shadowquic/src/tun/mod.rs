@@ -93,7 +93,7 @@ impl TunServer {
                 let stack = stack::run(cfg, input_rx, output_tx, request_tx);
                 let result: Result<((), (), ()), SError> = tokio::try_join!(read, write, stack);
                 if let Err(error) = &result {
-                    tracing::error!(%error, "TUN packet loop stopped");
+                    tracing::error!(event = "tun:tun_packet_loop_failed", %error, "TUN packet loop stopped");
                 }
                 result.map(|_| ())
             }
@@ -133,7 +133,7 @@ impl Inbound for TunServer {
                 Err(error) if error.is_cancelled() => {}
                 Err(error) => return Err(SError::Io(io::Error::other(error))),
             }
-            tracing::info!(name = %self.name, "TUN inbound stopped");
+            tracing::info!(event = "proxy:inbound_stopped", name = %self.name, "TUN inbound stopped");
         }
         Ok(())
     }
