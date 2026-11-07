@@ -231,7 +231,7 @@ jobs:
       # https://github.com/moby/moby/issues/52506
       - name: Set up Docker for i686 socket compatibility
         if: startsWith(matrix.target, 'i686-unknown-linux-')
-        uses: docker/setup-docker-action@v4
+        uses: docker/setup-docker-action@v5
         with:
           version: v29.9.1
           set-host: true
