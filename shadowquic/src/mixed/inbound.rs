@@ -6,6 +6,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tracing::{Instrument, error};
 
+use crate::utils::log::{REQ_ID, fetch_add_req_cnt};
 use crate::{
     Inbound, ProxyRequest,
     config::AuthUser,
@@ -142,15 +143,17 @@ impl Inbound for MixedServer {
                 // field by field, so Nagle plus the peer's delayed ACK costs about
                 // 40ms per connection unless it is off.
                 let _ = stream.set_nodelay(true);
+                let req_id = fetch_add_req_cnt();
                 let span = tracing::info_span!("inbound",
                     tag = %tag,
                     src = %addr,
                     user = tracing::field::Empty,
                     id = tracing::field::Empty,
+                    req_id = req_id,
                 );
                 span.in_scope(|| {
                     tracing::info!(
-                        event = "connectivity:connection_started",
+                        event = "mixed:connection_started",
                         "accepted mixed connection"
                     );
                 });
@@ -159,7 +162,7 @@ impl Inbound for MixedServer {
                 let req_send = req_send.clone();
                 tokio::spawn(
                     async move {
-                        handle_connection(stream, http, users, req_send)
+                        REQ_ID.scope(req_id, handle_connection(stream, http, users, req_send))
                             .await
                             .map_err(|x| {
                                 error!(

@@ -52,7 +52,7 @@ impl SunnyQuicUserManager {
         let store = user_store::build_store(&users, &self.observer).await;
         if let Err(error) = user_store::save_store(&path, &store) {
             error!(
-                event = "security:user_store_persist_failed",
+                event = "user_api:user_store_persist_failed",
                 "failed to persist user store: {}", error
             );
         }
@@ -77,7 +77,7 @@ impl UserManager for SunnyQuicUserManager {
         if let Err(error) = QuicServer::update_config(&self.endpoint, &config).await {
             *config = old_config;
             tracing::error!(
-                event = "security:user_add_failed",
+                event = "user_api:user_add_failed",
                 "failed to add sunnyquic user: {}",
                 error
             );
@@ -101,7 +101,7 @@ impl UserManager for SunnyQuicUserManager {
         if let Err(error) = QuicServer::update_config(&self.endpoint, &config).await {
             *config = old_config;
             tracing::error!(
-                event = "security:user_remove_failed",
+                event = "user_api:user_remove_failed",
                 "failed to remove sunnyquic user: {}",
                 error
             );
@@ -264,7 +264,7 @@ impl SunnyQuicServer {
         span.record("id", sq_conn.inner.peer_id());
         span.in_scope(|| {
             tracing::info!(
-                event = "connectivity:connection_started",
+                event = "sunnyquic:connection_started",
                 "accepted sunnyquic connection"
             );
         });
@@ -333,7 +333,7 @@ impl Inbound for SunnyQuicServer {
                     }
                     Err(e) => {
                         error!(
-                            event = "connectivity:connection_accept_failed",
+                            event = "sunnyquic:connection_accept_failed",
                             "Error accepting quic connection: {}", e
                         );
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;

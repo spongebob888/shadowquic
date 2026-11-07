@@ -49,7 +49,7 @@ impl ShadowQuicUserManager {
         let store = user_store::build_store(&users, &self.observer).await;
         if let Err(error) = user_store::save_store(&path, &store) {
             error!(
-                event = "security:user_store_persist_failed",
+                event = "user_api:user_store_persist_failed",
                 "failed to persist user store: {}", error
             );
         }
@@ -74,7 +74,7 @@ impl UserManager for ShadowQuicUserManager {
         if let Err(error) = QuicServer::update_config(&self.endpoint, &config).await {
             *config = old_config;
             tracing::error!(
-                event = "security:user_add_failed",
+                event = "user_api:user_add_failed",
                 "failed to add user: {}",
                 error
             );
@@ -97,7 +97,7 @@ impl UserManager for ShadowQuicUserManager {
         if let Err(error) = QuicServer::update_config(&self.endpoint, &config).await {
             *config = old_config;
             tracing::error!(
-                event = "security:user_remove_failed",
+                event = "user_api:user_remove_failed",
                 "failed to remove user: {}",
                 error
             );
@@ -254,7 +254,7 @@ impl ShadowQuicServer {
         span.record("user", tracing::field::display(user));
         span.in_scope(|| {
             tracing::info!(
-                event = "connectivity:connection_started",
+                event = "shadowquic:quic_connection_started",
                 "accepted shadowquic connection"
             );
         });
@@ -314,7 +314,7 @@ impl Inbound for ShadowQuicServer {
                     }
                     Err(e) => {
                         error!(
-                            event = "connectivity:connection_accept_failed",
+                            event = "shadowquic:quic_connection_accept_failed",
                             "Error accepting quic connection: {}", e
                         );
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;

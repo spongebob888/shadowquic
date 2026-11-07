@@ -195,19 +195,19 @@ impl QuicClient for EndClient {
                     tokio::spawn(
                         async move {
                             if let Err(error) = conn_clone.authenticated().await {
-                                debug!(event = "security:zero_rtt_handshake_failed", %error, "0-RTT handshake failed");
+                                debug!(event = "quic:zero_rtt_handshake_failed", %error, "0-RTT handshake failed");
                                 return;
                             }
-                            debug!(event = "security:zero_rtt_handshake_completed", "0-RTT handshake completed");
+                            debug!(event = "quic:zero_rtt_handshake_completed", "0-RTT handshake completed");
                             if conn_clone.is_jls() == Some(false) {
-                                error!(event = "security:jls_authentication_failed", "JLS hijacked or wrong pwd/iv");
+                                error!(event = "jls:jls_authentication_failed", "JLS hijacked or wrong pwd/iv");
                                 conn_clone.close(0u8.into(), b"");
                             }
                         }
                         .in_current_span(),
                     );
                     trace!(
-                        event = "connectivity:zero_rtt_attempted",
+                        event = "quic:zero_rtt_attempted",
                         "trying 0-rtt quic connection"
                     );
                     x
@@ -215,7 +215,7 @@ impl QuicClient for EndClient {
                 Err(e) => {
                     let x = e.await?;
                     debug!(
-                        event = "connectivity:connection_established",
+                        event = "quic:connection_established",
                         "1-rtt quic connection established"
                     );
                     x
@@ -224,14 +224,14 @@ impl QuicClient for EndClient {
         } else {
             let x = conn.await?;
             debug!(
-                event = "connectivity:connection_established",
+                event = "quic:connection_established",
                 "1-rtt quic connection established"
             );
             x
         };
         if conn.is_jls() == Some(false) {
             error!(
-                event = "security:jls_authentication_failed",
+                event = "jls:jls_authentication_failed",
                 "JLS hijacked or wrong pwd/iv"
             );
             conn.close(0u8.into(), b"");
@@ -454,12 +454,12 @@ impl QuicServer for EndServer {
                             tokio::spawn(
                                 async move {
                                     if let Err(error) = conn_clone.authenticated().await {
-                                        debug!(event = "security:zero_rtt_handshake_failed", %error, "0-RTT handshake failed");
+                                        debug!(event = "quic:zero_rtt_handshake_failed", %error, "0-RTT handshake failed");
                                         return;
                                     }
-                                    debug!(event = "security:zero_rtt_handshake_completed", "0-RTT handshake completed");
+                                    debug!(event = "quic:zero_rtt_handshake_completed", "0-RTT handshake completed");
                                     if conn_clone.is_jls() == Some(false) {
-                                        error!(event = "security:jls_authentication_failed", "JLS hijacked or wrong pwd/iv");
+                                        error!(event = "jls:jls_authentication_failed", "JLS hijacked or wrong pwd/iv");
                                         conn_clone.close(0u8.into(), b"");
                                     }
                                 }
@@ -474,7 +474,7 @@ impl QuicServer for EndServer {
                 };
                 if connection.is_jls() == Some(false) {
                     error!(
-                        event = "security:jls_authentication_failed",
+                        event = "jls:jls_authentication_failed",
                         "JLS hijacked or wrong pwd/iv"
                     );
                     connection.close(0u8.into(), b"");
@@ -538,7 +538,7 @@ fn gen_server_config(
 
     if !cfg.gso {
         tracing::warn!(
-            event = "shadowquic:gso_disabled",
+            event = "quic:gso_disabled",
             "disabling QUIC segmentation offload (GSO)"
         );
     }

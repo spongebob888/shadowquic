@@ -604,13 +604,15 @@ fn request_span(req: &ProxyRequest) -> tracing::Span {
             "tcp_req",
             src = tracing::field::Empty,
             user = tracing::field::Empty,
-            dst = %req.dst()
+            dst = %req.dst(),
+            req_id = %req.user_context().req_id,
         ),
         ProxyRequest::Udp(_) => info_span!(
             "udp_req",
             src = tracing::field::Empty,
             user = tracing::field::Empty,
-            dst = %req.dst()
+            dst = %req.dst(),
+            req_id = %req.user_context().req_id,
         ),
     };
     // Leave absent addresses and anonymous users out of the formatted fields.

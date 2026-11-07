@@ -137,7 +137,7 @@ impl SocksClient {
     }
 
     async fn connect_destination(&self, dst: SocksAddr) -> Result<tokio::net::TcpStream, SError> {
-        tracing::info!(event = "connectivity:connection_started", server = %self.cfg.addr, "connect to socks server");
+        tracing::info!(event = "socks:connection_started", server = %self.cfg.addr, "connect to socks server");
         let socket = self.tcp_socket_factory.create_socket().await?;
         let std_stream: std::net::TcpStream = socket.into();
         let tokio_socket = tokio::net::TcpSocket::from_std_stream(std_stream);
@@ -159,7 +159,7 @@ impl SocksClient {
             return Err(SError::SocksError(format!("CONNECT failed: {}", rep.rep)));
         }
         tracing::trace!(
-            event = "connectivity:connection_established",
+            event = "socks:connection_established",
             "socks tcp connection established"
         );
         Ok(tcp)

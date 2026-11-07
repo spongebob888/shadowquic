@@ -188,7 +188,7 @@ impl QuicClient for EndClient {
                     tokio::spawn(
                         async move {
                             debug!(
-                                event = "security:zero_rtt_result",
+                                event = "quic:zero_rtt_result",
                                 "zero rtt accepted: {}",
                                 accepted.await
                             );
@@ -197,7 +197,7 @@ impl QuicClient for EndClient {
                         .in_current_span(),
                     );
                     trace!(
-                        event = "connectivity:zero_rtt_attempted",
+                        event = "quic:zero_rtt_attempted",
                         "trying 0-rtt quic connection"
                     );
                     x
@@ -205,7 +205,7 @@ impl QuicClient for EndClient {
                 Err(e) => {
                     let x = e.await?;
                     trace!(
-                        event = "connectivity:connection_established",
+                        event = "quic:connection_established",
                         "1-rtt quic connection established"
                     );
                     x
@@ -214,7 +214,7 @@ impl QuicClient for EndClient {
         } else {
             let x = conn.await?;
             trace!(
-                event = "connectivity:connection_established",
+                event = "quic:connection_established",
                 "1-rtt quic connection established"
             );
             x
@@ -267,7 +267,7 @@ async fn add_extra_path(
         }
         if !conn.is_multipath_enabled() {
             warn!(
-                event = "connectivity:multipath_unavailable",
+                event = "quic:multipath_unavailable",
                 "multipath not enabled in quic connection, can't add path {}", path
             );
             break;
@@ -280,7 +280,7 @@ async fn add_extra_path(
                 match to_open {
                     Ok(p) => {
                         debug!(
-                            event = "connectivity:path_added",
+                            event = "quic:path_added",
                             "added multipath path to {path}: {:?}",
                             p.id()
                         );
@@ -289,13 +289,13 @@ async fn add_extra_path(
                     Err(e) => {
                         if ii == 4 {
                             warn!(
-                                event = "connectivity:path_add_failed",
+                                event = "quic:path_add_failed",
                                 "failed to add multipath path {}: {e}", path
                             );
                             break;
                         }
                         debug!(
-                            event = "connectivity:path_add_retried",
+                            event = "quic:path_add_retried",
                             "failed to add multipath path {path}: {e}, try again"
                         );
 

@@ -12,6 +12,7 @@ use crate::msgs::socks5::{
 use crate::msgs::{SDecode, SEncode};
 use crate::observe::Observer;
 use crate::utils::dual_socket::to_ipv4_mapped;
+use crate::utils::log::{REQ_ID, fetch_add_req_cnt};
 use crate::{AnyUdpRecv, AnyUdpSend, TcpTrait};
 use crate::{Inbound, ProxyRequest, StatsContext, TcpSession, UdpSession, UserContext};
 use async_trait::async_trait;
@@ -59,6 +60,7 @@ impl SocksServer {
                 username,
                 ..Default::default()
             }),
+            req_id: REQ_ID.with(|id| *id), // called by handle_connection, so REQ_ID is set
             ..Default::default()
         };
         match req.cmd {
@@ -236,11 +238,12 @@ async fn handle_tcp(
             username,
             ..Default::default()
         }),
+        req_id: REQ_ID.with(|id| *id),
         ..Default::default()
     };
     let req = match req.cmd {
         SOCKS5_CMD_TCP_CONNECT => {
-            info!(event = "proxy:tcp_request_accepted", dst = %req.dst, "tcp connect request accepted");
+            info!(event = "socks:tcp_request_accepted", dst = %req.dst, "tcp connect request accepted");
             ProxyRequest::Tcp(TcpSession {
                 stream: Box::new(s) as Box<dyn crate::TcpTrait>,
                 dst: req.dst,
@@ -249,7 +252,7 @@ async fn handle_tcp(
             })
         }
         SOCKS5_CMD_UDP_ASSOCIATE => {
-            info!(event = "proxy:udp_associate_request_accepted", bind_dst = %req.dst, "udp associate request accepted");
+            info!(event = "socks:udp_associate_request_accepted", bind_dst = %req.dst, "udp associate request accepted");
             let socket = Arc::new(socket.unwrap());
             ProxyRequest::Udp(
                 UdpSession::<AnyUdpRecv, AnyUdpSend> {
@@ -330,11 +333,14 @@ impl Inbound for SocksServer {
                         continue;
                     }
                 };
+                let req_id = fetch_add_req_cnt();
                 let span = tracing::info_span!("inbound",
                     tag = %tag,
                     src = %addr,
                     user = tracing::field::Empty,
                     id = tracing::field::Empty,
+                    req_id = req_id,
+
                 );
                 // The SOCKS5 replies are written field by field (src/msgs/socks5.rs),
                 // so with Nagle enabled every field after the first waits for the peer
@@ -345,7 +351,7 @@ impl Inbound for SocksServer {
                 let _ = stream.set_nodelay(true);
                 span.in_scope(|| {
                     tracing::info!(
-                        event = "connectivity:connection_started",
+                        event = "socks:connection_started",
                         "accepted socks connection"
                     );
                 });
@@ -354,9 +360,9 @@ impl Inbound for SocksServer {
                 let req_send = req_send.clone();
                 tokio::spawn(
                     async move {
-                        handle_tcp(users, stream, req_send).await.map_err(|x| {
+                        REQ_ID.scope(req_id,handle_tcp(users, stream, req_send)).await.map_err(|x| {
                             error!(
-                                event = "proxy:connection_failed",
+                                event = "socks:connection_failed",
                                 "failed to handle socks connection: {}", x
                             )
                         })

@@ -85,7 +85,7 @@ impl SunnyQuicClient {
                 .await
                 .map_err(|x| {
                     error!(
-                        event = "security:authentication_failed",
+                        event = "sunnyquic:authentication_failed",
                         "authentication failed: {}", x
                     )
                 });
@@ -107,7 +107,7 @@ impl SunnyQuicClient {
         quic_conn.take_if(|x| {
             QuicConnection::close_reason(&x.conn).is_some_and(|x| {
                 info!(
-                    event = "connectivity:connection_closed",
+                    event = "quic:connection_closed",
                     "quic connection closed due to {}", x
                 );
                 true
