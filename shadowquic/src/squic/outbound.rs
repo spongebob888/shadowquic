@@ -55,11 +55,11 @@ pub async fn handle_request<C: QuicConnection>(
                 .await?;
 
                 info!(
+                    upload = %format!("{} bytes", u.1),
+                    download = %format!("{} bytes", u.0),
                     event = "squic:tcp_request_completed",
-                    "request:{} finished, upload:{}bytes,download:{}bytes",
-                    tcp_session.dst,
-                    u.1,
-                    u.0
+                    "request finished",
+
                 );
                 Ok(()) as Result<(), SError>
             };

@@ -74,15 +74,15 @@ impl Outbound for DirectOut {
                         dst = %tcp_session.dst,
                         "connecting direct tcp"
                     );
-                    // If dns field is resolved, Direct outbound will be wrapped with ResolvingOutbound.
-                    // Here is mainly for backward compatibilty if dns-servers feature is disabled.
+                    // If dns field is set, Direct outbound will be wrapped with ResolvingOutbound.
+                    // Here is mainly for backward compatibilty if dns-servers feature is disabled or dns field not set.
                     let dst =
                         resolve_destination(&*dns, &tcp_session.dst, Some(&dns_strategy)).await?;
                     trace!(event = "dns:address_resolved", "resolved to {}", dst);
 
                     let mut upstream = self_clone.connect_tcp(dst).await?;
                     let _ = upstream.set_nodelay(true);
-                    let (_, _) = crate::utils::copy::copy_bidirectional(
+                    let u = crate::utils::copy::copy_bidirectional(
                         &mut tcp_session.stream,
                         &mut upstream,
                         1024 * 16,
@@ -90,6 +90,13 @@ impl Outbound for DirectOut {
                         self_clone.cfg.half_close_timeout,
                     )
                     .await?;
+
+                    tracing::info!(
+                        upload = %format!("{} bytes", u.1),
+                        download = %format!("{} bytes", u.0),
+                        event = "direct:tcp_request_completed",
+                        "request finished",
+                    );
                     Ok(()) as Result<(), SError>
                 };
                 fut.await?;
@@ -213,7 +220,9 @@ impl DirectOut {
         let dns_cache = DnsResolve(Default::default(), self.dns.clone());
         let dns_cache_clone = dns_cache.clone();
         let dns_strategy = self.cfg.dns_strategy.clone();
-        let fut1 = async move {
+        let mut upload: u64 = 0;
+        let mut download: u64 = 0;
+        let fut1 = async {
             loop {
                 let mut buf_send = BytesMut::new();
                 buf_send.resize(2000, 0);
@@ -225,19 +234,21 @@ impl DirectOut {
                 let buf = buf_send.freeze();
                 //trace!("udp recved:{} bytes", len);
                 let _ = udp_session.send.send_to(buf.slice(..len), dst).await?;
+                download += len as u64;
             }
             #[allow(unreachable_code)]
             (Ok(()) as Result<(), SError>)
         };
-        let fut2 = async move {
+        let fut2 = async {
             loop {
                 let (buf, dst) = downstream.recv_from().await?;
 
                 //trace!("udp request to:{}", dst);
                 let dst = dns_cache.resolve(&dst, &dns_strategy).await?;
                 //trace!("udp resolve to:{}", dst);
-                let _siz = upstream_clone.send_to(&buf, &dst).await?;
+                let siz = upstream_clone.send_to(&buf, &dst).await?;
                 //trace!("udp request sent:{}bytes", siz);
+                upload += siz as u64;
             }
             #[allow(unreachable_code)]
             (Ok(()) as Result<(), SError>)
@@ -254,7 +265,14 @@ impl DirectOut {
         };
         // We can use spawn, but it requirs communication to shutdown the other
         // Flatten spawn handle using try_join! doesn't work. Don't know why
-        tokio::try_join!(fut1, fut2, fut3)?;
+        let result = tokio::try_join!(fut1, fut2, fut3);
+        tracing::info!(
+            upload = %format!("{} bytes", upload),
+            download = %format!("{} bytes", download),
+            event = "direct:udp_association_completed",
+            "udp association finished",
+        );
+        result?;
         Ok(())
     }
 }
