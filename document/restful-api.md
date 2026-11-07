@@ -159,7 +159,10 @@ marker or row to inspect its raw fields and span context. Times are relative to
 the earliest timestamp in the retained capture. Records without timestamps
 remain in the event table but have no timeline marker.
 
-Grouping uses `req_id` first, normalizing numeric and string IDs to the same key.
+Grouping reads `fields.req_id` from the log record first, then a flattened
+top-level `req_id`, then span fields from the nearest span outward. Numeric and
+string IDs normalize to the same key, including zero; blank or invalid IDs are
+skipped so they do not hide a usable span ID.
 Otherwise an inbound span's connection ID, tag and source identify a connection.
 Records without either identity appear as unscoped events; destinations alone
 are not used to infer connections. Imported captures should come from one

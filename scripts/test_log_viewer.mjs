@@ -31,6 +31,56 @@ test("request ID zero and displayed string IDs identify the same request", () =>
   );
 });
 
+test("log fields and span fields join the same request group", () => {
+  const records = [
+    { event: "socks:connection_started", fields: { req_id: 42 }, spans: [] },
+    { event: "proxy:request_accepted", req_id: "42" },
+    {
+      event: "routing:outbound_selected",
+      spans: [{ name: "tcp_req", fields: { req_id: "42" } }],
+    },
+  ];
+  assert.deepEqual(
+    json(
+      `Array.from(groupRecords(${JSON.stringify(records)}.map(normalize)).values())`,
+    ).map(({ key, count }) => ({ key, count })),
+    [{ key: "req:42", count: 3 }],
+  );
+  assert.equal(evaluate("identity({req_id:0}).key"), "req:0");
+  assert.equal(
+    evaluate('identity({req_id:0,dst:"example.com:443"}).subtitle'),
+    "example.com:443",
+  );
+});
+
+test("explicit log IDs take precedence over inherited span IDs", () => {
+  assert.equal(
+    evaluate(
+      "identity({fields:{req_id:0},req_id:99,spans:[{fields:{req_id:7}}]}).key",
+    ),
+    "req:0",
+  );
+  assert.equal(
+    evaluate('identity({req_id:"12",spans:[{fields:{req_id:7}}]}).key'),
+    "req:12",
+  );
+});
+
+test("empty or invalid IDs fall back to the nearest usable span ID", () => {
+  for (const value of [null, "", "  ", false, {}, [], -1, 1.5]) {
+    assert.equal(
+      evaluate(
+        `identity({fields:{req_id:${JSON.stringify(value)}},spans:[{fields:{req_id:7}},{fields:{req_id:null}}]}).key`,
+      ),
+      "req:7",
+    );
+  }
+  assert.equal(
+    evaluate("identity({spans:[{fields:{req_id:7}},{fields:{req_id:8}}]}).key"),
+    "req:8",
+  );
+});
+
 test("connection IDs are scoped by inbound and source, never by destination alone", () => {
   const keys = json(
     '["one","two"].map(tag=>identity({spans:[{name:"inbound",fields:{tag,src:"127.0.0.1:4000",id:7}}]}).key)',

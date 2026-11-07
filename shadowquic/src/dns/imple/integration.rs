@@ -173,6 +173,7 @@ impl Inbound for RestoringInbound {
         req.set_dst(self.fake.restore(req.dst())?);
         if &old_dst != req.dst() {
             tracing::trace!(
+                req_id = req.user_context().req_id,
                 event = "dns:fakeip_mapped",
                 "fakeip mapping: {} -> {}",
                 old_dst,

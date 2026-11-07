@@ -109,14 +109,6 @@ impl TproxyServer {
 #[async_trait]
 impl Inbound for TproxyServer {
     async fn accept(&mut self) -> Result<ProxyRequest, SError> {
-        let tag = self.cfg.tag.clone();
-        let span = tracing::info_span!("inbound",
-        tag = %tag,
-        src = tracing::field::Empty,
-        user = tracing::field::Empty,
-        id = tracing::field::Empty,
-        req_id = tracing::field::Empty,
-                );
         let mut req: ProxyRequest = tokio::select! {
             (stream, addr, req_id) = async {
                 loop {
@@ -146,12 +138,8 @@ impl Inbound for TproxyServer {
                     },
                     port: orig_dst.port(),
                 };
-                span.record("req_id", tracing::field::display(req_id));
-                span.record("src", tracing::field::display(addr));
-                span.record("dst", tracing::field::display(&dst));
-                span.in_scope(|| {
-                    tracing::info!(event = "tproxy:tcp_connection_started", "accepted tproxy tcp connection");
-                });
+
+                tracing::info!(req_id, src=%addr, dst=%dst,event = "tproxy:tcp_connection_started", "accepted tproxy tcp connection");
                 ProxyRequest::Tcp(TcpSession {
                     stream: Box::new(stream),
                     dst,
@@ -163,14 +151,21 @@ impl Inbound for TproxyServer {
                 })
             }
             Some(req) = self.udp_req_rx.recv() => {
-                if let ProxyRequest::Udp(session) = &req
-                    && let Some(addr) = session.src_addr {
-                        span.record("src", tracing::field::display(addr));
+                if let ProxyRequest::Udp(session) = &req {
+                    if let Some(addr) = session.src_addr {
+                        tracing::info!(req_id = session.user_context.req_id,
+                            src = %addr,
+                        dst = %req.dst(),
+                        event = "tproxy:udp_request_accepted", "accepted tproxy udp request");
+                    } else {
+                        tracing::info!(req_id = session.user_context.req_id,
+                        dst = %req.dst(),
+                        event = "tproxy:udp_request_accepted", "accepted tproxy udp request");
+
                     }
-                span.record("dst", tracing::field::display(req.dst()));
-                span.in_scope(|| {
-                    tracing::info!(event = "proxy:udp_request_accepted", "accepted tproxy udp request");
-                });
+                }
+
+
                 req
             }
         };
@@ -272,7 +267,11 @@ impl UdpSend for TproxyUdpSend {
         .await
     }
 }
-
+struct UdpSessionItem {
+    tx: Sender<(Bytes, SocksAddr)>,
+    last_active: std::time::Instant,
+    req_id: u32,
+}
 async fn handle_udp_tproxy(
     bind_addr: SocketAddr,
     req_tx: Sender<ProxyRequest>,
@@ -328,8 +327,7 @@ async fn handle_udp_tproxy(
             .map_err(|e| SError::SocksError(e.to_string()))?,
     );
 
-    let mut sessions: HashMap<SocketAddr, (Sender<(Bytes, SocksAddr)>, std::time::Instant)> =
-        HashMap::new();
+    let mut sessions: HashMap<SocketAddr, UdpSessionItem> = HashMap::new();
     const MAX_UDP_PAYLOAD_SIZE: usize = 1500;
     const UDP_GRO_MAX_SEGMENTS: usize = 64;
 
@@ -351,7 +349,7 @@ async fn handle_udp_tproxy(
                         let now = std::time::Instant::now();
 
 
-                        let tx = if let Some((tx, last_active)) = sessions.get_mut(&client_addr) {
+                        let tx = if let Some(UdpSessionItem { tx, last_active, .. }) = sessions.get_mut(&client_addr) {
                             *last_active = now;
                             tx.clone()
                         } else {
@@ -388,7 +386,7 @@ async fn handle_udp_tproxy(
                             if req_tx.send(req).await.is_err() {
                                 break;
                             }
-                            sessions.insert(client_addr, (tx.clone(), now));
+                            sessions.insert(client_addr, UdpSessionItem { tx: tx.clone(), last_active: now, req_id });
                             tx
                         };
 
@@ -426,10 +424,10 @@ async fn handle_udp_tproxy(
             }
             _ = cleanup_interval.tick() => {
                 let now = std::time::Instant::now();
-                sessions.retain(|addr, (tx, last_active)| {
+                sessions.retain(|addr, UdpSessionItem { tx, last_active, req_id }| {
                     let keep = !tx.is_closed() && now.duration_since(*last_active) < idle_timeout;
                     if !keep {
-                        tracing::trace!(event = "tproxy:udp_session_expired", "cleaning up idle udp session for {}", addr);
+                        tracing::trace!(req_id,event = "tproxy:udp_session_expired", "cleaning up idle udp session for {}", addr);
                     }
                     keep
                 });

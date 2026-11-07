@@ -786,18 +786,36 @@ Request IDs and connection fields appear here.</pre>
           Object.assign(result, span.fields || {});
         return result;
       }
+      function requestId(raw) {
+        const candidates = [raw.fields?.req_id, raw.req_id];
+        for (const span of [...(raw.spans || [])].reverse()) {
+          candidates.push(span.fields?.req_id);
+        }
+        for (const value of candidates) {
+          if (typeof value === "string" && value.trim() !== "") {
+            return value.trim();
+          }
+          if (
+            typeof value === "number" &&
+            Number.isSafeInteger(value) &&
+            value >= 0
+          ) {
+            return String(value);
+          }
+        }
+        return null;
+      }
       function identity(raw) {
         const fields = { ...spanFields(raw), ...(raw.fields || {}) };
-        if (
-          fields.req_id !== undefined &&
-          fields.req_id !== null &&
-          String(fields.req_id) !== ""
-        )
+        const reqId = requestId(raw);
+        if (reqId !== null)
           return {
-            key: "req:" + String(fields.req_id),
-            label: "Request " + String(fields.req_id),
+            key: "req:" + reqId,
+            label: "Request " + reqId,
             request: true,
-            subtitle: String(fields.dst || fields.src || ""),
+            subtitle: String(
+              fields.dst || raw.dst || fields.src || raw.src || "",
+            ),
           };
         const inbound = (raw.spans || []).find(
           (s) =>
