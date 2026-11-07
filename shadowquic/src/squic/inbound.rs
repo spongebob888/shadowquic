@@ -142,8 +142,8 @@ impl<C: QuicConnection> SQServerConn<C> {
             | SQReq::SQAssociatOverStream(ref dst)) => {
                 let user = user.unwrap();
                 info!(event = "squic:udp_associate_request_accepted", bind_addr = %dst, "udp associate request accepted");
-                let (local_send, udp_recv) = channel::<(Bytes, SocksAddr)>(10);
-                let (udp_send, local_recv) = channel::<(Bytes, SocksAddr)>(10);
+                let (local_send, udp_recv) = channel::<(Bytes, SocksAddr)>(32);
+                let (udp_send, local_recv) = channel::<(Bytes, SocksAddr)>(32);
                 let publish_request = async {
                     let udp = UdpSession::<AnyUdpRecv, AnyUdpSend> {
                         recv: Box::new(udp_recv),
