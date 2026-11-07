@@ -382,7 +382,7 @@ impl<W: AsyncWrite> AssociateSendSession<W> {
         } else {
             let id = self.id_store.fetch_new_id(()).await;
             self.dst_map.insert(addr.clone(), id);
-            debug!(event = "squic:send_context_created", context_id = id, dst = %addr, "send session insert");
+            debug!(event = "squic:send_context_id_created", context_id = id, dst = %addr, "send session insert");
             (id, true)
         }
     }
@@ -402,7 +402,7 @@ impl<W: AsyncWrite> Drop for AssociateSendSession<W> {
                 let decrease = len - id_store.len();
                 event!(
                     Level::TRACE,
-                    event = "squic:send_contexts_removed",
+                    event = "squic:send_context_ids_removed",
                     "AssociateSendSession dropped, session id size:{}, {} ids cleaned",
                     id_remove.len(),
                     decrease
@@ -432,7 +432,7 @@ impl AssociateRecvSession {
             self.id_store
                 .store_socket_with_prelude(id, (socks, dst.clone()))
                 .await?;
-            debug!(event = "squic:receive_context_created", context_id = id, dst = %dst, "recv session insert");
+            debug!(event = "squic:receive_context_id_created", context_id = id, dst = %dst, "recv session insert");
             e.insert(dst);
         }
         Ok(())
@@ -454,7 +454,7 @@ impl Drop for AssociateRecvSession {
                 let decrease = len - id_store.len();
                 event!(
                     Level::TRACE,
-                    event = "squic:receive_contexts_removed",
+                    event = "squic:receive_context_ids_removed",
                     "AssociateRecvSession dropped, session id size:{}, {} ids cleaned",
                     id_remove.len(),
                     decrease
@@ -494,7 +494,7 @@ pub async fn handle_udp_send<C: QuicConnection>(
         }
         let (id, is_new) = session.get_id_or_insert(&dst).await;
         if should_trace {
-            trace!(target: "shadowquic::squic::udp", event = "squic:context_resolved", context_id = id, dst = %dst, "session id resolved,is_new_id:{}", is_new);
+            trace!(target: "shadowquic::squic::udp", event = "squic:context_id_resolved", context_id = id, dst = %dst, "session id resolved,is_new_id:{}", is_new);
         }
         //let span = trace_span!("udp", id = id);
         let ctl_header = SQUdpControlHeader {

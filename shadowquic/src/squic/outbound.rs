@@ -43,7 +43,7 @@ pub async fn handle_request<C: QuicConnection>(
                 info!(event = "squic:bidirectional_stream_opened", dst = %tcp_session.dst, "bistream opened for tcp");
                 let req = SQReq::SQConnect(tcp_session.dst.clone());
                 req.encode(&mut send).await?;
-                trace!(event = "proxy:tcp_request_sent", dst = %tcp_session.dst, "tcp connect req header sent");
+                trace!(event = "squic:tcp_request_sent", dst = %tcp_session.dst, "tcp connect req header sent");
 
                 let u: (u64, u64) = crate::utils::copy::copy_bidirectional(
                     &mut Unsplit { s: send, r: recv },
@@ -55,7 +55,7 @@ pub async fn handle_request<C: QuicConnection>(
                 .await?;
 
                 info!(
-                    event = "proxy:tcp_request_completed",
+                    event = "squic:tcp_request_completed",
                     "request:{} finished, upload:{}bytes,download:{}bytes",
                     tcp_session.dst,
                     u.1,
@@ -77,7 +77,7 @@ pub async fn handle_request<C: QuicConnection>(
 
                 req.encode(&mut send).await?;
                 trace!(
-                    event = "proxy:udp_associate_request_sent",
+                    event = "squic:udp_associate_request_sent",
                     "udp associate req header sent"
                 );
 
