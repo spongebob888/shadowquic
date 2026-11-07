@@ -521,6 +521,7 @@ impl DnsService for Resolver {
         err(level = "debug")
     )]
     async fn exchange(&self, query: &[u8]) -> Result<Vec<u8>> {
+        async {
         let packet = parse_query(query)?;
         let question = &packet.questions[0];
         tracing::Span::current().record("domain", tracing::field::display(&question.qname));
@@ -561,6 +562,7 @@ impl DnsService for Resolver {
             self.cache.insert(query, packet);
         }
         Ok(reply)
+    }.await.inspect_err(|e| tracing::error!(event = "dns:query_failed", "DNS query failed: {}", e))
     }
 }
 
