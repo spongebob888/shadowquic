@@ -1630,3 +1630,168 @@ async fn connections_sniffer_metadata_follows_receive_half_lifetime() {
         );
     }
 }
+
+async fn log_socket(
+    addr: SocketAddr,
+    path: &str,
+    authorization: Option<&str>,
+) -> Result<tokio_tungstenite::WebSocketStream<TcpStream>, tokio_tungstenite::tungstenite::Error> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let mut request = format!("ws://{addr}{path}").into_client_request().unwrap();
+    if let Some(authorization) = authorization {
+        request
+            .headers_mut()
+            .insert(hyper::header::AUTHORIZATION, authorization.parse().unwrap());
+    }
+    let stream = TcpStream::connect(addr).await.unwrap();
+    tokio_tungstenite::client_async(request, stream)
+        .await
+        .map(|(socket, _)| socket)
+}
+
+#[tokio::test]
+async fn log_websocket_authentication_streaming_and_shutdown() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::{Error, Message};
+    use tracing_subscriber::prelude::*;
+
+    tokio::time::timeout(Duration::from_secs(15), async {
+        let _guard = logs::TEST_LOG_LOCK.lock().await;
+        let mut api = manager(HashMap::new(), HashMap::new());
+        Arc::get_mut(&mut api).unwrap().secret = Some("log secret".into());
+        let (addr, stop, task) = server(api).await;
+        for (path, token) in [
+            ("/api/v1/logs", None),
+            ("/api/v1/logs?token=wrong", None),
+            ("/api/v1/logs?token=log+secret&token=log+secret", None),
+            ("/api/v1/logs?token=log+secret", Some("Bearer wrong")),
+        ] {
+            match log_socket(addr, path, token).await {
+                Err(Error::Http(response)) => {
+                    assert_eq!(response.status(), StatusCode::UNAUTHORIZED)
+                }
+                other => panic!("expected unauthorized upgrade: {other:?}"),
+            }
+        }
+        // Token authentication is limited to the log endpoint.
+        assert_eq!(
+            call(addr, "GET", "/api/v1/traffic?token=log+secret", "")
+                .await
+                .0,
+            401
+        );
+        assert_eq!(
+            call_with_authorization(addr, "GET", "/api/v1/logs", "", &["Bearer log secret"])
+                .await
+                .0,
+            400
+        );
+        assert_eq!(
+            call_with_authorization(addr, "POST", "/api/v1/logs", "", &["Bearer log secret"])
+                .await
+                .0,
+            405
+        );
+
+        let mut first = log_socket(addr, "/api/v1/logs", Some("Bearer log secret"))
+            .await
+            .unwrap();
+        let mut second = log_socket(addr, "/api/v1/logs?token=log+secret", None)
+            .await
+            .unwrap();
+        let subscriber = tracing_subscriber::registry().with(logs::LogLayer);
+        tracing::subscriber::with_default(subscriber, || {
+            let parent = tracing::info_span!(
+                "inbound",
+                tag = "log-test",
+                req_id = 42_u64,
+                user = tracing::field::Empty
+            );
+            parent.record("user", "alice");
+            let _entered = parent.enter();
+            let child = tracing::info_span!("request", dst = "example.com:443");
+            let _entered = child.enter();
+            tracing::info!(
+                event = "test:websocket_log",
+                accepted = true,
+                bytes = 123_u64,
+                "streamed record"
+            );
+        });
+        for socket in [&mut first, &mut second] {
+            loop {
+                let Message::Text(text) = socket.next().await.unwrap().unwrap() else {
+                    continue;
+                };
+                let record: Value = serde_json::from_str(&text).unwrap();
+                if record["event"] != "test:websocket_log" {
+                    continue;
+                }
+                assert_eq!(record["level"], "INFO");
+                assert_eq!(record["fields"]["accepted"], true);
+                assert_eq!(record["fields"]["bytes"], 123);
+                assert_eq!(record["fields"]["message"], "streamed record");
+                assert!(record["timestamp"].as_str().unwrap().ends_with('Z'));
+                assert_eq!(record["spans"][0]["name"], "inbound");
+                assert_eq!(record["spans"][0]["fields"]["req_id"], 42);
+                assert_eq!(record["spans"][0]["fields"]["user"], "alice");
+                assert_eq!(record["spans"][1]["fields"]["dst"], "example.com:443");
+                break;
+            }
+        }
+        // On this current-thread runtime the stream tasks cannot drain the
+        // broadcast buffer until this synchronous burst finishes.
+        tracing::subscriber::with_default(
+            tracing_subscriber::registry().with(logs::LogLayer),
+            || {
+                for _ in 0..2048 {
+                    tracing::info!(event = "test:log_burst", "burst");
+                }
+            },
+        );
+        loop {
+            let Message::Text(text) = first.next().await.unwrap().unwrap() else {
+                continue;
+            };
+            let record: Value = serde_json::from_str(&text).unwrap();
+            if record["event"] == "api:logs_lagged" {
+                assert!(record["dropped"].as_u64().unwrap() > 0);
+                break;
+            }
+        }
+        first
+            .send(Message::Ping(Bytes::from_static(b"ping")))
+            .await
+            .unwrap();
+        loop {
+            if let Message::Pong(data) = first.next().await.unwrap().unwrap() {
+                assert_eq!(data, Bytes::from_static(b"ping"));
+                break;
+            }
+        }
+        first.send(Message::Close(None)).await.unwrap();
+        loop {
+            if matches!(first.next().await, Some(Ok(Message::Close(_))) | None) {
+                break;
+            }
+        }
+        stop.send(true).unwrap();
+        task.await.unwrap().unwrap();
+        // Upgraded streams belong to the API's connection task set.
+        loop {
+            if matches!(
+                second.next().await,
+                None | Some(Err(_)) | Some(Ok(Message::Close(_)))
+            ) {
+                break;
+            }
+        }
+        let (addr, stop, task) = server(manager(HashMap::new(), HashMap::new())).await;
+        let mut socket = log_socket(addr, "/api/v1/logs", None).await.unwrap();
+        socket.close(None).await.unwrap();
+        stop.send(true).unwrap();
+        task.await.unwrap().unwrap();
+    })
+    .await
+    .unwrap();
+}

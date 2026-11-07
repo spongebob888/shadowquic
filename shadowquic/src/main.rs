@@ -271,6 +271,9 @@ fn setup_log(level: LogLevel) {
         .with_writer(std::io::stdout)
         .with_filter(filter);
     let sub = tracing_subscriber::registry().with(fmt);
+    #[cfg(feature = "restful-api")]
+    let sub = sub
+        .with(shadowquic::api::logs::LogLayer.with_filter(shadowquic::api::logs::trace_filter()));
     #[cfg(feature = "tokio-console")]
     let sub = sub.with(console_layer);
     sub.init();
