@@ -40,6 +40,7 @@ pub fn bind_device(socket: &Socket, device_name: &str) -> io::Result<()> {
         if errno != 0 {
             let last_err = io::Error::last_os_error();
             tracing::error!(
+                event = "connectivity:interface_binding_failed",
                 "bind socket to interface (IPv6 Unicast) failed, errno: {}, err: {:?}",
                 errno,
                 last_err
@@ -60,6 +61,7 @@ pub fn bind_device(socket: &Socket, device_name: &str) -> io::Result<()> {
             if errno != 0 {
                 let last_err = io::Error::last_os_error();
                 tracing::error!(
+                    event = "connectivity:interface_binding_failed",
                     "bind socket to interface (IPv6 Multicast) failed, errno: {}, err: {:?}",
                     errno,
                     last_err
@@ -101,6 +103,7 @@ pub fn bind_device(socket: &Socket, device_name: &str) -> io::Result<()> {
         if errno != 0 {
             let last_err = io::Error::last_os_error();
             tracing::error!(
+                event = "connectivity:interface_binding_failed",
                 "bind socket to interface (IPv4 Unicast) failed, errno: {}, err: {:?}",
                 errno,
                 last_err
@@ -121,6 +124,7 @@ pub fn bind_device(socket: &Socket, device_name: &str) -> io::Result<()> {
             if errno != 0 {
                 let last_err = io::Error::last_os_error();
                 tracing::error!(
+                    event = "connectivity:interface_binding_failed",
                     "bind socket to interface (IPv4 Multicast) failed, errno: {}, err: {:?}",
                     errno,
                     last_err

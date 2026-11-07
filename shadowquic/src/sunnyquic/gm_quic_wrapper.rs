@@ -129,7 +129,7 @@ impl QuicConnection for Connection {
     }
     async fn read_datagram(&self) -> Result<Bytes, QuicErrorRepr> {
         let bytes = poll_fn(|cx| self.datagram_reader.poll_recv(cx)).await?;
-        tracing::info!("Received datagram");
+        tracing::info!(event = "sunnyquic:datagram_received", "Received datagram");
         Ok(bytes)
     }
     async fn send_datagram(&self, bytes: Bytes) -> Result<(), QuicErrorRepr> {
@@ -224,6 +224,7 @@ impl QuicServer for EndServer {
             .await
             .map_err(|error| QuicErrorRepr::QuicBaseError(error.to_string()))?;
         tracing::info!(
+            event = "quic:connection_started",
             "Accepted new connection from {}, sni: {:?}",
             link.src(),
             sni
@@ -236,7 +237,10 @@ impl QuicServer for EndServer {
     }
 
     async fn update_config(&self, _cfg: &Self::SC) -> crate::error::SResult<()> {
-        tracing::warn!("sunnyquic gm-quic server does not support updating config");
+        tracing::warn!(
+            event = "configuration:update_unsupported",
+            "sunnyquic gm-quic server does not support updating config"
+        );
         Ok(())
     }
 }

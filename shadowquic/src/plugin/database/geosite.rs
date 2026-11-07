@@ -218,7 +218,7 @@ pub(super) fn import_geosite(
                 match AttrType::parse(&attribute) {
                     Some(attribute) => attributes |= attribute as u32,
                     None if warned_attributes.insert(attribute.clone()) => {
-                        tracing::warn!(%attribute, list = %list.name, "ignoring unknown geosite attribute");
+                        tracing::warn!(event = "database:unknown_attribute", %attribute, list = %list.name, "ignoring unknown geosite attribute");
                     }
                     None => {}
                 }

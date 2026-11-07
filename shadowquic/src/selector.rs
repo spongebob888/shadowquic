@@ -96,7 +96,7 @@ impl Outbound for SelectorOutbound {
     #[tracing::instrument(name = "outbound", skip_all, fields(tag = %self.tag))]
     async fn handle(&self, req: ProxyRequest) -> Result<(), SError> {
         let (tag, outbound) = &self.members[self.selected.load(Ordering::Relaxed)];
-        tracing::debug!(outbound = %tag, "dispatching selector session");
+        tracing::debug!(event = "routing:selector_dispatched", outbound = %tag, "dispatching selector session");
         outbound.handle(req).await
     }
 }

@@ -1,0 +1,1581 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src ws: wss:; base-uri 'none'; form-action 'none'"
+    />
+    <title>Shadowquic · Trace explorer</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #172631;
+        --muted: #697580;
+        --line: #dce2e5;
+        --paper: #f5f6f4;
+        --accent: #df653f;
+        --nav: #172b37;
+        --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font:
+          14px/1.5 system-ui,
+          -apple-system,
+          sans-serif;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 7px 12px;
+        background: white;
+        color: var(--ink);
+        white-space: nowrap;
+      }
+      button:hover {
+        border-color: #8799a3;
+        background: #f3f6f7;
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: white;
+      }
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible,
+      a:focus-visible,
+      [tabindex]:focus-visible {
+        outline: 3px solid #4595cd;
+        outline-offset: 2px;
+      }
+      input,
+      select {
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        padding: 7px 9px;
+        background: white;
+        color: var(--ink);
+      }
+      label {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .mono {
+        font-family: var(--mono);
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .top {
+        background: var(--nav);
+        color: white;
+        padding: 17px 24px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 15px;
+      }
+      .brand {
+        font-size: 16px;
+        font-weight: 650;
+        letter-spacing: 0.02em;
+      }
+      .brand span {
+        font-weight: 400;
+        color: #9bb0bd;
+        margin-left: 10px;
+      }
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: #c2d0d8;
+        font-size: 12px;
+      }
+      .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #869ca8;
+      }
+      .status[data-state="live"] .dot {
+        background: #82d8a5;
+      }
+      .status[data-state="error"] .dot {
+        background: #ff9678;
+      }
+      .connect {
+        padding: 14px 24px;
+        background: white;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: end;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .connect label {
+        display: grid;
+        gap: 4px;
+      }
+      .connect .endpoint {
+        flex: 1;
+        min-width: 230px;
+      }
+      .connect input {
+        width: 100%;
+      }
+      .connect .secret {
+        width: 180px;
+      }
+      .actions {
+        display: flex;
+        gap: 7px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 250px minmax(0, 1fr);
+        min-height: calc(100vh - 145px);
+      }
+      aside {
+        min-width: 0;
+        background: #edf1f1;
+        border-right: 1px solid var(--line);
+        padding: 20px 12px;
+      }
+      aside h2 {
+        margin: 0 8px 12px;
+        font-size: 12px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+      }
+      #requestSearch {
+        width: 100%;
+        margin-bottom: 10px;
+      }
+      .requests {
+        max-height: calc(100vh - 260px);
+        overflow: auto;
+      }
+      .request {
+        display: block;
+        width: 100%;
+        text-align: left;
+        border-color: transparent;
+        background: transparent;
+        margin-bottom: 5px;
+        padding: 10px;
+      }
+      .request[aria-pressed="true"] {
+        border-color: #bdcbd1;
+        background: white;
+        box-shadow: 0 2px 7px #192c3607;
+      }
+      .request small {
+        display: block;
+        color: var(--muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .request .count {
+        float: right;
+        font: 11px var(--mono);
+        color: var(--muted);
+        padding: 3px;
+      }
+      .sidebar-note {
+        font-size: 11px;
+        color: var(--muted);
+        margin: 16px 8px;
+      }
+      main {
+        min-width: 0;
+        padding: 26px 28px;
+      }
+      .heading {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 15px;
+        margin-bottom: 20px;
+      }
+      .eyebrow {
+        font: 11px var(--mono);
+        color: var(--accent);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+      h1 {
+        font-size: 27px;
+        font-weight: 600;
+        letter-spacing: -0.04em;
+        margin: 4px 0;
+      }
+      h2 {
+        font-size: 14px;
+        margin: 0;
+        font-weight: 650;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+        margin-bottom: 20px;
+      }
+      .stat {
+        background: white;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        padding: 13px 16px;
+      }
+      .stat span {
+        display: block;
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .stat strong {
+        font: 25px var(--mono);
+        display: block;
+        margin-top: 6px;
+      }
+      .panel {
+        background: white;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        margin-bottom: 18px;
+        overflow: hidden;
+      }
+      .panel-head {
+        padding: 13px 16px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .panel-head small {
+        color: var(--muted);
+        font: 11px var(--mono);
+      }
+      .timeline-wrap {
+        display: grid;
+        grid-template-columns: 138px minmax(0, 1fr);
+        padding: 10px 12px;
+      }
+      .lane-labels {
+        font: 11px var(--mono);
+        padding-top: 28px;
+      }
+      .lane-label {
+        height: 33px;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        overflow: hidden;
+        white-space: nowrap;
+      }
+      .swatch {
+        width: 7px;
+        height: 7px;
+        flex-shrink: 0;
+        border-radius: 2px;
+      }
+      .graph {
+        overflow: auto;
+        max-height: 600px;
+      }
+      .graph svg {
+        display: block;
+      }
+      .timeline-empty {
+        padding: 50px 25px;
+        text-align: center;
+        color: var(--muted);
+      }
+      .filters {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        padding: 12px 16px;
+        background: #fafbfa;
+        border-bottom: 1px solid var(--line);
+      }
+      .filters input {
+        flex: 1;
+        min-width: 190px;
+      }
+      .filters select {
+        max-width: 190px;
+      }
+      .table-scroll {
+        overflow: auto;
+        max-height: 410px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        text-align: left;
+        font-size: 12px;
+      }
+      th {
+        position: sticky;
+        top: 0;
+        background: #f4f6f5;
+        color: var(--muted);
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+      td,
+      th {
+        padding: 9px 13px;
+        border-bottom: 1px solid #edf0f1;
+      }
+      td {
+        white-space: nowrap;
+      }
+      tr[data-record] {
+        cursor: pointer;
+      }
+      tr[data-record]:hover {
+        background: #f4f8f9;
+      }
+      tr.selected {
+        background: #fff1e9;
+      }
+      .event-name {
+        font-family: var(--mono);
+        font-size: 11px;
+      }
+      .message {
+        max-width: 450px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .level {
+        font: 10px var(--mono);
+        color: var(--muted);
+      }
+      .level.ERROR,
+      .level.WARN {
+        color: #b34727;
+      }
+      .table-note {
+        padding: 9px 16px;
+        color: var(--muted);
+        font-size: 11px;
+        border-top: 1px solid var(--line);
+      }
+      .details {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      }
+      .details > div {
+        padding: 16px;
+        min-width: 0;
+      }
+      .details > div + div {
+        border-left: 1px solid var(--line);
+      }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        font: 11px/1.7 var(--mono);
+        max-height: 340px;
+        overflow: auto;
+      }
+      .detail-title {
+        font: 12px var(--mono);
+        margin-bottom: 10px;
+        color: var(--accent);
+      }
+      .empty-state {
+        padding: 46px 22px;
+        text-align: center;
+        color: var(--muted);
+      }
+      .empty-state strong {
+        display: block;
+        color: var(--ink);
+        margin-bottom: 6px;
+        font-size: 15px;
+      }
+      .notice {
+        padding: 9px 14px;
+        margin-bottom: 16px;
+        background: #fff0df;
+        border: 1px solid #e9caa4;
+        border-radius: 6px;
+        font-size: 12px;
+      }
+      .notice[hidden] {
+        display: none;
+      }
+      .footer {
+        font-size: 11px;
+        color: var(--muted);
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .hidden {
+        display: none !important;
+      }
+      input[type="range"] {
+        padding: 0;
+        width: 95px;
+        accent-color: var(--accent);
+      }
+      #sourceLabel {
+        max-width: 50vw;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      a {
+        color: #327494;
+      }
+      @media (max-width: 1000px) {
+        main {
+          padding: 20px 16px;
+        }
+        .layout {
+          grid-template-columns: 210px minmax(0, 1fr);
+        }
+        .connect {
+          padding: 12px 16px;
+        }
+        .top {
+          padding: 15px 16px;
+        }
+        .heading {
+          align-items: start;
+          flex-direction: column;
+        }
+      }
+      @media (max-width: 700px) {
+        .layout {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        aside {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+          padding: 12px;
+        }
+        aside h2,
+        .sidebar-note {
+          display: none;
+        }
+        .requests {
+          display: flex;
+          gap: 6px;
+          max-height: 120px;
+        }
+        .request {
+          min-width: 180px;
+          width: 180px;
+        }
+        .stats {
+          gap: 6px;
+        }
+        .stat {
+          padding: 9px;
+        }
+        .stat strong {
+          font-size: 20px;
+        }
+        .stat span {
+          font-size: 9px;
+        }
+        .details {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .details > div + div {
+          border-left: 0;
+          border-top: 1px solid var(--line);
+        }
+        .timeline-wrap {
+          grid-template-columns: 107px minmax(0, 1fr);
+        }
+        .lane-labels {
+          font-size: 10px;
+        }
+        .connect .secret {
+          width: 150px;
+        }
+        .brand span {
+          display: none;
+        }
+        #sourceLabel {
+          max-width: 80vw;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">SHADOWQUIC <span>/ Trace explorer</span></div>
+      <div id="status" class="status" data-state="idle" role="status">
+        <span class="dot"></span><span id="statusText">Not connected</span>
+      </div>
+    </header>
+    <form class="connect" id="connectForm">
+      <label class="endpoint"
+        >WebSocket endpoint<input
+          id="endpoint"
+          type="text"
+          spellcheck="false"
+          placeholder="ws://127.0.0.1:9090/api/v1/logs"
+          aria-label="WebSocket endpoint"
+      /></label>
+      <label class="secret"
+        >API secret<input
+          id="secret"
+          type="password"
+          autocomplete="off"
+          placeholder="Optional"
+          aria-label="API secret"
+      /></label>
+      <button class="primary" id="connectButton" type="submit">Connect</button
+      ><button id="disconnectButton" type="button" disabled>Disconnect</button>
+    </form>
+    <div class="layout">
+      <aside>
+        <h2>Requests & connections</h2>
+        <input
+          id="requestSearch"
+          type="search"
+          placeholder="Find a request…"
+          aria-label="Filter requests"
+        />
+        <div id="requests" class="requests"></div>
+        <p id="requestNote" class="sidebar-note">
+          Grouped by request ID, then connection identity. Records without
+          either stay unscoped.
+        </p>
+      </aside>
+      <main>
+        <div class="heading">
+          <div>
+            <div class="eyebrow">Trace analysis</div>
+            <h1>Connection timeline</h1>
+            <div id="sourceLabel" class="muted">
+              Connect a live stream or open a capture.
+            </div>
+          </div>
+          <div class="actions">
+            <button id="importButton">Open capture</button
+            ><input
+              id="fileInput"
+              class="hidden"
+              type="file"
+              accept=".json,.jsonl,.ndjson,application/json"
+            /><button id="exportButton" disabled>Export JSONL</button
+            ><button id="demoButton">Load demo</button>
+          </div>
+        </div>
+        <div id="notice" class="notice" role="status" hidden></div>
+        <div class="stats">
+          <div class="stat">
+            <span>Captured events</span><strong id="eventCount">0</strong>
+          </div>
+          <div class="stat">
+            <span>Requests</span><strong id="requestCount">0</strong>
+          </div>
+          <div class="stat">
+            <span>Observed window</span><strong id="duration">—</strong>
+          </div>
+          <div class="stat">
+            <span>Server skipped</span><strong id="droppedCount">0</strong>
+          </div>
+        </div>
+        <section class="panel" aria-label="Event timeline">
+          <div class="panel-head">
+            <div>
+              <h2 id="timelineTitle">All activity</h2>
+              <small id="timelineSummary">Relative time · category lanes</small>
+            </div>
+            <div class="actions">
+              <label
+                >Zoom
+                <input
+                  id="zoom"
+                  type="range"
+                  min="1"
+                  max="20"
+                  value="1"
+                  aria-label="Timeline zoom" /></label
+              ><button id="pauseButton" disabled>Pause display</button
+              ><button id="clearButton">Clear</button>
+            </div>
+          </div>
+          <div class="timeline-wrap" id="timelineWrap">
+            <div id="laneLabels" class="lane-labels"></div>
+            <div id="graph" class="graph"></div>
+          </div>
+          <div id="timelineEmpty" class="timeline-empty">
+            Events will appear here as a time-aligned trace.
+          </div>
+        </section>
+        <section class="panel" aria-label="Captured events">
+          <div class="panel-head">
+            <h2>Event log</h2>
+            <small id="filteredCount">0 records</small>
+          </div>
+          <div class="filters">
+            <input
+              id="search"
+              type="search"
+              placeholder="Search events, fields, destinations…"
+              aria-label="Search event records"
+            /><select id="category" aria-label="Category">
+              <option value="">All categories</option></select
+            ><select id="level" aria-label="Log level">
+              <option value="">All levels</option>
+              <option>ERROR</option>
+              <option>WARN</option>
+              <option>INFO</option>
+              <option>DEBUG</option>
+              <option>TRACE</option>
+            </select>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Relative time</th>
+                  <th>Level</th>
+                  <th>Event</th>
+                  <th>Request</th>
+                  <th>Message</th>
+                </tr>
+              </thead>
+              <tbody id="events"></tbody>
+            </table>
+            <div id="eventsEmpty" class="empty-state">
+              <strong>No events yet</strong>Load the demo to explore the viewer,
+              or connect your API.
+            </div>
+          </div>
+          <div class="table-note" id="tableNote">
+            Select an event to inspect its fields and span context.
+          </div>
+        </section>
+        <section class="panel" aria-label="Event inspector">
+          <div class="panel-head">
+            <h2>Event inspector</h2>
+            <small id="selectedTime">No event selected</small>
+          </div>
+          <div class="details">
+            <div>
+              <div class="detail-title">Record</div>
+              <pre id="recordDetails">
+Select a timeline marker or event row.</pre>
+            </div>
+            <div>
+              <div class="detail-title">Span context · root → leaf</div>
+              <pre id="spanDetails">
+Request IDs and connection fields appear here.</pre>
+            </div>
+          </div>
+        </section>
+        <div class="footer">
+          <span id="captureInfo"
+            >Live capture retains up to 20,000 records in memory.</span
+          ><span>Observed events only · no inferred connection lifecycle</span>
+        </div>
+      </main>
+    </div>
+    <script id="viewer-script">
+      "use strict";
+      const MAX_RECORDS = 20000,
+        MAX_FILE_SIZE = 25 * 1024 * 1024,
+        MAX_MARKERS = 5000,
+        MAX_ROWS = 500;
+      const $ = (id) => document.getElementById(id);
+      const state = {
+        records: [],
+        nextId: 1,
+        selectedGroup: "all",
+        selectedRecord: null,
+        socket: null,
+        paused: null,
+        dropped: 0,
+        evicted: 0,
+        invalid: 0,
+        source: "",
+        pending: false,
+      };
+      const palette = [
+        "#417aa0",
+        "#d4764d",
+        "#5b947b",
+        "#9b71ab",
+        "#b19a42",
+        "#518f99",
+        "#b5637a",
+        "#788cb2",
+      ];
+      const categories = {
+        socks: "#467fa4",
+        squic: "#ce7752",
+        quic: "#8479af",
+        routing: "#709e76",
+        dns: "#b39a49",
+        security: "#b66e88",
+        connectivity: "#518f99",
+        proxy: "#748d9c",
+        api: "#bd6854",
+      };
+      function color(name) {
+        if (Object.hasOwn(categories, name)) return categories[name];
+        let n = 0;
+        for (const c of name) n = (n * 31 + c.charCodeAt(0)) >>> 0;
+        return palette[n % palette.length];
+      }
+      function object(value) {
+        return (
+          value !== null && typeof value === "object" && !Array.isArray(value)
+        );
+      }
+      function timestamp(value) {
+        if (typeof value !== "string") return null;
+        const match = value.match(/\.(\d+)(Z|[+-]\d\d:\d\d)$/);
+        const base = Date.parse(
+          match ? value.replace(/\.\d+(Z|[+-]\d\d:\d\d)$/, "$1") : value,
+        );
+        return Number.isFinite(base)
+          ? base + (match ? Number("0." + match[1]) * 1000 : 0)
+          : null;
+      }
+      function spanFields(raw) {
+        const result = Object.create(null);
+        for (const span of raw.spans || [])
+          Object.assign(result, span.fields || {});
+        return result;
+      }
+      function requestId(raw) {
+        const candidates = [raw.fields?.req_id, raw.req_id];
+        for (const span of [...(raw.spans || [])].reverse()) {
+          candidates.push(span.fields?.req_id);
+        }
+        for (const value of candidates) {
+          if (typeof value === "string" && value.trim() !== "") {
+            return value.trim();
+          }
+          if (
+            typeof value === "number" &&
+            Number.isSafeInteger(value) &&
+            value >= 0
+          ) {
+            return String(value);
+          }
+        }
+        return null;
+      }
+      function identity(raw) {
+        const fields = { ...spanFields(raw), ...(raw.fields || {}) };
+        const reqId = requestId(raw);
+        if (reqId !== null)
+          return {
+            key: "req:" + reqId,
+            label: "Request " + reqId,
+            request: true,
+            subtitle: String(
+              fields.dst || raw.dst || fields.src || raw.src || "",
+            ),
+          };
+        const inbound = (raw.spans || []).find(
+          (s) =>
+            s.name === "inbound" &&
+            s.fields &&
+            s.fields.id !== undefined &&
+            s.fields.id !== null &&
+            String(s.fields.id) !== "",
+        );
+        if (inbound) {
+          const f = inbound.fields;
+          return {
+            key:
+              "conn:" +
+              JSON.stringify([f.tag || "", f.src || "", String(f.id)]),
+            label: "Connection " + String(f.id),
+            request: false,
+            subtitle: [f.tag, f.src].filter(Boolean).join(" · "),
+          };
+        }
+        return {
+          key: "unscoped",
+          label: "Unscoped events",
+          request: false,
+          subtitle: "No request or connection ID",
+        };
+      }
+      function normalize(raw) {
+        if (!object(raw)) throw Error("Each record must be a JSON object.");
+        if (
+          raw.fields !== undefined &&
+          raw.fields !== null &&
+          !object(raw.fields)
+        )
+          throw Error("Record fields must be an object.");
+        if (
+          raw.spans !== undefined &&
+          (!Array.isArray(raw.spans) ||
+            raw.spans.some(
+              (s) =>
+                !object(s) || (s.fields !== undefined && !object(s.fields)),
+            ))
+        )
+          throw Error("Record spans must contain span objects.");
+        if (
+          raw.event !== undefined &&
+          raw.event !== null &&
+          typeof raw.event !== "string"
+        )
+          throw Error("Event names must be strings or null.");
+        if (
+          raw.timestamp !== undefined &&
+          raw.timestamp !== null &&
+          timestamp(raw.timestamp) === null
+        )
+          throw Error("Invalid record timestamp.");
+        const group = identity(raw),
+          event = raw.event || "(no event)",
+          category = raw.event ? raw.event.split(":")[0] : "uncategorized";
+        return {
+          raw,
+          id: state.nextId++,
+          time: timestamp(raw.timestamp),
+          group,
+          event,
+          category,
+          level: String(raw.level || "").toUpperCase(),
+          search: JSON.stringify(raw).toLowerCase(),
+        };
+      }
+      function parseCapture(text) {
+        const trimmed = text.trim();
+        if (!trimmed) return [];
+        try {
+          const data = JSON.parse(trimmed);
+          if (Array.isArray(data)) return data;
+          if (object(data) && Array.isArray(data.records)) return data.records;
+          if (object(data)) return [data];
+          throw Error("Expected JSON records.");
+        } catch (error) {
+          if (!(error instanceof SyntaxError)) throw error;
+          return text.split(/\r?\n/).flatMap((line, i) => {
+            if (!line.trim()) return [];
+            try {
+              return [JSON.parse(line)];
+            } catch {
+              throw Error("Invalid JSON on line " + (i + 1) + ".");
+            }
+          });
+        }
+      }
+      function setStatus(text, kind = "idle") {
+        $("statusText").textContent = text;
+        $("status").dataset.state = kind;
+      }
+      function notice(text) {
+        $("notice").textContent = text;
+        $("notice").hidden = !text;
+      }
+      function disconnect(update = true) {
+        const socket = state.socket;
+        state.socket = null;
+        if (socket) socket.close();
+        $("connectButton").disabled = false;
+        $("disconnectButton").disabled = true;
+        if (update) setStatus("Disconnected");
+      }
+      function addRecords(records) {
+        for (const record of records) {
+          if (
+            record.raw.event === "api:logs_lagged" &&
+            Number.isSafeInteger(record.raw.dropped) &&
+            record.raw.dropped > 0
+          )
+            state.dropped += record.raw.dropped;
+          state.records.push(record);
+        }
+        if (state.records.length > MAX_RECORDS) {
+          const extra = state.records.length - MAX_RECORDS;
+          state.records.splice(0, extra);
+          state.evicted += extra;
+        }
+        schedule();
+      }
+      function reset(source) {
+        state.records = [];
+        state.nextId = 1;
+        state.selectedRecord = null;
+        state.selectedGroup = "all";
+        state.paused = null;
+        state.dropped = 0;
+        state.evicted = 0;
+        state.invalid = 0;
+        state.source = source;
+        $("pauseButton").textContent = "Pause display";
+        $("zoom").value = "1";
+        $("search").value = "";
+        $("category").value = "";
+        $("level").value = "";
+        notice("");
+      }
+      function schedule() {
+        if (state.pending) return;
+        state.pending = true;
+        setTimeout(() => {
+          state.pending = false;
+          render();
+        }, 120);
+      }
+      function connect(event) {
+        event.preventDefault();
+        let url;
+        try {
+          url = new URL($("endpoint").value);
+          if (url.protocol === "http:") url.protocol = "ws:";
+          if (url.protocol === "https:") url.protocol = "wss:";
+          if (
+            !["ws:", "wss:"].includes(url.protocol) ||
+            url.username ||
+            url.password
+          )
+            throw Error();
+          if (url.pathname === "/" || url.pathname === "")
+            url.pathname = "/api/v1/logs";
+          if ($("secret").value)
+            url.searchParams.set("token", $("secret").value);
+        } catch {
+          notice("Enter a valid ws:// or wss:// endpoint.");
+          return;
+        }
+        disconnect(false);
+        notice("");
+        let socket;
+        try {
+          socket = new WebSocket(url);
+        } catch (error) {
+          notice("Could not connect: " + error.message);
+          setStatus("Connection failed", "error");
+          return;
+        }
+        state.socket = socket;
+        setStatus("Connecting…");
+        $("connectButton").disabled = true;
+        $("disconnectButton").disabled = false;
+        socket.onopen = () => {
+          if (state.socket !== socket) return;
+          reset("Live · " + url.host);
+          setStatus("Live stream", "live");
+          schedule();
+        };
+        socket.onmessage = ({ data }) => {
+          if (state.socket !== socket) return;
+          try {
+            addRecords([normalize(JSON.parse(data))]);
+          } catch {
+            state.invalid++;
+            schedule();
+          }
+        };
+        socket.onerror = () => {
+          if (state.socket === socket)
+            notice(
+              "WebSocket connection failed. Check the endpoint, API secret, and whether the API is running. An HTTPS page requires wss://.",
+            );
+        };
+        socket.onclose = () => {
+          if (state.socket !== socket) return;
+          state.socket = null;
+          setStatus("Stream closed");
+          $("connectButton").disabled = false;
+          $("disconnectButton").disabled = true;
+          schedule();
+        };
+      }
+      function groupRecords(records) {
+        const groups = new Map();
+        for (const record of records) {
+          let group = groups.get(record.group.key);
+          if (!group) {
+            group = { ...record.group, count: 0 };
+            groups.set(group.key, group);
+          }
+          group.count++;
+          if (record.group.subtitle) group.subtitle = record.group.subtitle;
+        }
+        return groups;
+      }
+      function getFiltered(records) {
+        const query = $("search").value.toLowerCase(),
+          category = $("category").value,
+          level = $("level").value;
+        return records.filter(
+          (r) =>
+            (state.selectedGroup === "all" ||
+              r.group.key === state.selectedGroup) &&
+            (!category || category === r.category) &&
+            (!level || level === r.level) &&
+            (!query || r.search.includes(query)),
+        );
+      }
+      function make(tag, className, text) {
+        const el = document.createElement(tag);
+        if (className) el.className = className;
+        if (text !== undefined) el.textContent = text;
+        return el;
+      }
+      function renderRequests(records, groups) {
+        const list = $("requests");
+        list.replaceChildren();
+        const query = $("requestSearch").value.toLowerCase();
+        const matches = [...groups.values()]
+          .reverse()
+          .filter((group) =>
+            (group.label + " " + group.subtitle).toLowerCase().includes(query),
+          );
+        const visible = matches.slice(0, 200);
+        const selected = groups.get(state.selectedGroup);
+        if (selected && !visible.some((g) => g.key === selected.key))
+          visible.unshift(selected);
+        const all = [
+          {
+            key: "all",
+            label: "All activity",
+            subtitle: "Every request & connection",
+            count: records.length,
+          },
+          ...visible,
+        ];
+        for (const group of all) {
+          const button = make("button", "request");
+          button.type = "button";
+          button.setAttribute(
+            "aria-pressed",
+            String(group.key === state.selectedGroup),
+          );
+          button.append(
+            make("span", "count", group.count.toLocaleString()),
+            make("span", "", group.label),
+            make("small", "", group.subtitle || "Destination not recorded"),
+          );
+          button.onclick = () => {
+            state.selectedGroup = group.key;
+            render();
+          };
+          list.append(button);
+        }
+        $("requestNote").textContent =
+          matches.length > 200
+            ? "Showing the latest 200 matching groups. Search for older requests."
+            : "Grouped by request ID, then connection identity. Records without either stay unscoped.";
+      }
+      function bounds(records) {
+        let start = Infinity,
+          end = -Infinity;
+        for (const r of records)
+          if (r.time !== null) {
+            start = Math.min(start, r.time);
+            end = Math.max(end, r.time);
+          }
+        return start === Infinity ? null : { start, end };
+      }
+      function fmt(ms) {
+        return Math.abs(ms) < 1
+          ? ms.toFixed(3) + " ms"
+          : ms < 1000
+            ? ms.toFixed(2) + " ms"
+            : (ms / 1000).toFixed(3) + " s";
+      }
+      function svgElement(tag, attrs, text) {
+        const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+        for (const [key, val] of Object.entries(attrs))
+          el.setAttribute(key, String(val));
+        if (text !== undefined) el.textContent = text;
+        return el;
+      }
+      function inspect(record) {
+        state.selectedRecord = record;
+        renderInspector();
+        render();
+      }
+      function renderTimeline(records, origin) {
+        const timed = records.filter((r) => r.time !== null);
+        $("graph").replaceChildren();
+        $("laneLabels").replaceChildren();
+        $("timelineEmpty").hidden = timed.length > 0;
+        $("timelineWrap").classList.toggle("hidden", !timed.length);
+        if (!timed.length) return;
+        const time = bounds(timed),
+          span = Math.max(time.end - time.start, 0.001);
+        const names = [...new Set(timed.map((r) => r.category))].sort();
+        for (const name of names) {
+          const label = make("div", "lane-label");
+          const swatch = make("i", "swatch");
+          swatch.style.background = color(name);
+          label.append(swatch, make("span", "", name));
+          $("laneLabels").append(label);
+        }
+        const width =
+            Math.max(480, $("graph").clientWidth) * Number($("zoom").value),
+          height = names.length * 33 + 40,
+          left = 18,
+          right = 30;
+        const svg = svgElement("svg", {
+          width,
+          height,
+          role: "img",
+          "aria-label":
+            "Event markers by category, from " +
+            fmt(time.start - origin) +
+            " to " +
+            fmt(time.end - origin),
+        });
+        for (let i = 0; i <= 8; i++) {
+          const x = left + ((width - left - right) * i) / 8;
+          svg.append(
+            svgElement("line", {
+              x1: x,
+              y1: 24,
+              x2: x,
+              y2: height,
+              stroke: "#e5ebed",
+            }),
+          );
+          svg.append(
+            svgElement(
+              "text",
+              {
+                x,
+                y: 15,
+                "text-anchor": i === 8 ? "end" : "start",
+                fill: "#7c8992",
+                "font-family": "monospace",
+                "font-size": 10,
+              },
+              fmt(time.start - origin + (span * i) / 8),
+            ),
+          );
+        }
+        const lanes = new Map(names.map((name, i) => [name, 41 + i * 33]));
+        for (const name of names)
+          svg.append(
+            svgElement("line", {
+              x1: left,
+              y1: lanes.get(name),
+              x2: width - right,
+              y2: lanes.get(name),
+              stroke: "#f0f3f4",
+            }),
+          );
+        const stride = Math.max(1, Math.ceil(timed.length / MAX_MARKERS));
+        let marks = timed.filter((_, i) => i % stride === 0);
+        if (
+          state.selectedRecord &&
+          timed.includes(state.selectedRecord) &&
+          !marks.includes(state.selectedRecord)
+        )
+          marks.push(state.selectedRecord);
+        for (const record of marks) {
+          const selected = state.selectedRecord?.id === record.id;
+          const mark = svgElement("circle", {
+            cx:
+              left +
+              ((record.time - time.start) / span) * (width - left - right),
+            cy: lanes.get(record.category),
+            r: selected ? 6 : 4,
+            fill: color(record.category),
+            stroke: selected ? "#172b37" : "white",
+            "stroke-width": selected ? 2 : 1,
+            tabindex: 0,
+            role: "button",
+            "aria-label": record.event + " at " + fmt(record.time - origin),
+          });
+          mark.append(
+            svgElement(
+              "title",
+              {},
+              record.event +
+                " · " +
+                fmt(record.time - origin) +
+                " · " +
+                record.group.label,
+            ),
+          );
+          mark.addEventListener("click", () => inspect(record));
+          mark.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              inspect(record);
+            }
+          });
+          svg.append(mark);
+        }
+        $("graph").append(svg);
+        $("timelineSummary").textContent =
+          timed.length.toLocaleString() +
+          " timed events · " +
+          (stride > 1
+            ? marks.length.toLocaleString() + " sampled markers · "
+            : "") +
+          "relative to capture start";
+      }
+      function renderRows(records, origin) {
+        const tbody = $("events");
+        tbody.replaceChildren();
+        const rows = records.slice(-MAX_ROWS);
+        for (const record of rows) {
+          const row = make(
+            "tr",
+            state.selectedRecord?.id === record.id ? "selected" : "",
+          );
+          row.dataset.record = String(record.id);
+          row.tabIndex = 0;
+          row.setAttribute("aria-label", record.event);
+          row.append(
+            make(
+              "td",
+              "mono",
+              record.time === null ? "—" : fmt(record.time - origin),
+            ),
+            make(
+              "td",
+              "level " +
+                (["ERROR", "WARN", "INFO", "DEBUG", "TRACE"].includes(
+                  record.level,
+                )
+                  ? record.level
+                  : ""),
+              record.level || "—",
+            ),
+          );
+          const eventCell = make("td", "event-name", record.event);
+          eventCell.style.color = color(record.category);
+          row.append(
+            eventCell,
+            make(
+              "td",
+              "mono",
+              record.group.request
+                ? record.group.label.replace("Request ", "")
+                : "—",
+            ),
+            make(
+              "td",
+              "message",
+              record.raw.fields?.message ||
+                (record.raw.event === "api:logs_lagged"
+                  ? record.raw.dropped + " records skipped"
+                  : ""),
+            ),
+          );
+          row.onclick = () => inspect(record);
+          row.onkeydown = (e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              inspect(record);
+            }
+          };
+          tbody.append(row);
+        }
+        $("eventsEmpty").hidden = rows.length > 0;
+        if (!rows.length && state.records.length) {
+          $("eventsEmpty").replaceChildren(
+            make("strong", "", "No matching events"),
+            document.createTextNode(
+              "Adjust your filters or select All activity.",
+            ),
+          );
+        } else if (!rows.length) {
+          $("eventsEmpty").replaceChildren(
+            make("strong", "", "No events yet"),
+            document.createTextNode(
+              "Load the demo to explore the viewer, or connect your API.",
+            ),
+          );
+        }
+        $("tableNote").textContent =
+          rows.length < records.length
+            ? "Showing the latest " +
+              MAX_ROWS +
+              " of " +
+              records.length.toLocaleString() +
+              " matching events. Export includes the full retained capture."
+            : "Select an event to inspect its fields and span context.";
+      }
+      function renderInspector() {
+        const record = state.selectedRecord;
+        if (!record) {
+          $("recordDetails").textContent =
+            "Select a timeline marker or event row.";
+          $("spanDetails").textContent =
+            "Request IDs and connection fields appear here.";
+          $("selectedTime").textContent = "No event selected";
+          return;
+        }
+        const { spans, ...rest } = record.raw;
+        $("recordDetails").textContent = JSON.stringify(rest, null, 2);
+        $("spanDetails").textContent = JSON.stringify(spans || [], null, 2);
+        $("selectedTime").textContent =
+          record.raw.timestamp || "No timestamp recorded";
+      }
+      function render() {
+        const records = state.paused || state.records,
+          groups = groupRecords(records);
+        if (state.selectedGroup !== "all" && !groups.has(state.selectedGroup))
+          state.selectedGroup = "all";
+        const selectedCategory = $("category").value,
+          available = [...new Set(records.map((r) => r.category))].sort();
+        $("category").replaceChildren(
+          new Option("All categories", ""),
+          ...available.map((name) => new Option(name, name)),
+        );
+        if (available.includes(selectedCategory))
+          $("category").value = selectedCategory;
+        const filtered = getFiltered(records),
+          time = bounds(records);
+        $("eventCount").textContent = records.length.toLocaleString();
+        $("requestCount").textContent = [...groups.values()]
+          .filter((g) => g.request)
+          .length.toLocaleString();
+        $("duration").textContent = time ? fmt(time.end - time.start) : "—";
+        $("droppedCount").textContent = state.dropped.toLocaleString();
+        $("sourceLabel").textContent =
+          state.source || "Connect a live stream or open a capture.";
+        $("filteredCount").textContent =
+          filtered.length.toLocaleString() +
+          " / " +
+          records.length.toLocaleString() +
+          " records";
+        $("timelineTitle").textContent =
+          state.selectedGroup === "all"
+            ? "All activity"
+            : groups.get(state.selectedGroup)?.label || "All activity";
+        $("timelineSummary").textContent = "Relative time · category lanes";
+        $("exportButton").disabled = !state.records.length;
+        $("pauseButton").disabled = !state.records.length;
+        const messages = [];
+        if (state.paused)
+          messages.push("Display paused. Capture continues in the background.");
+        if (state.dropped)
+          messages.push(
+            state.dropped.toLocaleString() +
+              " records skipped by the server for this client.",
+          );
+        if (state.evicted)
+          messages.push(
+            state.evicted.toLocaleString() +
+              " older records removed by the viewer’s 20,000-record limit.",
+          );
+        if (state.invalid)
+          messages.push(state.invalid + " malformed stream messages ignored.");
+        $("captureInfo").textContent =
+          messages.join(" ") ||
+          "Live capture retains up to 20,000 records in memory.";
+        renderRequests(records, groups);
+        const scroll = $("graph").scrollLeft;
+        renderTimeline(filtered, time?.start || 0);
+        $("graph").scrollLeft = scroll;
+        renderRows(filtered, time?.start || 0);
+        renderInspector();
+      }
+      function exportCapture() {
+        const blob = new Blob(
+          [state.records.map((r) => JSON.stringify(r.raw)).join("\n") + "\n"],
+          { type: "application/x-ndjson" },
+        );
+        const url = URL.createObjectURL(blob);
+        const link = make("a");
+        link.href = url;
+        link.download =
+          "shadowquic-trace-" +
+          new Date().toISOString().replace(/[:.]/g, "-") +
+          ".jsonl";
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+      async function importFile(file) {
+        if (!file) return;
+        try {
+          if (file.size > MAX_FILE_SIZE)
+            throw Error("Capture files must be 25 MiB or smaller.");
+          const raw = parseCapture(await file.text());
+          const records = [];
+          let skipped = 0;
+          for (let i = 0; i < raw.length; i++) {
+            const record = normalize(raw[i]);
+            if (i >= raw.length - MAX_RECORDS) records.push(record);
+            else if (
+              record.raw.event === "api:logs_lagged" &&
+              Number.isSafeInteger(record.raw.dropped) &&
+              record.raw.dropped > 0
+            )
+              skipped += record.raw.dropped;
+          }
+          disconnect(false);
+          reset("Capture · " + file.name);
+          state.nextId = records.reduce((n, r) => Math.max(n, r.id + 1), 1);
+          state.evicted = Math.max(0, raw.length - MAX_RECORDS);
+          state.dropped = skipped;
+          addRecords(records);
+          setStatus("Offline capture");
+          notice(raw.length ? "" : "The capture contains no records.");
+          render();
+        } catch (error) {
+          notice("Could not open capture: " + error.message);
+        } finally {
+          $("fileInput").value = "";
+        }
+      }
+      function loadDemo() {
+        disconnect(false);
+        reset("Demo capture · illustrative events");
+        const base = Date.parse("2026-11-07T08:00:00Z");
+        const raw = [];
+        for (let i = 0; i < 4; i++) {
+          const id = 41 + i,
+            offset = i * 17,
+            dst = [
+              "example.com:443",
+              "api.example.com:443",
+              "dns.example.com:853",
+              "static.example.com:443",
+            ][i];
+          for (const [ms, event, message, level] of [
+            [
+              0,
+              "socks:connection_started",
+              "accepted socks connection",
+              "INFO",
+            ],
+            [
+              2,
+              "security:authentication_succeeded",
+              "socks authentication succeeded",
+              "DEBUG",
+            ],
+            [
+              4,
+              "socks:tcp_request_accepted",
+              "tcp connect request accepted",
+              "INFO",
+            ],
+            [9, "dns:query_received", "received DNS query", "INFO"],
+            [15, "dns:response_received", "received DNS response", "DEBUG"],
+            [17, "routing:outbound_selected", "routing request", "DEBUG"],
+            [
+              25,
+              "squic:bidirectional_stream_opened",
+              "bistream opened for tcp",
+              "INFO",
+            ],
+            [
+              28,
+              "proxy:tcp_request_sent",
+              "tcp connect req header sent",
+              "TRACE",
+            ],
+            [
+              70 + i * 19,
+              "proxy:tcp_request_completed",
+              "request finished",
+              "INFO",
+            ],
+          ])
+            raw.push({
+              timestamp: new Date(base + offset + ms).toISOString(),
+              level,
+              target: "shadowquic::demo",
+              event,
+              fields: {
+                message,
+                ...(event === "routing:outbound_selected"
+                  ? { outbound: "shadowquic" }
+                  : {}),
+              },
+              spans: [
+                {
+                  name: "inbound",
+                  fields: {
+                    tag: "socks",
+                    src: "127.0.0.1:" + String(45000 + i),
+                    req_id: id,
+                  },
+                },
+                { name: "tcp_req", fields: { req_id: id, dst } },
+              ],
+            });
+        }
+        raw.sort((a, b) => timestamp(a.timestamp) - timestamp(b.timestamp));
+        addRecords(raw.map(normalize));
+        setStatus("Demo capture");
+        render();
+      }
+      // Browser bindings. Model helpers above can run without a DOM.
+      $("endpoint").value = ["http:", "https:"].includes(location.protocol)
+        ? (location.protocol === "https:" ? "wss://" : "ws://") +
+          location.host +
+          "/api/v1/logs"
+        : "ws://127.0.0.1:9090/api/v1/logs";
+      $("connectForm").addEventListener("submit", connect);
+      $("disconnectButton").onclick = () => disconnect();
+      $("importButton").onclick = () => $("fileInput").click();
+      $("fileInput").onchange = (e) => importFile(e.target.files[0]);
+      $("exportButton").onclick = exportCapture;
+      $("demoButton").onclick = loadDemo;
+      $("clearButton").onclick = () => {
+        reset(state.source);
+        render();
+      };
+      $("pauseButton").onclick = () => {
+        state.paused = state.paused ? null : state.records.slice();
+        $("pauseButton").textContent = state.paused
+          ? "Resume display"
+          : "Pause display";
+        render();
+      };
+      for (const id of ["search", "category", "level", "requestSearch", "zoom"])
+        $(id).addEventListener("input", schedule);
+      window.addEventListener("resize", schedule);
+      window.addEventListener("beforeunload", () => disconnect(false));
+      render();
+    </script>
+  </body>
+</html>

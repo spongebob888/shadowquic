@@ -413,7 +413,7 @@ impl Resolver {
                 return Err(dns_error("local resolver has no upstream"));
             }
         };
-        tracing::debug!(%dst, tcp, "sending DNS query upstream");
+        tracing::debug!(event = "dns:query_sent", %dst, tcp, "sending DNS query upstream");
         let dst: SocksAddr = dst.into();
         let user_context = UserContext {
             dns_query: parse_query(query)?
@@ -521,14 +521,15 @@ impl DnsService for Resolver {
         err(level = "debug")
     )]
     async fn exchange(&self, query: &[u8]) -> Result<Vec<u8>> {
+        async {
         let packet = parse_query(query)?;
         let question = &packet.questions[0];
         tracing::Span::current().record("domain", tracing::field::display(&question.qname));
-        tracing::info!(record_type = ?question.qtype, "received DNS query");
+        tracing::info!(event = "dns:query_received", record_type = ?question.qtype, "received DNS query");
         if !self.bypass_cache
             && let Some(cached) = self.cache.get(query)?
         {
-            tracing::trace!("DNS cache hit");
+            tracing::trace!(event = "dns:cache_hit", "DNS cache hit");
             return Ok(cached);
         }
         let reply = tokio::time::timeout(TIMEOUT, async {
@@ -542,7 +543,10 @@ impl DnsService for Resolver {
                         .map_err(dns_error)?
                         .has_flags(PacketFlag::TRUNCATION)
                     {
-                        tracing::debug!("truncated DNS response, retrying over TCP");
+                        tracing::debug!(
+                            event = "dns:query_retried",
+                            "truncated DNS response, retrying over TCP"
+                        );
                         self.upstream(query, true).await
                     } else {
                         Ok(reply)
@@ -553,11 +557,12 @@ impl DnsService for Resolver {
         .await
         .map_err(|_| dns_error("query timed out"))??;
         let packet = validate_response(query, &reply)?;
-        tracing::debug!(rcode = ?packet.rcode(), answers = packet.answers.len(), "received DNS response");
+        tracing::debug!(event = "dns:response_received", rcode = ?packet.rcode(), answers = packet.answers.len(), "received DNS response");
         if !self.bypass_cache {
             self.cache.insert(query, packet);
         }
         Ok(reply)
+    }.await.inspect_err(|e| tracing::error!(event = "dns:query_failed", "DNS query failed: {}", e))
     }
 }
 

@@ -35,6 +35,7 @@ use crate::{
     },
 };
 
+pub mod logs;
 #[cfg(feature = "jemalloc")]
 mod memory;
 #[cfg(feature = "mem-profile")]
@@ -205,21 +206,27 @@ impl ApiManager {
                 biased;
                 _ = stopped.changed() => break,
                 Some(result) = connections.join_next(), if !connections.is_empty() => {
-                    if let Err(error) = result { tracing::debug!(%error, "API connection task failed"); }
+                    if let Err(error) = result { tracing::debug!(event = "api:connection_task_failed", %error, "API connection task failed"); }
                 }
                 accepted = listener.accept() => {
                     let (stream, _) = accepted?;
                     let api = self.clone();
                     connections.spawn(async move {
+                        let (upgrade_tx, upgrade_rx) = tokio::sync::oneshot::channel();
+                        let upgrade_tx = Arc::new(std::sync::Mutex::new(Some(upgrade_tx)));
                         let service = service_fn(move |request| {
                             let api = api.clone();
-                            async move { Ok::<_, Infallible>(api.handle(request).await) }
+                            let upgrade_tx = upgrade_tx.clone();
+                            async move { Ok::<_, Infallible>(api.handle(request, &upgrade_tx).await) }
                         });
                         if let Err(error) = hyper::server::conn::http1::Builder::new()
                             .max_buf_size(32 * 1024)
-                            .serve_connection(TokioIo::new(stream), service).await
+                            .serve_connection(TokioIo::new(stream), service).with_upgrades().await
                         {
-                            tracing::debug!(%error, "API HTTP connection closed");
+                            tracing::debug!(event = "api:connection_closed", %error, "API HTTP connection closed");
+                        }
+                        if let Ok(upgrade) = upgrade_rx.await {
+                            upgrade.serve().await;
                         }
                     });
                 }
@@ -230,7 +237,11 @@ impl ApiManager {
         Ok(())
     }
 
-    async fn handle(&self, request: Request<Incoming>) -> HttpResponse {
+    async fn handle(
+        &self,
+        request: Request<Incoming>,
+        upgrade: &logs::UpgradeSender,
+    ) -> HttpResponse {
         // Browsers send preflights without bearer credentials. Actual requests
         // still pass through route(), including its authentication check.
         let mut response = if request.method() == Method::OPTIONS
@@ -251,7 +262,7 @@ impl ApiManager {
             );
             response
         } else {
-            match self.route(request).await {
+            match self.route(request, upgrade).await {
                 Ok(response) => response,
                 Err(error) => error.response(),
             }
@@ -265,7 +276,11 @@ impl ApiManager {
         response
     }
 
-    async fn route(&self, request: Request<Incoming>) -> Result<HttpResponse, ApiError> {
+    async fn route(
+        &self,
+        request: Request<Incoming>,
+        upgrade: &logs::UpgradeSender,
+    ) -> Result<HttpResponse, ApiError> {
         let path = request.uri().path();
         if let Some(root) = &self.ui_path
             && path != "/api"
@@ -273,12 +288,26 @@ impl ApiManager {
         {
             return ui::serve(root, request.method(), path).await;
         }
-        if !self.authorized(request.headers()) {
+        let log_stream = path == "/api/v1/logs";
+        let query_authorized = log_stream
+            && !request.headers().contains_key(hyper::header::AUTHORIZATION)
+            && self.authorized_log_token(request.uri());
+        if !self.authorized(request.headers()) && !query_authorized {
             return Err(ApiError::new(
                 StatusCode::UNAUTHORIZED,
                 "unauthorized",
                 "missing or invalid bearer token",
             ));
+        }
+        if log_stream {
+            if request.method() != Method::GET {
+                return Err(ApiError::new(
+                    StatusCode::METHOD_NOT_ALLOWED,
+                    "method_not_allowed",
+                    "unsupported method",
+                ));
+            }
+            return logs::upgrade(request, upgrade);
         }
         #[cfg(feature = "mem-profile")]
         if request.uri().path() == "/api/v1/memory/profile" {
@@ -468,6 +497,19 @@ impl ApiManager {
                     .as_bytes()
                     .ct_eq(token.trim_start_matches(' ').as_bytes()),
             )
+    }
+
+    fn authorized_log_token(&self, uri: &hyper::Uri) -> bool {
+        let Some(secret) = &self.secret else {
+            return true;
+        };
+        let mut tokens = url::form_urlencoded::parse(uri.query().unwrap_or("").as_bytes())
+            .filter(|(key, _)| key == "token")
+            .map(|(_, value)| value);
+        let Some(token) = tokens.next() else {
+            return false;
+        };
+        tokens.next().is_none() && bool::from(secret.as_bytes().ct_eq(token.as_bytes()))
     }
 
     async fn get_outbounds(&self) -> Value {

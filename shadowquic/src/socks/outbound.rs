@@ -137,7 +137,7 @@ impl SocksClient {
     }
 
     async fn connect_destination(&self, dst: SocksAddr) -> Result<tokio::net::TcpStream, SError> {
-        tracing::info!(server = %self.cfg.addr, "connect to socks server");
+        tracing::info!(event = "socks:connection_started", server = %self.cfg.addr, "connect to socks server");
         let socket = self.tcp_socket_factory.create_socket().await?;
         let std_stream: std::net::TcpStream = socket.into();
         let tokio_socket = tokio::net::TcpSocket::from_std_stream(std_stream);
@@ -158,7 +158,10 @@ impl SocksClient {
         if rep.rep != SOCKS5_REPLY_SUCCEEDED {
             return Err(SError::SocksError(format!("CONNECT failed: {}", rep.rep)));
         }
-        tracing::trace!("socks tcp connection established");
+        tracing::trace!(
+            event = "socks:connection_established",
+            "socks tcp connection established"
+        );
         Ok(tcp)
     }
 
@@ -176,7 +179,11 @@ impl SocksClient {
     }
 
     async fn handle_udp(&self, mut udp_session: UdpSession) -> Result<(), SError> {
-        tracing::info!("connect to socks server: {}", self.cfg.addr);
+        tracing::info!(
+            event = "socks:udp_connection_started",
+            server_addr = %self.cfg.addr,
+            "connect to socks server",
+        );
         let socket = self.tcp_socket_factory.create_socket().await?;
         let std_stream: std::net::TcpStream = socket.into();
         let tokio_socket = tokio::net::TcpSocket::from_std_stream(std_stream);
@@ -199,7 +206,10 @@ impl SocksClient {
         };
         socksreq.encode(&mut tcp).await?;
         let rep = CmdReply::decode(&mut tcp).await?;
-        tracing::trace!("socks udp association established");
+        tracing::trace!(
+            event = "socks:udp_association_established",
+            "socks udp association established"
+        );
         let peer_addr = rep
             .bind_addr
             .to_socket_addrs()
@@ -254,7 +264,10 @@ impl SocksClient {
                 .read_exact(&mut buf)
                 .await
                 .map_err(|x| SError::UDPSessionClosed(x.to_string()))?;
-            error!("unexpected data received from socks control stream");
+            error!(
+                event = "socks:unexpected_control_data",
+                "unexpected data received from socks control stream"
+            );
             Err(SError::UDPSessionClosed(
                 "unexpected data received from socks control stream".into(),
             )) as Result<(), SError>

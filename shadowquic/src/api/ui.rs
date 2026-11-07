@@ -46,9 +46,11 @@ pub(crate) fn download_inbound(cfg: ApiConfig) -> DownloadInbound {
         }
         .await;
         match result {
-            Ok(()) => tracing::info!(tag = %cfg.tag, "dashboard ready"),
+            Ok(()) => tracing::info!(event = "dashboard:ready", tag = %cfg.tag, "dashboard ready"),
             Err(_) if client.is_cancelled() => {}
-            Err(error) => tracing::error!(tag = %cfg.tag, %error, "dashboard download failed"),
+            Err(error) => {
+                tracing::error!(event = "dashboard:download_failed", tag = %cfg.tag, %error, "dashboard download failed")
+            }
         }
     })
 }

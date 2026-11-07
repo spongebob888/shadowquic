@@ -3338,6 +3338,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.0",
+ "digest",
+]
+
+[[package]]
 name = "sha2"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3364,6 +3375,7 @@ dependencies = [
  "educe",
  "etherparse",
  "fast-socks5",
+ "futures-util",
  "gm-quic",
  "http-body-util",
  "hyper",
@@ -3409,6 +3421,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-rustls-jls",
+ "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",
  "tun-rs",
@@ -3809,6 +3822,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-tungstenite"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71"
+dependencies = [
+ "futures-util",
+ "log",
+ "tokio",
+ "tungstenite",
+]
+
+[[package]]
 name = "tokio-util"
 version = "0.7.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3985,6 +4010,22 @@ dependencies = [
  "widestring",
  "windows-sys 0.61.2",
  "winreg",
+]
+
+[[package]]
+name = "tungstenite"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e48ac77174b19c110a50ab2128b24215ac9cb40e0e12e093fb602d175c569d22"
+dependencies = [
+ "bytes",
+ "data-encoding",
+ "http",
+ "httparse",
+ "log",
+ "rand 0.10.2",
+ "sha1",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

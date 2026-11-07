@@ -1,5 +1,6 @@
 pub(crate) mod copy;
 pub mod dual_socket;
+pub mod log;
 pub mod platform;
 pub mod socket_opt;
 pub mod user_store;

@@ -8,7 +8,7 @@ use crate::{
     ProxyRequest, StatsContext, TcpSession, TcpTrait, UserContext,
     error::SError,
     msgs::socks5::{AddrOrDomain, SocksAddr},
-    utils::{dual_socket::to_ipv4_mapped, replay_stream::ReplayStream},
+    utils::{dual_socket::to_ipv4_mapped, log::REQ_ID, replay_stream::ReplayStream},
 };
 
 #[derive(Clone, Debug)]
@@ -65,7 +65,10 @@ impl HttpProxyServer {
                 return Err(SError::SocksError("http proxy auth failed".into()));
             };
             tracing::Span::current().record("user", tracing::field::display(&user.username));
-            tracing::debug!("http proxy authentication succeeded");
+            tracing::debug!(
+                event = "security:authentication_succeeded",
+                "http proxy authentication succeeded"
+            );
             user.username.clone()
         } else {
             String::new()
@@ -75,6 +78,7 @@ impl HttpProxyServer {
                 username,
                 ..Default::default()
             }),
+            req_id: REQ_ID.with(|id| *id),
             ..Default::default()
         };
 

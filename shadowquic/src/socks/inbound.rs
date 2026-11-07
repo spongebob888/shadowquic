@@ -12,6 +12,7 @@ use crate::msgs::socks5::{
 use crate::msgs::{SDecode, SEncode};
 use crate::observe::Observer;
 use crate::utils::dual_socket::to_ipv4_mapped;
+use crate::utils::log::{REQ_ID, fetch_add_req_cnt};
 use crate::{AnyUdpRecv, AnyUdpSend, TcpTrait};
 use crate::{Inbound, ProxyRequest, StatsContext, TcpSession, UdpSession, UserContext};
 use async_trait::async_trait;
@@ -59,6 +60,7 @@ impl SocksServer {
                 username,
                 ..Default::default()
             }),
+            req_id: REQ_ID.with(|id| *id), // called by handle_connection, so REQ_ID is set
             ..Default::default()
         };
         match req.cmd {
@@ -144,7 +146,10 @@ where
         return Err(SError::SocksError("authentication failed".to_string()));
     }
     tracing::Span::current().record("user", tracing::field::display(&user.username));
-    tracing::debug!("socks authentication succeeded");
+    tracing::debug!(
+        event = "security:authentication_succeeded",
+        "socks authentication succeeded"
+    );
     let reply = PasswordAuthReply {
         version: 0x01,
         status: SOCKS5_REPLY_SUCCEEDED,
@@ -233,11 +238,12 @@ async fn handle_tcp(
             username,
             ..Default::default()
         }),
+        req_id: REQ_ID.with(|id| *id),
         ..Default::default()
     };
     let req = match req.cmd {
         SOCKS5_CMD_TCP_CONNECT => {
-            info!(dst = %req.dst, "tcp connect request accepted");
+            info!(event = "socks:tcp_request_accepted", dst = %req.dst, "tcp connect request accepted");
             ProxyRequest::Tcp(TcpSession {
                 stream: Box::new(s) as Box<dyn crate::TcpTrait>,
                 dst: req.dst,
@@ -246,7 +252,7 @@ async fn handle_tcp(
             })
         }
         SOCKS5_CMD_UDP_ASSOCIATE => {
-            info!(bind_dst = %req.dst, "udp associate request accepted");
+            info!(event = "socks:udp_associate_request_accepted", bind_dst = %req.dst, "udp associate request accepted");
             let socket = Arc::new(socket.unwrap());
             ProxyRequest::Udp(
                 UdpSession::<AnyUdpRecv, AnyUdpSend> {
@@ -298,9 +304,13 @@ impl Inbound for SocksServer {
             Some(Protocol::TCP),
         )?;
         if dual_stack {
-            let _ = socket
-                .set_only_v6(false)
-                .map_err(|e| tracing::warn!("failed to set dual stack for socket: {}", e));
+            let _ = socket.set_only_v6(false).map_err(|e| {
+                tracing::warn!(
+                    event = "connectivity:dual_stack_failed",
+                    "failed to set dual stack for socket: {}",
+                    e
+                )
+            });
         };
         socket.set_reuse_address(true)?;
         socket.set_nonblocking(true)?;
@@ -317,17 +327,20 @@ impl Inbound for SocksServer {
                 let (stream, addr) = match listener.accept().await {
                     Ok(connection) => connection,
                     Err(error) => {
-                        error!(%error, "failed to accept socks connection");
+                        error!(event = "socks:connection_accept_failed", %error, "failed to accept socks connection");
                         // Avoid spinning when resource exhaustion prevents accepting.
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                         continue;
                     }
                 };
+                let req_id = fetch_add_req_cnt();
                 let span = tracing::info_span!("inbound",
                     tag = %tag,
                     src = %addr,
                     user = tracing::field::Empty,
                     id = tracing::field::Empty,
+                    req_id = req_id,
+
                 );
                 // The SOCKS5 replies are written field by field (src/msgs/socks5.rs),
                 // so with Nagle enabled every field after the first waits for the peer
@@ -337,16 +350,25 @@ impl Inbound for SocksServer {
                 // ~0.4ms with it.
                 let _ = stream.set_nodelay(true);
                 span.in_scope(|| {
-                    tracing::info!("accepted socks connection");
+                    tracing::info!(
+                        event = "socks:connection_started",
+                        "accepted socks connection"
+                    );
                 });
 
                 let users = users.clone();
                 let req_send = req_send.clone();
                 tokio::spawn(
                     async move {
-                        handle_tcp(users, stream, req_send)
+                        REQ_ID
+                            .scope(req_id, handle_tcp(users, stream, req_send))
                             .await
-                            .map_err(|x| error!("failed to handle socks connection: {}", x))
+                            .map_err(|x| {
+                                error!(
+                                    event = "socks:connection_failed",
+                                    "failed to handle socks connection: {}", x
+                                )
+                            })
                     }
                     .instrument(span),
                 );

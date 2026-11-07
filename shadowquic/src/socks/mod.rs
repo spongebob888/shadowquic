@@ -28,7 +28,10 @@ impl UdpRecv for UdpSocksWrap {
         let mut req = socks5::UdpReqHeader::decode(&mut cur).await?;
         req.dst.canonicalize_ip();
         if req.frag != 0 {
-            warn!("dropping fragmented udp datagram ");
+            warn!(
+                event = "socks:fragmented_datagram_dropped",
+                "dropping fragmented udp datagram "
+            );
             return Err(SError::ProtocolUnimpl);
         }
         let headsize: usize = cur.position().try_into().unwrap();

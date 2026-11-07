@@ -363,7 +363,7 @@ impl Stack {
                     if self.requests.try_send(request).is_err() {
                         return;
                     }
-                    tracing::info!(src = %client, dst = %destination, "accepted TUN UDP session");
+                    tracing::info!(event = "tun:udp_session_started", src = %client, dst = %destination, "accepted TUN UDP session");
                     self.udp.insert(
                         client,
                         UdpFlow {
@@ -415,7 +415,7 @@ impl Stack {
                 if self.requests.try_send(request).is_err() {
                     socket.abort();
                 } else {
-                    tracing::info!(
+                    tracing::info!(event = "tun:connection_started",
                         src = %key.client,
                         dst = %key.destination,
                         "accepted TUN TCP session"

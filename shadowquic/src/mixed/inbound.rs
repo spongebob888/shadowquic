@@ -6,6 +6,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tracing::{Instrument, error};
 
+use crate::utils::log::{REQ_ID, fetch_add_req_cnt};
 use crate::{
     Inbound, ProxyRequest,
     config::AuthUser,
@@ -96,9 +97,13 @@ impl Inbound for MixedServer {
             Some(Protocol::TCP),
         )?;
         if dual_stack {
-            let _ = socket
-                .set_only_v6(false)
-                .map_err(|e| tracing::warn!("failed to set dual stack for socket: {}", e));
+            let _ = socket.set_only_v6(false).map_err(|e| {
+                tracing::warn!(
+                    event = "connectivity:dual_stack_failed",
+                    "failed to set dual stack for socket: {}",
+                    e
+                )
+            });
         }
         socket.set_reuse_address(true)?;
         socket.set_nonblocking(true)?;
@@ -128,7 +133,7 @@ impl Inbound for MixedServer {
                 let (stream, addr) = match listener.accept().await {
                     Ok(connection) => connection,
                     Err(error) => {
-                        error!(%error, "failed to accept mixed connection");
+                        error!(event = "mixed:connection_accept_failed", %error, "failed to accept mixed connection");
                         // Avoid spinning when resource exhaustion prevents accepting.
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                         continue;
@@ -138,23 +143,34 @@ impl Inbound for MixedServer {
                 // field by field, so Nagle plus the peer's delayed ACK costs about
                 // 40ms per connection unless it is off.
                 let _ = stream.set_nodelay(true);
+                let req_id = fetch_add_req_cnt();
                 let span = tracing::info_span!("inbound",
                     tag = %tag,
                     src = %addr,
                     user = tracing::field::Empty,
                     id = tracing::field::Empty,
+                    req_id = req_id,
                 );
                 span.in_scope(|| {
-                    tracing::info!("accepted mixed connection");
+                    tracing::info!(
+                        event = "mixed:connection_started",
+                        "accepted mixed connection"
+                    );
                 });
                 let http = http.clone();
                 let users = users.clone();
                 let req_send = req_send.clone();
                 tokio::spawn(
                     async move {
-                        handle_connection(stream, http, users, req_send)
+                        REQ_ID
+                            .scope(req_id, handle_connection(stream, http, users, req_send))
                             .await
-                            .map_err(|x| error!("failed to handle mixed connection: {}", x))
+                            .map_err(|x| {
+                                error!(
+                                    event = "mixed:connection_failed",
+                                    "failed to handle mixed connection: {}", x
+                                )
+                            })
                     }
                     .instrument(span),
                 );

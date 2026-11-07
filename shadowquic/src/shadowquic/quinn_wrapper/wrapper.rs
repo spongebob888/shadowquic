@@ -87,7 +87,7 @@ impl QuicConnection for Connection {
         let rate: f32 =
             (self.stats().path.lost_packets as f32) / ((self.stats().path.sent_packets + 1) as f32);
 
-        info!(
+        info!(event = "recovery:metrics_updated",
             packet_loss_rate=%format!("{:.2}%", rate*100.0),
             rtt = %format!("{:.1}ms", self.rtt().as_secs_f32()*1000.0),
             mtu = self.stats().path.current_mtu,
@@ -119,6 +119,7 @@ impl QuicConnection for Connection {
         match self.send_datagram(bytes) {
             Ok(_) => (),
             Err(SendDatagramError::TooLarge) => warn!(
+                event = "shadowquic:datagram_too_large",
                 "datagram too large:{}>{}",
                 len,
                 self.max_datagram_size().unwrap()
@@ -194,33 +195,45 @@ impl QuicClient for EndClient {
                     tokio::spawn(
                         async move {
                             if let Err(error) = conn_clone.authenticated().await {
-                                debug!(%error, "0-RTT handshake failed");
+                                debug!(event = "quic:zero_rtt_handshake_failed", %error, "0-RTT handshake failed");
                                 return;
                             }
-                            debug!("0-RTT handshake completed");
+                            debug!(event = "quic:zero_rtt_handshake_completed", "0-RTT handshake completed");
                             if conn_clone.is_jls() == Some(false) {
-                                error!("JLS hijacked or wrong pwd/iv");
+                                error!(event = "jls:jls_authentication_failed", "JLS hijacked or wrong pwd/iv");
                                 conn_clone.close(0u8.into(), b"");
                             }
                         }
                         .in_current_span(),
                     );
-                    trace!("trying 0-rtt quic connection");
+                    trace!(
+                        event = "quic:zero_rtt_attempted",
+                        "trying 0-rtt quic connection"
+                    );
                     x
                 }
                 Err(e) => {
                     let x = e.await?;
-                    debug!("1-rtt quic connection established");
+                    debug!(
+                        event = "quic:connection_established",
+                        "1-rtt quic connection established"
+                    );
                     x
                 }
             }
         } else {
             let x = conn.await?;
-            debug!("1-rtt quic connection established");
+            debug!(
+                event = "quic:connection_established",
+                "1-rtt quic connection established"
+            );
             x
         };
         if conn.is_jls() == Some(false) {
-            error!("JLS hijacked or wrong pwd/iv");
+            error!(
+                event = "jls:jls_authentication_failed",
+                "JLS hijacked or wrong pwd/iv"
+            );
             conn.close(0u8.into(), b"");
             return Err(QuicErrorRepr::JlsAuthFailed);
         }
@@ -313,7 +326,10 @@ pub fn gen_client_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
         .enable_segmentation_offload(cfg.gso);
 
     if !cfg.gso {
-        tracing::warn!("disabling QUIC segmentation offload (GSO)");
+        tracing::warn!(
+            event = "quic:gso_disabled",
+            "disabling QUIC segmentation offload (GSO)"
+        );
     }
 
     // Only increase receive window to maximize download speed
@@ -342,11 +358,18 @@ pub fn gen_client_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
             tp_cfg.congestion_controller_factory(Arc::new(BbrConfig::default()))
         }
         CongestionControl::Bbr3 => {
-            warn!("BBR3 is not implemented yet in client, fallback to BBR");
+            warn!(
+                event = "recovery:controller_fallback",
+                "BBR3 is not implemented yet in client, fallback to BBR"
+            );
             tp_cfg.congestion_controller_factory(Arc::new(BbrConfig::default()))
         }
         CongestionControl::Brutal(ref brutal) => {
-            tracing::info!(?brutal, "using brutal congestion control");
+            tracing::info!(
+                event = "recovery:controller_selected",
+                ?brutal,
+                "using brutal congestion control"
+            );
             let brutal_config = BrutalConfig::new(
                 brutal.bandwidth,
                 brutal.min_window,
@@ -369,9 +392,12 @@ pub fn gen_client_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
 fn bind_server_udp_socket(bind_addr: SocketAddr) -> io::Result<UdpSocket> {
     if bind_addr.is_ipv6() && bind_addr.ip().is_unspecified() {
         let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
-        let _ = socket
-            .set_only_v6(false)
-            .map_err(|e| warn!("failed to enable dual-stack UDP socket: {}", e));
+        let _ = socket.set_only_v6(false).map_err(|e| {
+            warn!(
+                event = "connectivity:dual_stack_failed",
+                "failed to enable dual-stack UDP socket: {}", e
+            )
+        });
         socket.bind(&bind_addr.into())?;
         Ok(socket.into())
     } else {
@@ -428,12 +454,12 @@ impl QuicServer for EndServer {
                             tokio::spawn(
                                 async move {
                                     if let Err(error) = conn_clone.authenticated().await {
-                                        debug!(%error, "0-RTT handshake failed");
+                                        debug!(event = "quic:zero_rtt_handshake_failed", %error, "0-RTT handshake failed");
                                         return;
                                     }
-                                    debug!("0-RTT handshake completed");
+                                    debug!(event = "quic:zero_rtt_handshake_completed", "0-RTT handshake completed");
                                     if conn_clone.is_jls() == Some(false) {
-                                        error!("JLS hijacked or wrong pwd/iv");
+                                        error!(event = "jls:jls_authentication_failed", "JLS hijacked or wrong pwd/iv");
                                         conn_clone.close(0u8.into(), b"");
                                     }
                                 }
@@ -447,7 +473,10 @@ impl QuicServer for EndServer {
                     conn.await?
                 };
                 if connection.is_jls() == Some(false) {
-                    error!("JLS hijacked or wrong pwd/iv");
+                    error!(
+                        event = "jls:jls_authentication_failed",
+                        "JLS hijacked or wrong pwd/iv"
+                    );
                     connection.close(0u8.into(), b"");
                     return Err(QuicErrorRepr::JlsAuthFailed);
                 }
@@ -508,12 +537,19 @@ fn gen_server_config(
         .enable_segmentation_offload(cfg.gso);
 
     if !cfg.gso {
-        tracing::warn!("disabling QUIC segmentation offload (GSO)");
+        tracing::warn!(
+            event = "quic:gso_disabled",
+            "disabling QUIC segmentation offload (GSO)"
+        );
     }
 
     match cfg.congestion_control {
         CongestionControl::Brutal(ref brutal) => {
-            tracing::info!(?brutal, "using brutal congestion control");
+            tracing::info!(
+                event = "recovery:controller_selected",
+                ?brutal,
+                "using brutal congestion control"
+            );
             let brutal_config = BrutalConfig::new(
                 brutal.bandwidth,
                 brutal.min_window,
@@ -528,7 +564,10 @@ fn gen_server_config(
             tp_cfg.congestion_controller_factory(Arc::new(BbrConfig::default()))
         }
         CongestionControl::Bbr3 => {
-            warn!("BBR3 is not implemented yet in client, fallback to BBR");
+            warn!(
+                event = "recovery:controller_fallback",
+                "BBR3 is not implemented yet in client, fallback to BBR"
+            );
             tp_cfg.congestion_controller_factory(Arc::new(BbrConfig::default()))
         }
         CongestionControl::Cubic => {

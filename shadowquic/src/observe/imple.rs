@@ -151,7 +151,7 @@ impl Observer {
         for (id, handle) in to_close {
             if let Some(handle) = handle.upgrade() {
                 handle.stop();
-                info!(%id, "connection closed by observer");
+                info!(event = "user_api:connection_close_requested", %id, "connection closed by observer");
             }
         }
     }
@@ -259,7 +259,7 @@ impl Observer {
 
 pub struct TrackedSendStats {
     #[cfg(feature = "restful-api")]
-    pub id: u64,
+    pub id: u32,
     pub bytes_send: AtomicU64,
     pub dst: RwLock<SocksAddr>,
     /// Filled once the dispatcher has selected an outbound.
@@ -297,13 +297,14 @@ pub struct TrackedRecvStats {
     pub src_addr: Option<SocketAddr>,
     pub created: Instant,
     #[cfg(feature = "restful-api")]
-    pub id: u64,
+    pub id: u32,
 }
 
 impl TrackedRecvStats {
     fn new(
         src_addr: Option<SocketAddr>,
         conns: Arc<AtomicU64>,
+        id: u32,
         #[cfg(all(feature = "restful-api", feature = "sniffer"))] sniffer: Option<
             crate::utils::sniffer::SniffResult,
         >,
@@ -317,10 +318,7 @@ impl TrackedRecvStats {
             src_addr,
             created: Instant::now(),
             #[cfg(feature = "restful-api")]
-            id: {
-                static NEXT_ID: AtomicU64 = AtomicU64::new(1);
-                NEXT_ID.fetch_add(1, Ordering::Relaxed)
-            },
+            id,
         }
     }
 }
@@ -346,6 +344,7 @@ impl TrackedTcp {
         src: Option<SocketAddr>,
         dst: SocksAddr,
         outbound: String,
+        id: u32,
         #[cfg(all(feature = "restful-api", feature = "sniffer"))] sniffer: Option<
             crate::utils::sniffer::SniffResult,
         >,
@@ -354,6 +353,7 @@ impl TrackedTcp {
         let recv = Arc::new(TrackedRecvStats::new(
             src,
             tcp_conns,
+            id,
             #[cfg(all(feature = "restful-api", feature = "sniffer"))]
             sniffer,
         ));
@@ -499,6 +499,7 @@ impl Observer {
                     tcp.src_addr,
                     tcp.dst.clone(),
                     outbound,
+                    tcp.user_context.req_id,
                     #[cfg(all(feature = "restful-api", feature = "sniffer"))]
                     tcp.user_context.sniffer.clone(),
                 );
@@ -515,6 +516,7 @@ impl Observer {
                 let recv = Arc::new(TrackedRecvStats::new(
                     udp.src_addr,
                     udp_conns,
+                    udp.user_context.req_id,
                     #[cfg(all(feature = "restful-api", feature = "sniffer"))]
                     udp.user_context.sniffer.clone(),
                 ));

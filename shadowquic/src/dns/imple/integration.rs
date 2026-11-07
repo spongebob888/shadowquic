@@ -172,7 +172,13 @@ impl Inbound for RestoringInbound {
         let old_dst = req.dst().clone();
         req.set_dst(self.fake.restore(req.dst())?);
         if &old_dst != req.dst() {
-            tracing::trace!("fakeip mapping: {} -> {}", old_dst, req.dst());
+            tracing::trace!(
+                req_id = req.user_context().req_id,
+                event = "dns:fakeip_mapped",
+                "fakeip mapping: {} -> {}",
+                old_dst,
+                req.dst()
+            );
         }
         if let ProxyRequest::Udp(mut session) = req {
             let mapping = Arc::new(Mutex::new(HashMap::new()));

@@ -197,11 +197,13 @@ impl Sniffer {
         match &result {
             Ok(request) => match request.user_context().sniffer {
                 Some(ref sniff) => {
-                    tracing::debug!(domain = %sniff.domain, protocol = %sniff.protocol,version = %sniff.version, ?elapsed, "sniff completed")
+                    tracing::debug!(event = "sniffer:completed", domain = %sniff.domain, protocol = %sniff.protocol,version = %sniff.version, ?elapsed, "sniff completed")
                 }
-                None => tracing::debug!(?elapsed, "sniffed nothing"),
+                None => tracing::debug!(event = "sniffer:no_match", ?elapsed, "sniffed nothing"),
             },
-            Err(error) => tracing::warn!(%error, ?elapsed, "sniff failed"),
+            Err(error) => {
+                tracing::warn!(event = "sniffer:failed", %error, ?elapsed, "sniff failed")
+            }
         }
         result
     }
