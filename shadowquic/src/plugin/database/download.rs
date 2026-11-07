@@ -29,11 +29,11 @@ pub(super) fn inbound(cfg: RouterDatabaseCfg, slot: Arc<Slot>) -> DownloadInboun
         match result {
             Ok(db) => {
                 *slot.value.write().unwrap() = Ok(db);
-                tracing::info!(tag = %cfg.tag(), "router database ready");
+                tracing::info!(event = "database:ready", tag = %cfg.tag(), "router database ready");
             }
             Err(error) => {
                 *slot.value.write().unwrap() = Err(error.to_string());
-                tracing::error!(tag = %cfg.tag(), %error, "router database download/import failed");
+                tracing::error!(event = "database:download_failed", tag = %cfg.tag(), %error, "router database download/import failed");
             }
         }
     })

@@ -44,10 +44,10 @@ impl Source {
         match result {
             Ok(snapshot) => {
                 self.snapshot.store(Arc::new(snapshot));
-                debug!(tag = %self.tag, path = %self.path.display(), "DHCP lease file reloaded");
+                debug!(event = "dhcp:leases_reloaded", tag = %self.tag, path = %self.path.display(), "DHCP lease file reloaded");
             }
             Err(error) => {
-                warn!(tag = %self.tag, path = %self.path.display(), %error, "DHCP lease reload failed; retaining previous snapshot")
+                warn!(event = "dhcp:reload_failed", tag = %self.tag, path = %self.path.display(), %error, "DHCP lease reload failed; retaining previous snapshot")
             }
         }
     }
@@ -200,7 +200,7 @@ fn run_worker(
                     let _ = callback.try_send(Signal::Wake);
                 }
                 Err(error) => {
-                    warn!(%error, "DHCP lease watch failed");
+                    warn!(event = "dhcp:watch_failed", %error, "DHCP lease watch failed");
                     let _ = callback.try_send(Signal::Wake);
                 }
                 _ => {}
@@ -208,7 +208,7 @@ fn run_worker(
         let mut watcher = match watcher {
             Ok(watcher) => Some(watcher),
             Err(error) => {
-                warn!(%error, "DHCP lease watcher unavailable; polling");
+                warn!(event = "dhcp:watcher_unavailable", %error, "DHCP lease watcher unavailable; polling");
                 None
             }
         };
@@ -216,7 +216,7 @@ fn run_worker(
             let parents: HashSet<_> = watched.iter().filter_map(|s| s.path.parent()).collect();
             for parent in parents {
                 if let Err(error) = watcher.watch(parent, RecursiveMode::NonRecursive) {
-                    warn!(path = %parent.display(), %error, "DHCP lease directory watch failed; polling");
+                    warn!(event = "dhcp:directory_watch_failed", path = %parent.display(), %error, "DHCP lease directory watch failed; polling");
                 }
             }
         }

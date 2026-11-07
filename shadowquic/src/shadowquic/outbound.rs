@@ -77,9 +77,12 @@ impl ShadowQuicClient {
         let conn_clone = conn.clone();
         tokio::spawn(
             async move {
-                let _ = handle_udp_packet_recv(conn_clone)
-                    .await
-                    .map_err(|x| error!("handle udp packet recv error: {}", x));
+                let _ = handle_udp_packet_recv(conn_clone).await.map_err(|x| {
+                    error!(
+                        event = "shadowquic:datagram_receive_failed",
+                        "handle udp packet recv error: {}", x
+                    )
+                });
             }
             .in_current_span(),
         );
@@ -91,7 +94,10 @@ impl ShadowQuicClient {
         // delete connection if closed.
         quic_conn.take_if(|x| {
             x.close_reason().is_some_and(|x| {
-                info!("quic connection closed due to {}", x);
+                info!(
+                    event = "connectivity:connection_closed",
+                    "quic connection closed due to {}", x
+                );
                 true
             })
         });

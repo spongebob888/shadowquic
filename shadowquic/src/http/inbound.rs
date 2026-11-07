@@ -65,7 +65,10 @@ impl HttpProxyServer {
                 return Err(SError::SocksError("http proxy auth failed".into()));
             };
             tracing::Span::current().record("user", tracing::field::display(&user.username));
-            tracing::debug!("http proxy authentication succeeded");
+            tracing::debug!(
+                event = "security:authentication_succeeded",
+                "http proxy authentication succeeded"
+            );
             user.username.clone()
         } else {
             String::new()

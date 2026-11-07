@@ -41,10 +41,10 @@ pub async fn handle_request<C: QuicConnection>(
     match req {
         crate::ProxyRequest::Tcp(mut tcp_session) => {
             let fut = async move {
-                info!(dst = %tcp_session.dst, "bistream opened for tcp");
+                info!(event = "squic:bidirectional_stream_opened", dst = %tcp_session.dst, "bistream opened for tcp");
                 let req = SQReq::SQConnect(tcp_session.dst.clone());
                 req.encode(&mut send).await?;
-                trace!(dst = %tcp_session.dst, "tcp connect req header sent");
+                trace!(event = "proxy:tcp_request_sent", dst = %tcp_session.dst, "tcp connect req header sent");
 
                 let u: (u64, u64) = crate::utils::copy::copy_bidirectional(
                     &mut Unsplit { s: send, r: recv },
@@ -56,8 +56,11 @@ pub async fn handle_request<C: QuicConnection>(
                 .await?;
 
                 info!(
+                    event = "proxy:tcp_request_completed",
                     "request:{} finished, upload:{}bytes,download:{}bytes",
-                    tcp_session.dst, u.1, u.0
+                    tcp_session.dst,
+                    u.1,
+                    u.0
                 );
                 Ok(()) as Result<(), SError>
             };
@@ -66,7 +69,7 @@ pub async fn handle_request<C: QuicConnection>(
 
         crate::ProxyRequest::Udp(udp_session) => {
             let fut = async move {
-                info!(bind_addr = %udp_session.bind_addr, "bistream opened for udp association");
+                info!(event = "squic:bidirectional_stream_opened", bind_addr = %udp_session.bind_addr, "bistream opened for udp association");
                 let req = if over_stream {
                     SQReq::SQAssociatOverStream(udp_session.bind_addr.clone())
                 } else {
@@ -74,7 +77,10 @@ pub async fn handle_request<C: QuicConnection>(
                 };
 
                 req.encode(&mut send).await?;
-                trace!("udp associate req header sent");
+                trace!(
+                    event = "proxy:udp_associate_request_sent",
+                    "udp associate req header sent"
+                );
 
                 let fut2 = handle_udp_recv_ctrl(recv, udp_session.send.clone(), conn.clone());
                 let fut1 = handle_udp_send(send, udp_session.recv, conn, over_stream);
@@ -90,14 +96,21 @@ pub async fn handle_request<C: QuicConnection>(
                         .read_exact(&mut buf)
                         .await
                         .map_err(|x| SError::UDPSessionClosed(x.to_string()))?;
-                    error!("unexpected data received from socks control stream");
+                    error!(
+                        event = "squic:unexpected_control_data",
+                        "unexpected data received from socks control stream"
+                    );
                     Err(SError::UDPSessionClosed(
                         "unexpected data received from socks control stream".into(),
                     )) as Result<(), SError>
                 };
 
                 tokio::try_join!(fut1, fut2, fut3)?;
-                info!("udp association to {} ended", udp_session.bind_addr.clone());
+                info!(
+                    event = "squic:udp_association_closed",
+                    "udp association to {} ended",
+                    udp_session.bind_addr.clone()
+                );
                 Ok(()) as Result<(), SError>
             };
             fut.await?;
@@ -116,10 +129,13 @@ pub async fn connect_tcp<C: QuicConnection>(
 
     let (mut send, recv, _id) = conn.open_bi().await?;
 
-    info!(dst = %dst, "bistream opened for tcp");
+    info!(event = "squic:bidirectional_stream_opened", dst = %dst, "bistream opened for tcp");
     let req = SQReq::SQConnect(dst.clone());
     req.encode(&mut send).await?;
-    trace!("tcp connect req header sent");
+    trace!(
+        event = "proxy:tcp_request_sent",
+        "tcp connect req header sent"
+    );
 
     Ok(Unsplit { s: send, r: recv })
 }
@@ -227,7 +243,10 @@ async fn print_stats<C: QuicConnection>(sq_conn: &SQConn<C>) -> SResult<()> {
         match tokio::time::timeout(Duration::from_secs(10), get_peer_conn_stats(sq_conn)).await {
             Ok(Ok(Ok(stats))) => stats,
             _ => {
-                trace!("failed to get peer conn stats. Api may not be implemented");
+                trace!(
+                    event = "recovery:peer_metrics_unavailable",
+                    "failed to get peer conn stats. Api may not be implemented"
+                );
                 return Err(SError::ProtocolUnimpl);
             }
         };
@@ -243,7 +262,7 @@ async fn print_stats<C: QuicConnection>(sq_conn: &SQConn<C>) -> SResult<()> {
 }
 
 fn log_conn_stats(stats: &ConnStats, direction: &'static str) {
-    info!(
+    info!(event = "recovery:metrics_updated",
         packet_loss_rate=%format!("{:.2}%", stats.lost_packets as f32 / (stats.sent_packets + 1) as f32 * 100.0),
         rtt = %format!("{:.1}ms", stats.rtt),
         mtu = stats.current_mtu,
@@ -264,7 +283,7 @@ pub async fn associate_udp<C: QuicConnection>(
 
     let (mut send, recv, _id) = conn.open_bi().await?;
 
-    info!(bind_addr = %dst, "bistream opened for udp association");
+    info!(event = "squic:bidirectional_stream_opened", bind_addr = %dst, "bistream opened for udp association");
 
     let req = if over_stream {
         SQReq::SQAssociatOverStream(dst.clone())
@@ -281,8 +300,14 @@ pub async fn associate_udp<C: QuicConnection>(
     tokio::spawn(
         async {
             match tokio::try_join!(fut1, fut2) {
-                Err(e) => error!("udp association ended due to {}", e),
-                Ok(_) => trace!("udp association ended"),
+                Err(e) => error!(
+                    event = "squic:udp_association_failed",
+                    "udp association ended due to {}", e
+                ),
+                Ok(_) => trace!(
+                    event = "squic:udp_association_closed",
+                    "udp association ended"
+                ),
             }
         }
         .in_current_span(),

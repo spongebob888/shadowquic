@@ -83,10 +83,18 @@ impl SunnyQuicClient {
                     gen_sunny_user_hash(&username, &password),
                 )
                 .await
-                .map_err(|x| error!("authentication failed: {}", x));
-                let _ = handle_udp_packet_recv(conn_clone)
-                    .await
-                    .map_err(|x| error!("handle udp packet recv error: {}", x));
+                .map_err(|x| {
+                    error!(
+                        event = "security:authentication_failed",
+                        "authentication failed: {}", x
+                    )
+                });
+                let _ = handle_udp_packet_recv(conn_clone).await.map_err(|x| {
+                    error!(
+                        event = "sunnyquic:datagram_receive_failed",
+                        "handle udp packet recv error: {}", x
+                    )
+                });
             }
             .in_current_span(),
         );
@@ -98,7 +106,10 @@ impl SunnyQuicClient {
         // delete connection if closed.
         quic_conn.take_if(|x| {
             QuicConnection::close_reason(&x.conn).is_some_and(|x| {
-                info!("quic connection closed due to {}", x);
+                info!(
+                    event = "connectivity:connection_closed",
+                    "quic connection closed due to {}", x
+                );
                 true
             })
         });

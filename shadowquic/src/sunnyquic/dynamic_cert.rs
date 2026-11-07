@@ -97,8 +97,17 @@ impl DynamicCertResolver {
                     .map(|x| {
                         self.update_cert(x);
                     })
-                    .map_err(|x| tracing::error!("failed to reload certificate: {}", x));
-                tracing::info!("certificate reloaded");
+                    .map_err(|x| {
+                        tracing::error!(
+                            event = "security:certificate_reload_failed",
+                            "failed to reload certificate: {}",
+                            x
+                        )
+                    });
+                tracing::info!(
+                    event = "security:certificate_reloaded",
+                    "certificate reloaded"
+                );
             }
         }
 

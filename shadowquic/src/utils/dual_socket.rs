@@ -30,7 +30,11 @@ impl DualSocket {
         if dual_stack {
             let _ = socket.set_only_v6(false).map_err(|x| {
                 dual_stack = false;
-                tracing::warn!("set dual stack for failed: {}", x);
+                tracing::warn!(
+                    event = "connectivity:dual_stack_failed",
+                    "set dual stack for failed: {}",
+                    x
+                );
             });
         };
         socket.set_nonblocking(true)?;

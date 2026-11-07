@@ -51,7 +51,10 @@ impl SunnyQuicUserManager {
         drop(config);
         let store = user_store::build_store(&users, &self.observer).await;
         if let Err(error) = user_store::save_store(&path, &store) {
-            error!("failed to persist user store: {}", error);
+            error!(
+                event = "security:user_store_persist_failed",
+                "failed to persist user store: {}", error
+            );
         }
     }
 }
@@ -73,7 +76,11 @@ impl UserManager for SunnyQuicUserManager {
 
         if let Err(error) = QuicServer::update_config(&self.endpoint, &config).await {
             *config = old_config;
-            tracing::error!("failed to add sunnyquic user: {}", error);
+            tracing::error!(
+                event = "security:user_add_failed",
+                "failed to add sunnyquic user: {}",
+                error
+            );
             return Err(SQExtError::Other(error.to_string()));
         }
         self.users.store(SunnyQuicServer::gen_users_hash(&config));
@@ -93,7 +100,11 @@ impl UserManager for SunnyQuicUserManager {
 
         if let Err(error) = QuicServer::update_config(&self.endpoint, &config).await {
             *config = old_config;
-            tracing::error!("failed to remove sunnyquic user: {}", error);
+            tracing::error!(
+                event = "security:user_remove_failed",
+                "failed to remove sunnyquic user: {}",
+                error
+            );
             return Err(SQExtError::Other(error.to_string()));
         }
         self.users.store(SunnyQuicServer::gen_users_hash(&config));
@@ -252,7 +263,10 @@ impl SunnyQuicServer {
         );
         span.record("id", sq_conn.inner.peer_id());
         span.in_scope(|| {
-            tracing::info!("accepted sunnyquic connection");
+            tracing::info!(
+                event = "connectivity:connection_started",
+                "accepted sunnyquic connection"
+            );
         });
         let sq_conn = Arc::new(sq_conn);
         sq_conn
@@ -312,13 +326,16 @@ impl Inbound for SunnyQuicServer {
                             async move {
                                 Self::handle_incoming(conn, request_sender, user_hash, user_manager)
                                     .await
-                                    .map_err(|x| error!("{}", x))
+                                    .map_err(|x| error!(event = "proxy:connection_failed", "{}", x))
                             }
                             .instrument(span),
                         );
                     }
                     Err(e) => {
-                        error!("Error accepting quic connection: {}", e);
+                        error!(
+                            event = "connectivity:connection_accept_failed",
+                            "Error accepting quic connection: {}", e
+                        );
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 }

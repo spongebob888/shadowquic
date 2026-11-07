@@ -151,7 +151,7 @@ impl Observer {
         for (id, handle) in to_close {
             if let Some(handle) = handle.upgrade() {
                 handle.stop();
-                info!(%id, "connection closed by observer");
+                info!(event = "connectivity:connection_close_requested", %id, "connection closed by observer");
             }
         }
     }

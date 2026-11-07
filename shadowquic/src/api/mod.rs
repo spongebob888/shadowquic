@@ -205,7 +205,7 @@ impl ApiManager {
                 biased;
                 _ = stopped.changed() => break,
                 Some(result) = connections.join_next(), if !connections.is_empty() => {
-                    if let Err(error) = result { tracing::debug!(%error, "API connection task failed"); }
+                    if let Err(error) = result { tracing::debug!(event = "api:connection_task_failed", %error, "API connection task failed"); }
                 }
                 accepted = listener.accept() => {
                     let (stream, _) = accepted?;
@@ -219,7 +219,7 @@ impl ApiManager {
                             .max_buf_size(32 * 1024)
                             .serve_connection(TokioIo::new(stream), service).await
                         {
-                            tracing::debug!(%error, "API HTTP connection closed");
+                            tracing::debug!(event = "api:connection_closed", %error, "API HTTP connection closed");
                         }
                     });
                 }

@@ -1,4 +1,7 @@
-use std::time::Duration;
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use shadowquic::{Inbound, ProxyRequest, config::SocksServerCfg, socks::inbound::SocksServer};
 use tokio::{
@@ -10,14 +13,36 @@ use tokio::{
 use tracing::{Event, Subscriber};
 use tracing_subscriber::{Layer, layer::Context, prelude::*};
 
-struct SocksErrors(mpsc::UnboundedSender<()>);
+struct SocksErrors {
+    errors: mpsc::UnboundedSender<()>,
+    events: Arc<Mutex<Vec<String>>>,
+}
+
+#[derive(Default)]
+struct EventName(Option<String>);
+
+impl tracing::field::Visit for EventName {
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if field.name() == "event" {
+            self.0 = Some(value.to_owned());
+        }
+    }
+
+    fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
+}
 
 impl<S: Subscriber> Layer<S> for SocksErrors {
     fn on_event(&self, event: &Event<'_>, _context: Context<'_, S>) {
-        if *event.metadata().level() == tracing::Level::ERROR
-            && event.metadata().target() == "shadowquic::socks::inbound"
-        {
-            let _ = self.0.send(());
+        if event.metadata().target() == "shadowquic::socks::inbound" {
+            let mut name = EventName::default();
+            event.record(&mut name);
+            self.events
+                .lock()
+                .unwrap()
+                .push(name.0.expect("logs must carry a string event field"));
+            if *event.metadata().level() == tracing::Level::ERROR {
+                let _ = self.errors.send(());
+            }
         }
     }
 }
@@ -25,7 +50,11 @@ impl<S: Subscriber> Layer<S> for SocksErrors {
 #[tokio::test(flavor = "current_thread")]
 async fn socks_server_accepts_after_client_closes_before_accept() {
     let (error_tx, mut error_rx) = mpsc::unbounded_channel();
-    let subscriber = tracing_subscriber::registry().with(SocksErrors(error_tx));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let subscriber = tracing_subscriber::registry().with(SocksErrors {
+        errors: error_tx,
+        events: events.clone(),
+    });
     let _subscriber = tracing::subscriber::set_default(subscriber);
 
     timeout(Duration::from_secs(5), async {
@@ -70,6 +99,19 @@ async fn socks_server_accepts_after_client_closes_before_accept() {
         assert_eq!(&connect_reply[..4], &[0x05, 0x00, 0x00, 0x01]);
 
         let req = inbound.accept().await.unwrap();
+        // A timeline consumer can classify events without parsing message text.
+        let names = events.lock().unwrap().clone();
+        assert!(names.iter().any(|name| matches!(
+            name.as_str(),
+            "proxy:connection_failed" | "connectivity:connection_accept_failed"
+        )));
+        assert!(
+            names.ends_with(&[
+                "connectivity:connection_started".into(),
+                "proxy:tcp_request_accepted".into(),
+            ]),
+            "unexpected connection timeline: {names:?}"
+        );
         assert_eq!(req.user_context().inbound_tag, "test-socks");
         // The inbound stamps its configured default outbound as the request's
         // preference before handing it to the manager.

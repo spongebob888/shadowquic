@@ -69,12 +69,15 @@ impl Outbound for DirectOut {
             crate::ProxyRequest::Tcp(mut tcp_session) => {
                 let dns = self.dns.clone();
                 let fut = async move {
-                    trace!("direct tcp to {}", tcp_session.dst);
+                    trace!(
+                        event = "connectivity:connection_started",
+                        "direct tcp to {}", tcp_session.dst
+                    );
                     // If dns field is resolved, Direct outbound will be wrapped with ResolvingOutbound.
                     // Here is mainly for backward compatibilty if dns-servers feature is disabled.
                     let dst =
                         resolve_destination(&*dns, &tcp_session.dst, Some(&dns_strategy)).await?;
-                    trace!("resolved to {}", dst);
+                    trace!(event = "dns:address_resolved", "resolved to {}", dst);
 
                     let mut upstream = self_clone.connect_tcp(dst).await?;
                     let _ = upstream.set_nodelay(true);
@@ -120,7 +123,12 @@ impl DnsResolve {
                 Ok(*v)
             } else {
                 let s = resolve_destination(&*self.1, socks, Some(strategy)).await?;
-                tracing::trace!("{} resolved to {}", socks, s);
+                tracing::trace!(
+                    event = "dns:address_resolved",
+                    "{} resolved to {}",
+                    socks,
+                    s
+                );
                 self.0.lock().await.insert(socks.clone(), s);
                 Ok(s)
             }
@@ -187,7 +195,7 @@ impl DirectOut {
     }
 
     async fn handle_udp(&self, udp_session: UdpSession) -> Result<(), SError> {
-        trace!(bind_addr = %udp_session.bind_addr,"associating udp");
+        trace!(event = "direct:udp_association_started", bind_addr = %udp_session.bind_addr,"associating udp");
         let bind_addr =
             udp_session
                 .bind_addr

@@ -96,9 +96,13 @@ impl Inbound for MixedServer {
             Some(Protocol::TCP),
         )?;
         if dual_stack {
-            let _ = socket
-                .set_only_v6(false)
-                .map_err(|e| tracing::warn!("failed to set dual stack for socket: {}", e));
+            let _ = socket.set_only_v6(false).map_err(|e| {
+                tracing::warn!(
+                    event = "connectivity:dual_stack_failed",
+                    "failed to set dual stack for socket: {}",
+                    e
+                )
+            });
         }
         socket.set_reuse_address(true)?;
         socket.set_nonblocking(true)?;
@@ -128,7 +132,7 @@ impl Inbound for MixedServer {
                 let (stream, addr) = match listener.accept().await {
                     Ok(connection) => connection,
                     Err(error) => {
-                        error!(%error, "failed to accept mixed connection");
+                        error!(event = "connectivity:connection_accept_failed", %error, "failed to accept mixed connection");
                         // Avoid spinning when resource exhaustion prevents accepting.
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                         continue;
@@ -145,7 +149,10 @@ impl Inbound for MixedServer {
                     id = tracing::field::Empty,
                 );
                 span.in_scope(|| {
-                    tracing::info!("accepted mixed connection");
+                    tracing::info!(
+                        event = "connectivity:connection_started",
+                        "accepted mixed connection"
+                    );
                 });
                 let http = http.clone();
                 let users = users.clone();
@@ -154,7 +161,12 @@ impl Inbound for MixedServer {
                     async move {
                         handle_connection(stream, http, users, req_send)
                             .await
-                            .map_err(|x| error!("failed to handle mixed connection: {}", x))
+                            .map_err(|x| {
+                                error!(
+                                    event = "proxy:connection_failed",
+                                    "failed to handle mixed connection: {}", x
+                                )
+                            })
                     }
                     .instrument(span),
                 );

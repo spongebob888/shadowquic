@@ -120,6 +120,7 @@ impl QuicConnection for Connection {
         match self.send_datagram(bytes) {
             Ok(_) => (),
             Err(SendDatagramError::TooLarge) => warn!(
+                event = "sunnyquic:datagram_too_large",
                 "datagram too large:{}>{}",
                 len,
                 self.max_datagram_size().unwrap()
@@ -186,23 +187,36 @@ impl QuicClient for EndClient {
                     accepted_0rtt = Some(rx);
                     tokio::spawn(
                         async move {
-                            debug!("zero rtt accepted: {}", accepted.await);
+                            debug!(
+                                event = "security:zero_rtt_result",
+                                "zero rtt accepted: {}",
+                                accepted.await
+                            );
                             tx.send(()).unwrap_or(());
                         }
                         .in_current_span(),
                     );
-                    trace!("trying 0-rtt quic connection");
+                    trace!(
+                        event = "connectivity:zero_rtt_attempted",
+                        "trying 0-rtt quic connection"
+                    );
                     x
                 }
                 Err(e) => {
                     let x = e.await?;
-                    trace!("1-rtt quic connection established");
+                    trace!(
+                        event = "connectivity:connection_established",
+                        "1-rtt quic connection established"
+                    );
                     x
                 }
             }
         } else {
             let x = conn.await?;
-            trace!("1-rtt quic connection established");
+            trace!(
+                event = "connectivity:connection_established",
+                "1-rtt quic connection established"
+            );
             x
         };
         tokio::spawn(
@@ -253,8 +267,8 @@ async fn add_extra_path(
         }
         if !conn.is_multipath_enabled() {
             warn!(
-                "multipath not enabled in quic connection, can't add path {}",
-                path
+                event = "connectivity:multipath_unavailable",
+                "multipath not enabled in quic connection, can't add path {}", path
             );
             break;
         }
@@ -265,15 +279,25 @@ async fn add_extra_path(
                 let to_open = conn.open_path_ensure(path_addr, Default::default()).await;
                 match to_open {
                     Ok(p) => {
-                        debug!("added multipath path to {path}: {:?}", p.id());
+                        debug!(
+                            event = "connectivity:path_added",
+                            "added multipath path to {path}: {:?}",
+                            p.id()
+                        );
                         break;
                     }
                     Err(e) => {
                         if ii == 4 {
-                            warn!("failed to add multipath path {}: {e}", path);
+                            warn!(
+                                event = "connectivity:path_add_failed",
+                                "failed to add multipath path {}: {e}", path
+                            );
                             break;
                         }
-                        debug!("failed to add multipath path {path}: {e}, try again");
+                        debug!(
+                            event = "connectivity:path_add_retried",
+                            "failed to add multipath path {path}: {e}, try again"
+                        );
 
                         tokio::time::sleep(Duration::from_millis(2000)).await;
                     }
@@ -378,14 +402,21 @@ pub fn gen_client_cfg(cfg: &SunnyQuicClientCfg) -> noq::ClientConfig {
             tp_cfg.congestion_controller_factory(Arc::new(NewRenoConfig::default()))
         }
         CongestionControl::Bbr => {
-            warn!("BBR is not implemented, fallback to BBR3");
+            warn!(
+                event = "recovery:controller_fallback",
+                "BBR is not implemented, fallback to BBR3"
+            );
             tp_cfg.congestion_controller_factory(Arc::new(Bbr3Config::default()))
         }
         CongestionControl::Bbr3 => {
             tp_cfg.congestion_controller_factory(Arc::new(Bbr3Config::default()))
         }
         CongestionControl::Brutal(ref brutal) => {
-            tracing::info!(?brutal, "using brutal congestion control");
+            tracing::info!(
+                event = "recovery:controller_selected",
+                ?brutal,
+                "using brutal congestion control"
+            );
             let brutal_config = BrutalConfig::new(
                 brutal.bandwidth,
                 brutal.min_window,
@@ -441,7 +472,11 @@ impl QuicServer for EndServer {
                             let _conn_clone = conn.clone();
                             tokio::spawn(
                                 async move {
-                                    debug!("zero rtt accepted:{}", accepted.await);
+                                    debug!(
+                                        event = "security:zero_rtt_result",
+                                        "zero rtt accepted:{}",
+                                        accepted.await
+                                    );
                                 }
                                 .in_current_span(),
                             );
@@ -512,7 +547,11 @@ fn gen_server_config(
         .initial_mtu(cfg.initial_mtu);
     match cfg.congestion_control {
         CongestionControl::Brutal(ref brutal) => {
-            tracing::info!(?brutal, "using brutal congestion control");
+            tracing::info!(
+                event = "recovery:controller_selected",
+                ?brutal,
+                "using brutal congestion control"
+            );
             let brutal_config = BrutalConfig::new(
                 brutal.bandwidth,
                 brutal.min_window,
@@ -524,7 +563,10 @@ fn gen_server_config(
             tp_cfg.congestion_controller_factory(Arc::new(brutal_config))
         }
         CongestionControl::Bbr => {
-            warn!("BBR is not implemented, fallback to BBR3");
+            warn!(
+                event = "recovery:controller_fallback",
+                "BBR is not implemented, fallback to BBR3"
+            );
             tp_cfg.congestion_controller_factory(Arc::new(Bbr3Config::default()))
         }
         CongestionControl::Bbr3 => {

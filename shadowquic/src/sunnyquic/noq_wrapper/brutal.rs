@@ -45,6 +45,7 @@ impl ControllerFactory for BrutalConfig {
         let cfg = self.0.clone();
 
         trace!(
+            event = "recovery:controller_created",
             "[brutal] build called: default_bandwidth_bps={}, initial_rtt_ms={}, min_window={}, cwnd_gain={}, min_ack_rate={}, min_sample_count={}, enable_ack_rate_compensation={}, mtu={}",
             cfg.default_bandwidth_bps,
             cfg.initial_rtt.as_millis(),

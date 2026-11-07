@@ -44,7 +44,11 @@ impl TproxyServer {
             tokio::spawn(
                 async move {
                     if let Err(e) = handle_udp_tproxy(bind_addr, udp_req_tx).await {
-                        tracing::error!("tproxy udp listener failed: {}", e);
+                        tracing::error!(
+                            event = "connectivity:udp_listener_failed",
+                            "tproxy udp listener failed: {}",
+                            e
+                        );
                     }
                 }
                 .in_current_span(),
@@ -72,9 +76,13 @@ impl TproxyServer {
             Some(Protocol::TCP),
         )?;
         if dual_stack {
-            let _ = socket
-                .set_only_v6(false)
-                .map_err(|e| tracing::warn!("failed to set dual stack for socket: {}", e));
+            let _ = socket.set_only_v6(false).map_err(|e| {
+                tracing::warn!(
+                    event = "connectivity:dual_stack_failed",
+                    "failed to set dual stack for socket: {}",
+                    e
+                )
+            });
         };
         socket.set_reuse_address(true)?;
 
@@ -106,7 +114,7 @@ impl Inbound for TproxyServer {
                     match self.tcp_listener.accept().await {
                         Ok((conn, addr)) => return (conn, addr.to_canonical()),
                         Err(error) => {
-                            tracing::error!(%error, "failed to accept tproxy tcp connection");
+                            tracing::error!(event = "connectivity:connection_accept_failed", %error, "failed to accept tproxy tcp connection");
                             // Keep UDP requests available while TCP accepts back off.
                             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                         }
@@ -118,7 +126,7 @@ impl Inbound for TproxyServer {
                 // here; this only keeps every accepted socket behaving the same.
                 let _ = stream.set_nodelay(true);
 
-                tracing::info!("accepted tproxy tcp connection");
+                tracing::info!(event = "connectivity:connection_started", "accepted tproxy tcp connection");
 
                 let src_addr = Some(addr);
                 let orig_dst = stream.local_addr().map_err(|e| SError::SocksError(e.to_string()))?
@@ -149,7 +157,7 @@ impl Inbound for TproxyServer {
                         span.record("src", tracing::field::display(addr));
                     }
                 span.in_scope(|| {
-                    tracing::info!("accepted tproxy udp request");
+                    tracing::info!(event = "proxy:udp_request_accepted", "accepted tproxy udp request");
                 });
                 req
             }
@@ -335,7 +343,7 @@ async fn handle_udp_tproxy(
                             *last_active = now;
                             tx.clone()
                         } else {
-                            tracing::trace!("accepted udp connection from {}", client_addr);
+                            tracing::trace!(event = "tproxy:udp_session_started", "accepted udp connection from {}", client_addr);
 
                             let (tx, rx) = channel(1024);
                             let send = Arc::new(TproxyUdpSend {
@@ -384,7 +392,7 @@ async fn handle_udp_tproxy(
                             match tx.try_send((data, dst_socks.clone())) {
                                 Ok(()) => {}
                                 Err(TrySendError::Full(_)) => {
-                                    tracing::warn!(dst = %dst_socks,"udp packet queue full and dropped");
+                                    tracing::warn!(event = "tproxy:datagram_dropped", dst = %dst_socks,"udp packet queue full and dropped");
                                 }
                                 Err(TrySendError::Closed(_)) => {
                                     sessions.remove(&client_addr);
@@ -395,7 +403,7 @@ async fn handle_udp_tproxy(
                         }
                     }
                     Err(error) => {
-                        tracing::error!(%error, "failed to receive tproxy udp packet");
+                        tracing::error!(event = "tproxy:datagram_receive_failed", %error, "failed to receive tproxy udp packet");
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 }
@@ -405,7 +413,7 @@ async fn handle_udp_tproxy(
                 sessions.retain(|addr, (tx, last_active)| {
                     let keep = !tx.is_closed() && now.duration_since(*last_active) < idle_timeout;
                     if !keep {
-                        tracing::debug!("cleaning up idle udp session for {}", addr);
+                        tracing::debug!(event = "tproxy:udp_session_expired", "cleaning up idle udp session for {}", addr);
                     }
                     keep
                 });

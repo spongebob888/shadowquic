@@ -291,7 +291,7 @@ impl UdpSend for Sender<(Bytes, SocksAddr)> {
         match self.try_send((buf, addr.clone())) {
             Ok(()) => {}
             Err(TrySendError::Full(_)) => {
-                tracing::warn!(dst = %&addr,"drop udp packet due to full channel");
+                tracing::warn!(event = "proxy:datagram_dropped", dst = %&addr,"drop udp packet due to full channel");
                 return Ok(0);
             }
             Err(TrySendError::Closed(_)) => {
@@ -355,7 +355,7 @@ impl RequestDispatcher {
                     req = match sniffer.sniff(req).await {
                         Ok(req) => req,
                         Err(error) => {
-                            error!(%error, "sniffing request failed");
+                            error!(event = "sniffer:request_failed", %error, "sniffing request failed");
                             return;
                         }
                     };
@@ -372,12 +372,12 @@ impl RequestDispatcher {
                             outbound_tag
                         }
                         Err(error) => {
-                            error!(%error, "invalid rewritten destination");
+                            error!(event = "routing:invalid_destination", %error, "invalid rewritten destination");
                             return;
                         }
                     },
                     Err(error) => {
-                        error!(%error, "routing request failed");
+                        error!(event = "routing:request_failed", %error, "routing request failed");
                         return;
                     }
                 }
@@ -387,15 +387,15 @@ impl RequestDispatcher {
         #[cfg(not(feature = "plugin"))]
         let outbound_tag = self.fallback_outbound_tag(&req);
         let Some(outbound) = self.outbounds.get(&outbound_tag).cloned() else {
-            error!(outbound = %outbound_tag, "selected an unknown outbound");
+            error!(event = "routing:unknown_outbound", outbound = %outbound_tag, "selected an unknown outbound");
             return;
         };
         if let Some(observer) = req.user_context().observer.upgrade() {
             req = observer.wrap_request(req, outbound_tag.clone()).await;
         }
-        tracing::debug!(outbound = %outbound_tag, dst = %req.dst(), "routing request");
+        tracing::debug!(event = "routing:outbound_selected", outbound = %outbound_tag, dst = %req.dst(), "routing request");
         if let Err(error) = outbound.handle(req).await {
-            error!(outbound = %outbound_tag, %error, "error handling request");
+            error!(event = "proxy:request_failed", outbound = %outbound_tag, %error, "error handling request");
         }
     }
 
@@ -519,10 +519,10 @@ impl Manager {
     async fn init_inbounds(&self) -> Result<(), SError> {
         for (tag, inbound) in &self.inbounds {
             if let Err(error) = inbound.init().await {
-                error!(inbound = %tag, %error, "inbound initialization failed");
+                error!(event = "proxy:inbound_initialization_failed", inbound = %tag, %error, "inbound initialization failed");
                 for (tag, inbound) in &self.inbounds {
                     if let Err(error) = inbound.shutdown().await {
-                        error!(inbound = %tag, %error, "inbound shutdown failed");
+                        error!(event = "proxy:inbound_shutdown_failed", inbound = %tag, %error, "inbound shutdown failed");
                     }
                 }
                 return Err(error);
@@ -552,7 +552,7 @@ async fn run_inbound(
                     _ = stopped.changed() => break 'accepting,
                     Some(result) = requests.join_next(), if !requests.is_empty() => {
                         if let Err(error) = result {
-                            error!(inbound = %tag, %error, "request task failed");
+                            error!(event = "proxy:request_task_failed", inbound = %tag, %error, "request task failed");
                         }
                     }
                     req = &mut accept => break req,
@@ -568,7 +568,7 @@ async fn run_inbound(
             }
             Err(SError::InboundClosed) => break,
             Err(error) => {
-                error!(inbound = %tag, %error, "error accepting request");
+                error!(event = "proxy:request_accept_failed", inbound = %tag, %error, "error accepting request");
                 tokio::select! {
                     biased;
                     _ = stopped.changed() => break,
@@ -622,7 +622,7 @@ async fn supervise_tasks(
     loop {
         tokio::select! {
             _ = &mut shutdown => {
-                info!("shutdown requested, persisting users and stats");
+                info!(event = "application:shutdown_requested", "shutdown requested, persisting users and stats");
                 break;
             }
             task = tasks.join_next() => {
@@ -643,7 +643,7 @@ async fn supervise_tasks(
             Err(error) => Err(SError::Io(std::io::Error::other(error))),
         };
         if let Err(error) = task_result {
-            error!(%error, "inbound shutdown failed");
+            error!(event = "proxy:inbound_shutdown_failed", %error, "inbound shutdown failed");
             if result.is_ok() {
                 result = Err(error);
             }

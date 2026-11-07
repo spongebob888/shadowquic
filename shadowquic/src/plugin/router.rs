@@ -318,7 +318,7 @@ impl Router {
                         }
                     }
                     Ok(_) => {}
-                    Err(error) => warn!(%error, "router script watch failed"),
+                    Err(error) => warn!(event = "routing:script_watch_failed", %error, "router script watch failed"),
                 });
             })
             .map_err(|error| {
@@ -488,7 +488,7 @@ impl Router {
         globals.set(
             "info",
             lua.create_function(|_, message: String| {
-                info!("{message}");
+                info!(event = "routing:script_message", "{message}");
                 Ok(())
             })?,
         )?;
@@ -549,7 +549,7 @@ impl Router {
             }
         }
         .await;
-        tracing::trace!(
+        tracing::trace!(event = "routing:completed",
             elapsed = ?started.elapsed(),
             success = result.is_ok(),
             "routing completed",
@@ -613,9 +613,11 @@ fn reload_script(inner: &Mutex<RouterInner>, path: &Path, resolver_manager: Arc<
         Ok::<_, SError>(true)
     })();
     match result {
-        Ok(true) => info!("router script reloaded"),
+        Ok(true) => info!(event = "routing:script_reloaded", "router script reloaded"),
         Ok(false) => {}
-        Err(error) => warn!(%error, "failed to reload router script; keeping current router"),
+        Err(error) => {
+            warn!(event = "routing:script_reload_failed", %error, "failed to reload router script; keeping current router")
+        }
     }
 }
 
