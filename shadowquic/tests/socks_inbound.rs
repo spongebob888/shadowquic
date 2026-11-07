@@ -103,12 +103,12 @@ async fn socks_server_accepts_after_client_closes_before_accept() {
         let names = events.lock().unwrap().clone();
         assert!(names.iter().any(|name| matches!(
             name.as_str(),
-            "proxy:connection_failed" | "connectivity:connection_accept_failed"
+            "socks:connection_failed" | "connectivity:connection_accept_failed"
         )));
         assert!(
             names.ends_with(&[
-                "connectivity:connection_started".into(),
-                "proxy:tcp_request_accepted".into(),
+                "socks:connection_started".into(),
+                "socks:tcp_request_accepted".into(),
             ]),
             "unexpected connection timeline: {names:?}"
         );

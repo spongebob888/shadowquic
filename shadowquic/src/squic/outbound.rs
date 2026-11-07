@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use tracing::field::debug;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
@@ -29,8 +30,7 @@ pub async fn handle_request<C: QuicConnection>(
     over_stream: bool,
     half_close_timeout: u64,
 ) -> Result<(), SError> {
-    let (mut send, recv, id) = QuicConnection::open_bi(&conn.conn).await?;
-    let _span = span!(Level::INFO, "bistream", id = id);
+    let (mut send, recv, _id) = QuicConnection::open_bi(&conn.conn).await?;
     let conn_clone = conn.clone();
     tokio::spawn(
         async move {

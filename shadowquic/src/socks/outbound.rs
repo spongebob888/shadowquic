@@ -180,9 +180,9 @@ impl SocksClient {
 
     async fn handle_udp(&self, mut udp_session: UdpSession) -> Result<(), SError> {
         tracing::info!(
-            event = "connectivity:connection_started",
-            "connect to socks server: {}",
-            self.cfg.addr
+            event = "socks:udp_connection_started",
+            server_addr = %self.cfg.addr,
+            "connect to socks server",
         );
         let socket = self.tcp_socket_factory.create_socket().await?;
         let std_stream: std::net::TcpStream = socket.into();

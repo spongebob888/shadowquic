@@ -327,7 +327,7 @@ pub fn gen_client_cfg(cfg: &ShadowQuicClientCfg) -> quinn::ClientConfig {
 
     if !cfg.gso {
         tracing::warn!(
-            event = "shadowquic:gso_disabled",
+            event = "quic:gso_disabled",
             "disabling QUIC segmentation offload (GSO)"
         );
     }

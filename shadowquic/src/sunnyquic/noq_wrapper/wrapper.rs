@@ -187,10 +187,11 @@ impl QuicClient for EndClient {
                     accepted_0rtt = Some(rx);
                     tokio::spawn(
                         async move {
+                            let accepted = accepted.await;
                             debug!(
                                 event = "quic:zero_rtt_result",
-                                "zero rtt accepted: {}",
-                                accepted.await
+                                accepted = %accepted,
+                                "zero rtt result"
                             );
                             tx.send(()).unwrap_or(());
                         }
@@ -472,10 +473,11 @@ impl QuicServer for EndServer {
                             let _conn_clone = conn.clone();
                             tokio::spawn(
                                 async move {
+                                    let accepted = accepted.await;
                                     debug!(
-                                        event = "security:zero_rtt_result",
-                                        "zero rtt accepted:{}",
-                                        accepted.await
+                                        event = "quic:zero_rtt_result",
+                                        accepted = %accepted,
+                                        "zero rtt accept result",
                                     );
                                 }
                                 .in_current_span(),
