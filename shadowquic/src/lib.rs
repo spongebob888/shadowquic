@@ -88,7 +88,10 @@ pub use msgs::SDecode;
 pub use msgs::SEncode;
 pub use selector::Selectable;
 
-use crate::{observe::Observer, utils::{dual_socket::to_ipv4_mapped, log::fetch_add_req_cnt}};
+use crate::{
+    observe::Observer,
+    utils::{dual_socket::to_ipv4_mapped, log::fetch_add_req_cnt},
+};
 #[cfg(test)]
 mod manager_tests;
 pub enum ProxyRequest<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend> {

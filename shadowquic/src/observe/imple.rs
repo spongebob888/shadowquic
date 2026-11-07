@@ -151,7 +151,7 @@ impl Observer {
         for (id, handle) in to_close {
             if let Some(handle) = handle.upgrade() {
                 handle.stop();
-                info!(event = "connectivity:connection_close_requested", %id, "connection closed by observer");
+                info!(event = "user_api:connection_close_requested", %id, "connection closed by observer");
             }
         }
     }
@@ -304,7 +304,7 @@ impl TrackedRecvStats {
     fn new(
         src_addr: Option<SocketAddr>,
         conns: Arc<AtomicU64>,
-        id:u32,
+        id: u32,
         #[cfg(all(feature = "restful-api", feature = "sniffer"))] sniffer: Option<
             crate::utils::sniffer::SniffResult,
         >,
@@ -318,7 +318,7 @@ impl TrackedRecvStats {
             src_addr,
             created: Instant::now(),
             #[cfg(feature = "restful-api")]
-            id: id,
+            id,
         }
     }
 }
@@ -499,7 +499,7 @@ impl Observer {
                     tcp.src_addr,
                     tcp.dst.clone(),
                     outbound,
-                    tcp.user_context.req_id,    
+                    tcp.user_context.req_id,
                     #[cfg(all(feature = "restful-api", feature = "sniffer"))]
                     tcp.user_context.sniffer.clone(),
                 );

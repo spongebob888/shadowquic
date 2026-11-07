@@ -129,7 +129,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                             conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),
                             conn_id: self.inner.conn.peer_id(),
                         }),
-                        req_id: req_id,
+                        req_id,
                         ..Default::default()
                     },
                 };
@@ -161,7 +161,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                                 conn_handle: Arc::downgrade(&(self.clone() as Arc<dyn Stoppable>)),
                                 conn_id: self.inner.conn.peer_id(),
                             }),
-                            req_id: req_id,
+                            req_id,
                             ..Default::default()
                         },
                     }

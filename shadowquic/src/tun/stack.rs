@@ -415,7 +415,7 @@ impl Stack {
                 if self.requests.try_send(request).is_err() {
                     socket.abort();
                 } else {
-                    tracing::info!(event = "connectivity:connection_started",
+                    tracing::info!(event = "tun:connection_started",
                         src = %key.client,
                         dst = %key.destination,
                         "accepted TUN TCP session"

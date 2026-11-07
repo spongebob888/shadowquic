@@ -1,9 +1,9 @@
 pub(crate) mod copy;
 pub mod dual_socket;
+pub mod log;
 pub mod platform;
 pub mod socket_opt;
 pub mod user_store;
-pub mod log;
 
 #[cfg(any(feature = "router-db", feature = "restful-api"))]
 pub(crate) mod download;

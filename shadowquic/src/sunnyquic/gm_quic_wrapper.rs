@@ -224,7 +224,7 @@ impl QuicServer for EndServer {
             .await
             .map_err(|error| QuicErrorRepr::QuicBaseError(error.to_string()))?;
         tracing::info!(
-            event = "connectivity:connection_started",
+            event = "quic:connection_started",
             "Accepted new connection from {}, sni: {:?}",
             link.src(),
             sni

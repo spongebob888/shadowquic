@@ -1,12 +1,11 @@
 use bytes::Bytes;
-use tracing::field::debug;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 
 use tokio::io::AsyncReadExt;
 use tracing::Instrument;
-use tracing::{Level, error, info, span, trace};
+use tracing::{error, info, trace};
 
 use crate::config::AuthUser;
 use crate::error::SResult;

@@ -95,7 +95,7 @@ impl ShadowQuicClient {
         quic_conn.take_if(|x| {
             x.close_reason().is_some_and(|x| {
                 info!(
-                    event = "connectivity:connection_closed",
+                    event = "quic:connection_closed",
                     "quic connection closed due to {}", x
                 );
                 true

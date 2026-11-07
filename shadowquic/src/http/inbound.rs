@@ -5,7 +5,10 @@ use base64::engine::general_purpose::STANDARD;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{
-    ProxyRequest, StatsContext, TcpSession, TcpTrait, UserContext, error::SError, msgs::socks5::{AddrOrDomain, SocksAddr}, utils::{dual_socket::to_ipv4_mapped, log::REQ_ID, replay_stream::ReplayStream},
+    ProxyRequest, StatsContext, TcpSession, TcpTrait, UserContext,
+    error::SError,
+    msgs::socks5::{AddrOrDomain, SocksAddr},
+    utils::{dual_socket::to_ipv4_mapped, log::REQ_ID, replay_stream::ReplayStream},
 };
 
 #[derive(Clone, Debug)]

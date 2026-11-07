@@ -327,7 +327,7 @@ impl Inbound for SocksServer {
                 let (stream, addr) = match listener.accept().await {
                     Ok(connection) => connection,
                     Err(error) => {
-                        error!(event = "connectivity:connection_accept_failed", %error, "failed to accept socks connection");
+                        error!(event = "socks:connection_accept_failed", %error, "failed to accept socks connection");
                         // Avoid spinning when resource exhaustion prevents accepting.
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                         continue;
@@ -360,12 +360,15 @@ impl Inbound for SocksServer {
                 let req_send = req_send.clone();
                 tokio::spawn(
                     async move {
-                        REQ_ID.scope(req_id,handle_tcp(users, stream, req_send)).await.map_err(|x| {
-                            error!(
-                                event = "socks:connection_failed",
-                                "failed to handle socks connection: {}", x
-                            )
-                        })
+                        REQ_ID
+                            .scope(req_id, handle_tcp(users, stream, req_send))
+                            .await
+                            .map_err(|x| {
+                                error!(
+                                    event = "socks:connection_failed",
+                                    "failed to handle socks connection: {}", x
+                                )
+                            })
                     }
                     .instrument(span),
                 );

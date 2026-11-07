@@ -70,8 +70,9 @@ impl Outbound for DirectOut {
                 let dns = self.dns.clone();
                 let fut = async move {
                     trace!(
-                        event = "connectivity:connection_started",
-                        "direct tcp to {}", tcp_session.dst
+                        event = "direct:tcp_connection_started",
+                        dst = %tcp_session.dst,
+                        "connecting direct tcp"
                     );
                     // If dns field is resolved, Direct outbound will be wrapped with ResolvingOutbound.
                     // Here is mainly for backward compatibilty if dns-servers feature is disabled.

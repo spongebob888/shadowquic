@@ -133,7 +133,7 @@ impl Inbound for MixedServer {
                 let (stream, addr) = match listener.accept().await {
                     Ok(connection) => connection,
                     Err(error) => {
-                        error!(event = "connectivity:connection_accept_failed", %error, "failed to accept mixed connection");
+                        error!(event = "mixed:connection_accept_failed", %error, "failed to accept mixed connection");
                         // Avoid spinning when resource exhaustion prevents accepting.
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                         continue;
@@ -162,11 +162,12 @@ impl Inbound for MixedServer {
                 let req_send = req_send.clone();
                 tokio::spawn(
                     async move {
-                        REQ_ID.scope(req_id, handle_connection(stream, http, users, req_send))
+                        REQ_ID
+                            .scope(req_id, handle_connection(stream, http, users, req_send))
                             .await
                             .map_err(|x| {
                                 error!(
-                                    event = "proxy:connection_failed",
+                                    event = "mixed:connection_failed",
                                     "failed to handle mixed connection: {}", x
                                 )
                             })
