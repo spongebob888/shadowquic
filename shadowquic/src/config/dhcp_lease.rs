@@ -25,7 +25,29 @@ use std::path::{Path, PathBuf};
 /// ignored. Lease files reload automatically; failures retain the previous data
 /// with expiry still enforced. Missing initial files give empty results and are
 /// retried. Stores survive Lua reloads, and lease updates do not reset Lua state.
-
+///
+/// Example configuration:
+/// ```yaml
+/// router:
+///   dhcp-lease:
+///     - type: dnsmasq
+///       tag: lan-v4
+///       path: /tmp/dhcp.leases
+///     - type: odhcp
+///       tag: lan-v6
+///       path: /tmp/odhcpd.leases
+///   src: |
+///     return function(ctx)
+///       local host
+///       if ctx.src_ip_v4 then
+///         host = find_dhcp_host_v4("lan-v4", ctx.src_ip_v4)
+///       elseif ctx.src_ip_v6 then
+///         host = find_dhcp_host_v6("lan-v6", ctx.src_ip_v6)
+///       end
+///       if host == "blocked-device" then return "block" end
+///       return "direct"
+///     end
+/// ```
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum DhcpLeaseCfg {
