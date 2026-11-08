@@ -775,6 +775,13 @@ Request IDs and connection fields appear here.</pre
       function validLimit(value) {
         return Number.isSafeInteger(value) && value > 0;
       }
+      function createCaptureId() {
+        // getRandomValues is available on ordinary HTTP origins too, unlike
+        // randomUUID. These opaque IDs are internal IndexedDB keys.
+        return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
+          byte.toString(16).padStart(2, "0"),
+        ).join("");
+      }
       class CaptureStore {
         constructor(db) {
           this.db = db;
@@ -842,7 +849,7 @@ Request IDs and connection fields appear here.</pre
         }
         newCapture(source) {
           return {
-            id: crypto.randomUUID(),
+            id: createCaptureId(),
             source,
             count: 0,
             nextId: 1,

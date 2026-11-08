@@ -143,6 +143,8 @@ test(
         "--headless=new",
         "--no-sandbox",
         "--disable-gpu",
+        "--no-proxy-server",
+        "--host-resolver-rules=MAP viewer.test 127.0.0.1",
         "--remote-debugging-port=0",
         "--user-data-dir=" + profile,
         "about:blank",
@@ -503,6 +505,94 @@ test(
           await browser.wait(
             fileSession,
             `performance.timeOrigin !== ${origin} && typeof state !== "undefined" && state.ready && state.view?.capture.count === 36`,
+          );
+          await browser.call("Target.closeTarget", { targetId });
+        },
+      );
+      await t.test(
+        "plain HTTP origins initialize storage, import, retain and reload captures",
+        async () => {
+          const { targetId } = await browser.call("Target.createTarget", {
+            url: "about:blank",
+          });
+          const { sessionId: httpSession } = await browser.call(
+            "Target.attachToTarget",
+            { targetId, flatten: true },
+          );
+          const httpUrl = url.replace("127.0.0.1", "viewer.test");
+          await browser.call("Page.enable", {}, httpSession);
+          await browser.call("Page.navigate", { url: httpUrl }, httpSession);
+          await browser.wait(
+            httpSession,
+            'typeof state !== "undefined" && (state.ready || state.failed)',
+          );
+          assert.deepEqual(
+            await browser.evaluate(
+              httpSession,
+              '({secure:isSecureContext,uuid:typeof crypto.randomUUID,ready:state.ready,failed:state.failed,notice:$("notice").textContent})',
+            ),
+            {
+              secure: false,
+              uuid: "undefined",
+              ready: true,
+              failed: false,
+              notice: "",
+            },
+          );
+          await browser.evaluate(httpSession, "loadDemo()");
+          await browser.wait(httpSession, "state.view?.capture.count === 36");
+          await browser.evaluate(
+            httpSession,
+            `(async () => {
+            await importFile(new File([JSON.stringify([
+              {event:'proxy:http_one',fields:{req_id:1}},
+              {event:'proxy:http_two',fields:{req_id:2}},
+              {event:'proxy:http_three',fields:{req_id:3}}
+            ])], 'http.json'));
+            $('maxRecords').value = '2';
+            await applyLimit({preventDefault(){}});
+          })()`,
+          );
+          await browser.wait(httpSession, "state.view?.capture.count === 2");
+          assert.deepEqual(
+            await browser.evaluate(
+              httpSession,
+              "state.view.rows.map(record => record.event)",
+            ),
+            ["proxy:http_two", "proxy:http_three"],
+          );
+          const origin = await browser.evaluate(
+            httpSession,
+            "performance.timeOrigin",
+          );
+          await browser.call("Page.reload", {}, httpSession);
+          await browser.wait(
+            httpSession,
+            `performance.timeOrigin !== ${origin} && typeof state !== "undefined" && state.ready && state.view?.capture.count === 2`,
+          );
+          assert.equal(
+            await browser.evaluate(httpSession, '$("maxRecords").value'),
+            "2",
+          );
+          await browser.evaluate(httpSession, "clearCapture()");
+          await browser.wait(httpSession, "state.view?.capture.count === 0");
+          await browser.evaluate(
+            httpSession,
+            `(() => {
+            $('endpoint').value = ${JSON.stringify(httpUrl.replace("http:", "ws:") + "/api/v1/logs")};
+            connect({preventDefault(){}});
+          })()`,
+          );
+          await browser.wait(
+            httpSession,
+            'state.view?.capture.source.startsWith("Live") && state.view.rows.at(-1)?.raw.fields.message === "live-39" && !state.pump',
+          );
+          assert.deepEqual(
+            await browser.evaluate(
+              httpSession,
+              "({count:state.view.capture.count,evicted:state.view.capture.evicted,failed:state.failed})",
+            ),
+            { count: 2, evicted: 38, failed: false },
           );
           await browser.call("Target.closeTarget", { targetId });
         },
