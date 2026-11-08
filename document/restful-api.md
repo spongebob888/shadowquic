@@ -168,17 +168,39 @@ Records without either identity appear as unscoped events; destinations alone
 are not used to infer connections. Imported captures should come from one
 process/run because request counters can repeat after a restart.
 
-Connecting successfully starts a fresh capture. Pause display freezes the view
-while live capture continues; Resume display shows the latest retained records.
-Export JSONL saves the full retained capture independently of display filters,
-without the endpoint or the API secret from the connection form. The viewer
-does not store the secret in browser storage.
+Events are saved in **IndexedDB**, so the retained capture survives page reloads.
+The **Max stored events** setting defaults to 20,000 and accepts any positive
+safe whole number. Raise it for larger captures, or lower it to immediately
+remove the oldest events and their unused request groups. The setting persists
+across reloads and applies to both live streams and imported files. **Clear**
+deletes the retained capture's events without changing the limit.
 
-The viewer retains the latest 20,000 records, accepts files up to 25 MiB, and
-reports viewer evictions separately from the server's skipped-record notices.
+Connecting successfully starts a fresh capture. Pause display freezes a bounded
+display snapshot while live capture continues in IndexedDB. Filters and request
+selection are disabled while paused; Resume display shows the latest retained
+records. Imports stream JSONL, JSON arrays, or `records` wrappers in batches,
+without the former 25 MiB file limit. A candidate import uses temporary database
+space, up to the retention limit, until validation succeeds; a malformed import
+leaves the current capture intact. Abandoned imports older than a day are cleaned
+up when the viewer opens.
+
+Export JSONL reads all retained records in batches, independently of display
+filters. Browsers with a save-file picker write directly to the chosen file;
+other browsers download a browser-managed Blob. If retention removes records
+during export, the viewer reports the change; disconnect and export again for a
+fixed capture. Neither the endpoint nor the API secret from the connection form
+is included in exports, and the secret is not saved in browser storage.
+
+The event limit counts records rather than bytes; browser disk quotas still
+apply. Storage failures are reported and stop live capture instead of silently
+falling back to an unbounded in-memory buffer. The live write queue is bounded
+to 5,000 pending events and reports skipped events if storage cannot keep up.
+Closing the page can lose pending writes; committed records remain in IndexedDB.
+Viewer evictions are reported separately from the server's skipped-record notices.
 The event table shows the latest 500 matching records. Large timelines sample
 up to 5,000 markers (plus a selected marker) and display the marker count;
-searches and exports still use every retained record. The sidebar lists the
+indexed queries and batched text searches cover every retained record without
+loading the full capture into memory. The sidebar lists the
 latest 200 matching groups; search finds older retained requests. Existing
 source-side sampling and correlation limits still apply. The WebSocket captures
 at trace level independently of the console's configured `log-level`.

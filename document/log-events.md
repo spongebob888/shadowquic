@@ -29,6 +29,10 @@ structured fields and span context. See [Live logs over WebSocket](restful-api.m
 for authentication, the JSON schema, buffering and subscriber setup.
 The [standalone HTML viewer](../assets/log_viewer.html) provides live capture, offline import/export,
 request grouping, category timelines, filtering and inspection of span fields.
+It stores captures in IndexedDB with a configurable **Max stored events** limit
+(20,000 by default), retaining the newest events and restoring them after reload.
+See the [viewer storage details](restful-api.md#html-trace-viewer) for importing,
+exporting, and retention behavior.
 
 ## Parsing a connection timeline
 

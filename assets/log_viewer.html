@@ -155,6 +155,21 @@
         align-items: center;
         flex-wrap: wrap;
       }
+      .storage-settings {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        padding: 10px 24px;
+        border-bottom: 1px solid var(--line);
+      }
+      .storage-settings input {
+        width: 130px;
+      }
+      #storageStatus {
+        color: var(--muted);
+        font-size: 12px;
+      }
       .layout {
         display: grid;
         grid-template-columns: 250px minmax(0, 1fr);
@@ -571,6 +586,20 @@
       <button class="primary" id="connectButton" type="submit">Connect</button
       ><button id="disconnectButton" type="button" disabled>Disconnect</button>
     </form>
+    <form id="storageForm" class="storage-settings">
+      <label
+        >Max stored events<input
+          id="maxRecords"
+          type="number"
+          min="1"
+          step="1"
+          value="20000"
+          required
+          aria-label="Maximum stored events"
+      /></label>
+      <button id="applyLimit" type="submit">Apply limit</button>
+      <span id="storageStatus" role="status">Opening IndexedDB…</span>
+    </form>
     <div class="layout">
       <aside>
         <h2>Requests & connections</h2>
@@ -702,41 +731,765 @@
             <div>
               <div class="detail-title">Record</div>
               <pre id="recordDetails">
-Select a timeline marker or event row.</pre>
+Select a timeline marker or event row.</pre
+              >
             </div>
             <div>
               <div class="detail-title">Span context · root → leaf</div>
               <pre id="spanDetails">
-Request IDs and connection fields appear here.</pre>
+Request IDs and connection fields appear here.</pre
+              >
             </div>
           </div>
         </section>
         <div class="footer">
           <span id="captureInfo"
-            >Live capture retains up to 20,000 records in memory.</span
+            >Events are stored in this browser using IndexedDB.</span
           ><span>Observed events only · no inferred connection lifecycle</span>
         </div>
       </main>
     </div>
+    <script id="storage-script">
+      // IndexedDB owns the capture. Only bounded query results reach the display.
+      function idbRequest(request) {
+        return new Promise((resolve, reject) => {
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+      }
+      function idbDone(transaction) {
+        const result = new Promise((resolve, reject) => {
+          transaction.oncomplete = resolve;
+          transaction.onabort = () =>
+            reject(
+              transaction.error ||
+                new DOMException("Transaction aborted", "AbortError"),
+            );
+        });
+        result.catch(() => {});
+        return result;
+      }
+      function captureRange(id, suffix = []) {
+        return IDBKeyRange.bound([id, ...suffix], [id, ...suffix, []]);
+      }
+      function validLimit(value) {
+        return Number.isSafeInteger(value) && value > 0;
+      }
+      class CaptureStore {
+        constructor(db) {
+          this.db = db;
+        }
+        static async open() {
+          if (!globalThis.indexedDB)
+            throw Error("IndexedDB is unavailable in this browser.");
+          const request = indexedDB.open("shadowquic-trace-viewer", 1);
+          request.onupgradeneeded = () => {
+            const db = request.result;
+            const events = db.createObjectStore("events", {
+              keyPath: ["captureId", "id"],
+            });
+            events.createIndex("time", ["captureId", "time", "id"]);
+            for (const [name, field] of [
+              ["group", "groupKey"],
+              ["category", "category"],
+              ["level", "level"],
+            ]) {
+              events.createIndex(name, ["captureId", field, "id"]);
+              events.createIndex(name + "Time", [
+                "captureId",
+                field,
+                "time",
+                "id",
+              ]);
+            }
+            const groups = db.createObjectStore("groups", {
+              keyPath: ["captureId", "key"],
+            });
+            groups.createIndex("recent", ["captureId", "lastId"]);
+            db.createObjectStore("captures", { keyPath: "id" });
+            db.createObjectStore("settings");
+          };
+          request.onblocked = () =>
+            notice("Close other viewer tabs so browser storage can be opened.");
+          const store = new CaptureStore(await idbRequest(request));
+          store.db.onversionchange = () => {
+            store.db.close();
+            storageFailure(
+              Error(
+                "Browser storage changed in another tab. Reload the viewer.",
+              ),
+            );
+          };
+          return store;
+        }
+        async write(action) {
+          const tx = this.db.transaction(
+            ["events", "groups", "captures", "settings"],
+            "readwrite",
+          );
+          const done = idbDone(tx);
+          try {
+            const result = await action(tx);
+            await done;
+            return result;
+          } catch (error) {
+            try {
+              tx.abort();
+            } catch {}
+            await done.catch(() => {});
+            throw error;
+          }
+        }
+        newCapture(source) {
+          return {
+            id: crypto.randomUUID(),
+            source,
+            count: 0,
+            nextId: 1,
+            requestCount: 0,
+            groupCount: 0,
+            categories: new Map(),
+            dropped: 0,
+            evicted: 0,
+            invalid: 0,
+            overflow: 0,
+          };
+        }
+        async initialize() {
+          return this.write(async (tx) => {
+            const settings = tx.objectStore("settings"),
+              captures = tx.objectStore("captures");
+            let maxRecords = await idbRequest(settings.get("maxRecords"));
+            if (!validLimit(maxRecords)) {
+              maxRecords = DEFAULT_MAX_RECORDS;
+              settings.put(maxRecords, "maxRecords");
+            }
+            let id = await idbRequest(settings.get("activeCapture"));
+            let capture = id && (await idbRequest(captures.get(id)));
+            if (!capture) {
+              capture = this.newCapture("");
+              captures.put(capture);
+              settings.put(capture.id, "activeCapture");
+            }
+            // An interrupted import never replaces the last valid capture. Expired
+            // staging data is removed without touching another tab's recent import.
+            for (const other of await idbRequest(captures.getAll())) {
+              if (
+                other.id !== capture.id &&
+                Date.now() - (other.updated || 0) > 86400000
+              )
+                this.removeInTransaction(tx, other.id);
+            }
+            return { captureId: capture.id, maxRecords };
+          });
+        }
+        removeInTransaction(tx, id) {
+          tx.objectStore("events").delete(captureRange(id));
+          tx.objectStore("groups").delete(captureRange(id));
+          tx.objectStore("captures").delete(id);
+        }
+        async create(source) {
+          const capture = this.newCapture(source);
+          capture.updated = Date.now();
+          await this.write((tx) => tx.objectStore("captures").put(capture));
+          return capture.id;
+        }
+        async activate(id) {
+          return this.write(async (tx) => {
+            const settings = tx.objectStore("settings");
+            if (!(await idbRequest(tx.objectStore("captures").get(id))))
+              throw Error("Capture no longer exists.");
+            const old = await idbRequest(settings.get("activeCapture"));
+            settings.put(id, "activeCapture");
+            if (old && old !== id) this.removeInTransaction(tx, old);
+          });
+        }
+        async remove(id) {
+          await this.write((tx) => this.removeInTransaction(tx, id));
+        }
+        async clear(id) {
+          await this.write(async (tx) => {
+            const capture = await idbRequest(
+              tx.objectStore("captures").get(id),
+            );
+            if (!capture)
+              throw Error(
+                "Capture was removed in another tab. Reload the viewer.",
+              );
+            tx.objectStore("events").delete(captureRange(id));
+            tx.objectStore("groups").delete(captureRange(id));
+            const clean = this.newCapture(capture.source);
+            tx.objectStore("captures").put({
+              ...clean,
+              id,
+              nextId: capture.nextId,
+              updated: Date.now(),
+            });
+          });
+        }
+        async append(id, records, counters = {}) {
+          return this.write((tx) =>
+            this.appendInTransaction(tx, id, records, counters),
+          );
+        }
+        async appendInTransaction(tx, id, records, counters = {}) {
+          const capture = await idbRequest(tx.objectStore("captures").get(id));
+          if (!capture)
+            throw Error(
+              "Capture was removed in another tab. Reload the viewer.",
+            );
+          const limit = await idbRequest(
+            tx.objectStore("settings").get("maxRecords"),
+          );
+          const events = tx.objectStore("events"),
+            changes = new Map();
+          const change = (record, count) => {
+            let delta = changes.get(record.group.key);
+            if (!delta) {
+              delta = { count: 0, latest: null };
+              changes.set(record.group.key, delta);
+            }
+            delta.count += count;
+            if (count > 0) delta.latest = record;
+            const value =
+              (capture.categories.get(record.category) || 0) + count;
+            if (value) capture.categories.set(record.category, value);
+            else capture.categories.delete(record.category);
+          };
+          for (const record of records) {
+            const stored = {
+              ...record,
+              captureId: id,
+              id: capture.nextId++,
+              groupKey: record.group.key,
+            };
+            events.put(stored);
+            change(stored, 1);
+            if (
+              record.raw.event === "api:logs_lagged" &&
+              Number.isSafeInteger(record.raw.dropped) &&
+              record.raw.dropped > 0
+            )
+              capture.dropped += record.raw.dropped;
+          }
+          capture.count += records.length;
+          capture.invalid += counters.invalid || 0;
+          capture.overflow += counters.overflow || 0;
+          let extra = Math.max(0, capture.count - limit);
+          capture.evicted += extra;
+          capture.count -= extra;
+          const groups = tx.objectStore("groups");
+          const applyChanges = async () => {
+            await Promise.all(
+              [...changes].map(async ([key, delta]) => {
+                const old = await idbRequest(groups.get([id, key]));
+                const count = (old?.count || 0) + delta.count;
+                if (!count) {
+                  if (old) {
+                    groups.delete([id, key]);
+                    capture.groupCount--;
+                    if (old.request) capture.requestCount--;
+                  }
+                } else {
+                  const latest = delta.latest;
+                  const group = latest
+                    ? {
+                        ...latest.group,
+                        subtitle: latest.group.subtitle || old?.subtitle || "",
+                        lastId: latest.id,
+                      }
+                    : old;
+                  if (!old) {
+                    capture.groupCount++;
+                    if (group.request) capture.requestCount++;
+                  }
+                  groups.put({ ...group, captureId: id, count });
+                }
+              }),
+            );
+            changes.clear();
+          };
+          await applyChanges();
+          while (extra) {
+            const oldest = await idbRequest(
+              events.getAll(captureRange(id), Math.min(extra, 1000)),
+            );
+            if (!oldest.length)
+              throw Error(
+                "Capture storage is inconsistent. Reload the viewer.",
+              );
+            for (const record of oldest) change(record, -1);
+            events.delete(
+              IDBKeyRange.bound([id, oldest[0].id], [id, oldest.at(-1).id]),
+            );
+            extra -= oldest.length;
+            await applyChanges();
+          }
+          capture.updated = Date.now();
+          tx.objectStore("captures").put(capture);
+        }
+        async setLimit(id, limit) {
+          if (!validLimit(limit))
+            throw Error("Enter a positive whole number of events.");
+          await this.write(async (tx) => {
+            tx.objectStore("settings").put(limit, "maxRecords");
+            await this.appendInTransaction(tx, id, []);
+          });
+        }
+        async query(id, filters, signal) {
+          const tx = this.db.transaction(
+            ["events", "groups", "captures"],
+            "readonly",
+          );
+          const done = idbDone(tx);
+          const abort = () => {
+            try {
+              tx.abort();
+            } catch {}
+          };
+          signal?.addEventListener("abort", abort, { once: true });
+          if (signal?.aborted) abort();
+          try {
+            const capture = await idbRequest(
+              tx.objectStore("captures").get(id),
+            );
+            if (!capture)
+              throw Error(
+                "Capture was removed in another tab. Reload the viewer.",
+              );
+            if (filters.category && !capture.categories.has(filters.category))
+              filters = { ...filters, category: "" };
+            const events = tx.objectStore("events"),
+              groupStore = tx.objectStore("groups");
+            let selectedGroup = filters.group;
+            const selected =
+              selectedGroup !== "all"
+                ? await idbRequest(groupStore.get([id, selectedGroup]))
+                : null;
+            if (!selected) selectedGroup = "all";
+            const groups = new Map();
+            let hasMoreGroups = false;
+            await new Promise((resolve, reject) => {
+              const request = groupStore
+                .index("recent")
+                .openCursor(captureRange(id), "prev");
+              request.onerror = () => reject(request.error);
+              request.onsuccess = () => {
+                const cursor = request.result;
+                if (!cursor) {
+                  resolve();
+                  return;
+                }
+                const group = cursor.value;
+                if (
+                  (group.label + " " + group.subtitle)
+                    .toLowerCase()
+                    .includes(filters.requestSearch)
+                ) {
+                  if (groups.size === 200) {
+                    hasMoreGroups = true;
+                    resolve();
+                    return;
+                  }
+                  groups.set(group.key, group);
+                }
+                cursor.continue();
+              };
+            });
+            if (selected && !groups.has(selected.key))
+              groups.set(selected.key, selected);
+            const edge = async (index, range, direction) => {
+              const cursor = await idbRequest(
+                index.openKeyCursor(range, direction),
+              );
+              return cursor ? cursor.key[cursor.key.length - 2] : null;
+            };
+            const timeIndex = events.index("time"),
+              allTime = captureRange(id);
+            const origin = await edge(timeIndex, allTime, "next");
+            const end = await edge(timeIndex, allTime, "prev");
+            const time = origin === null ? null : { start: origin, end };
+            const selectedRecord =
+              filters.recordId === null
+                ? null
+                : await idbRequest(events.get([id, filters.recordId]));
+            let prefix = [],
+              index = events,
+              timedIndex = timeIndex;
+            if (selectedGroup !== "all") {
+              prefix = [selectedGroup];
+              index = events.index("group");
+              timedIndex = events.index("groupTime");
+            } else if (filters.category) {
+              prefix = [filters.category];
+              index = events.index("category");
+              timedIndex = events.index("categoryTime");
+            } else if (filters.level) {
+              prefix = [filters.level];
+              index = events.index("level");
+              timedIndex = events.index("levelTime");
+            }
+            const range = captureRange(id, prefix);
+            const secondary = Boolean(
+              filters.query ||
+              (selectedGroup !== "all" &&
+                (filters.category || filters.level)) ||
+              (filters.category && filters.level),
+            );
+            const matches = (record) =>
+              (selectedGroup === "all" || record.group.key === selectedGroup) &&
+              (!filters.category || record.category === filters.category) &&
+              (!filters.level || record.level === filters.level) &&
+              (!filters.query || record.search.includes(filters.query));
+            let count = 0,
+              timedCount = 0,
+              rows = [],
+              markers = [],
+              start = Infinity,
+              finish = -Infinity;
+            if (!secondary) {
+              count = await idbRequest(index.count(range));
+              const timedRange = captureRange(id, prefix);
+              timedCount = await idbRequest(timedIndex.count(timedRange));
+              const first = await edge(timedIndex, timedRange, "next");
+              if (first !== null) {
+                start = first;
+                finish = await edge(timedIndex, timedRange, "prev");
+              }
+              await new Promise((resolve, reject) => {
+                const request = index.openCursor(range, "prev");
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => {
+                  const cursor = request.result;
+                  if (!cursor || rows.length >= MAX_ROWS) {
+                    resolve();
+                    return;
+                  }
+                  rows.push(cursor.value);
+                  if (rows.length === MAX_ROWS) resolve();
+                  else cursor.continue();
+                };
+              });
+              rows.reverse();
+              const stride = Math.max(1, Math.ceil(timedCount / MAX_MARKERS));
+              await new Promise((resolve, reject) => {
+                const request = timedIndex.openCursor(timedRange);
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => {
+                  const cursor = request.result;
+                  if (!cursor || markers.length >= MAX_MARKERS) {
+                    resolve();
+                    return;
+                  }
+                  markers.push(cursor.value);
+                  cursor.advance(stride);
+                };
+              });
+            } else {
+              // Combined/text filters scan indexed batches, never the entire capture
+              // in one array. Changing filters aborts the transaction promptly.
+              let remaining = range,
+                stride = 1;
+              while (true) {
+                const batch = await idbRequest(index.getAll(remaining, 1024));
+                if (!batch.length) break;
+                for (const record of batch)
+                  if (matches(record)) {
+                    count++;
+                    rows.push(record);
+                    if (record.time !== null) {
+                      start = Math.min(start, record.time);
+                      finish = Math.max(finish, record.time);
+                      if (timedCount % stride === 0) markers.push(record);
+                      timedCount++;
+                      if (markers.length > MAX_MARKERS) {
+                        markers = markers.filter((_, i) => i % 2 === 0);
+                        stride *= 2;
+                      }
+                    }
+                  }
+                if (rows.length > MAX_ROWS)
+                  rows.splice(0, rows.length - MAX_ROWS);
+                const last = batch[batch.length - 1];
+                const key = prefix.length
+                  ? [id, ...prefix, last.id]
+                  : [id, last.id];
+                remaining = IDBKeyRange.bound(
+                  key,
+                  range.upper,
+                  true,
+                  range.upperOpen,
+                );
+              }
+            }
+            if (
+              selectedRecord &&
+              selectedRecord.time !== null &&
+              matches(selectedRecord) &&
+              !markers.some((r) => r.id === selectedRecord.id)
+            )
+              markers.push(selectedRecord);
+            await done;
+            return {
+              capture,
+              groups,
+              hasMoreGroups,
+              selectedGroup,
+              selectedRecord: selectedRecord || null,
+              rows,
+              markers,
+              count,
+              timedCount,
+              time,
+              filteredTime: start === Infinity ? null : { start, end: finish },
+            };
+          } catch (error) {
+            abort();
+            await done.catch(() => {});
+            throw error;
+          } finally {
+            signal?.removeEventListener("abort", abort);
+          }
+        }
+        async *exportBatches(id) {
+          let tx = this.db.transaction("captures"),
+            done = idbDone(tx);
+          const capture = await idbRequest(tx.objectStore("captures").get(id));
+          await done;
+          if (!capture) throw Error("Capture no longer exists.");
+          const last = capture.nextId - 1;
+          let next = capture.nextId - capture.count;
+          while (next <= last) {
+            tx = this.db.transaction("events");
+            done = idbDone(tx);
+            const records = await idbRequest(
+              tx
+                .objectStore("events")
+                .getAll(IDBKeyRange.bound([id, next], [id, last]), 1024),
+            );
+            await done;
+            if (!records.length || records[0].id !== next)
+              throw Error(
+                "Capture changed during export. Disconnect and try again.",
+              );
+            next = records[records.length - 1].id + 1;
+            yield records.map((r) => JSON.stringify(r.raw)).join("\n") + "\n";
+          }
+        }
+      }
+
+      // Incremental JSON/JSONL reader. Arrays and {records:[...]} wrappers are split
+      // into individual values before JSON.parse, including across UTF-8 chunks.
+      class CaptureParser {
+        constructor() {
+          this.buffer = "";
+          this.offset = 0;
+          this.phase = "start";
+          this.scan = null;
+          this.key = null;
+          this.root = null;
+          this.wrapper = false;
+          this.arrayParent = null;
+        }
+        value(final) {
+          if (!this.scan)
+            this.scan = {
+              start: this.offset,
+              pos: this.offset,
+              depth: 0,
+              string: false,
+              escaped: false,
+              compound: "[{".includes(this.buffer[this.offset]),
+              quoted: this.buffer[this.offset] === '"',
+            };
+          const scan = this.scan;
+          for (; scan.pos < this.buffer.length; scan.pos++) {
+            const char = this.buffer[scan.pos];
+            if (scan.string) {
+              if (scan.escaped) scan.escaped = false;
+              else if (char === "\\") scan.escaped = true;
+              else if (char === '"') {
+                scan.string = false;
+                if (!scan.compound) return this.finishValue(scan.pos + 1);
+              }
+            } else if (char === '"') scan.string = true;
+            else if (char === "{" || char === "[") scan.depth++;
+            else if (char === "}" || char === "]") {
+              if (scan.compound && --scan.depth === 0)
+                return this.finishValue(scan.pos + 1);
+              if (!scan.compound) return this.finishValue(scan.pos);
+            } else if (!scan.compound && /[\s,:]/.test(char))
+              return this.finishValue(scan.pos);
+          }
+          if (final) return this.finishValue(this.buffer.length);
+          return null;
+        }
+        finishValue(end) {
+          if (end === this.scan.start) throw Error("Invalid JSON value.");
+          const text = this.buffer.slice(this.scan.start, end);
+          const value = JSON.parse(text);
+          this.offset = end;
+          this.scan = null;
+          return { value };
+        }
+        push(text, final = false) {
+          this.buffer += text;
+          const records = [];
+          while (true) {
+            if (!this.scan)
+              while (
+                this.offset < this.buffer.length &&
+                /[\s\uFEFF]/.test(this.buffer[this.offset])
+              )
+                this.offset++;
+            if (this.offset >= this.buffer.length) break;
+            const char = this.buffer[this.offset];
+            if (this.phase === "start") {
+              if (char === "[") {
+                this.offset++;
+                this.phase = "arrayFirst";
+                this.arrayParent = "start";
+              } else if (char === "{") {
+                this.offset++;
+                this.root = Object.create(null);
+                this.wrapper = false;
+                this.phase = "objectFirst";
+              } else
+                throw Error(
+                  "Expected a JSON record, array, or records wrapper.",
+                );
+            } else if (
+              this.phase === "arrayFirst" ||
+              this.phase === "arrayValue"
+            ) {
+              if (char === "]" && this.phase === "arrayFirst") {
+                this.offset++;
+                this.phase = this.arrayParent;
+              } else {
+                const result = this.value(final);
+                if (!result) break;
+                records.push(result.value);
+                this.phase = "arraySeparator";
+              }
+            } else if (this.phase === "arraySeparator") {
+              if (char === ",") {
+                this.offset++;
+                this.phase = "arrayValue";
+              } else if (char === "]") {
+                this.offset++;
+                this.phase = this.arrayParent;
+              } else throw Error("Expected a comma or closing bracket.");
+            } else if (
+              this.phase === "objectFirst" ||
+              this.phase === "objectKey"
+            ) {
+              if (char === "}" && this.phase === "objectFirst") {
+                this.offset++;
+                if (!this.wrapper) records.push(this.root);
+                this.root = null;
+                this.phase = "start";
+              } else {
+                const result = this.value(final);
+                if (!result) break;
+                if (typeof result.value !== "string")
+                  throw Error("Expected a JSON property name.");
+                if (result.value === "records" && this.wrapper)
+                  throw Error("Duplicate records property.");
+                this.key = result.value;
+                this.phase = "objectColon";
+              }
+            } else if (this.phase === "objectColon") {
+              if (char !== ":") throw Error("Expected a colon.");
+              this.offset++;
+              this.phase = "objectValue";
+            } else if (this.phase === "objectValue") {
+              if (!this.scan && this.key === "records" && char === "[") {
+                if (this.wrapper) throw Error("Duplicate records array.");
+                this.wrapper = true;
+                this.offset++;
+                this.arrayParent = "objectSeparator";
+                this.phase = "arrayFirst";
+              } else {
+                const result = this.value(final);
+                if (!result) break;
+                this.root[this.key] = result.value;
+                this.phase = "objectSeparator";
+              }
+            } else if (this.phase === "objectSeparator") {
+              if (char === ",") {
+                this.offset++;
+                this.phase = "objectKey";
+              } else if (char === "}") {
+                this.offset++;
+                if (!this.wrapper) records.push(this.root);
+                this.root = null;
+                this.phase = "start";
+              } else throw Error("Expected a comma or closing brace.");
+            }
+          }
+          if (this.offset) {
+            this.buffer = this.buffer.slice(this.offset);
+            if (this.scan) {
+              this.scan.start -= this.offset;
+              this.scan.pos -= this.offset;
+            }
+            this.offset = 0;
+          }
+          if (
+            final &&
+            (this.buffer.trim() || this.phase !== "start" || this.scan)
+          )
+            throw Error("Incomplete JSON capture.");
+          return records;
+        }
+      }
+      async function* captureFileRecords(file) {
+        const parser = new CaptureParser(),
+          decoder = new TextDecoder("utf-8", { fatal: true });
+        const reader = file.stream().getReader();
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            yield* parser.push(decoder.decode(value, { stream: true }));
+          }
+          yield* parser.push(decoder.decode(), true);
+        } finally {
+          await reader.cancel().catch(() => {});
+          reader.releaseLock();
+        }
+      }
+    </script>
     <script id="viewer-script">
       "use strict";
-      const MAX_RECORDS = 20000,
-        MAX_FILE_SIZE = 25 * 1024 * 1024,
+      const DEFAULT_MAX_RECORDS = 20000,
         MAX_MARKERS = 5000,
-        MAX_ROWS = 500;
+        MAX_ROWS = 500,
+        MAX_PENDING = 5000,
+        WRITE_BATCH = 500;
       const $ = (id) => document.getElementById(id);
       const state = {
-        records: [],
-        nextId: 1,
+        store: null,
+        captureId: null,
+        maxRecords: DEFAULT_MAX_RECORDS,
+        ready: false,
+        failed: false,
+        busy: false,
+        exporting: false,
         selectedGroup: "all",
         selectedRecord: null,
         socket: null,
         paused: null,
-        dropped: 0,
-        evicted: 0,
-        invalid: 0,
-        source: "",
+        view: null,
         pending: false,
+        dirty: false,
+        rendering: false,
+        renderController: null,
+        pump: null,
+        pendingRecords: [],
+        pendingHead: 0,
+        invalid: 0,
+        overflow: 0,
       };
       const palette = [
         "#417aa0",
@@ -877,7 +1630,6 @@ Request IDs and connection fields appear here.</pre>
           category = raw.event ? raw.event.split(":")[0] : "uncategorized";
         return {
           raw,
-          id: state.nextId++,
           time: timestamp(raw.timestamp),
           group,
           event,
@@ -923,33 +1675,43 @@ Request IDs and connection fields appear here.</pre>
         $("disconnectButton").disabled = true;
         if (update) setStatus("Disconnected");
       }
-      function addRecords(records) {
-        for (const record of records) {
-          if (
-            record.raw.event === "api:logs_lagged" &&
-            Number.isSafeInteger(record.raw.dropped) &&
-            record.raw.dropped > 0
-          )
-            state.dropped += record.raw.dropped;
-          state.records.push(record);
-        }
-        if (state.records.length > MAX_RECORDS) {
-          const extra = state.records.length - MAX_RECORDS;
-          state.records.splice(0, extra);
-          state.evicted += extra;
-        }
-        schedule();
+      function storageFailure(error) {
+        state.failed = true;
+        disconnect(false);
+        setStatus("Storage unavailable", "error");
+        $("storageStatus").textContent = "Storage unavailable";
+        notice(
+          "Could not store capture: " +
+            error.message +
+            " Free browser storage or reload to try again.",
+        );
+        updateControls();
       }
-      function reset(source) {
-        state.records = [];
-        state.nextId = 1;
+      function updateControls() {
+        const unavailable = !state.ready || state.failed,
+          busy = unavailable || state.busy || state.exporting;
+        $("connectButton").disabled = busy || Boolean(state.socket);
+        $("disconnectButton").disabled = !state.socket;
+        for (const id of [
+          "importButton",
+          "demoButton",
+          "clearButton",
+          "applyLimit",
+          "maxRecords",
+        ])
+          $(id).disabled = busy;
+        $("exportButton").disabled =
+          busy || state.exporting || !state.view?.capture.count;
+        $("pauseButton").disabled = busy || !state.view?.capture.count;
+        for (const id of ["search", "category", "level", "requestSearch"])
+          $(id).disabled = unavailable || Boolean(state.paused);
+      }
+      function resetDisplay() {
         state.selectedRecord = null;
         state.selectedGroup = "all";
         state.paused = null;
-        state.dropped = 0;
-        state.evicted = 0;
-        state.invalid = 0;
-        state.source = source;
+        state.view = null;
+        state.renderController?.abort();
         $("pauseButton").textContent = "Pause display";
         $("zoom").value = "1";
         $("search").value = "";
@@ -957,7 +1719,74 @@ Request IDs and connection fields appear here.</pre>
         $("level").value = "";
         notice("");
       }
+      function resetPending() {
+        state.pendingRecords = [];
+        state.pendingHead = 0;
+        state.invalid = 0;
+        state.overflow = 0;
+      }
+      function addRecords(records) {
+        if (!state.ready || state.failed) return;
+        for (const record of records) {
+          if (state.pendingRecords.length - state.pendingHead >= MAX_PENDING) {
+            state.pendingRecords[state.pendingHead++] = null;
+            state.overflow++;
+          }
+          state.pendingRecords.push(record);
+        }
+        if (state.pendingHead >= MAX_PENDING) {
+          state.pendingRecords = state.pendingRecords.slice(state.pendingHead);
+          state.pendingHead = 0;
+        }
+        pumpRecords();
+      }
+      function pumpRecords() {
+        if (state.pump) return state.pump;
+        state.pump = (async () => {
+          while (
+            !state.failed &&
+            (state.pendingHead < state.pendingRecords.length ||
+              state.invalid ||
+              state.overflow)
+          ) {
+            const records = state.pendingRecords.slice(
+              state.pendingHead,
+              state.pendingHead + WRITE_BATCH,
+            );
+            state.pendingHead += records.length;
+            const counters = {
+              invalid: state.invalid,
+              overflow: state.overflow,
+            };
+            state.invalid = 0;
+            state.overflow = 0;
+            if (state.pendingHead === state.pendingRecords.length) {
+              state.pendingRecords = [];
+              state.pendingHead = 0;
+            }
+            await state.store.append(state.captureId, records, counters);
+            schedule();
+          }
+        })()
+          .catch(storageFailure)
+          .finally(() => {
+            state.pump = null;
+          });
+        return state.pump;
+      }
+      async function flushRecords() {
+        while (
+          state.pump ||
+          state.pendingHead < state.pendingRecords.length ||
+          state.invalid ||
+          state.overflow
+        ) {
+          await (state.pump || pumpRecords());
+          if (state.failed) throw Error("Capture storage failed.");
+        }
+      }
       function schedule() {
+        state.dirty = true;
         if (state.pending) return;
         state.pending = true;
         setTimeout(() => {
@@ -965,8 +1794,9 @@ Request IDs and connection fields appear here.</pre>
           render();
         }, 120);
       }
-      function connect(event) {
+      async function connect(event) {
         event.preventDefault();
+        if (!state.ready || state.busy || state.failed) return;
         let url;
         try {
           url = new URL($("endpoint").value);
@@ -998,22 +1828,56 @@ Request IDs and connection fields appear here.</pre>
         }
         state.socket = socket;
         setStatus("Connecting…");
-        $("connectButton").disabled = true;
-        $("disconnectButton").disabled = false;
-        socket.onopen = () => {
+        updateControls();
+        let initialized = false,
+          opened = false,
+          closed = false;
+        // WebSocket callbacks are ordered, but opening a new persistent capture is
+        // asynchronous. Buffer a bounded number of messages until it is ready.
+        let opening = [],
+          openingDropped = 0;
+        socket.onopen = async () => {
           if (state.socket !== socket) return;
-          reset("Live · " + url.host);
-          setStatus("Live stream", "live");
-          schedule();
+          opened = true;
+          try {
+            await flushRecords();
+            const id = await state.store.create("Live · " + url.host);
+            if (state.socket !== socket) {
+              await state.store.remove(id);
+              return;
+            }
+            await state.store.activate(id);
+            resetPending();
+            resetDisplay();
+            state.captureId = id;
+            initialized = true;
+            state.overflow += openingDropped;
+            for (const data of opening) receive(data);
+            opening = [];
+            if (closed) {
+              state.socket = null;
+              setStatus("Stream closed");
+            } else setStatus("Live stream", "live");
+            schedule();
+            updateControls();
+          } catch (error) {
+            storageFailure(error);
+          }
         };
-        socket.onmessage = ({ data }) => {
-          if (state.socket !== socket) return;
+        function receive(data) {
           try {
             addRecords([normalize(JSON.parse(data))]);
           } catch {
             state.invalid++;
-            schedule();
+            pumpRecords();
           }
+        }
+        socket.onmessage = ({ data }) => {
+          if (state.socket !== socket) return;
+          if (!initialized) {
+            if (opening.length < MAX_PENDING) opening.push(data);
+            else openingDropped++;
+          } else receive(data);
         };
         socket.onerror = () => {
           if (state.socket === socket)
@@ -1023,13 +1887,281 @@ Request IDs and connection fields appear here.</pre>
         };
         socket.onclose = () => {
           if (state.socket !== socket) return;
+          if (opened && !initialized) {
+            closed = true;
+            return;
+          }
           state.socket = null;
           setStatus("Stream closed");
-          $("connectButton").disabled = false;
-          $("disconnectButton").disabled = true;
+          updateControls();
           schedule();
         };
       }
+      async function render() {
+        if (!state.ready || state.failed) return;
+        if (state.paused) {
+          paint(state.paused);
+          return;
+        }
+        if (state.rendering) {
+          state.dirty = true;
+          return;
+        }
+        state.rendering = true;
+        state.dirty = false;
+        const id = state.captureId;
+        const controller = new AbortController();
+        state.renderController = controller;
+        try {
+          const view = await state.store.query(
+            id,
+            {
+              group: state.selectedGroup,
+              category: $("category").value,
+              level: $("level").value,
+              query: $("search").value.toLowerCase(),
+              requestSearch: $("requestSearch").value.toLowerCase(),
+              recordId: state.selectedRecord?.id ?? null,
+            },
+            controller.signal,
+          );
+          if (
+            id !== state.captureId ||
+            controller.signal.aborted ||
+            state.failed
+          )
+            return;
+          state.selectedGroup = view.selectedGroup;
+          state.selectedRecord = view.selectedRecord;
+          state.view = view;
+          paint(view);
+        } catch (error) {
+          if (error.name !== "AbortError") storageFailure(error);
+        } finally {
+          state.rendering = false;
+          if (state.dirty && !state.paused) schedule();
+        }
+      }
+      function paint(view) {
+        const capture = view.capture;
+        const selectedCategory = $("category").value,
+          available = [...capture.categories.keys()].sort();
+        $("category").replaceChildren(
+          new Option("All categories", ""),
+          ...available.map((name) => new Option(name, name)),
+        );
+        if (available.includes(selectedCategory))
+          $("category").value = selectedCategory;
+        $("eventCount").textContent = capture.count.toLocaleString();
+        $("requestCount").textContent = capture.requestCount.toLocaleString();
+        $("duration").textContent = view.time
+          ? fmt(view.time.end - view.time.start)
+          : "—";
+        $("droppedCount").textContent = capture.dropped.toLocaleString();
+        $("sourceLabel").textContent =
+          capture.source || "Connect a live stream or open a capture.";
+        $("filteredCount").textContent =
+          view.count.toLocaleString() +
+          " / " +
+          capture.count.toLocaleString() +
+          " records";
+        $("timelineTitle").textContent =
+          state.selectedGroup === "all"
+            ? "All activity"
+            : view.groups.get(state.selectedGroup)?.label || "All activity";
+        $("timelineSummary").textContent = "Relative time · category lanes";
+        const messages = [];
+        if (state.paused)
+          messages.push(
+            "Display paused. Capture continues in IndexedDB; resume to change filters.",
+          );
+        if (capture.dropped)
+          messages.push(
+            capture.dropped.toLocaleString() +
+              " records skipped by the server for this client.",
+          );
+        if (capture.evicted)
+          messages.push(
+            capture.evicted.toLocaleString() +
+              " older records removed by the viewer’s " +
+              state.maxRecords.toLocaleString() +
+              "-event limit.",
+          );
+        if (capture.invalid)
+          messages.push(
+            capture.invalid.toLocaleString() +
+              " malformed stream messages ignored.",
+          );
+        if (capture.overflow)
+          messages.push(
+            capture.overflow.toLocaleString() +
+              " live events skipped because browser storage could not keep up.",
+          );
+        $("captureInfo").textContent =
+          messages.join(" ") ||
+          "Events are stored in this browser using IndexedDB.";
+        $("storageStatus").textContent =
+          capture.count.toLocaleString() +
+          " / " +
+          state.maxRecords.toLocaleString() +
+          " events stored";
+        renderRequests(view);
+        const scroll = $("graph").scrollLeft;
+        renderTimeline(view.markers, view.time?.start || 0, view);
+        $("graph").scrollLeft = scroll;
+        renderRows(view.rows, view.time?.start || 0, view.count, capture.count);
+        renderInspector();
+        updateControls();
+      }
+      async function exportCapture() {
+        if (!state.ready || state.exporting || state.busy || state.failed)
+          return;
+        const id = state.captureId;
+        const name =
+          "shadowquic-trace-" +
+          new Date().toISOString().replace(/[:.]/g, "-") +
+          ".jsonl";
+        state.exporting = true;
+        updateControls();
+        let writable;
+        try {
+          if (window.showSaveFilePicker) {
+            const handle = await window.showSaveFilePicker({
+              suggestedName: name,
+              types: [
+                {
+                  description: "JSON Lines capture",
+                  accept: { "application/x-ndjson": [".jsonl"] },
+                },
+              ],
+            });
+            writable = await handle.createWritable();
+          }
+          await flushRecords();
+          const parts = [];
+          for await (const batch of state.store.exportBatches(id)) {
+            if (writable) await writable.write(batch);
+            else parts.push(new Blob([batch]));
+          }
+          if (writable) await writable.close();
+          else {
+            const url = URL.createObjectURL(
+              new Blob(parts, { type: "application/x-ndjson" }),
+            );
+            const link = make("a");
+            link.href = url;
+            link.download = name;
+            link.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+          }
+        } catch (error) {
+          if (writable) await writable.abort().catch(() => {});
+          if (error.name !== "AbortError")
+            notice("Could not export capture: " + error.message);
+        } finally {
+          state.exporting = false;
+          updateControls();
+        }
+      }
+      async function importFile(file) {
+        if (!file || !state.ready || state.busy || state.failed) return;
+        state.busy = true;
+        updateControls();
+        notice("Importing capture…");
+        let id;
+        try {
+          id = await state.store.create("Capture · " + file.name);
+          let records = [],
+            count = 0;
+          for await (const raw of captureFileRecords(file)) {
+            records.push(normalize(raw));
+            count++;
+            if (records.length === WRITE_BATCH) {
+              await state.store.append(id, records);
+              records = [];
+              notice(
+                "Importing capture… " +
+                  count.toLocaleString() +
+                  " events read.",
+              );
+            }
+          }
+          if (records.length) await state.store.append(id, records);
+          disconnect(false);
+          await flushRecords();
+          await state.store.activate(id);
+          resetPending();
+          resetDisplay();
+          state.captureId = id;
+          id = null;
+          setStatus("Offline capture");
+          notice(count ? "" : "The capture contains no records.");
+          await render();
+        } catch (error) {
+          notice("Could not open capture: " + error.message);
+        } finally {
+          if (id) await state.store.remove(id).catch(() => {});
+          state.busy = false;
+          $("fileInput").value = "";
+          updateControls();
+        }
+      }
+      async function applyLimit(event) {
+        event.preventDefault();
+        if (!state.ready || state.busy || state.failed) return;
+        const limit = Number($("maxRecords").value);
+        if (!validLimit(limit)) {
+          notice("Enter a positive whole number of events.");
+          return;
+        }
+        state.busy = true;
+        updateControls();
+        try {
+          await state.store.setLimit(state.captureId, limit);
+          state.maxRecords = limit;
+          state.paused = null;
+          $("pauseButton").textContent = "Pause display";
+          notice("Storage limit saved. Oldest events are removed first.");
+          await render();
+        } catch (error) {
+          storageFailure(error);
+        } finally {
+          state.busy = false;
+          updateControls();
+        }
+      }
+      async function clearCapture() {
+        if (!state.ready || state.busy || state.failed) return;
+        state.busy = true;
+        updateControls();
+        resetPending();
+        try {
+          await state.store.clear(state.captureId);
+          resetDisplay();
+          await render();
+        } catch (error) {
+          storageFailure(error);
+        } finally {
+          state.busy = false;
+          updateControls();
+        }
+      }
+      async function initialize() {
+        updateControls();
+        try {
+          state.store = await CaptureStore.open();
+          const settings = await state.store.initialize();
+          state.captureId = settings.captureId;
+          state.maxRecords = settings.maxRecords;
+          $("maxRecords").value = String(state.maxRecords);
+          state.ready = true;
+          await render();
+          updateControls();
+        } catch (error) {
+          storageFailure(error);
+        }
+      }
+
       function groupRecords(records) {
         const groups = new Map();
         for (const record of records) {
@@ -1062,31 +2194,22 @@ Request IDs and connection fields appear here.</pre>
         if (text !== undefined) el.textContent = text;
         return el;
       }
-      function renderRequests(records, groups) {
+      function renderRequests(view) {
         const list = $("requests");
         list.replaceChildren();
-        const query = $("requestSearch").value.toLowerCase();
-        const matches = [...groups.values()]
-          .reverse()
-          .filter((group) =>
-            (group.label + " " + group.subtitle).toLowerCase().includes(query),
-          );
-        const visible = matches.slice(0, 200);
-        const selected = groups.get(state.selectedGroup);
-        if (selected && !visible.some((g) => g.key === selected.key))
-          visible.unshift(selected);
         const all = [
           {
             key: "all",
             label: "All activity",
             subtitle: "Every request & connection",
-            count: records.length,
+            count: view.capture.count,
           },
-          ...visible,
+          ...view.groups.values(),
         ];
         for (const group of all) {
           const button = make("button", "request");
           button.type = "button";
+          button.disabled = Boolean(state.paused);
           button.setAttribute(
             "aria-pressed",
             String(group.key === state.selectedGroup),
@@ -1098,14 +2221,14 @@ Request IDs and connection fields appear here.</pre>
           );
           button.onclick = () => {
             state.selectedGroup = group.key;
-            render();
+            state.renderController?.abort();
+            schedule();
           };
           list.append(button);
         }
-        $("requestNote").textContent =
-          matches.length > 200
-            ? "Showing the latest 200 matching groups. Search for older requests."
-            : "Grouped by request ID, then connection identity. Records without either stay unscoped.";
+        $("requestNote").textContent = view.hasMoreGroups
+          ? "Showing the latest 200 matching groups. Search for older requests."
+          : "Grouped by request ID, then connection identity. Records without either stay unscoped.";
       }
       function bounds(records) {
         let start = Infinity,
@@ -1133,17 +2256,16 @@ Request IDs and connection fields appear here.</pre>
       }
       function inspect(record) {
         state.selectedRecord = record;
-        renderInspector();
-        render();
+        if (state.paused || state.view) paint(state.paused || state.view);
       }
-      function renderTimeline(records, origin) {
+      function renderTimeline(records, origin, view) {
         const timed = records.filter((r) => r.time !== null);
         $("graph").replaceChildren();
         $("laneLabels").replaceChildren();
         $("timelineEmpty").hidden = timed.length > 0;
         $("timelineWrap").classList.toggle("hidden", !timed.length);
         if (!timed.length) return;
-        const time = bounds(timed),
+        const time = view.filteredTime || bounds(timed),
           span = Math.max(time.end - time.start, 0.001);
         const names = [...new Set(timed.map((r) => r.category))].sort();
         for (const name of names) {
@@ -1205,8 +2327,8 @@ Request IDs and connection fields appear here.</pre>
               stroke: "#f0f3f4",
             }),
           );
-        const stride = Math.max(1, Math.ceil(timed.length / MAX_MARKERS));
-        let marks = timed.filter((_, i) => i % stride === 0);
+        const stride = 1;
+        let marks = timed;
         if (
           state.selectedRecord &&
           timed.includes(state.selectedRecord) &&
@@ -1250,14 +2372,14 @@ Request IDs and connection fields appear here.</pre>
         }
         $("graph").append(svg);
         $("timelineSummary").textContent =
-          timed.length.toLocaleString() +
+          view.timedCount.toLocaleString() +
           " timed events · " +
-          (stride > 1
+          (marks.length < view.timedCount
             ? marks.length.toLocaleString() + " sampled markers · "
             : "") +
           "relative to capture start";
       }
-      function renderRows(records, origin) {
+      function renderRows(records, origin, matchingCount, totalCount) {
         const tbody = $("events");
         tbody.replaceChildren();
         const rows = records.slice(-MAX_ROWS);
@@ -1316,7 +2438,7 @@ Request IDs and connection fields appear here.</pre>
           tbody.append(row);
         }
         $("eventsEmpty").hidden = rows.length > 0;
-        if (!rows.length && state.records.length) {
+        if (!rows.length && totalCount) {
           $("eventsEmpty").replaceChildren(
             make("strong", "", "No matching events"),
             document.createTextNode(
@@ -1332,11 +2454,11 @@ Request IDs and connection fields appear here.</pre>
           );
         }
         $("tableNote").textContent =
-          rows.length < records.length
+          rows.length < matchingCount
             ? "Showing the latest " +
               MAX_ROWS +
               " of " +
-              records.length.toLocaleString() +
+              matchingCount.toLocaleString() +
               " matching events. Export includes the full retained capture."
             : "Select an event to inspect its fields and span context.";
       }
@@ -1356,197 +2478,105 @@ Request IDs and connection fields appear here.</pre>
         $("selectedTime").textContent =
           record.raw.timestamp || "No timestamp recorded";
       }
-      function render() {
-        const records = state.paused || state.records,
-          groups = groupRecords(records);
-        if (state.selectedGroup !== "all" && !groups.has(state.selectedGroup))
-          state.selectedGroup = "all";
-        const selectedCategory = $("category").value,
-          available = [...new Set(records.map((r) => r.category))].sort();
-        $("category").replaceChildren(
-          new Option("All categories", ""),
-          ...available.map((name) => new Option(name, name)),
-        );
-        if (available.includes(selectedCategory))
-          $("category").value = selectedCategory;
-        const filtered = getFiltered(records),
-          time = bounds(records);
-        $("eventCount").textContent = records.length.toLocaleString();
-        $("requestCount").textContent = [...groups.values()]
-          .filter((g) => g.request)
-          .length.toLocaleString();
-        $("duration").textContent = time ? fmt(time.end - time.start) : "—";
-        $("droppedCount").textContent = state.dropped.toLocaleString();
-        $("sourceLabel").textContent =
-          state.source || "Connect a live stream or open a capture.";
-        $("filteredCount").textContent =
-          filtered.length.toLocaleString() +
-          " / " +
-          records.length.toLocaleString() +
-          " records";
-        $("timelineTitle").textContent =
-          state.selectedGroup === "all"
-            ? "All activity"
-            : groups.get(state.selectedGroup)?.label || "All activity";
-        $("timelineSummary").textContent = "Relative time · category lanes";
-        $("exportButton").disabled = !state.records.length;
-        $("pauseButton").disabled = !state.records.length;
-        const messages = [];
-        if (state.paused)
-          messages.push("Display paused. Capture continues in the background.");
-        if (state.dropped)
-          messages.push(
-            state.dropped.toLocaleString() +
-              " records skipped by the server for this client.",
-          );
-        if (state.evicted)
-          messages.push(
-            state.evicted.toLocaleString() +
-              " older records removed by the viewer’s 20,000-record limit.",
-          );
-        if (state.invalid)
-          messages.push(state.invalid + " malformed stream messages ignored.");
-        $("captureInfo").textContent =
-          messages.join(" ") ||
-          "Live capture retains up to 20,000 records in memory.";
-        renderRequests(records, groups);
-        const scroll = $("graph").scrollLeft;
-        renderTimeline(filtered, time?.start || 0);
-        $("graph").scrollLeft = scroll;
-        renderRows(filtered, time?.start || 0);
-        renderInspector();
-      }
-      function exportCapture() {
-        const blob = new Blob(
-          [state.records.map((r) => JSON.stringify(r.raw)).join("\n") + "\n"],
-          { type: "application/x-ndjson" },
-        );
-        const url = URL.createObjectURL(blob);
-        const link = make("a");
-        link.href = url;
-        link.download =
-          "shadowquic-trace-" +
-          new Date().toISOString().replace(/[:.]/g, "-") +
-          ".jsonl";
-        link.click();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-      }
-      async function importFile(file) {
-        if (!file) return;
+      async function loadDemo() {
+        if (!state.ready || state.busy || state.failed) return;
+        state.busy = true;
+        updateControls();
         try {
-          if (file.size > MAX_FILE_SIZE)
-            throw Error("Capture files must be 25 MiB or smaller.");
-          const raw = parseCapture(await file.text());
-          const records = [];
-          let skipped = 0;
-          for (let i = 0; i < raw.length; i++) {
-            const record = normalize(raw[i]);
-            if (i >= raw.length - MAX_RECORDS) records.push(record);
-            else if (
-              record.raw.event === "api:logs_lagged" &&
-              Number.isSafeInteger(record.raw.dropped) &&
-              record.raw.dropped > 0
-            )
-              skipped += record.raw.dropped;
-          }
           disconnect(false);
-          reset("Capture · " + file.name);
-          state.nextId = records.reduce((n, r) => Math.max(n, r.id + 1), 1);
-          state.evicted = Math.max(0, raw.length - MAX_RECORDS);
-          state.dropped = skipped;
-          addRecords(records);
-          setStatus("Offline capture");
-          notice(raw.length ? "" : "The capture contains no records.");
-          render();
-        } catch (error) {
-          notice("Could not open capture: " + error.message);
-        } finally {
-          $("fileInput").value = "";
-        }
-      }
-      function loadDemo() {
-        disconnect(false);
-        reset("Demo capture · illustrative events");
-        const base = Date.parse("2026-11-07T08:00:00Z");
-        const raw = [];
-        for (let i = 0; i < 4; i++) {
-          const id = 41 + i,
-            offset = i * 17,
-            dst = [
-              "example.com:443",
-              "api.example.com:443",
-              "dns.example.com:853",
-              "static.example.com:443",
-            ][i];
-          for (const [ms, event, message, level] of [
-            [
-              0,
-              "socks:connection_started",
-              "accepted socks connection",
-              "INFO",
-            ],
-            [
-              2,
-              "security:authentication_succeeded",
-              "socks authentication succeeded",
-              "DEBUG",
-            ],
-            [
-              4,
-              "socks:tcp_request_accepted",
-              "tcp connect request accepted",
-              "INFO",
-            ],
-            [9, "dns:query_received", "received DNS query", "INFO"],
-            [15, "dns:response_received", "received DNS response", "DEBUG"],
-            [17, "routing:outbound_selected", "routing request", "DEBUG"],
-            [
-              25,
-              "squic:bidirectional_stream_opened",
-              "bistream opened for tcp",
-              "INFO",
-            ],
-            [
-              28,
-              "proxy:tcp_request_sent",
-              "tcp connect req header sent",
-              "TRACE",
-            ],
-            [
-              70 + i * 19,
-              "proxy:tcp_request_completed",
-              "request finished",
-              "INFO",
-            ],
-          ])
-            raw.push({
-              timestamp: new Date(base + offset + ms).toISOString(),
-              level,
-              target: "shadowquic::demo",
-              event,
-              fields: {
-                message,
-                ...(event === "routing:outbound_selected"
-                  ? { outbound: "shadowquic" }
-                  : {}),
-              },
-              spans: [
-                {
-                  name: "inbound",
-                  fields: {
-                    tag: "socks",
-                    src: "127.0.0.1:" + String(45000 + i),
-                    req_id: id,
-                  },
-                },
-                { name: "tcp_req", fields: { req_id: id, dst } },
+          await flushRecords();
+          const base = Date.parse("2026-11-07T08:00:00Z");
+          const raw = [];
+          for (let i = 0; i < 4; i++) {
+            const id = 41 + i,
+              offset = i * 17,
+              dst = [
+                "example.com:443",
+                "api.example.com:443",
+                "dns.example.com:853",
+                "static.example.com:443",
+              ][i];
+            for (const [ms, event, message, level] of [
+              [
+                0,
+                "socks:connection_started",
+                "accepted socks connection",
+                "INFO",
               ],
-            });
+              [
+                2,
+                "security:authentication_succeeded",
+                "socks authentication succeeded",
+                "DEBUG",
+              ],
+              [
+                4,
+                "socks:tcp_request_accepted",
+                "tcp connect request accepted",
+                "INFO",
+              ],
+              [9, "dns:query_received", "received DNS query", "INFO"],
+              [15, "dns:response_received", "received DNS response", "DEBUG"],
+              [17, "routing:outbound_selected", "routing request", "DEBUG"],
+              [
+                25,
+                "squic:bidirectional_stream_opened",
+                "bistream opened for tcp",
+                "INFO",
+              ],
+              [
+                28,
+                "proxy:tcp_request_sent",
+                "tcp connect req header sent",
+                "TRACE",
+              ],
+              [
+                70 + i * 19,
+                "proxy:tcp_request_completed",
+                "request finished",
+                "INFO",
+              ],
+            ])
+              raw.push({
+                timestamp: new Date(base + offset + ms).toISOString(),
+                level,
+                target: "shadowquic::demo",
+                event,
+                fields: {
+                  message,
+                  ...(event === "routing:outbound_selected"
+                    ? { outbound: "shadowquic" }
+                    : {}),
+                },
+                spans: [
+                  {
+                    name: "inbound",
+                    fields: {
+                      tag: "socks",
+                      src: "127.0.0.1:" + String(45000 + i),
+                      req_id: id,
+                    },
+                  },
+                  { name: "tcp_req", fields: { req_id: id, dst } },
+                ],
+              });
+          }
+          raw.sort((a, b) => timestamp(a.timestamp) - timestamp(b.timestamp));
+          const id = await state.store.create(
+            "Demo capture · illustrative events",
+          );
+          await state.store.append(id, raw.map(normalize));
+          await state.store.activate(id);
+          resetDisplay();
+          state.captureId = id;
+          setStatus("Demo capture");
+          await render();
+        } catch (error) {
+          storageFailure(error);
+        } finally {
+          state.busy = false;
+          updateControls();
         }
-        raw.sort((a, b) => timestamp(a.timestamp) - timestamp(b.timestamp));
-        addRecords(raw.map(normalize));
-        setStatus("Demo capture");
-        render();
       }
       // Browser bindings. Model helpers above can run without a DOM.
       $("endpoint").value = ["http:", "https:"].includes(location.protocol)
@@ -1560,22 +2590,31 @@ Request IDs and connection fields appear here.</pre>
       $("fileInput").onchange = (e) => importFile(e.target.files[0]);
       $("exportButton").onclick = exportCapture;
       $("demoButton").onclick = loadDemo;
-      $("clearButton").onclick = () => {
-        reset(state.source);
-        render();
-      };
+      $("clearButton").onclick = clearCapture;
+      $("storageForm").addEventListener("submit", applyLimit);
       $("pauseButton").onclick = () => {
-        state.paused = state.paused ? null : state.records.slice();
+        if (!state.view) return;
+        state.paused = state.paused ? null : state.view;
         $("pauseButton").textContent = state.paused
           ? "Resume display"
           : "Pause display";
-        render();
+        if (state.paused) paint(state.paused);
+        else render();
       };
-      for (const id of ["search", "category", "level", "requestSearch", "zoom"])
-        $(id).addEventListener("input", schedule);
-      window.addEventListener("resize", schedule);
+      for (const id of ["search", "category", "level", "requestSearch"])
+        $(id).addEventListener("input", () => {
+          state.renderController?.abort();
+          schedule();
+        });
+      for (const id of ["zoom"])
+        $(id).addEventListener("input", () => {
+          if (state.paused || state.view) paint(state.paused || state.view);
+        });
+      window.addEventListener("resize", () => {
+        if (state.paused || state.view) paint(state.paused || state.view);
+      });
       window.addEventListener("beforeunload", () => disconnect(false));
-      render();
+      initialize();
     </script>
   </body>
 </html>

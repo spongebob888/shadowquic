@@ -10,10 +10,13 @@ const html = readFileSync(
 );
 const script = html.match(/<script id="viewer-script">([\s\S]*?)<\/script>/)[1];
 const model = script.split("// Browser bindings.")[0];
+const storage = html.match(
+  /<script id="storage-script">([\s\S]*?)<\/script>/,
+)[1];
 
 function evaluate(expression) {
   const context = vm.createContext({});
-  return vm.runInContext(`${model}\n${expression}`, context);
+  return vm.runInContext(`${storage}\n${model}\n${expression}`, context);
 }
 
 function json(expression) {
@@ -150,4 +153,57 @@ test("malformed structured records are rejected before capture is replaced", () 
   ]) {
     assert.throws(() => evaluate(`normalize(${input})`));
   }
+});
+
+function streamed(text, size = 1) {
+  return json(`(() => {
+    const parser = new CaptureParser(), text = ${JSON.stringify(text)}, records = [];
+    for (let i = 0; i < text.length; i += ${size}) records.push(...parser.push(text.slice(i, i + ${size})));
+    records.push(...parser.push('', true));
+    return records;
+  })()`);
+}
+
+test("streaming imports handle arrays, wrappers and JSONL across every character boundary", () => {
+  const records = [
+    {
+      event: "dns:query",
+      fields: {
+        message: 'quote " slash \\ newline\n 中文 😀',
+        nested: [{ text: "[}]" }],
+      },
+    },
+    { event: "proxy:complete", spans: [{ fields: { req_id: 0 } }] },
+  ];
+  for (const text of [
+    JSON.stringify(records),
+    JSON.stringify({ version: 1, records, note: "after" }),
+    records.map((r) => JSON.stringify(r)).join("\r\n"),
+  ]) {
+    for (const size of [1, 2, 7, 64, 1024])
+      assert.deepEqual(streamed("\uFEFF \n" + text, size), records);
+  }
+  assert.deepEqual(streamed(JSON.stringify(records[0])), [records[0]]);
+  assert.deepEqual(streamed("[]"), []);
+  assert.deepEqual(streamed('{"records":[]}'), []);
+});
+
+test("streaming imports reject incomplete records and invalid envelope separators", () => {
+  for (const text of [
+    '[{"event":"one"},]',
+    '[{"event":"one"}',
+    '{"records":[{}]',
+    '{"records":[{}],}',
+    "{} garbage",
+    '{"records":[],"records":[]}',
+  ]) {
+    assert.throws(() => streamed(text), undefined, text);
+  }
+});
+
+test("storage limits accept only positive safe whole numbers", () => {
+  for (const value of [1, 20000, 1000000, Number.MAX_SAFE_INTEGER])
+    assert.equal(evaluate(`validLimit(${value})`), true);
+  for (const value of [0, -1, 1.5, null, "20000", Number.MAX_SAFE_INTEGER + 1])
+    assert.equal(evaluate(`validLimit(${JSON.stringify(value)})`), false);
 });
