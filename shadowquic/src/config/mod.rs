@@ -212,7 +212,7 @@ pub fn default_api_tag() -> String {
 
 /// Default standalone dashboard HTML release.
 pub fn default_ui_download_url() -> String {
-    "https://github.com/spongebob888/squirrelboard/releases/download/v0.1.3/index.html".into()
+    "https://github.com/spongebob888/squirrelboard/releases/download/v0.1.4/index.html".into()
 }
 impl Config {
     /// Explicit outbounds come first, followed by automatically registered DNS services.
