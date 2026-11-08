@@ -171,12 +171,12 @@ impl AsyncWrite for Stream {
     }
 }
 
-fn request(port: u16) -> (DuplexStream, ProxyRequest) {
+fn request(port: u16) -> (DuplexStream, ProxyRequest<Stream>) {
     let (client, server) = tokio::io::duplex(65536);
     (
         client,
         ProxyRequest::Tcp(TcpSession {
-            stream: Box::new(Stream(server)),
+            stream: Stream(server),
             dst: std::net::SocketAddr::from(([192, 0, 2, 1], port)).into(),
             src_addr: None,
             user_context: UserContext::default(),
@@ -184,7 +184,10 @@ fn request(port: u16) -> (DuplexStream, ProxyRequest) {
     )
 }
 
-async fn replay(request: ProxyRequest, expected: &[u8]) {
+async fn replay<T: TcpTrait, I: UdpRecv, O: UdpSend>(
+    request: ProxyRequest<T, I, O>,
+    expected: &[u8],
+) {
     let ProxyRequest::Tcp(mut session) = request else {
         panic!()
     };
@@ -269,6 +272,197 @@ async fn timeout_and_budget_exhaustion_preserve_input() {
     let req = sniffer.sniff(req).await.unwrap();
     assert!(req.user_context().sniffer.is_none());
     replay(req, b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn tcp_bypasses_preserve_typed_stream_and_clear_metadata() {
+    for reason in ["disabled", "port", "concurrent", "memory"] {
+        let mut cfg = config();
+        if reason == "disabled" {
+            cfg.tcp.clear();
+        }
+        let sniffer = Sniffer::new(cfg).unwrap();
+        let _active = (reason == "concurrent").then(|| {
+            sniffer
+                .concurrent
+                .try_acquire_many(sniffer.config.max_concurrent as u32)
+                .unwrap()
+        });
+        let _memory = (reason == "memory").then(|| {
+            sniffer
+                .memory
+                .clone()
+                .try_acquire_many_owned(sniffer.config.max_buffered_bytes as u32)
+                .unwrap()
+        });
+        let available = sniffer.memory.available_permits();
+        let (mut client, mut req) = request(if reason == "port" { 8080 } else { 80 });
+        req.user_context_mut().sniffer = Some(SniffResult {
+            domain: "stale.example".into(),
+            protocol: "http",
+            version: "1.1".into(),
+        });
+        let wire = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
+        client.write_all(wire).await.unwrap();
+        let started = tokio::time::Instant::now();
+        let req = sniffer.sniff(req).await.unwrap();
+        assert_eq!(started.elapsed(), Duration::ZERO, "{reason}");
+        assert!(req.user_context().sniffer.is_none(), "{reason}");
+        assert_eq!(sniffer.memory.available_permits(), available, "{reason}");
+        replay(req, wire).await;
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn empty_tcp_timeout_releases_memory_while_stream_stays_open() {
+    let sniffer = Sniffer::new(config()).unwrap();
+    let (mut client, req) = request(80);
+    let req = sniffer.sniff(req).await.unwrap();
+    assert!(req.user_context().sniffer.is_none());
+    assert_eq!(
+        sniffer.memory.available_permits(),
+        sniffer.config.max_buffered_bytes
+    );
+    client.write_all(b"after timeout").await.unwrap();
+    replay(req, b"after timeout").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn typed_udp_preserves_control_stream_and_metadata_across_sniff_paths() {
+    for reason in [
+        "sniff",
+        "disabled",
+        "port",
+        "concurrent",
+        "memory",
+        "timeout",
+    ] {
+        let mut cfg = config();
+        if reason == "disabled" {
+            cfg.udp.clear();
+        } else if reason == "port" {
+            cfg.udp[0].ports = vec![80];
+        }
+        let sniffer = Sniffer::new(cfg).unwrap();
+        let _active = (reason == "concurrent").then(|| {
+            sniffer
+                .concurrent
+                .try_acquire_many(sniffer.config.max_concurrent as u32)
+                .unwrap()
+        });
+        let _memory = (reason == "memory").then(|| {
+            sniffer
+                .memory
+                .clone()
+                .try_acquire_many_owned(sniffer.config.max_buffered_bytes as u32)
+                .unwrap()
+        });
+        let available = sniffer.memory.available_permits();
+        let (tx, rx) = tokio::sync::mpsc::channel(2);
+        let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel(2);
+        let (mut client, control) = tokio::io::duplex(64);
+        let dst: crate::SocksAddr = "192.0.2.1:443"
+            .parse::<std::net::SocketAddr>()
+            .unwrap()
+            .into();
+        let src = "192.0.2.2:1234".parse().unwrap();
+        let bind_addr: crate::SocksAddr = "127.0.0.1:0"
+            .parse::<std::net::SocketAddr>()
+            .unwrap()
+            .into();
+        let req: ProxyRequest<Stream, _, _> = ProxyRequest::Udp(UdpSession {
+            recv: rx,
+            send: reply_tx,
+            stream: Some(Stream(control)),
+            bind_addr: bind_addr.clone(),
+            dst: dst.clone(),
+            src_addr: Some(src),
+            user_context: UserContext {
+                inbound_tag: "typed".into(),
+                preferred_outbound: Some("direct".into()),
+                req_id: 42,
+                sniffer: Some(SniffResult {
+                    domain: "stale.example".into(),
+                    protocol: "quic",
+                    version: "v1".into(),
+                }),
+                ..Default::default()
+            },
+        });
+        let wire = initial(
+            rustls_jls::quic::Version::V1,
+            &crypto_frame(0, &hello(b"example.com")),
+            0,
+        );
+        let packet = (bytes::Bytes::from(wire), dst.clone());
+        if reason != "timeout" {
+            tx.send(packet.clone()).await.unwrap();
+        }
+        client.write_all(b"control").await.unwrap();
+        let started = tokio::time::Instant::now();
+        let req = sniffer.sniff(req).await.unwrap();
+        assert_eq!(
+            started.elapsed(),
+            if reason == "timeout" {
+                Duration::from_millis(sniffer.config.timeout)
+            } else {
+                Duration::ZERO
+            },
+            "{reason}"
+        );
+        assert_eq!(
+            req.user_context()
+                .sniffer
+                .as_ref()
+                .map(|r| r.domain.as_str()),
+            (reason == "sniff").then_some("example.com"),
+            "{reason}"
+        );
+        let context = crate::plugin::router::RouteContext::from_request(&req);
+        assert_eq!(context.src_addr, Some(src));
+        let ProxyRequest::Udp(mut session) = req.into_boxed() else {
+            panic!()
+        };
+        assert_eq!(session.dst, dst);
+        assert_eq!(session.bind_addr, bind_addr);
+        assert_eq!(session.src_addr, Some(src));
+        assert_eq!(session.user_context.inbound_tag, "typed");
+        assert_eq!(
+            session.user_context.preferred_outbound.as_deref(),
+            Some("direct")
+        );
+        assert_eq!(session.user_context.req_id, 42);
+        if reason == "sniff" {
+            assert!(sniffer.memory.available_permits() < available);
+        } else {
+            assert_eq!(sniffer.memory.available_permits(), available, "{reason}");
+        }
+        if reason == "timeout" {
+            tx.send(packet.clone()).await.unwrap();
+        }
+        assert_eq!(session.recv.recv_from().await.unwrap(), packet);
+        assert_eq!(sniffer.memory.available_permits(), available, "{reason}");
+        let reply = bytes::Bytes::from_static(b"reply");
+        assert_eq!(
+            session
+                .send
+                .send_to(reply.clone(), dst.clone())
+                .await
+                .unwrap(),
+            reply.len()
+        );
+        assert_eq!(reply_rx.recv().await.unwrap(), (reply, dst));
+        let control = session.stream.as_mut().unwrap();
+        let mut bytes = [0; 7];
+        control.read_exact(&mut bytes).await.unwrap();
+        assert_eq!(&bytes, b"control");
+        control.write_all(b"reply").await.unwrap();
+        let mut reply = [0; 5];
+        client.read_exact(&mut reply).await.unwrap();
+        assert_eq!(&reply, b"reply");
+        drop(session);
+        assert_eq!(client.read(&mut bytes).await.unwrap(), 0);
+    }
 }
 
 #[test]
@@ -552,7 +746,7 @@ router:
     let (mut client, req) = request(80);
     let wire = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
     client.write_all(wire).await.unwrap();
-    dispatcher.dispatch(req).await;
+    dispatcher.dispatch(req.into_boxed()).await;
     let req = tokio::time::timeout(Duration::from_secs(2), rx.recv())
         .await
         .unwrap()

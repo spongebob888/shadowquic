@@ -94,12 +94,30 @@ use crate::{
 };
 #[cfg(test)]
 mod manager_tests;
-pub enum ProxyRequest<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend> {
+pub enum ProxyRequest<T: TcpTrait = AnyTcp, I: UdpRecv = AnyUdpRecv, O: UdpSend = AnyUdpSend> {
     Tcp(TcpSession<T>),
-    Udp(UdpSession<I, O>),
+    Udp(UdpSession<T, I, O>),
 }
 
-impl ProxyRequest {
+impl<T: TcpTrait, I: UdpRecv, O: UdpSend> ProxyRequest<T, I, O> {
+    /// Erase transport types at the boundary to a dynamic inbound or outbound.
+    pub fn into_boxed(self) -> ProxyRequest
+    where
+        T: 'static,
+        I: 'static,
+        O: 'static,
+    {
+        match self {
+            Self::Tcp(session) => ProxyRequest::Tcp(TcpSession {
+                stream: Box::new(session.stream),
+                dst: session.dst,
+                src_addr: session.src_addr,
+                user_context: session.user_context,
+            }),
+            Self::Udp(session) => ProxyRequest::Udp(session.into_boxed()),
+        }
+    }
+
     pub fn user_context(&self) -> &UserContext {
         match self {
             ProxyRequest::Tcp(TcpSession { user_context, .. }) => user_context,
@@ -146,7 +164,7 @@ pub trait Stoppable: Send + Sync {
     fn stop(&self);
 }
 pub type UserName = String;
-pub struct TcpSession<IO = AnyTcp> {
+pub struct TcpSession<IO: TcpTrait = AnyTcp> {
     pub stream: IO,
     pub dst: SocksAddr,
     /// Address of the client that opened this session, when available.
@@ -155,11 +173,11 @@ pub struct TcpSession<IO = AnyTcp> {
     user_context: UserContext,
 }
 
-pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
+pub struct UdpSession<T: TcpTrait = AnyTcp, I: UdpRecv = AnyUdpRecv, O: UdpSend = AnyUdpSend> {
     pub recv: I,
     pub send: O,
     /// Control stream, should be kept alive during session.
-    stream: Option<AnyTcp>,
+    stream: Option<T>,
     bind_addr: SocksAddr,
     /// Destination of the first received datagram.
     /// Only used for routing. The true sending destination is determined per-datagram by UdpRecv.
@@ -171,17 +189,37 @@ pub struct UdpSession<I = AnyUdpRecv, O = AnyUdpSend> {
     #[allow(dead_code)]
     user_context: UserContext,
 }
-impl UdpSession {
+impl<T: TcpTrait, I: UdpRecv, O: UdpSend> UdpSession<T, I, O> {
+    /// Erase the transport types while retaining session metadata.
+    pub fn into_boxed(self) -> UdpSession
+    where
+        T: 'static,
+        I: 'static,
+        O: 'static,
+    {
+        UdpSession {
+            recv: Box::new(self.recv),
+            send: Arc::new(self.send),
+            stream: self.stream.map(|x| Box::new(x) as AnyTcp),
+            bind_addr: self.bind_addr,
+            dst: self.dst,
+            src_addr: self.src_addr,
+            user_context: self.user_context,
+        }
+    }
+
     /// Wait for the first datagram and retain it for the outbound receiver.
-    pub(crate) async fn wait_first_packet(mut self) -> Result<Self, SError> {
+    pub(crate) async fn wait_first_packet(
+        mut self,
+    ) -> Result<UdpSession<T, FirstPacketUdpRecv<I>, O>, SError> {
         let first: (Bytes, SocksAddr) = self.recv.recv_from().await?;
-        Ok(Self {
+        Ok(UdpSession {
             dst: first.1.clone(),
             src_addr: self.src_addr,
-            recv: Box::new(FirstPacketUdpRecv {
+            recv: FirstPacketUdpRecv {
                 first: Some(first),
                 inner: self.recv,
-            }),
+            },
             send: self.send,
             stream: self.stream,
             bind_addr: self.bind_addr,
@@ -190,13 +228,14 @@ impl UdpSession {
     }
 }
 
-struct FirstPacketUdpRecv {
+/// A datagram receiver that replays the packet used to select a route.
+pub struct FirstPacketUdpRecv<T: UdpRecv> {
     first: Option<(Bytes, SocksAddr)>,
-    inner: AnyUdpRecv,
+    inner: T,
 }
 
 #[async_trait]
-impl UdpRecv for FirstPacketUdpRecv {
+impl<T: UdpRecv> UdpRecv for FirstPacketUdpRecv<T> {
     async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr), SError> {
         if let Some(packet) = self.first.take() {
             Ok(packet)
@@ -265,6 +304,19 @@ impl Default for StatsContext {
 pub type AnyTcp = Box<dyn TcpTrait>;
 pub type AnyUdpSend = Arc<dyn UdpSend>;
 pub type AnyUdpRecv = Box<dyn UdpRecv>;
+
+#[async_trait::async_trait]
+impl UdpSend for AnyUdpSend {
+    async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
+        (**self).send_to(buf, addr).await
+    }
+}
+#[async_trait::async_trait]
+impl UdpRecv for AnyUdpRecv {
+    async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr), SError> {
+        (**self).recv_from().await
+    }
+}
 pub trait TcpTrait: AsyncRead + AsyncWrite + Unpin + Send + Sync {
     fn peer_addr(&self) -> Option<SocketAddr> {
         None
@@ -283,7 +335,9 @@ impl TcpTrait for TcpStream {
 }
 
 #[async_trait]
-pub trait Inbound<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend>: Send + Sync + Unpin {
+pub trait Inbound<T: TcpTrait = AnyTcp, I: UdpRecv = AnyUdpRecv, O: UdpSend = AnyUdpSend>:
+    Send + Sync + Unpin
+{
     /// Return a request with its inbound tag and routing preference populated.
     /// Return `SError::InboundClosed` when no more requests will be produced.
     async fn accept(&mut self) -> Result<ProxyRequest<T, I, O>, SError>;
@@ -297,7 +351,9 @@ pub trait Inbound<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend>: Send + Sync + Unp
 }
 
 #[async_trait]
-pub trait Outbound<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend>: Send + Sync + Unpin {
+pub trait Outbound<T: TcpTrait = AnyTcp, I: UdpRecv = AnyUdpRecv, O: UdpSend = AnyUdpSend>:
+    Send + Sync + Unpin
+{
     async fn handle(&self, req: ProxyRequest<T, I, O>) -> Result<(), SError>;
 }
 
@@ -371,7 +427,7 @@ impl RequestDispatcher {
                 #[cfg(feature = "sniffer")]
                 if let Some(sniffer) = &router.sniffer {
                     req = match sniffer.sniff(req).await {
-                        Ok(req) => req,
+                        Ok(req) => req.into_boxed(),
                         Err(error) => {
                             error!(event = "sniffer:request_failed", %error, "sniffing request failed");
                             return;

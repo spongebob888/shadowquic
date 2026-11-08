@@ -9,13 +9,13 @@ use tokio::sync::{
 use tracing::{Instrument, error};
 
 use crate::{
-    Inbound, ProxyRequest,
+    Inbound,
     config::{AuthUser, SunnyQuicServerCfg},
     error::SError,
     msgs::squic::{SQExtError, SunnyCredential, UserStats},
     observe::Observer,
     quic::QuicConnection,
-    squic::inbound::{SQServerConn, SunnyQuicUsers, UserManager},
+    squic::inbound::{SQServerConn, SQServerRequest, SunnyQuicUsers, UserManager},
     sunnyquic::EndServer,
     utils::{dual_socket::ToCanonical, user_store},
 };
@@ -27,8 +27,8 @@ pub struct SunnyQuicServer {
     pub endpoint: EndServer,
     users: Arc<ArcSwap<HashMap<SunnyCredential, String>>>,
     user_manager: Arc<SunnyQuicUserManager>,
-    request_sender: Sender<ProxyRequest>,
-    request: Receiver<ProxyRequest>,
+    request_sender: Sender<SQServerRequest<<EndServer as QuicServer>::C>>,
+    request: Receiver<SQServerRequest<<EndServer as QuicServer>::C>>,
     /// Shared with the manager's observer map when registering this inbound.
     pub observer: Arc<Observer>,
 }
@@ -180,7 +180,7 @@ impl UserManager for SunnyQuicUserManager {
 
 impl SunnyQuicServer {
     pub async fn new(mut cfg: SunnyQuicServerCfg) -> Result<Self, SError> {
-        let (send, recv) = channel::<ProxyRequest>(10);
+        let (send, recv) = channel::<SQServerRequest<<EndServer as QuicServer>::C>>(10);
         let store = match &cfg.user_store {
             Some(path) => user_store::load_store(path)?,
             None => None,
@@ -247,7 +247,7 @@ impl SunnyQuicServer {
 
     async fn handle_incoming<C: QuicConnection>(
         incom: C,
-        req_sender: Sender<ProxyRequest>,
+        req_sender: Sender<SQServerRequest<C>>,
         user_hash: SunnyQuicUsers,
         user_manager: Arc<dyn UserManager>,
     ) -> Result<(), SError> {
@@ -292,7 +292,8 @@ impl Inbound for SunnyQuicServer {
             .request
             .recv()
             .await
-            .ok_or(SError::InboundUnavailable)?;
+            .ok_or(SError::InboundUnavailable)?
+            .into_boxed();
         {
             let config = self.user_manager.config.read().await;
             let context = req.user_context_mut();

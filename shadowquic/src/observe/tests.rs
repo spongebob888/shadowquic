@@ -263,7 +263,7 @@ async fn udp_tracks_first_packet_errors_and_independent_half_lifetimes() {
     };
     let request = observer
         .wrap_request(
-            ProxyRequest::Udp(udp.wait_first_packet().await.unwrap()),
+            ProxyRequest::Udp(udp.wait_first_packet().await.unwrap().into_boxed()),
             "selected".into(),
         )
         .await;

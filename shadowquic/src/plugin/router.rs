@@ -15,7 +15,7 @@ use mlua::{Function, Lua, LuaOptions, StdLib, UserData, UserDataFields, chunk::C
 use super::database::Databases;
 use crate::dns::ResolverManager;
 use crate::{
-    DnsQuery, ProxyRequest, StatsContext, TcpSession, UdpSession,
+    DnsQuery, ProxyRequest, StatsContext, TcpSession, TcpTrait, UdpRecv, UdpSend, UdpSession,
     error::SError,
     msgs::socks5::{AddrOrDomain, SocksAddr},
 };
@@ -173,7 +173,9 @@ impl RouteContext {
         Ok(())
     }
 
-    pub(crate) fn from_request(req: &ProxyRequest) -> Self {
+    pub(crate) fn from_request<T: TcpTrait, I: UdpRecv, O: UdpSend>(
+        req: &ProxyRequest<T, I, O>,
+    ) -> Self {
         #[allow(unused_mut)]
         let mut context = match req {
             ProxyRequest::Tcp(TcpSession {

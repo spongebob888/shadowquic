@@ -8,13 +8,13 @@ use tokio::sync::{
 use tracing::{Instrument, error};
 
 use crate::{
-    Inbound, ProxyRequest,
+    Inbound,
     config::{AuthUser, ShadowQuicServerCfg},
     error::SError,
     msgs::squic::{SQExtError, UserStats},
     observe::Observer,
     quic::{AuthedConn, QuicConnection},
-    squic::inbound::{SQServerConn, UserManager},
+    squic::inbound::{SQServerConn, SQServerRequest, UserManager},
     utils::{dual_socket::ToCanonical, user_store},
 };
 
@@ -25,8 +25,8 @@ use crate::quic::QuicServer;
 pub struct ShadowQuicServer {
     pub endpoint: EndServer,
     user_manager: Arc<ShadowQuicUserManager>,
-    request_sender: Sender<ProxyRequest>,
-    request: Receiver<ProxyRequest>,
+    request_sender: Sender<SQServerRequest<<EndServer as QuicServer>::C>>,
+    request: Receiver<SQServerRequest<<EndServer as QuicServer>::C>>,
     /// Shared with the manager's observer map when registering this inbound.
     pub observer: Arc<Observer>,
 }
@@ -175,7 +175,7 @@ impl UserManager for ShadowQuicUserManager {
 
 impl ShadowQuicServer {
     pub async fn new(mut cfg: ShadowQuicServerCfg) -> Result<Self, SError> {
-        let (send, recv) = channel::<ProxyRequest>(10);
+        let (send, recv) = channel::<SQServerRequest<<EndServer as QuicServer>::C>>(10);
 
         let store = match &cfg.user_store {
             Some(path) => user_store::load_store(path)?,
@@ -234,7 +234,7 @@ impl ShadowQuicServer {
 
     async fn handle_incoming<C: QuicConnection + AuthedConn>(
         incom: C,
-        req_sender: Sender<ProxyRequest>,
+        req_sender: Sender<SQServerRequest<C>>,
         user_manager: Arc<dyn UserManager>,
     ) -> Result<(), SError> {
         let user = incom
@@ -275,7 +275,8 @@ impl Inbound for ShadowQuicServer {
             .request
             .recv()
             .await
-            .ok_or(SError::InboundUnavailable)?;
+            .ok_or(SError::InboundUnavailable)?
+            .into_boxed();
         {
             let config = self.user_manager.config.read().await;
             let context = req.user_context_mut();

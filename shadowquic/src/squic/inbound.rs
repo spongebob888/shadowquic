@@ -4,13 +4,13 @@ use std::{collections::HashMap, pin::Pin, sync::Arc};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     select,
-    sync::mpsc::{Sender, channel},
+    sync::mpsc::{Receiver, Sender, channel},
 };
 use tracing::{Instrument, info, info_span, trace};
 
 use crate::{
-    AnyUdpRecv, AnyUdpSend, ProxyRequest, StatsContext, Stoppable, TcpSession, TcpTrait,
-    UdpSession, UserContext,
+    FirstPacketUdpRecv, ProxyRequest, StatsContext, Stoppable, TcpSession, TcpTrait, UdpSession,
+    UserContext,
     config::AuthUser,
     error::{SError, SResult},
     msgs::{
@@ -29,6 +29,13 @@ use crate::{
 use super::{SQConn, handle_udp_packet_recv, handle_udp_recv_ctrl, handle_udp_send};
 
 pub type SunnyQuicUsers = Arc<HashMap<SunnyCredential, String>>;
+
+/// Requests produced by a QUIC connection before transport type erasure.
+pub type SQServerRequest<C> = ProxyRequest<
+    Unsplit<<C as QuicConnection>::SendStream, <C as QuicConnection>::RecvStream>,
+    FirstPacketUdpRecv<Receiver<(Bytes, SocksAddr)>>,
+    Sender<(Bytes, SocksAddr)>,
+>;
 
 #[async_trait::async_trait]
 pub trait UserManager: Send + Sync {
@@ -60,7 +67,7 @@ pub struct SQServerConn<C: QuicConnection> {
 impl<C: QuicConnection> SQServerConn<C> {
     pub async fn handle_connection(
         self: Arc<Self>,
-        req_send: Sender<ProxyRequest>,
+        req_send: Sender<SQServerRequest<C>>,
     ) -> Result<(), SError> {
         let conn_clone = self.inner.clone();
         let fut1 = async move { handle_udp_packet_recv(conn_clone).await };
@@ -91,7 +98,7 @@ impl<C: QuicConnection> SQServerConn<C> {
         self: Arc<Self>,
         send: C::SendStream,
         mut recv: C::RecvStream,
-        req_send: Sender<ProxyRequest>,
+        req_send: Sender<SQServerRequest<C>>,
     ) -> Result<(), SError> {
         // We can direct decode the whole SQReq.
         // Attackers may create malicious extention with long vector
@@ -116,8 +123,8 @@ impl<C: QuicConnection> SQServerConn<C> {
             SQReq::SQConnect(dst) => {
                 let user = user.unwrap();
                 info!(event = "squic:tcp_request_accepted", dst = %dst, "tcp connect request accepted");
-                let tcp: TcpSession = TcpSession {
-                    stream: Box::new(Unsplit { s: send, r: recv }),
+                let tcp: TcpSession<_> = TcpSession {
+                    stream: Unsplit { s: send, r: recv },
                     dst,
                     src_addr: Some(self.inner.conn.remote_address().to_canonical()),
                     user_context: UserContext {
@@ -145,9 +152,9 @@ impl<C: QuicConnection> SQServerConn<C> {
                 let (local_send, udp_recv) = channel::<(Bytes, SocksAddr)>(32);
                 let (udp_send, local_recv) = channel::<(Bytes, SocksAddr)>(32);
                 let publish_request = async {
-                    let udp = UdpSession::<AnyUdpRecv, AnyUdpSend> {
-                        recv: Box::new(udp_recv),
-                        send: Arc::new(udp_send),
+                    let udp = UdpSession {
+                        recv: udp_recv,
+                        send: udp_send,
                         stream: None,
                         bind_addr: dst.clone(),
                         dst: dst.clone(),

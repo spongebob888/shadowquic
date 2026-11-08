@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 
+use crate::TcpTrait;
 use crate::config::{AuthUser, SocksServerCfg};
 use crate::error::{SError, SResult};
 use crate::msgs::socks5::{
@@ -13,7 +14,6 @@ use crate::msgs::{SDecode, SEncode};
 use crate::observe::Observer;
 use crate::utils::dual_socket::to_ipv4_mapped;
 use crate::utils::log::{REQ_ID, fetch_add_req_cnt};
-use crate::{AnyUdpRecv, AnyUdpSend, TcpTrait};
 use crate::{Inbound, ProxyRequest, StatsContext, TcpSession, UdpSession, UserContext};
 use async_trait::async_trait;
 use socket2::{Domain, Protocol, Socket, Type};
@@ -72,9 +72,9 @@ impl SocksServer {
             })),
             SOCKS5_CMD_UDP_ASSOCIATE => {
                 let socket = Arc::new(socket.unwrap());
-                let session = UdpSession::<AnyUdpRecv, AnyUdpSend> {
-                    recv: Box::new(UdpSocksWrap(socket.clone(), Default::default())),
-                    send: Arc::new(UdpSocksWrap(socket, Default::default())),
+                let session = UdpSession {
+                    recv: UdpSocksWrap(socket.clone(), Default::default()),
+                    send: UdpSocksWrap(socket, Default::default()),
                     stream: Some(Box::new(s)),
                     bind_addr: req.dst.clone(),
                     dst: req.dst,
@@ -82,7 +82,8 @@ impl SocksServer {
                     user_context,
                 }
                 .wait_first_packet()
-                .await?;
+                .await?
+                .into_boxed();
                 Ok(ProxyRequest::Udp(session))
             }
             _ => Err(SError::ProtocolViolation),
@@ -255,9 +256,9 @@ async fn handle_tcp(
             info!(event = "socks:udp_associate_request_accepted", bind_dst = %req.dst, "udp associate request accepted");
             let socket = Arc::new(socket.unwrap());
             ProxyRequest::Udp(
-                UdpSession::<AnyUdpRecv, AnyUdpSend> {
-                    recv: Box::new(UdpSocksWrap(socket.clone(), Default::default())),
-                    send: Arc::new(UdpSocksWrap(socket, Default::default())),
+                UdpSession {
+                    recv: UdpSocksWrap(socket.clone(), Default::default()),
+                    send: UdpSocksWrap(socket, Default::default()),
                     stream: Some(Box::new(s)),
                     bind_addr: req.dst.clone(),
                     dst: req.dst, // rewrite later
@@ -265,7 +266,8 @@ async fn handle_tcp(
                     user_context,
                 }
                 .wait_first_packet()
-                .await?,
+                .await?
+                .into_boxed(),
             )
         }
         _ => {

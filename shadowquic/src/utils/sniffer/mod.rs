@@ -7,7 +7,7 @@ mod tls;
 
 use super::replay_stream::ReplayStream;
 use crate::{
-    AnyUdpRecv, ProxyRequest, UdpRecv,
+    ProxyRequest, TcpSession, TcpTrait, UdpRecv, UdpSend, UdpSession,
     config::{SniffProtocol, SnifferCfg},
     error::SError,
 };
@@ -63,7 +63,10 @@ impl Sniffer {
             quic_suite,
         })
     }
-    pub(crate) async fn sniff(&self, mut request: ProxyRequest) -> Result<ProxyRequest, SError> {
+    pub(crate) async fn sniff<T: TcpTrait, I: UdpRecv, O: UdpSend>(
+        &self,
+        mut request: ProxyRequest<T, I, O>,
+    ) -> Result<ProxyRequest<ReplayStream<T>, ReplayDatagram<I>, O>, SError> {
         request.user_context_mut().sniffer = None;
         let udp = matches!(request, ProxyRequest::Udp(_));
         let rules = if udp {
@@ -87,21 +90,21 @@ impl Sniffer {
             }
         }
         if !http && !tls && !quic {
-            return Ok(request);
+            return Ok(without_inspection(request));
         }
         let Ok(_active) = self.concurrent.try_acquire() else {
-            return Ok(request);
+            return Ok(without_inspection(request));
         };
         let Ok(memory) = self
             .memory
             .clone()
             .try_acquire_many_owned(self.config.reservation_bytes(udp) as u32)
         else {
-            return Ok(request);
+            return Ok(without_inspection(request));
         };
         let started = Instant::now();
         let deadline = Duration::from_millis(self.config.timeout);
-        let result: Result<ProxyRequest, SError> = async {
+        let result: Result<_, SError> = async {
             match request {
                 ProxyRequest::Tcp(mut session) => {
                     let mut prefix = Vec::with_capacity(self.config.max_bytes);
@@ -140,10 +143,19 @@ impl Sniffer {
                         Err(_) => None,
                     };
                     drop(parser);
-                    if !prefix.is_empty() {
-                        session.stream =
-                            Box::new(ReplayStream::with_permit(prefix, session.stream, memory));
-                    }
+                    let stream = if prefix.is_empty() {
+                        drop(memory);
+                        ReplayStream::new(Vec::new(), session.stream)
+                    } else {
+                        ReplayStream::with_permit(prefix, session.stream, memory)
+                    };
+
+                    let session = TcpSession {
+                        stream,
+                        dst: session.dst,
+                        src_addr: session.src_addr,
+                        user_context: session.user_context,
+                    };
                     Ok(ProxyRequest::Tcp(session))
                 }
                 ProxyRequest::Udp(mut session) => {
@@ -181,13 +193,29 @@ impl Sniffer {
                         }
                     }
                     drop(parser);
-                    if !buffered.is_empty() {
-                        session.recv = Box::new(ReplayDatagram {
-                            buffered,
-                            inner: session.recv,
-                            permit: Some(memory),
-                        });
-                    }
+                    let permit = if buffered.is_empty() {
+                        drop(memory);
+                        None
+                    } else {
+                        Some(memory)
+                    };
+                    let recv = ReplayDatagram {
+                        buffered,
+                        inner: session.recv,
+                        permit,
+                    };
+
+                    let session = UdpSession {
+                        recv,
+                        send: session.send,
+                        stream: session
+                            .stream
+                            .map(|stream| ReplayStream::new(Vec::new(), stream)),
+                        bind_addr: session.bind_addr,
+                        dst: session.dst,
+                        src_addr: session.src_addr,
+                        user_context: session.user_context,
+                    };
                     Ok(ProxyRequest::Udp(session))
                 }
             }
@@ -208,13 +236,42 @@ impl Sniffer {
         result
     }
 }
-struct ReplayDatagram {
+/// Wrap an uninspected request without reading or reserving replay memory.
+fn without_inspection<T: TcpTrait, I: UdpRecv, O: UdpSend>(
+    request: ProxyRequest<T, I, O>,
+) -> ProxyRequest<ReplayStream<T>, ReplayDatagram<I>, O> {
+    match request {
+        ProxyRequest::Tcp(session) => ProxyRequest::Tcp(TcpSession {
+            stream: ReplayStream::new(Vec::new(), session.stream),
+            dst: session.dst,
+            src_addr: session.src_addr,
+            user_context: session.user_context,
+        }),
+        ProxyRequest::Udp(session) => ProxyRequest::Udp(UdpSession {
+            recv: ReplayDatagram {
+                buffered: VecDeque::new(),
+                inner: session.recv,
+                permit: None,
+            },
+            send: session.send,
+            stream: session
+                .stream
+                .map(|stream| ReplayStream::new(Vec::new(), stream)),
+            bind_addr: session.bind_addr,
+            dst: session.dst,
+            src_addr: session.src_addr,
+            user_context: session.user_context,
+        }),
+    }
+}
+
+pub(crate) struct ReplayDatagram<I: UdpRecv> {
     buffered: VecDeque<(bytes::Bytes, crate::msgs::socks5::SocksAddr)>,
-    inner: AnyUdpRecv,
+    inner: I,
     permit: Option<OwnedSemaphorePermit>,
 }
 #[async_trait::async_trait]
-impl UdpRecv for ReplayDatagram {
+impl<R: UdpRecv> UdpRecv for ReplayDatagram<R> {
     async fn recv_from(
         &mut self,
     ) -> Result<(bytes::Bytes, crate::msgs::socks5::SocksAddr), SError> {

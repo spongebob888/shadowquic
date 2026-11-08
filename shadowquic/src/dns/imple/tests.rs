@@ -2,7 +2,7 @@ use super::config::{DnsFakeIpServerCfg, DnsSystemServerCfg, DnsUdpServerCfg};
 use super::*;
 use crate::TcpSession;
 use crate::{
-    AnyUdpRecv, AnyUdpSend, Manager, UdpRecv,
+    AnyTcp, AnyUdpRecv, AnyUdpSend, Manager, UdpRecv,
     config::{Config, DirectOutCfg},
     direct::outbound::DirectOut,
     msgs::socks5::AddrOrDomain,
@@ -570,7 +570,7 @@ async fn hijacked_dns_keeps_original_reply_source() {
     send.send((query("hijacked.test", TYPE::A, 42).into(), dst.clone()))
         .await
         .unwrap();
-    let session = UdpSession::<AnyUdpRecv, AnyUdpSend> {
+    let session = UdpSession::<AnyTcp, AnyUdpRecv, AnyUdpSend> {
         recv: Box::new(recv),
         send: Arc::new(reply_send),
         stream: None,
@@ -581,7 +581,8 @@ async fn hijacked_dns_keeps_original_reply_source() {
     }
     .wait_first_packet()
     .await
-    .unwrap();
+    .unwrap()
+    .into_boxed();
     tokio::time::timeout(Duration::from_secs(1), async {
         let (handled, ()) = tokio::join!(
             manager.outbounds["fake"].handle(ProxyRequest::Udp(session)),
@@ -726,7 +727,7 @@ async fn fakeip_udp_is_restored_before_routing_and_replies_use_fake_source() {
     tx.send((Bytes::from_static(b"one"), dst.clone()))
         .await
         .unwrap();
-    let session = UdpSession::<AnyUdpRecv, AnyUdpSend> {
+    let session = UdpSession::<AnyTcp, AnyUdpRecv, AnyUdpSend> {
         recv: Box::new(rx),
         send: Arc::new(reply_tx),
         stream: None,
@@ -737,7 +738,8 @@ async fn fakeip_udp_is_restored_before_routing_and_replies_use_fake_source() {
     }
     .wait_first_packet()
     .await
-    .unwrap();
+    .unwrap()
+    .into_boxed();
     let mut inbound = RestoringInbound {
         inner: Box::new(OneRequest(Some(ProxyRequest::Udp(session)))),
         fake,
@@ -927,7 +929,7 @@ async fn selected_resolver_handles_tcp_and_udp_destinations_and_preserves_ports(
     tx.send((Bytes::from_static(b"second"), second.clone()))
         .await
         .unwrap();
-    let session = UdpSession::<AnyUdpRecv, AnyUdpSend> {
+    let session = UdpSession::<AnyTcp, AnyUdpRecv, AnyUdpSend> {
         recv: Box::new(recv),
         send: Arc::new(send),
         stream: None,
@@ -938,7 +940,8 @@ async fn selected_resolver_handles_tcp_and_udp_destinations_and_preserves_ports(
     }
     .wait_first_packet()
     .await
-    .unwrap();
+    .unwrap()
+    .into_boxed();
     outbound.handle(ProxyRequest::Udp(session)).await.unwrap();
     let Some(ProxyRequest::Udp(mut session)) = rx.recv().await else {
         panic!()
