@@ -7,7 +7,11 @@ use http_body_util::{BodyExt, Full};
 use hyper::{Request, StatusCode};
 use hyper_util::rt::TokioIo;
 use serde_json::{Value, json};
-use shadowquic::config::Config;
+use shadowquic::{
+    Manager,
+    config::{Config, InboundCfg},
+    error::SError,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -49,12 +53,100 @@ async fn call_with_authorization(
     (status, serde_json::from_slice(&bytes).unwrap())
 }
 
-async fn unused_address() -> SocketAddr {
-    TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap()
+struct RunningManager {
+    inbound_addr: SocketAddr,
+    api_addr: SocketAddr,
+    stop: tokio::sync::oneshot::Sender<()>,
+    task: tokio::task::JoinHandle<Result<(), SError>>,
+}
+
+async fn start_manager(mut config: Config, configure: impl Fn(&mut Manager)) -> RunningManager {
+    // Configuration requires addresses before run_until binds its listeners.
+    // Reserve distinct ports through build_manager (which also binds DNS), then
+    // retry only address collisions in the unavoidable release/rebind window.
+    for _ in 0..10 {
+        let inbound_bind = match &mut config.inbounds[..] {
+            [InboundCfg::Socks(cfg)] => &mut cfg.bind_addr,
+            #[cfg(feature = "mixed")]
+            [InboundCfg::Mixed(cfg)] => &mut cfg.bind_addr,
+            _ => panic!("expected one SOCKS or mixed inbound"),
+        };
+        inbound_bind.set_port(0);
+        let inbound_reservation = TcpListener::bind(*inbound_bind).await.unwrap();
+        let inbound_addr = inbound_reservation.local_addr().unwrap();
+        *inbound_bind = inbound_addr;
+        let api_config = config.restful_api.as_mut().unwrap();
+        api_config.bind_addr.set_port(0);
+        let api_reservation = TcpListener::bind(api_config.bind_addr).await.unwrap();
+        api_config.bind_addr = api_reservation.local_addr().unwrap();
+        let mut api_addr = api_config.bind_addr;
+        if api_addr.ip().is_unspecified() {
+            api_addr.set_ip("127.0.0.1".parse().unwrap());
+        }
+
+        let mut manager = config.clone().build_manager().await.unwrap();
+        configure(&mut manager);
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        drop(inbound_reservation);
+        drop(api_reservation);
+        let mut run = Box::pin(manager.run_until(async move {
+            let _ = stopped.await;
+        }));
+        loop {
+            tokio::select! {
+                biased;
+                result = &mut run => {
+                    match result {
+                        Err(SError::Io(error)) if error.kind() == std::io::ErrorKind::AddrInUse => break,
+                        result => panic!("manager exited before API startup: {result:?}"),
+                    }
+                }
+                connected = TcpStream::connect(api_addr) => {
+                    if connected.is_ok() {
+                        return RunningManager {
+                            inbound_addr,
+                            api_addr,
+                            stop,
+                            task: tokio::spawn(run),
+                        };
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            }
+        }
+    }
+    panic!("manager startup encountered address collisions on all 10 attempts");
+}
+
+#[tokio::test]
+async fn manager_startup_retries_address_collisions() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let occupied = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let attempts = std::sync::atomic::AtomicUsize::new(0);
+        let config: Config = serde_saphyr::from_str(
+            "inbounds: [{tag: inbound, type: socks, bind-addr: '127.0.0.1:0'}]\n\
+             outbounds: [{tag: direct, type: direct}]\n\
+             restful-api: {bind-addr: '127.0.0.1:0'}",
+        )
+        .unwrap();
+        let running = start_manager(config, |manager| {
+            if attempts.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
+                manager.api_config.as_mut().unwrap().bind_addr = occupied.local_addr().unwrap();
+            }
+        })
+        .await;
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::Relaxed), 2);
+        assert_eq!(
+            call(running.api_addr, "GET", "/api/v1/traffic", Value::Null)
+                .await
+                .0,
+            StatusCode::OK
+        );
+        running.stop.send(()).unwrap();
+        running.task.await.unwrap().unwrap();
+    })
+    .await
+    .unwrap();
 }
 
 struct DashboardSource {
@@ -67,20 +159,20 @@ struct DashboardSource {
 async fn dashboard_downloads_default_squirrelboard_release() {
     tokio::time::timeout(Duration::from_secs(60), async {
         let temp = tempfile::tempdir().unwrap();
-        let api_addr = unused_address().await;
         let root = temp.path().join("ui");
         let config: Config = serde_saphyr::from_str(&format!(
             "inbounds: [{{tag: inbound, type: socks, bind-addr: '127.0.0.1:0'}}]\n\
              outbounds: [{{tag: direct, type: direct}}]\n\
-             restful-api:\n  bind-addr: '{api_addr}'\n  ui-path: '{}'",
+             restful-api:\n  bind-addr: '127.0.0.1:0'\n  ui-path: '{}'",
             root.display()
         ))
         .unwrap();
-        let manager = config.build_manager().await.unwrap();
-        let (stop, stopped) = tokio::sync::oneshot::channel();
-        let task = tokio::spawn(manager.run_until(async {
-            let _ = stopped.await;
-        }));
+        let RunningManager {
+            api_addr,
+            stop,
+            task,
+            ..
+        } = start_manager(config, |_| {}).await;
         loop {
             assert!(!task.is_finished(), "manager exited before serving UI");
             if TcpStream::connect(api_addr).await.is_ok()
@@ -186,7 +278,6 @@ async fn dashboard_startup_routes_redirects_serves_html_and_reuses_cached_file()
         let html = b"<html>dashboard</html>".to_vec();
         let (requests, mut received) = tokio::sync::mpsc::unbounded_channel();
         for startup in 0..2 {
-            let api_addr = unused_address().await;
             let router = if cfg!(feature = "plugin") {
                 "default-outbound: blocked\n  src: 'return function(ctx) if ctx.inbound_tag == \"dashboard-download\" then return \"download\" end return \"blocked\" end'"
             } else { "default-outbound: download" };
@@ -194,15 +285,14 @@ async fn dashboard_startup_routes_redirects_serves_html_and_reuses_cached_file()
                 "inbounds: [{{tag: inbound, type: socks, bind-addr: '127.0.0.1:0'}}]\n\
                  outbounds: [{{tag: blocked, type: drop}}, {{tag: download, type: direct}}]\n\
                  router:\n  {router}\n\
-                 restful-api:\n  bind-addr: '{api_addr}'\n  tag: dashboard-download\n  secret: test-secret\n  ui-path: '{}'\n  ui-download-url: http://dashboard.test/start",
+                 restful-api:\n  bind-addr: '127.0.0.1:0'\n  tag: dashboard-download\n  secret: test-secret\n  ui-path: '{}'\n  ui-download-url: http://dashboard.test/start",
                 root.display()
             )).unwrap();
-            let mut manager = config.build_manager().await.unwrap();
-            assert!(manager.inbounds.contains_key("dashboard-download"));
-            assert!(!manager.observers.contains_key("dashboard-download"));
-            manager.outbounds.insert("download".into(), std::sync::Arc::new(DashboardSource { html: html.clone(), requests: requests.clone() }));
-            let (stop, stopped) = tokio::sync::oneshot::channel();
-            let task = tokio::spawn(manager.run_until(async { let _ = stopped.await; }));
+            let RunningManager { api_addr, stop, task, .. } = start_manager(config, |manager| {
+                assert!(manager.inbounds.contains_key("dashboard-download"));
+                assert!(!manager.observers.contains_key("dashboard-download"));
+                manager.outbounds.insert("download".into(), std::sync::Arc::new(DashboardSource { html: html.clone(), requests: requests.clone() }));
+            }).await;
             loop {
                 assert!(!task.is_finished(), "manager exited before serving UI");
                 if TcpStream::connect(api_addr).await.is_ok()
@@ -238,8 +328,6 @@ async fn dashboard_startup_routes_redirects_serves_html_and_reuses_cached_file()
 #[tokio::test]
 async fn configured_selector_switches_proxy_sessions_and_probes() {
     tokio::time::timeout(Duration::from_secs(10), async {
-        let socks_addr = unused_address().await;
-        let api_addr = unused_address().await;
         let dns = if cfg!(feature = "dns-server") {
             "dns: [{tag: resolver, type: dns-system, bind-addr: '127.0.0.1:0'}]"
         } else {
@@ -253,29 +341,23 @@ async fn configured_selector_switches_proxy_sessions_and_probes() {
         let config: Config = serde_saphyr::from_str(&format!(
             r#"
 inbounds:
-  - {{tag: inbound, type: socks, bind-addr: "{socks_addr}"}}
+  - {{tag: inbound, type: socks, bind-addr: "127.0.0.1:0"}}
 {dns}
 outbounds:
   - {{tag: choice, type: selector, outbounds: [direct, blocked]}}
   - {{tag: direct, type: direct{resolver}}}
   - {{tag: blocked, type: drop}}
 restful-api:
-  bind-addr: "{api_addr}"
+  bind-addr: "127.0.0.1:0"
 "#
         ))
         .unwrap();
-        let manager = config.build_manager().await.unwrap();
-        let (stop, stopped) = tokio::sync::oneshot::channel();
-        let task = tokio::spawn(manager.run_until(async {
-            let _ = stopped.await;
-        }));
-        loop {
-            if TcpStream::connect(api_addr).await.is_ok() {
-                break;
-            }
-            assert!(!task.is_finished());
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        let RunningManager {
+            inbound_addr: socks_addr,
+            api_addr,
+            stop,
+            task,
+        } = start_manager(config, |_| {}).await;
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let target = listener.local_addr().unwrap();
         let mut client = TcpStream::connect(socks_addr).await.unwrap();
@@ -352,29 +434,21 @@ restful-api:
 async fn configured_api_allows_wildcard_binding_with_optional_secret() {
     tokio::time::timeout(Duration::from_secs(10), async {
         for secret in [None, Some(""), Some("integration-secret")] {
-            let address = unused_address().await;
             let secret_config = secret
                 .map(|secret| format!("  secret: '{secret}'"))
                 .unwrap_or_default();
             let config: Config = serde_saphyr::from_str(&format!(
                 "inbounds: [{{tag: inbound, type: socks, bind-addr: '127.0.0.1:0'}}]\n\
                  outbounds: [{{tag: direct, type: direct}}]\n\
-                 restful-api:\n  bind-addr: '0.0.0.0:{}'\n{secret_config}",
-                address.port()
+                 restful-api:\n  bind-addr: '0.0.0.0:0'\n{secret_config}"
             ))
             .unwrap();
-            let manager = config.build_manager().await.unwrap();
-            let (stop, stopped) = tokio::sync::oneshot::channel();
-            let task = tokio::spawn(manager.run_until(async {
-                let _ = stopped.await;
-            }));
-            loop {
-                if TcpStream::connect(address).await.is_ok() {
-                    break;
-                }
-                assert!(!task.is_finished(), "manager failed before API startup");
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
+            let RunningManager {
+                api_addr: address,
+                stop,
+                task,
+                ..
+            } = start_manager(config, |_| {}).await;
             let status = call(address, "GET", "/api/v1/traffic", Value::Null).await.0;
             assert_eq!(
                 status,
@@ -415,8 +489,6 @@ async fn configured_api_tracks_mixed_traffic_probes_direct_and_exposes_memory() 
 
 async fn configured_api_tracks_tcp_traffic(inbound_type: &str) {
     tokio::time::timeout(Duration::from_secs(10), async {
-        let socks_addr = unused_address().await;
-        let api_addr = unused_address().await;
         let dns = if cfg!(feature = "dns-server") {
             "dns: [{tag: resolver, type: dns-system, bind-addr: '127.0.0.1:0'}]"
         } else {
@@ -430,29 +502,25 @@ async fn configured_api_tracks_tcp_traffic(inbound_type: &str) {
         let config: Config = serde_saphyr::from_str(&format!(
             r#"
 inbounds:
-  - {{tag: inbound, type: {inbound_type}, bind-addr: "{socks_addr}"}}
+  - {{tag: inbound, type: {inbound_type}, bind-addr: "127.0.0.1:0"}}
 {dns}
 outbounds:
   - {{tag: outbound, type: direct{resolver}}}
 restful-api:
-  bind-addr: "{api_addr}"
+  bind-addr: "127.0.0.1:0"
 "#
         ))
         .unwrap();
-        let manager = config.build_manager().await.unwrap();
-        assert_eq!(manager.observers.len(), 1);
-        assert!(manager.observers.contains_key("inbound"));
-        let (stop, stopped) = tokio::sync::oneshot::channel();
-        let task = tokio::spawn(manager.run_until(async {
-            let _ = stopped.await;
-        }));
-        loop {
-            if TcpStream::connect(api_addr).await.is_ok() {
-                break;
-            }
-            assert!(!task.is_finished(), "manager failed before API startup");
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        let RunningManager {
+            inbound_addr: socks_addr,
+            api_addr,
+            stop,
+            task,
+        } = start_manager(config, |manager| {
+            assert_eq!(manager.observers.len(), 1);
+            assert!(manager.observers.contains_key("inbound"));
+        })
+        .await;
         let (status, outbounds) = call(api_addr, "GET", "/api/v1/outbounds", Value::Null).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(outbounds["outbounds"].as_array().unwrap().len(), 1);
