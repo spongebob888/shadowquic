@@ -9,6 +9,89 @@ use crate::{
 };
 use std::net::{Ipv4Addr, SocketAddr};
 
+#[tokio::test]
+async fn ephemeral_dns_listeners_retry_udp_port_conflicts() {
+    let attempts = std::cell::Cell::new(0);
+    let (tcp, udp) = bind_listeners("127.0.0.1:0".parse().unwrap(), |addr| {
+        attempts.set(attempts.get() + 1);
+        let conflict = attempts.get() == 1;
+        async move {
+            let _occupied = if conflict {
+                Some(UdpSocket::bind(addr).await?)
+            } else {
+                None
+            };
+            UdpSocket::bind(addr).await
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(attempts.get(), 2);
+    assert_ne!(tcp.local_addr().unwrap().port(), 0);
+    assert_eq!(tcp.local_addr().unwrap(), udp.local_addr().unwrap());
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn ephemeral_dns_listeners_retry_windows_udp_access_conflicts() {
+    let attempts = std::cell::Cell::new(0);
+    let (tcp, udp) = bind_listeners("127.0.0.1:0".parse().unwrap(), |addr| {
+        attempts.set(attempts.get() + 1);
+        let conflict = attempts.get() == 1;
+        async move {
+            if conflict {
+                Err(io::Error::from_raw_os_error(10013))
+            } else {
+                UdpSocket::bind(addr).await
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(attempts.get(), 2);
+    assert_eq!(tcp.local_addr().unwrap(), udp.local_addr().unwrap());
+}
+
+#[tokio::test]
+async fn ephemeral_dns_listener_retries_are_bounded() {
+    let attempts = std::cell::Cell::new(0);
+    let error = bind_listeners("127.0.0.1:0".parse().unwrap(), |_| {
+        attempts.set(attempts.get() + 1);
+        std::future::ready(Err(io::Error::from(io::ErrorKind::AddrInUse)))
+    })
+    .await
+    .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::AddrInUse);
+    assert_eq!(attempts.get(), LISTENER_BIND_ATTEMPTS);
+}
+
+#[tokio::test]
+async fn dns_listener_bind_does_not_retry_other_errors() {
+    let attempts = std::cell::Cell::new(0);
+    let error = bind_listeners("127.0.0.1:0".parse().unwrap(), |_| {
+        attempts.set(attempts.get() + 1);
+        std::future::ready(Err(io::Error::from(io::ErrorKind::PermissionDenied)))
+    })
+    .await
+    .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    assert_eq!(attempts.get(), 1);
+}
+
+#[tokio::test]
+async fn fixed_dns_listener_port_is_not_reassigned() {
+    let (tcp, _udp) = bind_listeners("127.0.0.1:0".parse().unwrap(), UdpSocket::bind)
+        .await
+        .unwrap();
+    let addr = tcp.local_addr().unwrap();
+    let error = bind_listeners(addr, UdpSocket::bind).await.unwrap_err();
+    assert!(
+        error.kind() == io::ErrorKind::AddrInUse
+            || (cfg!(windows) && error.raw_os_error() == Some(10013)),
+        "{error}"
+    );
+}
+
 fn udp_cfg(upstream: SocketAddr) -> DnsUdpServerCfg {
     DnsUdpServerCfg {
         bypass_cache: false,

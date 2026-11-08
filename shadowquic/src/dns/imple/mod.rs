@@ -31,7 +31,13 @@ use simple_dns::{
     CLASS, Name, OPCODE, Packet, PacketFlag, QCLASS, QTYPE, Question, RCODE, ResourceRecord, TYPE,
     rdata::RData,
 };
-use std::{collections::HashMap, net::IpAddr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    io,
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, UdpSocket},
@@ -239,6 +245,41 @@ impl Drop for DnsServer {
     }
 }
 
+const LISTENER_BIND_ATTEMPTS: usize = 32;
+
+async fn bind_listeners<F, Fut>(
+    bind_addr: SocketAddr,
+    mut bind_udp: F,
+) -> io::Result<(TcpListener, UdpSocket)>
+where
+    F: FnMut(SocketAddr) -> Fut,
+    Fut: std::future::Future<Output = io::Result<UdpSocket>>,
+{
+    let mut retries = if bind_addr.port() == 0 {
+        LISTENER_BIND_ATTEMPTS - 1
+    } else {
+        0
+    };
+    loop {
+        let tcp = TcpListener::bind(bind_addr).await?;
+        let local_addr = tcp.local_addr()?;
+        match bind_udp(local_addr).await {
+            Ok(udp) => return Ok((tcp, udp)),
+            // A port chosen for TCP need not be available for UDP. On Windows,
+            // an exclusive binding or excluded UDP port can return WSAEACCES.
+            // Drop the TCP listener before requesting a fresh ephemeral pair.
+            Err(error)
+                if retries > 0
+                    && (error.kind() == io::ErrorKind::AddrInUse
+                        || (cfg!(windows) && error.raw_os_error() == Some(10013))) =>
+            {
+                retries -= 1;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 impl DnsServer {
     async fn new(
         tag: String,
@@ -247,9 +288,9 @@ impl DnsServer {
         cache: Arc<DnsCache>,
         bypass_cache: bool,
     ) -> Result<Self> {
-        let tcp = TcpListener::bind(bind_addr).await?;
+        let (tcp, udp) = bind_listeners(bind_addr, UdpSocket::bind).await?;
         let local_addr = tcp.local_addr()?;
-        let udp = Arc::new(UdpSocket::bind(local_addr).await?);
+        let udp = Arc::new(udp);
         let (tx, rx) = mpsc::channel(256);
         let resolver = Arc::new(Resolver {
             tag,
