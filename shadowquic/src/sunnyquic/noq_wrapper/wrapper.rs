@@ -120,7 +120,7 @@ impl QuicConnection for Connection {
         match self.send_datagram(bytes) {
             Ok(_) => (),
             Err(SendDatagramError::TooLarge) => warn!(
-                event = "sunnyquic:datagram_too_large",
+                event = "sunnyquic:datagram_dropped",
                 "datagram too large:{}>{}",
                 len,
                 self.max_datagram_size().unwrap()
