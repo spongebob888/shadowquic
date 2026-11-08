@@ -17,7 +17,21 @@ pub struct SnifferRule {
     /// supported protocols for sniffing. TCP supports http/tls; UDP supports quic.
     pub protocols: Vec<SniffProtocol>,
 }
-
+/// Sniffing configuration for router. Empty means no sniffing. Supports TCP and UDP sniffing.
+/// The sniffing result can be obtained by router script and exposed as
+/// `ctx.sniffer.domain` and `ctx.sniffer.type` and `ctx.sniffer.version`.
+/// ```yaml
+/// router:
+///   sniffer:
+///     tcp:
+///       - ports: [80]
+///         protocols: [http]
+///       - ports: [443]
+///         protocols: [tls]
+///     udp:
+///       - ports: [] # empty ports sniffing any ports
+///         protocols: [quic]
+/// ```
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SnifferCfg {
