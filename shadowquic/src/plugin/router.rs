@@ -40,7 +40,7 @@ pub struct RouteContext {
     /// Setting one of these clears the others.
     pub dst_ip_v6: Option<Ipv6Addr>,
     /// Destination port. Scripts may update this for TCP requests only.
-    pub dst_port: Option<u16>,
+    pub dst_port: u16,
     pub src_addr: Option<SocketAddr>,
     pub src_ip_v4: Option<Ipv4Addr>,
     pub src_ip_v6: Option<Ipv6Addr>,
@@ -91,9 +91,12 @@ impl UserData for RouteContext {
         fields.add_field_method_set("dst_domain", |_, this, value: Option<String>| {
             this.ensure_destination_writable("dst_domain")?;
             this.dst_domain = value;
-            if this.dst_domain.is_some() {
+            if let Some(ref dst_domain) = this.dst_domain {
                 this.dst_ip_v4 = None;
                 this.dst_ip_v6 = None;
+                tracing::info!(rewrite_dst = %dst_domain,
+                               event = "routing:dst_domain_rewrite",
+                               "router script set dst_domain");
             }
             Ok(())
         });
@@ -103,9 +106,12 @@ impl UserData for RouteContext {
                 .map(|value| value.parse())
                 .transpose()
                 .map_err(mlua::Error::external)?;
-            if this.dst_ip_v4.is_some() {
+            if let Some(ref dst_ip_v4) = this.dst_ip_v4 {
                 this.dst_domain = None;
                 this.dst_ip_v6 = None;
+                tracing::info!(rewrite_dst = %dst_ip_v4,
+                               event = "routing:dst_ipv4_rewrite",  
+                               "router script set dst_ipv4");
             }
             Ok(())
         });
@@ -115,15 +121,24 @@ impl UserData for RouteContext {
                 .map(|value| value.parse())
                 .transpose()
                 .map_err(mlua::Error::external)?;
-            if this.dst_ip_v6.is_some() {
+            if let Some(ref dst_ip_v6) = this.dst_ip_v6 {
                 this.dst_domain = None;
                 this.dst_ip_v4 = None;
+                tracing::info!(rewrite_dst = %dst_ip_v6,
+                               event = "routing:dst_ipv6_rewrite",
+                               "router script set dst_ipv6");
             }
             Ok(())
         });
-        fields.add_field_method_set("dst_port", |_, this, value: Option<u16>| {
+        fields.add_field_method_set("dst_port", |_, this, value: u16| {
             this.ensure_destination_writable("dst_port")?;
             this.dst_port = value;
+            tracing::info!(
+                rewrite_dst_port = value,
+                event = "routing:dst_port_rewrite",
+                "router script set dst_port"
+            );
+
             Ok(())
         });
         fields.add_field_method_get("src_addr", |_, this| {
@@ -223,7 +238,7 @@ impl RouteContext {
             dst_domain,
             dst_ip_v4,
             dst_ip_v6,
-            dst_port: Some(dst.port),
+            dst_port: dst.port,
             src_ip_v4: src_addr.and_then(|addr| match addr.ip() {
                 std::net::IpAddr::V4(ip) => Some(ip),
                 std::net::IpAddr::V6(_) => None,
@@ -623,9 +638,7 @@ fn reload_script(inner: &Mutex<RouterInner>, path: &Path, resolver_manager: Arc<
 
 impl RouteContext {
     pub(crate) fn destination(&self) -> Result<SocksAddr, SError> {
-        let port = self
-            .dst_port
-            .ok_or_else(|| SError::RouterError("router cleared the destination port".into()))?;
+        let port = self.dst_port;
         let addr = match (self.dst_domain.as_deref(), self.dst_ip_v4, self.dst_ip_v6) {
             (Some(domain), None, None)
                 if !domain.is_empty() && domain.len() <= u8::MAX as usize =>
@@ -779,7 +792,7 @@ mod tests {
             dst_domain: Some("api.example".into()),
             dst_ip_v4: None,
             dst_ip_v6: None,
-            dst_port: Some(443),
+            dst_port: 443,
             src_addr: Some("192.0.2.1:54321".parse().unwrap()),
             src_ip_v4: Some("192.0.2.1".parse().unwrap()),
             src_ip_v6: None,
@@ -1043,13 +1056,13 @@ mod tests {
 
     #[tokio::test]
     async fn lua_router_rejects_udp_destination_writes() {
-        for (field, value) in [
-            ("dst_domain", "'rewritten.example'"),
-            ("dst_ip_v4", "'192.0.2.44'"),
-            ("dst_ip_v6", "'2001:db8::1'"),
-            ("dst_port", "8443"),
+        for (field, values) in [
+            ("dst_domain", &["'rewritten.example'", "nil"][..]),
+            ("dst_ip_v4", &["'192.0.2.44'", "nil"][..]),
+            ("dst_ip_v6", &["'2001:db8::1'", "nil"][..]),
+            ("dst_port", &["8443"][..]),
         ] {
-            for value in [value, "nil"] {
+            for value in values {
                 let mut context = context();
                 context.network_type = NetworkType::Udp;
                 if field == "dst_ip_v4" {
@@ -1077,6 +1090,26 @@ mod tests {
                 assert_eq!(unchanged.dst_ip_v6, context.dst_ip_v6);
                 assert_eq!(unchanged.dst_port, context.dst_port);
             }
+        }
+    }
+
+    #[test]
+    fn lua_router_rejects_clearing_destination_port() {
+        for network_type in [NetworkType::Tcp, NetworkType::Udp] {
+            let mut context = context();
+            context.network_type = network_type;
+            let lua = Lua::new();
+            let userdata = lua.create_userdata(context.clone()).unwrap();
+            lua.globals().set("ctx", userdata.clone()).unwrap();
+
+            lua.load("ctx.dst_port = nil").exec().unwrap_err();
+
+            let unchanged = userdata.borrow::<RouteContext>().unwrap();
+            assert_eq!(unchanged.dst_port, context.dst_port);
+            assert_eq!(
+                unchanged.destination().unwrap(),
+                context.destination().unwrap()
+            );
         }
     }
 
