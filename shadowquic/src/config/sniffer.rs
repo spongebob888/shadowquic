@@ -35,7 +35,13 @@ pub struct SnifferRule {
 ///         protocols: [quic]
 ///   src: |
 ///     return function(ctx)
-///       if ctx.sniffer.domain then
+///       if ctx.sniffer and ctx.sniffer.domain then
+///         -- Override the destination with the sniffed domain
+///         -- Only tcp supports destination rewrite for now
+///         if ctx.network == "tcp" then
+///           ctx.dst_domain = ctx.sniffer.domain
+///         end
+///
 ///         local ok, cn = pcall(find_domain, "geosite-db", "cn", ctx.sniffer.domain)
 ///         if ok and cn then return "direct" end
 ///       end
