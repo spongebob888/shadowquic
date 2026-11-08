@@ -413,7 +413,6 @@ impl Resolver {
                 return Err(dns_error("local resolver has no upstream"));
             }
         };
-        tracing::debug!(event = "dns:query_sent", %dst, tcp, "sending DNS query upstream");
         let dst: SocksAddr = dst.into();
         let user_context = UserContext {
             dns_query: parse_query(query)?
@@ -426,6 +425,8 @@ impl Resolver {
                 .collect(),
             ..UserContext::default()
         };
+        tracing::debug!(%dst, tcp, upstream_req_id = user_context.req_id, event = "dns:query_sent", 
+                        "sending DNS query upstream");
         if !tcp {
             let (send_query, recv_query) = mpsc::channel(5);
             let (send_reply, mut recv_reply) = mpsc::channel(5);

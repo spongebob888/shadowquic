@@ -9,6 +9,7 @@
  - [Local REST API](./document/restful-api.md)
  - [DNS services](./document/dns.md)
  - [TUN inbound](./document/tun.md)
+ - [Dashboard](https://spongebob888.github.io/squirrelboard/)
  - SNI camouflage with any domain (powered by [JLS](https://github.com/JimmyHuang454/JLS))
     - Anti-hijack
     - Resisting active detection
