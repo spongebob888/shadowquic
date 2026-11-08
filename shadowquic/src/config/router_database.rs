@@ -9,6 +9,43 @@ pub fn default_geosite_url() -> String {
         .into()
 }
 /// A routing database stored as a country MMDB or an indexed redb file.
+///
+/// Example configuration:
+/// ```yaml
+/// router:
+///   database:
+///     # GeoLite2 Country (MMDB) for CN IP ranges. Downloaded on first start.
+///     - tag: geoip-db
+///       type: country
+///       path: data/geolite2-country.mmdb
+///     # v2fly domain-list-community for CN domains. Downloaded on first start.
+///     - tag: geosite-db
+///       type: geosite
+///       list-include: ["cn", "geolocation-cn"]
+///       path: data/geosite.redb
+///
+///   src: |
+///     return function(ctx)
+///       -- CN domain names.
+///       if ctx.dst_domain then
+///         local ok, cn = pcall(find_domain, "geosite-db", "cn", ctx.dst_domain)
+///         if ok and cn then return "direct" end
+///       end
+///       -- CN IP ranges from the country database (the primary path for tproxy).
+///       if ctx.dst_ip_v4 then
+///         local ok, cn = pcall(find_ip_v4, "geoip-db", "cn", ctx.dst_ip_v4)
+///         if ok and cn then return "direct" end
+///       end
+///       if ctx.dst_ip_v6 then
+///         local ok, cn = pcall(find_ip_v6, "geoip-db", "cn", ctx.dst_ip_v6)
+///         if ok and cn then return "direct" end
+///       end
+///
+///       -- Everything else (non-CN public traffic) goes through shadowquic.
+///       return "select"
+///     end
+///
+/// ```
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", tag = "type")]
 pub enum RouterDatabaseCfg {
