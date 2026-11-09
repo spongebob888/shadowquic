@@ -135,6 +135,24 @@ impl ProxyRequest {
 pub trait UdpSend: Send + Sync + Unpin {
     async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError>; // addr is proxy addr
 }
+/// Nonblocking sender
+#[async_trait]
+pub trait UdpSendExt: UdpSend {
+    async fn try_send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
+        let mut fut = std::pin::pin!(self.send_to(buf, addr.clone()));
+        // Use nonblocking style incase it blocks quic datagram dispatcher.
+        match std::future::poll_fn(|x| std::task::Poll::Ready(fut.as_mut().poll(x))).await {
+            std::task::Poll::Ready(x) => x,
+            std::task::Poll::Pending => {
+                // For Sender, it may falsely trigger this even whey channel is empty if tokio budget is not enough.
+                // But it is rare
+                Err(SError::UdpSenderBusy("sender buffer may be full".into()))
+            }
+        }
+    }
+}
+impl<T: UdpSend + ?Sized> UdpSendExt for T {}
+
 #[async_trait]
 pub trait UdpRecv: Send + Sync + Unpin {
     async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr), SError>; // socksaddr is proxy addr

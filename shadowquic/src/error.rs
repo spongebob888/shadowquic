@@ -38,6 +38,8 @@ pub enum SError {
     SocksError(String),
     #[error("Sunnyquic authentication error: {0}")]
     SunnyAuthError(String),
+    #[error("UDP sink busy: {0}")]
+    UdpSenderBusy(String),
 }
 
 pub type SResult<T> = result::Result<T, SError>;

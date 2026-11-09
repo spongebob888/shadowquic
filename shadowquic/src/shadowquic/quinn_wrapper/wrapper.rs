@@ -116,7 +116,7 @@ impl QuicConnection for Connection {
 
     async fn send_datagram(&self, bytes: Bytes) -> Result<(), QuicErrorRepr> {
         let len = bytes.len();
-        match self.send_datagram(bytes) {
+        match self.send_datagram_wait(bytes).await {
             Ok(_) => (),
             Err(SendDatagramError::TooLarge) => warn!(
                 event = "shadowquic:datagram_dropped",

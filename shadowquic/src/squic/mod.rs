@@ -25,7 +25,7 @@ use tokio::{
 use tracing::{Instrument, Level, debug, error, event, info, trace};
 
 use crate::{
-    AnyUdpRecv, AnyUdpSend, UdpSend,
+    AnyUdpRecv, AnyUdpSend, UdpSend, UdpSendExt,
     error::{SError, SResult},
     msgs::{
         SDecode, SEncode,
@@ -276,7 +276,8 @@ impl IDStore {
         if let Some(Ok((socket, addr))) = lock.get(&id) {
             let (socket, addr) = (socket.clone(), addr.clone());
             drop(lock);
-            socket.send_to(packet, addr.clone()).await?;
+            // Nonblocking sender
+            socket.try_send_to(packet, addr.clone()).await?;
             Ok(())
         } else {
             drop(lock);
@@ -288,7 +289,8 @@ impl IDStore {
                     Ok((socket, addr)) => {
                         let (socket, addr) = (socket.clone(), addr.clone());
                         drop(lock);
-                        socket.send_to(packet, addr.clone()).await?;
+                        // Use nonblocking style incase it blocks quic datagram dispatcher.
+                        socket.try_send_to(packet, addr).await?;
                         Ok(())
                     }
                     Err(notify) => {
@@ -599,11 +601,18 @@ pub async fn handle_udp_packet_recv<C: QuicConnection>(conn: SQConn<C>) -> Resul
                 }
 
                 let pos = cur.position() as usize;
-                if let Err(error) = id_store.feed_datagram(id, cur.into_inner().split_off(pos).freeze()).await {
+                match id_store.feed_datagram(id, cur.into_inner().split_off(pos).freeze()).await {
+                    Ok(()) => {}
                     // A failed association must not stop UDP reception for the
                     // other associations sharing this QUIC connection.
-                    tracing::warn!(event = "squic:datagram_delivery_failed", context_id = id, %error, "dropping UDP datagram after delivery failure");
-                    continue;
+                    Err(error @ SError::UdpSenderBusy(_)) => {
+                        tracing::warn!(event = "squic:datagram_dropped", context_id = id, %error, "dropping UDP datagram due to sender busy");
+                        continue;
+                    }
+                    Err(error) => {
+                        tracing::warn!(event = "squic:datagram_delivery_failed", context_id = id, %error, "dropping UDP datagram after delivery failure");
+                        continue;
+                    }
                 }
                 if should_trace {
                     trace!(target: "shadowquic::squic::udp", event = "squic:datagram_forwarded", context_id = id, "quic unreliable datagram received sent to upstream");
