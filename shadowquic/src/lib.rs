@@ -8,11 +8,8 @@ use std::{
 use bytes::Bytes;
 use error::SError;
 use msgs::socks5::SocksAddr;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    sync::mpsc::error::TrySendError,
-};
 
 use async_trait::async_trait;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -305,20 +302,9 @@ pub trait Outbound<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend>: Send + Sync + Un
 impl UdpSend for Sender<(Bytes, SocksAddr)> {
     async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
         let siz = buf.len();
-
-        match self.try_send((buf, addr.clone())) {
-            Ok(()) => {}
-            Err(TrySendError::Full(_)) => {
-                tracing::warn!(event = "proxy:datagram_dropped", dst = %&addr,"drop udp packet due to full channel");
-                return Ok(0);
-            }
-            Err(TrySendError::Closed(_)) => {
-                return Err(SError::UDPSessionClosed(format!(
-                    "udp session closed: dst={}",
-                    addr
-                )));
-            }
-        }
+        self.send((buf, addr))
+            .await
+            .map_err(|_| SError::InboundUnavailable)?;
         Ok(siz)
     }
 }
