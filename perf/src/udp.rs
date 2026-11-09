@@ -1,47 +1,180 @@
-//! Shared UDP measurement for the QUIC performance executables.
+//! Shared UDP measurement for the performance executables.
 
-use std::{io, net::SocketAddr};
+use std::{
+    env,
+    future::Future,
+    io,
+    net::SocketAddr,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
-use fast_socks5::client::Socks5Datagram;
+use fast_socks5::{client::Socks5Datagram, parse_udp_request};
 use shadowquic::Manager;
 use tokio::{
     net::{TcpStream, UdpSocket},
     sync::watch,
+    task::JoinSet,
     time::{Duration, Instant, sleep_until, timeout},
 };
+
+use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
+
+// Count drops without formatting or writing a log line for every lost packet.
+struct FullChannelDrops(Arc<AtomicU64>);
+
+impl<S: tracing::Subscriber> Layer<S> for FullChannelDrops {
+    fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        struct Visitor(bool);
+        impl tracing::field::Visit for Visitor {
+            fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+                if field.name() == "event" && value == "proxy:datagram_dropped" {
+                    self.0 = true;
+                }
+            }
+            fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
+        }
+        let mut visitor = Visitor(false);
+        event.record(&mut visitor);
+        if visitor.0 {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 const PACKET_LEN: usize = 1000;
-const ROUND: usize = 100_000;
 const DRAIN: Duration = Duration::from_millis(500);
 const BENCHMARK_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Direction {
+    Both,
+    Upload,
+    Download,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Config {
+    packets: usize,
+    batch: usize,
+    pause: Duration,
+    direction: Direction,
+}
+
+impl Config {
+    fn from_env() -> Result<Self> {
+        let number = |name: &str, default: usize| -> Result<usize> {
+            match env::var(name) {
+                Ok(value) => Ok(value.parse()?),
+                Err(env::VarError::NotPresent) => Ok(default),
+                Err(error) => Err(error.into()),
+            }
+        };
+        let direction = match env::var("PERF_UDP_DIRECTION").as_deref() {
+            Err(env::VarError::NotPresent) | Ok("both") => Direction::Both,
+            Ok("upload") => Direction::Upload,
+            Ok("download") => Direction::Download,
+            _ => {
+                return Err(io::Error::other(
+                    "PERF_UDP_DIRECTION must be both, upload, or download",
+                )
+                .into());
+            }
+        };
+        let config = Self {
+            packets: number("PERF_UDP_PACKETS", 100_000)?,
+            batch: number("PERF_UDP_BATCH", 100)?,
+            pause: Duration::from_micros(number("PERF_UDP_PAUSE_US", 1)?.try_into()?),
+            direction,
+        };
+        if config.packets == 0 {
+            return Err(io::Error::other("PERF_UDP_PACKETS must be positive").into());
+        }
+        Ok(config)
+    }
+}
 
 /// Run both managers, measure a warmed-up association, and stop while its SOCKS
 /// control stream is still open. Per-packet tracing is opt-in via RUST_LOG.
 pub async fn run(client: Manager, server: Manager) -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
+    run_managers(vec![client, server]).await
+}
+
+/// Run one direct manager or a client/server pair with identical measurements.
+pub async fn run_managers(managers: Vec<Manager>) -> Result<()> {
+    let drops = Arc::new(AtomicU64::new(0));
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().with_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "off".into()),
+        ))
+        .with(
+            FullChannelDrops(drops.clone()).with_filter(tracing_subscriber::filter::filter_fn(
+                |metadata| {
+                    *metadata.level() == tracing::Level::WARN && metadata.target() == "shadowquic"
+                },
+            )),
         )
         .init();
     let (stop, stopped) = watch::channel(false);
-    let mut server_stopped = stopped.clone();
-    let server = tokio::spawn(server.run_until(async move {
-        let _ = server_stopped.changed().await;
-    }));
-    let mut client_stopped = stopped;
-    let client = tokio::spawn(client.run_until(async move {
-        let _ = client_stopped.changed().await;
-    }));
+    let tasks: Vec<_> = managers
+        .into_iter()
+        .map(|manager| {
+            let mut stopped = stopped.clone();
+            tokio::spawn(manager.run_until(async move {
+                let _ = stopped.changed().await;
+            }))
+        })
+        .collect();
 
-    let result = timeout(BENCHMARK_TIMEOUT, async {
-        let peer = UdpSocket::bind("127.0.0.1:0").await?;
+    let result = benchmark("127.0.0.1:1089".parse()?).await;
+
+    stop.send_replace(true);
+    for task in tasks {
+        task.await??;
+    }
+    result?.report()?;
+    eprintln!(
+        "proxy full-channel drops: {}",
+        drops.load(Ordering::Relaxed)
+    );
+    Ok(())
+}
+
+/// Keep this value alive until the proxy stops so the SOCKS control connection
+/// cannot close the association while its final counters are being collected.
+struct Benchmark {
+    _association: Arc<Socks5Datagram<TcpStream>>,
+    measured: Result<(Option<Measurement>, Option<Measurement>)>,
+}
+
+impl Benchmark {
+    fn report(self) -> Result<()> {
+        let (upload, download) = self.measured?;
+        if let Some(upload) = upload {
+            upload.report("upload");
+        }
+        if let Some(download) = download {
+            download.report("download");
+        }
+        Ok(())
+    }
+}
+
+/// Measure the same warmed-up SOCKS association for direct and QUIC forwarding.
+async fn benchmark(proxy_addr: SocketAddr) -> Result<Benchmark> {
+    let config = Config::from_env()?;
+    eprintln!("UDP benchmark: {config:?}; payload {PACKET_LEN} bytes");
+    timeout(BENCHMARK_TIMEOUT, async {
+        let peer = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
         let target = peer.local_addr()?;
         // Use the first successful connection, rather than probing and dropping
         // an extra SOCKS connection. The overall timeout also bounds startup.
         let control = loop {
-            match TcpStream::connect("127.0.0.1:1089").await {
+            match TcpStream::connect(proxy_addr).await {
                 Ok(stream) => break stream,
                 Err(error) if error.kind() == io::ErrorKind::ConnectionRefused => {
                     tokio::time::sleep(Duration::from_millis(10)).await;
@@ -49,7 +182,8 @@ pub async fn run(client: Manager, server: Manager) -> Result<()> {
                 Err(error) => return Err(error.into()),
             }
         };
-        let socks = Socks5Datagram::bind(control, "127.0.0.1:0".parse::<SocketAddr>()?).await?;
+        let socks =
+            Arc::new(Socks5Datagram::bind(control, "127.0.0.1:0".parse::<SocketAddr>()?).await?);
 
         // Complete a round trip before bulk traffic so authentication, the UDP
         // context, and the return address are established outside the timing.
@@ -65,39 +199,51 @@ pub async fn run(client: Manager, server: Manager) -> Result<()> {
             return Err(io::Error::other("invalid UDP warmup reply").into());
         }
 
-        let upload = measure(Endpoint::Socks(&socks), Endpoint::Peer(&peer), target, 0xa5);
-        let download = measure(
-            Endpoint::Peer(&peer),
-            Endpoint::Socks(&socks),
-            client_addr,
-            0x5a,
-        );
+        let upload = async {
+            if config.direction == Direction::Download {
+                return Ok(None);
+            }
+            measure(
+                Endpoint::Socks(socks.clone()),
+                Endpoint::Peer(peer.clone()),
+                target,
+                0xa5,
+                config,
+            )
+            .await
+            .map(Some)
+        };
+        let download = async {
+            if config.direction == Direction::Upload {
+                return Ok(None);
+            }
+            measure(
+                Endpoint::Peer(peer.clone()),
+                Endpoint::Socks(socks.clone()),
+                client_addr,
+                0x5a,
+                config,
+            )
+            .await
+            .map(Some)
+        };
         let measured = tokio::try_join!(upload, download);
-        // Keep the association open through manager shutdown, including when
-        // measurement fails. Otherwise EOF can race with the final counters.
-        Ok::<_, Box<dyn std::error::Error + Send + Sync>>((socks, measured))
+        Ok(Benchmark {
+            _association: socks,
+            measured,
+        })
     })
-    .await;
-
-    stop.send_replace(true);
-    let (client, server) = tokio::join!(client, server);
-    client??;
-    server??;
-    let (_association, measured) = result??;
-    let (upload, download) = measured?;
-    upload.report("upload");
-    download.report("download");
-    Ok(())
+    .await?
 }
 
-#[derive(Clone, Copy)]
-enum Endpoint<'a> {
-    Socks(&'a Socks5Datagram<TcpStream>),
-    Peer(&'a UdpSocket),
+#[derive(Clone)]
+enum Endpoint {
+    Socks(Arc<Socks5Datagram<TcpStream>>),
+    Peer(Arc<UdpSocket>),
 }
 
-impl Endpoint<'_> {
-    async fn send(self, buffer: &[u8], target: SocketAddr) -> Result<()> {
+impl Endpoint {
+    async fn send(&self, buffer: &[u8], target: SocketAddr) -> Result<()> {
         match self {
             Self::Socks(socket) => {
                 socket.send_to(buffer, target).await?;
@@ -108,13 +254,36 @@ impl Endpoint<'_> {
         }
         Ok(())
     }
+}
 
-    async fn recv(self, buffer: &mut [u8]) -> Result<usize> {
+trait PacketReceiver: Send {
+    fn recv(&mut self, buffer: &mut [u8]) -> impl Future<Output = Result<usize>> + Send;
+}
+
+impl PacketReceiver for Endpoint {
+    async fn recv(&mut self, buffer: &mut [u8]) -> Result<usize> {
         Ok(match self {
-            Self::Socks(socket) => socket.recv_from(buffer).await?.0,
+            Self::Socks(socket) => {
+                // fast-socks5's recv_from future embeds a 64 KiB buffer. Moving
+                // it through select! copies far more than our fixed payload.
+                // Retain SOCKS header validation with a bounded receive buffer:
+                // 262 bytes covers the largest possible SOCKS5 UDP header.
+                let mut packet = [0; PACKET_LEN + 262 + 1];
+                let len = socket.get_ref().recv(&mut packet).await?;
+                copy_socks_payload(&packet[..len], buffer).await?
+            }
             Self::Peer(socket) => socket.recv_from(buffer).await?.0,
         })
     }
+}
+
+async fn copy_socks_payload(packet: &[u8], buffer: &mut [u8]) -> Result<usize> {
+    let (frag, _, payload) = parse_udp_request(packet).await?;
+    if frag != 0 || payload.len() > buffer.len() {
+        return Err(io::Error::other("invalid SOCKS UDP benchmark packet").into());
+    }
+    buffer[..payload.len()].copy_from_slice(payload);
+    Ok(payload.len())
 }
 
 struct Measurement {
@@ -126,10 +295,10 @@ impl Measurement {
     fn report(&self, direction: &str) {
         eprintln!(
             "{direction}: send {:.2} MiB/s; receive {:.2} MiB/s; received {}/{} packets; loss {:.2}%; duplicates {}",
-            rate(ROUND * PACKET_LEN, self.sent_in),
+            rate(self.received.seen.len() * PACKET_LEN, self.sent_in),
             self.received.rate(),
             self.received.count,
-            ROUND,
+            self.received.seen.len(),
             self.received.loss_percent(),
             self.received.duplicates,
         );
@@ -137,38 +306,62 @@ impl Measurement {
 }
 
 async fn measure(
-    sender: Endpoint<'_>,
-    receiver: Endpoint<'_>,
+    sender: Endpoint,
+    receiver: Endpoint,
     target: SocketAddr,
     marker: u8,
+    config: Config,
 ) -> Result<Measurement> {
     let (finished, completion) = watch::channel(None);
-    let send = async {
+    // Independent tasks keep a continuously ready sender from starving its
+    // receiver inside join!, especially when pacing is disabled. JoinSet also
+    // cancels both tasks if the benchmark fails or times out.
+    let mut tasks = JoinSet::new();
+    tasks.spawn(async move {
         let mut buffer = [marker; PACKET_LEN];
         let start = Instant::now();
-        for sequence in 0..ROUND {
+        for sequence in 0..config.packets {
             buffer[..8].copy_from_slice(&(sequence as u64).to_be_bytes());
             sender.send(&buffer, target).await?;
-            if sequence % 100 == 99 && sequence + 1 < ROUND {
-                tokio::time::sleep(Duration::from_micros(1)).await;
+            if config.batch > 0
+                && (sequence + 1) % config.batch == 0
+                && sequence + 1 < config.packets
+            {
+                if config.pause.is_zero() {
+                    tokio::task::yield_now().await;
+                } else {
+                    tokio::time::sleep(config.pause).await;
+                }
             }
         }
         let end = Instant::now();
         finished.send_replace(Some(end));
-        Ok(end - start) as Result<Duration>
+        Ok(MeasurementPart::Sent(end - start)) as Result<MeasurementPart>
+    });
+    tasks.spawn(async move {
+        receive(receiver, completion, config.packets, marker)
+            .await
+            .map(MeasurementPart::Received)
+    });
+    let first = tasks.join_next().await.unwrap()??;
+    let second = tasks.join_next().await.unwrap()??;
+    let (sent_in, received) = match (first, second) {
+        (MeasurementPart::Sent(sent_in), MeasurementPart::Received(received))
+        | (MeasurementPart::Received(received), MeasurementPart::Sent(sent_in)) => {
+            (sent_in, received)
+        }
+        _ => unreachable!("one sender and one receiver task"),
     };
-    let recv = receive(
-        async |buffer: &mut [u8]| receiver.recv(buffer).await,
-        completion,
-        ROUND,
-        marker,
-    );
-    let (sent_in, received) = tokio::try_join!(send, recv)?;
     Ok(Measurement { sent_in, received })
 }
 
+enum MeasurementPart {
+    Sent(Duration),
+    Received(Received),
+}
+
 async fn receive(
-    mut recv: impl AsyncFnMut(&mut [u8]) -> Result<usize>,
+    mut receiver: impl PacketReceiver,
     mut finished: watch::Receiver<Option<Instant>>,
     rounds: usize,
     marker: u8,
@@ -178,7 +371,7 @@ async fn receive(
     let mut deadline = finished.borrow().map(|end| end + DRAIN);
     while received.count < rounds {
         tokio::select! {
-            packet = recv(&mut buffer) => {
+            packet = receiver.recv(&mut buffer) => {
                 let len = packet?;
                 received.record(&buffer[..len], Instant::now())?;
             }
@@ -255,10 +448,61 @@ fn rate(bytes: usize, elapsed: Duration) -> f64 {
 mod tests {
     use super::*;
 
+    struct ChannelReceiver(tokio::sync::mpsc::UnboundedReceiver<[u8; PACKET_LEN]>);
+
+    impl PacketReceiver for ChannelReceiver {
+        async fn recv(&mut self, buffer: &mut [u8]) -> Result<usize> {
+            let packet = self.0.recv().await.unwrap();
+            buffer[..PACKET_LEN].copy_from_slice(&packet);
+            Ok(PACKET_LEN)
+        }
+    }
+
+    struct PendingReceiver;
+
+    impl PacketReceiver for PendingReceiver {
+        async fn recv(&mut self, _: &mut [u8]) -> Result<usize> {
+            std::future::pending().await
+        }
+    }
+
     fn packet(sequence: u64) -> [u8; PACKET_LEN] {
         let mut packet = [0xa5; PACKET_LEN];
         packet[..8].copy_from_slice(&sequence.to_be_bytes());
         packet
+    }
+
+    #[test]
+    fn drop_counter_counts_only_full_channel_events() {
+        let drops = Arc::new(AtomicU64::new(0));
+        let subscriber = tracing_subscriber::registry().with(FullChannelDrops(drops.clone()));
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::warn!(event = "proxy:datagram_dropped", "full association channel");
+            tracing::warn!(event = "unrelated", "another warning");
+        });
+        assert_eq!(drops.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn bounded_socks_receiver_validates_headers_and_payload_size() {
+        for address in ["127.0.0.1:1234", "[::1]:1234"] {
+            let mut datagram =
+                fast_socks5::new_udp_header(address.parse::<SocketAddr>().unwrap()).unwrap();
+            datagram.extend_from_slice(&packet(0));
+            let mut buffer = [0; PACKET_LEN + 1];
+            let len = copy_socks_payload(&datagram, &mut buffer).await.unwrap();
+            assert_eq!(&buffer[..len], &packet(0));
+            datagram[2] = 1;
+            assert!(copy_socks_payload(&datagram, &mut buffer).await.is_err());
+            datagram[2] = 0;
+            datagram.extend_from_slice(&[0, 0]);
+            assert!(copy_socks_payload(&datagram, &mut buffer).await.is_err());
+        }
+        assert!(
+            copy_socks_payload(b"short", &mut [0; PACKET_LEN + 1])
+                .await
+                .is_err()
+        );
     }
 
     #[test]
@@ -301,18 +545,9 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn receiving_continues_until_sender_finishes_and_drain_is_not_timed() {
-        let (send, mut packets) = tokio::sync::mpsc::unbounded_channel();
+        let (send, packets) = tokio::sync::mpsc::unbounded_channel();
         let (finished, completion) = watch::channel(None);
-        let recv = receive(
-            async |buffer: &mut [u8]| {
-                let packet: [u8; PACKET_LEN] = packets.recv().await.unwrap();
-                buffer[..PACKET_LEN].copy_from_slice(&packet);
-                Ok(PACKET_LEN)
-            },
-            completion,
-            3,
-            0xa5,
-        );
+        let recv = receive(ChannelReceiver(packets), completion, 3, 0xa5);
         let start = Instant::now();
         let sender = async {
             send.send(packet(0)).unwrap();
@@ -333,14 +568,7 @@ mod tests {
     async fn complete_loss_terminates_after_sender_completion() {
         let start = Instant::now();
         let (_finished, completion) = watch::channel(Some(start));
-        let received = receive(
-            async |_: &mut [u8]| std::future::pending::<Result<usize>>().await,
-            completion,
-            3,
-            0xa5,
-        )
-        .await
-        .unwrap();
+        let received = receive(PendingReceiver, completion, 3, 0xa5).await.unwrap();
         assert_eq!(received.count, 0);
         assert_eq!(received.loss_percent(), 100.0);
         assert_eq!(received.rate(), 0.0);
