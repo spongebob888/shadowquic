@@ -390,7 +390,7 @@ impl RequestDispatcher {
                 {
                     Ok(outbound_tag) => match context.destination() {
                         Ok(dst) => {
-                            req.set_dst(dst);
+                            plugin::router::rewrite_dst(&mut req, dst);
                             outbound_tag
                         }
                         Err(error) => {

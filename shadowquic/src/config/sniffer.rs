@@ -37,8 +37,6 @@ pub struct SnifferRule {
 ///     return function(ctx)
 ///       if ctx.sniffer and ctx.sniffer.domain then
 ///         -- Override the destination with the sniffed domain
-///         -- Only tcp supports destination rewrite for now
-///         if ctx.network == "tcp" then
 ///           ctx.dst_domain = ctx.sniffer.domain
 ///         end
 ///

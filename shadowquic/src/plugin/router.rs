@@ -6,6 +6,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use bytes::Bytes;
 use notify::{RecursiveMode, Watcher};
 use tracing::{info, info_span, warn};
 
@@ -15,7 +16,7 @@ use mlua::{Function, Lua, LuaOptions, StdLib, UserData, UserDataFields, chunk::C
 use super::database::Databases;
 use crate::dns::ResolverManager;
 use crate::{
-    DnsQuery, ProxyRequest, StatsContext, TcpSession, UdpSession,
+    DnsQuery, ProxyRequest, StatsContext, TcpSession, UdpRecv, UdpSend, UdpSession,
     error::SError,
     msgs::socks5::{AddrOrDomain, SocksAddr},
 };
@@ -89,7 +90,6 @@ impl UserData for RouteContext {
         });
         fields.add_field_method_get("dst_port", |_, this| Ok(this.dst_port));
         fields.add_field_method_set("dst_domain", |_, this, value: Option<String>| {
-            this.ensure_destination_writable("dst_domain")?;
             this.dst_domain = value;
             if let Some(ref dst_domain) = this.dst_domain {
                 this.dst_ip_v4 = None;
@@ -101,7 +101,6 @@ impl UserData for RouteContext {
             Ok(())
         });
         fields.add_field_method_set("dst_ip_v4", |_, this, value: Option<String>| {
-            this.ensure_destination_writable("dst_ip_v4")?;
             this.dst_ip_v4 = value
                 .map(|value| value.parse())
                 .transpose()
@@ -110,13 +109,12 @@ impl UserData for RouteContext {
                 this.dst_domain = None;
                 this.dst_ip_v6 = None;
                 tracing::info!(rewrite_dst = %dst_ip_v4,
-                               event = "routing:dst_ipv4_rewrite",  
+                               event = "routing:dst_ipv4_rewrite",
                                "router script set dst_ipv4");
             }
             Ok(())
         });
         fields.add_field_method_set("dst_ip_v6", |_, this, value: Option<String>| {
-            this.ensure_destination_writable("dst_ip_v6")?;
             this.dst_ip_v6 = value
                 .map(|value| value.parse())
                 .transpose()
@@ -131,7 +129,6 @@ impl UserData for RouteContext {
             Ok(())
         });
         fields.add_field_method_set("dst_port", |_, this, value: u16| {
-            this.ensure_destination_writable("dst_port")?;
             this.dst_port = value;
             tracing::info!(
                 rewrite_dst_port = value,
@@ -164,15 +161,6 @@ impl UserData for RouteContext {
 }
 
 impl RouteContext {
-    fn ensure_destination_writable(&self, field: &str) -> mlua::Result<()> {
-        if self.network_type == NetworkType::Udp {
-            return Err(mlua::Error::runtime(format!(
-                "cannot write {field} when network_type is udp"
-            )));
-        }
-        Ok(())
-    }
-
     pub(crate) fn from_request(req: &ProxyRequest) -> Self {
         #[allow(unused_mut)]
         let mut context = match req {
@@ -656,10 +644,183 @@ impl RouteContext {
         Ok(SocksAddr { addr, port })
     }
 }
+pub(crate) struct RewriteUdpSend<S: UdpSend + ?Sized> {
+    inner: Arc<S>,
+    old_dst: SocksAddr,
+    new_dst: SocksAddr,
+}
+#[async_trait::async_trait]
+impl<S: UdpSend + ?Sized> UdpSend for RewriteUdpSend<S> {
+    async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
+        let addr = if addr == self.new_dst {
+            self.old_dst.clone()
+        } else {
+            addr
+        };
+        self.inner.send_to(buf, addr).await
+    }
+}
+pub(crate) struct RewriteUdpRecv<R: UdpRecv + ?Sized> {
+    inner: Box<R>,
+    old_dst: SocksAddr,
+    new_dst: SocksAddr,
+}
+#[async_trait::async_trait]
+impl<R: UdpRecv + ?Sized> UdpRecv for RewriteUdpRecv<R> {
+    async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr), SError> {
+        let (buf, addr) = self.inner.recv_from().await?;
+        let addr = if addr == self.old_dst {
+            self.new_dst.clone()
+        } else {
+            addr
+        };
+        Ok((buf, addr))
+    }
+}
+
+/// Rewrite matching UDP destinations and restore their original address on replies.
+pub(crate) fn rewrite_dst(req: &mut ProxyRequest, dst: SocksAddr) {
+    match req {
+        ProxyRequest::Tcp(session) => session.dst = dst,
+        ProxyRequest::Udp(session) if session.dst != dst => {
+            // A closed receiver temporarily fills the slot while its owner is moved.
+            let (_, empty) = tokio::sync::mpsc::channel(1);
+            let recv = std::mem::replace(&mut session.recv, Box::new(empty));
+            session.recv = Box::new(RewriteUdpRecv {
+                inner: recv,
+                old_dst: session.dst.clone(),
+                new_dst: dst.clone(),
+            });
+            session.send = Arc::new(RewriteUdpSend {
+                inner: session.send.clone(),
+                old_dst: session.dst.clone(),
+                new_dst: dst.clone(),
+            });
+            session.dst = dst;
+        }
+        _ => {}
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn rewrite_dst_updates_tcp_destination_and_preserves_stream() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (stream, mut peer) = tokio::io::duplex(64);
+        let mut request: ProxyRequest = ProxyRequest::Tcp(TcpSession {
+            stream: Box::new(stream),
+            dst: "original.example:443".parse().unwrap(),
+            src_addr: None,
+            user_context: Default::default(),
+        });
+        let dst: SocksAddr = "[2001:db8::1]:8443".parse().unwrap();
+        rewrite_dst(&mut request, dst.clone());
+        assert_eq!(request.dst(), &dst);
+        let ProxyRequest::Tcp(mut session) = request else {
+            panic!("expected TCP request");
+        };
+        peer.write_all(b"hello").await.unwrap();
+        let mut buf = [0; 5];
+        session.stream.read_exact(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"hello");
+    }
+
+    #[tokio::test]
+    async fn rewrite_dst_translates_udp_packets_and_restores_replies() {
+        for destinations in [
+            vec!["192.0.2.53:5353"],
+            vec!["[2001:db8::53]:5353"],
+            vec!["rewritten.example:5353"],
+            vec!["192.0.2.53:5353", "rewritten.example:5353"],
+        ] {
+            let original: SocksAddr = "original.example:53".parse().unwrap();
+            let (packets, recv) = tokio::sync::mpsc::channel(4);
+            let (send, mut replies) = tokio::sync::mpsc::channel(4);
+            let payload = Bytes::from_static(b"hello");
+            // Exercise the buffered first packet as well as subsequent datagrams.
+            packets
+                .send((payload.clone(), original.clone()))
+                .await
+                .unwrap();
+            let session: UdpSession = UdpSession {
+                recv: Box::new(recv),
+                send: Arc::new(send),
+                stream: None,
+                bind_addr: "127.0.0.1:0".parse().unwrap(),
+                dst: original.clone(),
+                src_addr: None,
+                user_context: Default::default(),
+            };
+            let session = session.wait_first_packet().await.unwrap();
+            let mut request = ProxyRequest::Udp(session);
+            let mut rewritten = original.clone();
+            for destination in destinations {
+                rewritten = destination.parse().unwrap();
+                rewrite_dst(&mut request, rewritten.clone());
+                assert_eq!(request.dst(), &rewritten);
+            }
+            let ProxyRequest::Udp(ref session) = request else {
+                panic!("expected UDP request");
+            };
+            let recv_ptr = &*session.recv as *const dyn UdpRecv;
+            let send_ptr = Arc::as_ptr(&session.send);
+            rewrite_dst(&mut request, rewritten.clone());
+            let ProxyRequest::Udp(mut session) = request else {
+                panic!("expected UDP request");
+            };
+            assert!(std::ptr::eq(recv_ptr, &*session.recv));
+            assert!(std::ptr::eq(send_ptr, Arc::as_ptr(&session.send)));
+            assert_eq!(
+                session.recv.recv_from().await.unwrap(),
+                (payload.clone(), rewritten.clone())
+            );
+
+            // Matching includes the port; unrelated destinations pass through.
+            let other_port: SocksAddr = "original.example:123".parse().unwrap();
+            let other_host: SocksAddr = "other.example:53".parse().unwrap();
+            for (destination, expected) in [
+                (original.clone(), rewritten.clone()),
+                (other_port.clone(), other_port),
+                (other_host.clone(), other_host),
+            ] {
+                packets
+                    .send((payload.clone(), destination.clone()))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    session.recv.recv_from().await.unwrap(),
+                    (payload.clone(), expected.clone())
+                );
+                assert_eq!(
+                    session
+                        .send
+                        .send_to(payload.clone(), expected)
+                        .await
+                        .unwrap(),
+                    payload.len()
+                );
+                assert_eq!(
+                    replies.recv().await.unwrap(),
+                    (payload.clone(), destination)
+                );
+            }
+
+            drop(packets);
+            assert!(matches!(
+                session.recv.recv_from().await,
+                Err(SError::OutboundUnavailable)
+            ));
+            drop(replies);
+            assert!(matches!(
+                session.send.send_to(payload, rewritten).await,
+                Err(SError::InboundUnavailable)
+            ));
+        }
+    }
 
     struct ScriptDir(std::path::PathBuf);
 
@@ -1055,41 +1216,103 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lua_router_rejects_udp_destination_writes() {
-        for (field, values) in [
-            ("dst_domain", &["'rewritten.example'", "nil"][..]),
-            ("dst_ip_v4", &["'192.0.2.44'", "nil"][..]),
-            ("dst_ip_v6", &["'2001:db8::1'", "nil"][..]),
-            ("dst_port", &["8443"][..]),
-        ] {
-            for value in values {
-                let mut context = context();
-                context.network_type = NetworkType::Udp;
-                if field == "dst_ip_v4" {
-                    context.dst_domain = None;
-                    context.dst_ip_v4 = Some("192.0.2.10".parse().unwrap());
-                } else if field == "dst_ip_v6" {
-                    context.dst_domain = None;
-                    context.dst_ip_v6 = Some("2001:db8::10".parse().unwrap());
-                }
-                let lua = Lua::new();
-                let userdata = lua.create_userdata(context.clone()).unwrap();
-                lua.globals().set("ctx", userdata.clone()).unwrap();
-                let error = lua
-                    .load(format!("ctx.{field} = {value}"))
-                    .exec()
-                    .unwrap_err();
-                assert!(
-                    error
-                        .to_string()
-                        .contains(&format!("cannot write {field} when network_type is udp"))
-                );
-                let unchanged = userdata.borrow::<RouteContext>().unwrap();
-                assert_eq!(unchanged.dst_domain, context.dst_domain);
-                assert_eq!(unchanged.dst_ip_v4, context.dst_ip_v4);
-                assert_eq!(unchanged.dst_ip_v6, context.dst_ip_v6);
-                assert_eq!(unchanged.dst_port, context.dst_port);
+    async fn lua_router_rewrites_udp_destination_and_restores_reply_address() {
+        struct Capture(tokio::sync::mpsc::Sender<ProxyRequest>);
+
+        #[async_trait::async_trait]
+        impl crate::Outbound for Capture {
+            async fn handle(&self, request: ProxyRequest) -> Result<(), SError> {
+                self.0
+                    .send(request)
+                    .await
+                    .map_err(|_| SError::OutboundUnavailable)
             }
+        }
+
+        for (rewrite, expected) in [
+            (
+                "ctx.dst_domain = 'rewritten.example'; ctx.dst_port = 5353",
+                "rewritten.example:5353",
+            ),
+            (
+                "ctx.dst_ip_v4 = '192.0.2.44'; ctx.dst_port = 5353",
+                "192.0.2.44:5353",
+            ),
+            (
+                "ctx.dst_ip_v6 = '2001:db8::44'; ctx.dst_port = 5353",
+                "[2001:db8::44]:5353",
+            ),
+            ("ctx.dst_port = 5353", "192.0.2.53:5353"),
+        ] {
+            let router = Router::from_source(&format!(
+                r#"
+                    return function(ctx)
+                        assert(ctx.network_type == "udp")
+                        assert(ctx.dst_ip_v4 == "192.0.2.53")
+                        assert(ctx.dst_port == 53)
+                        {rewrite}
+                        return "rewritten"
+                    end
+                "#,
+            ))
+            .unwrap();
+            let (captured, mut requests) = tokio::sync::mpsc::channel(1);
+            let dispatcher = crate::RequestDispatcher {
+                outbounds: std::collections::HashMap::from([(
+                    "rewritten".into(),
+                    Arc::new(Capture(captured)) as Arc<dyn crate::Outbound>,
+                )]),
+                default_outbound: "unused".into(),
+                router: Some(Arc::new(router)),
+            };
+            let original: SocksAddr = "192.0.2.53:53".parse().unwrap();
+            let expected: SocksAddr = expected.parse().unwrap();
+            let payload = Bytes::from_static(b"request");
+            let (packets, recv) = tokio::sync::mpsc::channel(1);
+            let (send, mut replies) = tokio::sync::mpsc::channel(1);
+            packets
+                .send((payload.clone(), original.clone()))
+                .await
+                .unwrap();
+            let session: UdpSession = UdpSession {
+                recv: Box::new(recv),
+                send: Arc::new(send),
+                stream: None,
+                bind_addr: "127.0.0.1:0".parse().unwrap(),
+                dst: original.clone(),
+                src_addr: None,
+                user_context: Default::default(),
+            };
+            dispatcher
+                .dispatch(ProxyRequest::Udp(
+                    session.wait_first_packet().await.unwrap(),
+                ))
+                .await;
+
+            let request = requests.try_recv().expect("router did not select outbound");
+            assert_eq!(request.dst(), &expected);
+            let ProxyRequest::Udp(mut session) = request else {
+                panic!("expected UDP request");
+            };
+            // Both the buffered first packet and later packets must be rewritten.
+            for index in 0..2 {
+                if index > 0 {
+                    packets
+                        .send((payload.clone(), original.clone()))
+                        .await
+                        .unwrap();
+                }
+                assert_eq!(
+                    session.recv.recv_from().await.unwrap(),
+                    (payload.clone(), expected.clone())
+                );
+            }
+            let reply = Bytes::from_static(b"reply");
+            assert_eq!(
+                session.send.send_to(reply.clone(), expected).await.unwrap(),
+                reply.len()
+            );
+            assert_eq!(replies.try_recv().unwrap(), (reply, original));
         }
     }
 
