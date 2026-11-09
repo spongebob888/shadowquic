@@ -9,7 +9,6 @@ use std::{
     time::Duration,
 };
 
-use async_trait::async_trait;
 use bytes::Bytes;
 use smoltcp::{
     iface::{Config, Interface, SocketHandle, SocketSet},
@@ -140,31 +139,36 @@ struct UdpReplySender {
     client: SocketAddr,
     generation: u64,
     mtu: u16,
-    replies: mpsc::Sender<Reply>,
+    replies: std::sync::Mutex<tokio_util::sync::PollSender<Reply>>,
 }
-#[async_trait]
 impl UdpSend for UdpReplySender {
-    async fn send_to(&self, bytes: Bytes, source: SocksAddr) -> Result<usize, SError> {
+    fn poll_send_to(
+        &self,
+        cx: &mut Context<'_>,
+        bytes: &Bytes,
+        source: &SocksAddr,
+    ) -> Poll<Result<usize, SError>> {
         let source: SocketAddr = match source.addr {
             crate::msgs::socks5::AddrOrDomain::V4(ip) => SocketAddr::new(ip.into(), source.port),
             crate::msgs::socks5::AddrOrDomain::V6(ip) => SocketAddr::new(ip.into(), source.port),
             _ => {
-                return Err(SError::Io(io::Error::new(
+                return Poll::Ready(Err(SError::Io(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "TUN reply source must be an IP address",
-                )));
+                ))));
             }
         };
-        let packet = udp_packet(source, self.client, &bytes, self.mtu)?;
-        self.replies
-            .send(Reply {
+        let packet = udp_packet(source, self.client, bytes, self.mtu)?;
+        let mut replies = self.replies.lock().unwrap();
+        std::task::ready!(replies.poll_reserve(cx)).map_err(|_| SError::InboundUnavailable)?;
+        replies
+            .send_item(Reply {
                 client: self.client,
                 generation: self.generation,
                 packet,
             })
-            .await
             .map_err(|_| SError::InboundUnavailable)?;
-        Ok(bytes.len())
+        Poll::Ready(Ok(bytes.len()))
     }
 }
 
@@ -341,7 +345,9 @@ impl Stack {
                         client,
                         generation: self.next_generation,
                         mtu: self.cfg.mtu,
-                        replies: self.replies.clone(),
+                        replies: std::sync::Mutex::new(tokio_util::sync::PollSender::new(
+                            self.replies.clone(),
+                        )),
                     });
                     let request: ProxyRequest = ProxyRequest::Udp(UdpSession {
                         recv: Box::new(rx),

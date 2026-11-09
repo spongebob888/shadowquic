@@ -292,7 +292,7 @@ pub async fn associate_udp<C: QuicConnection>(
     req.encode(&mut send).await?;
     let (local_send, udp_recv) = channel::<(Bytes, SocksAddr)>(10);
     let (udp_send, local_recv) = channel::<(Bytes, SocksAddr)>(10);
-    let local_send = Arc::new(local_send);
+    let local_send = Arc::new(crate::UdpChannelSend::from(local_send));
     let fut2 = handle_udp_recv_ctrl(recv, local_send, conn.clone());
     let fut1 = handle_udp_send(send, Box::new(local_recv), conn.clone(), over_stream);
 

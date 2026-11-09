@@ -2,7 +2,7 @@ use super::config::{DnsFakeIpServerCfg, DnsSystemServerCfg, DnsUdpServerCfg};
 use super::*;
 use crate::TcpSession;
 use crate::{
-    AnyUdpRecv, AnyUdpSend, Manager, UdpRecv,
+    AnyUdpRecv, AnyUdpSend, Manager,
     config::{Config, DirectOutCfg},
     direct::outbound::DirectOut,
     msgs::socks5::AddrOrDomain,
@@ -572,7 +572,7 @@ async fn hijacked_dns_keeps_original_reply_source() {
         .unwrap();
     let session = UdpSession::<AnyUdpRecv, AnyUdpSend> {
         recv: Box::new(recv),
-        send: Arc::new(reply_send),
+        send: Arc::new(crate::UdpChannelSend::from(reply_send)),
         stream: None,
         bind_addr: "0.0.0.0:0".parse::<SocketAddr>().unwrap().into(),
         dst: "0.0.0.0:0".parse::<SocketAddr>().unwrap().into(),
@@ -728,7 +728,7 @@ async fn fakeip_udp_is_restored_before_routing_and_replies_use_fake_source() {
         .unwrap();
     let session = UdpSession::<AnyUdpRecv, AnyUdpSend> {
         recv: Box::new(rx),
-        send: Arc::new(reply_tx),
+        send: Arc::new(crate::UdpChannelSend::from(reply_tx)),
         stream: None,
         bind_addr: "0.0.0.0:0".parse::<SocketAddr>().unwrap().into(),
         dst: "0.0.0.0:0".parse::<SocketAddr>().unwrap().into(),
@@ -929,7 +929,7 @@ async fn selected_resolver_handles_tcp_and_udp_destinations_and_preserves_ports(
         .unwrap();
     let session = UdpSession::<AnyUdpRecv, AnyUdpSend> {
         recv: Box::new(recv),
-        send: Arc::new(send),
+        send: Arc::new(crate::UdpChannelSend::from(send)),
         stream: None,
         bind_addr: "0.0.0.0:0".parse::<SocketAddr>().unwrap().into(),
         dst: "0.0.0.0:0".parse::<SocketAddr>().unwrap().into(),

@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::{UdpRecvExt as _, UdpSendExt as _};
 use std::io;
 use std::mem::MaybeUninit;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -185,11 +187,14 @@ pub struct TproxyUdpSend {
     v6_socket: Arc<tokio::io::unix::AsyncFd<std::os::fd::OwnedFd>>,
 }
 
-#[async_trait]
 impl UdpSend for TproxyUdpSend {
-    async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
+    fn poll_send_to(
+        &self,
+        cx: &mut std::task::Context<'_>,
+        buf: &Bytes,
+        addr: &SocksAddr,
+    ) -> std::task::Poll<Result<usize, SError>> {
         use etherparse::PacketBuilder;
-        use std::future::poll_fn;
         use std::os::fd::AsRawFd;
         use std::task::Poll;
 
@@ -201,9 +206,9 @@ impl UdpSend for TproxyUdpSend {
                 SocketAddr::V6(std::net::SocketAddrV6::new(v6.into(), addr.port, 0, 0))
             }
             AddrOrDomain::Domain(_) => {
-                return Err(SError::SocksError(
+                return Poll::Ready(Err(SError::SocksError(
                     "Cannot send to domain from tproxy".into(),
-                ));
+                )));
             }
         };
 
@@ -217,13 +222,13 @@ impl UdpSend for TproxyUdpSend {
                 PacketBuilder::ipv6(src.ip().octets(), dst.ip().octets(), 64)
                     .udp(src.port(), dst.port())
             }
-            _ => return Err(SError::SocksError("Address family mismatch".into())),
+            _ => return Poll::Ready(Err(SError::SocksError("Address family mismatch".into()))),
         };
 
         let packet_size = builder.size(buf.len());
         packet.reserve(packet_size);
         builder
-            .write(&mut packet, &buf)
+            .write(&mut packet, buf)
             .map_err(|e| SError::SocksError(e.to_string()))?;
 
         let afd = if self.client_addr.is_ipv4() {
@@ -232,7 +237,7 @@ impl UdpSend for TproxyUdpSend {
             &self.v6_socket
         };
 
-        poll_fn(|cx| {
+        loop {
             let mut guard = match std::task::ready!(afd.poll_write_ready(cx)) {
                 Ok(g) => g,
                 Err(e) => return Poll::Ready(Err(SError::SocksError(e.to_string()))),
@@ -258,13 +263,12 @@ impl UdpSend for TproxyUdpSend {
                 let err = io::Error::last_os_error();
                 if err.kind() == io::ErrorKind::WouldBlock {
                     guard.clear_ready();
-                    return Poll::Pending;
+                    continue;
                 }
                 return Poll::Ready(Err(SError::SocksError(err.to_string())));
             }
-            Poll::Ready(Ok(buf.len()))
-        })
-        .await
+            return Poll::Ready(Ok(buf.len()));
+        }
     }
 }
 struct UdpSessionItem {
@@ -746,7 +750,7 @@ mod tests {
             requests
                 .send(ProxyRequest::Udp(UdpSession {
                     recv: Box::new(recv),
-                    send: Arc::new(reply),
+                    send: Arc::new(crate::UdpChannelSend::from(reply)),
                     stream: None,
                     bind_addr: bind_addr.into(),
                     dst: destination.clone(),

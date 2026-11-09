@@ -461,7 +461,7 @@ async fn complete_first_datagram_finishes_inspection_before_other_destinations()
         .unwrap();
     let req: ProxyRequest = ProxyRequest::Udp(crate::UdpSession {
         recv: Box::new(rx),
-        send: Arc::new(tx),
+        send: Arc::new(crate::UdpChannelSend::from(tx)),
         stream: None,
         bind_addr: dst.clone(),
         dst: dst.clone(),
@@ -700,7 +700,7 @@ async fn quic_assembles_up_to_five_datagrams_and_replays_every_packet() {
             }
             let req: ProxyRequest = ProxyRequest::Udp(crate::UdpSession {
                 recv: Box::new(rx),
-                send: Arc::new(tx),
+                send: Arc::new(crate::UdpChannelSend::from(tx)),
                 stream: None,
                 bind_addr: dst.clone(),
                 dst,
@@ -761,7 +761,7 @@ async fn incomplete_quic_times_out_once_and_non_quic_bypasses_waiting() {
         tx.send(packet.clone()).await.unwrap();
         let req: ProxyRequest = ProxyRequest::Udp(crate::UdpSession {
             recv: Box::new(rx),
-            send: Arc::new(tx),
+            send: Arc::new(crate::UdpChannelSend::from(tx)),
             stream: None,
             bind_addr: dst.clone(),
             dst,

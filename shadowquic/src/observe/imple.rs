@@ -13,7 +13,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use async_trait::async_trait;
 use bytes::Bytes;
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
@@ -447,16 +446,15 @@ struct TrackedUdpRecv {
     tracked_recv_local: Arc<TrackedRecvStats>,
 }
 
-#[async_trait]
 impl UdpRecv for TrackedUdpRecv {
-    async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr), SError> {
-        let (bytes, addr) = self.inner.recv_from().await?;
+    fn poll_recv_from(&mut self, cx: &mut Context<'_>) -> Poll<Result<(Bytes, SocksAddr), SError>> {
+        let (bytes, addr) = std::task::ready!(self.inner.poll_recv_from(cx))?;
         self.global_bytes_recv
             .fetch_add(bytes.len() as u64, Ordering::Relaxed);
         self.tracked_recv_local
             .bytes_recv
             .fetch_add(bytes.len() as u64, Ordering::Relaxed);
-        Ok((bytes, addr))
+        Poll::Ready(Ok((bytes, addr)))
     }
 }
 
@@ -466,14 +464,18 @@ struct TrackedUdpSend {
     tracked_send_local: Arc<TrackedSendStats>,
 }
 
-#[async_trait]
 impl UdpSend for TrackedUdpSend {
-    async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
-        let len = self.inner.send_to(buf, addr).await?;
+    fn poll_send_to(
+        &self,
+        cx: &mut Context<'_>,
+        buf: &Bytes,
+        addr: &SocksAddr,
+    ) -> Poll<Result<usize, SError>> {
+        let len = std::task::ready!(self.inner.poll_send_to(cx, buf, addr))?;
         self.global_bytes_sent
             .fetch_add(len as u64, Ordering::Relaxed);
         self.tracked_send_local.sent(len);
-        Ok(len)
+        Poll::Ready(Ok(len))
     }
 }
 

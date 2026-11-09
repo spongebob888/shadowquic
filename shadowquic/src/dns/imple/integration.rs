@@ -36,7 +36,9 @@ use bytes::Bytes;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
+    task::{Context, Poll, ready},
 };
+use tokio_util::sync::ReusableBoxFuture;
 
 /// Resolve after routing and preserve the original address on UDP replies.
 pub(crate) struct ResolvingOutbound {
@@ -70,6 +72,7 @@ impl Outbound for ResolvingOutbound {
                     resolver,
                     strategy,
                     mapping: mapping.clone(),
+                    pending: None,
                 });
                 session.send = Arc::new(MappedSend {
                     inner: session.send,
@@ -88,16 +91,28 @@ struct ResolvingRecv {
     resolver: Arc<dyn DnsService>,
     strategy: DnsStrategy,
     mapping: Mapping,
+    pending: Option<ResolvingPacket>,
 }
-#[async_trait]
+type ResolvingPacket = ReusableBoxFuture<'static, Result<(Bytes, SocksAddr)>>;
+
 impl UdpRecv for ResolvingRecv {
-    async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr)> {
-        let (bytes, original) = self.inner.recv_from().await?;
-        let resolved = resolve_destination(&*self.resolver, &original, Some(&self.strategy))
-            .await?
-            .into();
-        remember(&self.mapping, &resolved, original)?;
-        Ok((bytes, resolved))
+    fn poll_recv_from(&mut self, cx: &mut Context<'_>) -> Poll<Result<(Bytes, SocksAddr)>> {
+        if self.pending.is_none() {
+            let (bytes, original) = ready!(self.inner.poll_recv_from(cx))?;
+            let resolver = self.resolver.clone();
+            let strategy = self.strategy.clone();
+            let mapping = self.mapping.clone();
+            self.pending = Some(ReusableBoxFuture::new(async move {
+                let resolved = resolve_destination(&*resolver, &original, Some(&strategy))
+                    .await?
+                    .into();
+                remember(&mapping, &resolved, original)?;
+                Ok((bytes, resolved))
+            }));
+        }
+        let result = ready!(self.pending.as_mut().unwrap().poll(cx));
+        self.pending = None;
+        Poll::Ready(result)
     }
 }
 fn remember(mapping: &Mapping, translated: &SocksAddr, original: SocksAddr) -> Result<()> {
@@ -113,17 +128,21 @@ struct MappedSend {
     inner: AnyUdpSend,
     mapping: Mapping,
 }
-#[async_trait]
 impl UdpSend for MappedSend {
-    async fn send_to(&self, bytes: Bytes, addr: SocksAddr) -> Result<usize> {
+    fn poll_send_to(
+        &self,
+        cx: &mut Context<'_>,
+        bytes: &Bytes,
+        addr: &SocksAddr,
+    ) -> Poll<Result<usize>> {
         let original = self
             .mapping
             .lock()
             .unwrap()
-            .get(&addr)
+            .get(addr)
             .cloned()
-            .unwrap_or(addr);
-        self.inner.send_to(bytes, original).await
+            .unwrap_or_else(|| addr.clone());
+        self.inner.poll_send_to(cx, bytes, &original)
     }
 }
 
@@ -227,12 +246,93 @@ struct RestoringRecv {
         )
     )
 ))]
-#[async_trait]
 impl UdpRecv for RestoringRecv {
-    async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr)> {
-        let (bytes, original) = self.inner.recv_from().await?;
+    fn poll_recv_from(&mut self, cx: &mut Context<'_>) -> Poll<Result<(Bytes, SocksAddr)>> {
+        let (bytes, original) = ready!(self.inner.poll_recv_from(cx))?;
         let restored = self.fake.restore(&original)?;
         remember(&self.mapping, &restored, original)?;
-        Ok((bytes, restored))
+        Poll::Ready(Ok((bytes, restored)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::UdpRecvExt;
+    use std::{
+        future::Future,
+        net::{IpAddr, Ipv4Addr},
+        sync::atomic::{AtomicUsize, Ordering},
+        task::Waker,
+    };
+
+    struct DelayedResolver {
+        ready: tokio::sync::Semaphore,
+        calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl DnsService for DelayedResolver {
+        async fn exchange(&self, _: &[u8]) -> Result<Vec<u8>> {
+            unreachable!()
+        }
+
+        async fn resolve(&self, _: &str) -> Result<Vec<IpAddr>> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            self.ready.acquire().await.unwrap().forget();
+            Ok(vec![Ipv4Addr::LOCALHOST.into()])
+        }
+    }
+
+    #[tokio::test]
+    async fn pending_resolution_survives_canceled_receive_without_losing_packets() {
+        let resolver = Arc::new(DelayedResolver {
+            ready: tokio::sync::Semaphore::new(0),
+            calls: AtomicUsize::new(0),
+        });
+        let (tx, rx) = tokio::sync::mpsc::channel(2);
+        let mapping = Mapping::default();
+        let mut receiver = ResolvingRecv {
+            inner: Box::new(rx),
+            resolver: resolver.clone(),
+            strategy: DnsStrategy::Ipv4Only,
+            mapping: mapping.clone(),
+            pending: None,
+        };
+        for port in [53, 5353] {
+            tx.send((
+                Bytes::from_static(b"query"),
+                SocksAddr::from_domain("test.example".into(), port),
+            ))
+            .await
+            .unwrap();
+        }
+        for (index, port) in [53, 5353].into_iter().enumerate() {
+            {
+                let mut receiving = std::pin::pin!(receiver.recv_from());
+                assert!(
+                    receiving
+                        .as_mut()
+                        .poll(&mut Context::from_waker(Waker::noop()))
+                        .is_pending()
+                );
+                // A repeated poll must keep the same lookup and packet.
+                assert!(
+                    receiving
+                        .as_mut()
+                        .poll(&mut Context::from_waker(Waker::noop()))
+                        .is_pending()
+                );
+            }
+            assert_eq!(resolver.calls.load(Ordering::Relaxed), index + 1);
+            resolver.ready.add_permits(1);
+            let (bytes, resolved) = receiver.recv_from().await.unwrap();
+            assert_eq!(bytes, b"query"[..]);
+            assert_eq!(resolved.to_string(), format!("127.0.0.1:{port}"));
+            assert_eq!(
+                mapping.lock().unwrap().get(&resolved),
+                Some(&SocksAddr::from_domain("test.example".into(), port))
+            );
+        }
     }
 }

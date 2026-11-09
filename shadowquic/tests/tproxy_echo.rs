@@ -1,4 +1,5 @@
 #![cfg(all(target_os = "linux", feature = "tproxy"))]
+use shadowquic::{UdpRecvExt as _, UdpSendExt as _};
 
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

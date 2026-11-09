@@ -2,6 +2,7 @@ use super::*;
 #[cfg(feature = "dns-server")]
 use crate::dns::DnsService;
 use crate::{ProxyRequest, msgs::socks5::SocksAddr};
+use crate::{UdpRecvExt as _, UdpSendExt as _};
 use std::net::SocketAddr;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -1117,7 +1118,7 @@ async fn traffic_sums_named_and_anonymous_users_and_follows_user_counter_changes
     let dst: SocksAddr = "192.0.2.1:53".parse::<SocketAddr>().unwrap().into();
     let request: ProxyRequest = ProxyRequest::Udp(crate::UdpSession {
         recv: Box::new(recv),
-        send: Arc::new(reply),
+        send: Arc::new(crate::UdpChannelSend::from(reply)),
         stream: None,
         dst: dst.clone(),
         bind_addr: dst.clone(),
@@ -1251,7 +1252,7 @@ async fn snapshots_report_active_sessions_and_preserve_udp_half_metadata() {
     let dst: SocksAddr = "[2001:db8::1]:53".parse::<SocketAddr>().unwrap().into();
     let request: ProxyRequest = ProxyRequest::Udp(crate::UdpSession {
         recv: Box::new(recv_request),
-        send: Arc::new(send_reply),
+        send: Arc::new(crate::UdpChannelSend::from(send_reply)),
         stream: None,
         bind_addr: dst.clone(),
         dst: dst.clone(),
@@ -1322,7 +1323,7 @@ async fn connections_report_half_closed_when_only_udp_receiver_remains() {
     let dst: SocksAddr = "192.0.2.1:53".parse::<SocketAddr>().unwrap().into();
     let request: ProxyRequest = ProxyRequest::Udp(crate::UdpSession {
         recv: Box::new(recv),
-        send: Arc::new(reply),
+        send: Arc::new(crate::UdpChannelSend::from(reply)),
         stream: None,
         dst: dst.clone(),
         bind_addr: dst.clone(),
@@ -1582,7 +1583,7 @@ async fn connections_sniffer_metadata_follows_receive_half_lifetime() {
         let dst: SocksAddr = "192.0.2.1:443".parse::<SocketAddr>().unwrap().into();
         let request: ProxyRequest = ProxyRequest::Udp(crate::UdpSession {
             recv: Box::new(rx),
-            send: Arc::new(tx),
+            send: Arc::new(crate::UdpChannelSend::from(tx)),
             stream: None,
             bind_addr: dst.clone(),
             dst,

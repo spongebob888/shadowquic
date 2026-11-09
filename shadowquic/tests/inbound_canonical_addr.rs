@@ -1,3 +1,4 @@
+use shadowquic::UdpRecvExt as _;
 use std::{net::SocketAddr, time::Duration};
 
 use shadowquic::{

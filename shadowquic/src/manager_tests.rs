@@ -65,7 +65,7 @@ fn request() -> ProxyRequest {
             .into(),
         src_addr: None,
         recv: Box::new(recv),
-        send: Arc::new(send),
+        send: Arc::new(crate::UdpChannelSend::from(send)),
         stream: None,
         bind_addr: "127.0.0.1:0"
             .parse::<std::net::SocketAddr>()

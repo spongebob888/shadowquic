@@ -1,5 +1,6 @@
 use super::*;
 use crate::{Outbound, direct::outbound::DirectOut};
+use crate::{UdpRecvExt as _, UdpSendExt as _};
 use simple_dns::{CLASS, Name, Packet, PacketFlag, Question, TYPE};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::{task::JoinSet, time::timeout};

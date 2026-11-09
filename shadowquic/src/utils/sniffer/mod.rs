@@ -1,4 +1,5 @@
 //! Passive, bounded hostname inspection before Lua routing.
+use crate::UdpRecvExt as _;
 mod http;
 mod quic;
 #[cfg(test)]
@@ -213,17 +214,17 @@ struct ReplayDatagram {
     inner: AnyUdpRecv,
     permit: Option<OwnedSemaphorePermit>,
 }
-#[async_trait::async_trait]
 impl UdpRecv for ReplayDatagram {
-    async fn recv_from(
+    fn poll_recv_from(
         &mut self,
-    ) -> Result<(bytes::Bytes, crate::msgs::socks5::SocksAddr), SError> {
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(bytes::Bytes, crate::msgs::socks5::SocksAddr), SError>> {
         if let Some(first) = self.buffered.pop_front() {
             if self.buffered.is_empty() {
                 self.permit = None;
             }
-            return Ok(first);
+            return std::task::Poll::Ready(Ok(first));
         }
-        self.inner.recv_from().await
+        self.inner.poll_recv_from(cx)
     }
 }

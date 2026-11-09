@@ -59,6 +59,7 @@ tproxy = ["dep:etherparse", "dep:libc"]
 tun = ["dep:tun-rs", "dep:smoltcp", "dep:ipnet"]
 
 [dependencies]
+tokio-util = { version = "0.7", features = ["rt"] }
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"], optional = true }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"], optional = true }
 tempfile = { version = "3", optional = true }

@@ -314,7 +314,7 @@ impl ProxySocket {
         .unwrap();
         let request: ProxyRequest = ProxyRequest::Udp(UdpSession {
             recv: Box::new(recv_query),
-            send: Arc::new(send_reply),
+            send: Arc::new(crate::UdpChannelSend::from(send_reply)),
             stream: None,
             bind_addr: local_addr.into(),
             dst: upstream.into(),

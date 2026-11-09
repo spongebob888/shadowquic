@@ -147,7 +147,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                 let publish_request = async {
                     let udp = UdpSession::<AnyUdpRecv, AnyUdpSend> {
                         recv: Box::new(udp_recv),
-                        send: Arc::new(udp_send),
+                        send: Arc::new(crate::UdpChannelSend::from(udp_send)),
                         stream: None,
                         bind_addr: dst.clone(),
                         dst: dst.clone(),
@@ -173,7 +173,7 @@ impl<C: QuicConnection> SQServerConn<C> {
                         .await
                         .map_err(|_| SError::OutboundUnavailable)
                 };
-                let local_send = Arc::new(local_send);
+                let local_send = Arc::new(crate::UdpChannelSend::from(local_send));
                 let fut1 = handle_udp_send(
                     send,
                     Box::new(local_recv),

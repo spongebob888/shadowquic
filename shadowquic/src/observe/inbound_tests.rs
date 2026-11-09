@@ -5,6 +5,7 @@ use crate::{
     msgs::{SDecode, socks5::CmdReply},
     socks::inbound::SocksServer,
 };
+use crate::{UdpRecvExt as _, UdpSendExt as _};
 use bytes::Bytes;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{

@@ -1,5 +1,7 @@
 use super::*;
 use crate::{Outbound, RequestDispatcher, Stoppable, TcpSession, UdpSession, UserContext};
+use crate::{UdpRecvExt as _, UdpSendExt as _};
+use async_trait::async_trait;
 use std::{future::Future, task::Waker};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -103,7 +105,7 @@ fn udp_request(
     (
         ProxyRequest::Udp(UdpSession {
             recv: Box::new(recv_request),
-            send: Arc::new(send_reply),
+            send: Arc::new(crate::UdpChannelSend::from(send_reply)),
             stream: None,
             bind_addr: addr(),
             dst: addr(),

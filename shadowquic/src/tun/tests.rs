@@ -4,6 +4,7 @@ use super::{
     stack,
 };
 use crate::{Inbound, ProxyRequest, error::SError};
+use crate::{UdpRecvExt as _, UdpSendExt as _};
 use bytes::Bytes;
 use smoltcp::{
     phy::ChecksumCapabilities,

@@ -1,4 +1,6 @@
 //! Runtime selection among a fixed set of outbound instances.
+#[cfg(test)]
+use crate::{UdpRecvExt as _, UdpSendExt as _};
 
 use std::{
     collections::HashMap,
@@ -224,7 +226,7 @@ mod tests {
         selector
             .handle(ProxyRequest::Udp(UdpSession {
                 recv: Box::new(recv),
-                send: Arc::new(send),
+                send: Arc::new(crate::UdpChannelSend::from(send)),
                 stream: None,
                 bind_addr: dst(),
                 dst: dst(),

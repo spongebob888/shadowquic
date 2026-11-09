@@ -941,7 +941,7 @@ mod tests {
                 }),
                 ProxyRequest::Udp(UdpSession {
                     recv: Box::new(recv),
-                    send: Arc::new(send),
+                    send: Arc::new(crate::UdpChannelSend::from(send)),
                     stream: None,
                     bind_addr: dst.clone(),
                     dst,
@@ -980,7 +980,7 @@ mod tests {
             }),
             ProxyRequest::Udp(UdpSession {
                 recv: Box::new(recv),
-                send: Arc::new(send),
+                send: Arc::new(crate::UdpChannelSend::from(send)),
                 stream: None,
                 bind_addr: dst.clone(),
                 dst,

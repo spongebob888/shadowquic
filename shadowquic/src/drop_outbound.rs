@@ -29,7 +29,7 @@ mod tests {
         sender.send((Bytes::new(), dst.into())).await.unwrap();
         let session = UdpSession::<AnyUdpRecv, AnyUdpSend> {
             recv: Box::new(receiver),
-            send: Arc::new(sender.clone()),
+            send: Arc::new(crate::UdpChannelSend::from(sender.clone())),
             stream: None,
             bind_addr: "127.0.0.1:0".parse::<SocketAddr>().unwrap().into(),
             dst: "127.0.0.1:0".parse::<SocketAddr>().unwrap().into(),

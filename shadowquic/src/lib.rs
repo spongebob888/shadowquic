@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    future::Future,
     net::SocketAddr,
     sync::{Arc, Weak},
 };
@@ -12,7 +11,6 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 
 use async_trait::async_trait;
-use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 use tracing::{Instrument, error, info, info_span};
@@ -79,7 +77,9 @@ pub mod tproxy;
     )
 ))]
 pub mod tun;
+mod udp;
 pub mod utils;
+pub use udp::{UdpChannelSend, UdpRecv, UdpRecvExt, UdpSend, UdpSendExt};
 
 pub use msgs::SDecode;
 pub use msgs::SEncode;
@@ -128,34 +128,6 @@ impl ProxyRequest {
             ProxyRequest::Udp(UdpSession { src_addr, .. }) => src_addr,
         }
     }
-}
-/// Udp socket only use immutable reference to self
-/// So it can be safely wrapped by Arc and cloned to work in duplex way.
-#[async_trait]
-pub trait UdpSend: Send + Sync + Unpin {
-    async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError>; // addr is proxy addr
-}
-/// Nonblocking sender
-#[async_trait]
-pub trait UdpSendExt: UdpSend {
-    async fn try_send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
-        let mut fut = std::pin::pin!(self.send_to(buf, addr.clone()));
-        // Use nonblocking style incase it blocks quic datagram dispatcher.
-        match std::future::poll_fn(|x| std::task::Poll::Ready(fut.as_mut().poll(x))).await {
-            std::task::Poll::Ready(x) => x,
-            std::task::Poll::Pending => {
-                // For Sender, it may falsely trigger this even whey channel is empty if tokio budget is not enough.
-                // But it is rare
-                Err(SError::UdpSenderBusy("sender buffer may be full".into()))
-            }
-        }
-    }
-}
-impl<T: UdpSend + ?Sized> UdpSendExt for T {}
-
-#[async_trait]
-pub trait UdpRecv: Send + Sync + Unpin {
-    async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr), SError>; // socksaddr is proxy addr
 }
 pub trait Stoppable: Send + Sync {
     fn stop(&self);
@@ -210,13 +182,15 @@ struct FirstPacketUdpRecv {
     inner: AnyUdpRecv,
 }
 
-#[async_trait]
 impl UdpRecv for FirstPacketUdpRecv {
-    async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr), SError> {
+    fn poll_recv_from(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(Bytes, SocksAddr), SError>> {
         if let Some(packet) = self.first.take() {
-            Ok(packet)
+            std::task::Poll::Ready(Ok(packet))
         } else {
-            self.inner.recv_from().await
+            self.inner.poll_recv_from(cx)
         }
     }
 }
@@ -316,23 +290,6 @@ pub trait Outbound<T = AnyTcp, I = AnyUdpRecv, O = AnyUdpSend>: Send + Sync + Un
     async fn handle(&self, req: ProxyRequest<T, I, O>) -> Result<(), SError>;
 }
 
-#[async_trait]
-impl UdpSend for Sender<(Bytes, SocksAddr)> {
-    async fn send_to(&self, buf: Bytes, addr: SocksAddr) -> Result<usize, SError> {
-        let siz = buf.len();
-        self.send((buf, addr))
-            .await
-            .map_err(|_| SError::InboundUnavailable)?;
-        Ok(siz)
-    }
-}
-#[async_trait]
-impl UdpRecv for Receiver<(Bytes, SocksAddr)> {
-    async fn recv_from(&mut self) -> Result<(Bytes, SocksAddr), SError> {
-        let r = self.recv().await.ok_or(SError::OutboundUnavailable)?;
-        Ok(r)
-    }
-}
 pub struct Manager {
     pub inbounds: HashMap<String, Box<dyn Inbound>>,
     /// Observers for client inbounds; internal request queues are omitted.

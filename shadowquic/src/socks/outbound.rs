@@ -1,7 +1,10 @@
-use std::{net::ToSocketAddrs, sync::Arc};
+use std::{
+    net::ToSocketAddrs,
+    sync::{Arc, OnceLock},
+};
 
 use crate::{
-    TcpSession, UdpRecv, UdpSend, UdpSession,
+    TcpSession, UdpRecvExt, UdpSendExt, UdpSession,
     msgs::socks5::{
         CmdReply, PasswordAuthReply, PasswordAuthReq, SOCKS5_AUTH_METHOD_PASSWORD,
         SOCKS5_CMD_TCP_CONNECT, SOCKS5_CMD_UDP_ASSOCIATE, SOCKS5_REPLY_SUCCEEDED, SOCKS5_RESERVE,
@@ -13,7 +16,6 @@ use crate::{
 use tokio::{
     io::AsyncReadExt,
     net::{TcpStream, UdpSocket},
-    sync::OnceCell,
 };
 
 use async_trait::async_trait;
@@ -230,7 +232,7 @@ impl SocksClient {
         let std_socket: std::net::UdpSocket = socket.into();
         let socket = UdpSocket::from_std(std_socket)?;
         socket.connect(peer_addr).await?;
-        let mut upstream = UdpSocksWrap(Arc::new(socket), OnceCell::new_with(Some(peer_addr)));
+        let mut upstream = UdpSocksWrap(Arc::new(socket), OnceLock::from(peer_addr));
 
         let upstream_clone = upstream.clone();
         let fut1 = async move {

@@ -1,4 +1,5 @@
 //! Routed DNS services, enabled by `dns-server`.
+use crate::{UdpRecvExt as _, UdpSendExt as _};
 mod cache;
 pub mod config;
 mod fakeip;
@@ -479,7 +480,7 @@ impl Resolver {
             self.requests
                 .send(ProxyRequest::Udp(UdpSession {
                     recv: Box::new(recv_query),
-                    send: Arc::new(send_reply),
+                    send: Arc::new(crate::UdpChannelSend::from(send_reply)),
                     stream: None,
                     bind_addr: "0.0.0.0:0".parse::<std::net::SocketAddr>().unwrap().into(),
                     dst: dst.clone(),

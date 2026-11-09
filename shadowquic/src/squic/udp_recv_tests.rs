@@ -49,16 +49,22 @@ impl QuicConnection for DatagramConnection {
 
 struct FailOnceSender {
     failed: std::sync::atomic::AtomicBool,
-    sender: tokio::sync::mpsc::Sender<(Bytes, SocksAddr)>,
+    sender: crate::UdpChannelSend,
 }
 
-#[async_trait]
 impl UdpSend for FailOnceSender {
-    async fn send_to(&self, packet: Bytes, addr: SocksAddr) -> SResult<usize> {
+    fn poll_send_to(
+        &self,
+        cx: &mut std::task::Context<'_>,
+        packet: &Bytes,
+        addr: &SocksAddr,
+    ) -> std::task::Poll<SResult<usize>> {
         if !self.failed.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            return Err(std::io::Error::other("test delivery failure").into());
+            return std::task::Poll::Ready(Err(
+                std::io::Error::other("test delivery failure").into()
+            ));
         }
-        self.sender.send_to(packet, addr).await
+        self.sender.poll_send_to(cx, packet, addr)
     }
 }
 
@@ -86,12 +92,18 @@ async fn delivery_errors_do_not_stop_shared_datagram_receiver() {
     let (healthy, mut received) = tokio::sync::mpsc::channel(4);
     let failing = FailOnceSender {
         failed: Default::default(),
-        sender: healthy.clone(),
+        sender: healthy.clone().into(),
     };
     for (id, sender) in [
-        (1, Arc::new(closed) as AnyUdpSend),
+        (
+            1,
+            Arc::new(crate::UdpChannelSend::from(closed)) as AnyUdpSend,
+        ),
         (2, Arc::new(failing) as AnyUdpSend),
-        (3, Arc::new(healthy) as AnyUdpSend),
+        (
+            3,
+            Arc::new(crate::UdpChannelSend::from(healthy)) as AnyUdpSend,
+        ),
     ] {
         conn.recv_id_store
             .store_socket(id, (sender, addr.clone()))

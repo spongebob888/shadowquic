@@ -2,6 +2,7 @@
 //! It handles the general tcp/udp proxying logic over quic connection
 //! It contains an optional authentication feature for sunnyquic only
 
+use crate::UdpRecvExt as _;
 use std::{
     collections::{
         HashMap,
