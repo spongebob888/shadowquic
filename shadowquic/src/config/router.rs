@@ -117,9 +117,9 @@ use std::sync::Arc;
 /// | `src_port` | Source port number, or nil when unavailable |
 /// | `stats_context` | Table with `username` and `conn_id` for authenticated QUIC requests, otherwise nil |
 ///
-/// Scripts may update `dst_domain`, `dst_ip_v4`, `dst_ip_v6`, and `dst_port` only
-/// for TCP requests. Writing these fields for UDP requests raises an error,
-/// including assigning nil.
+/// Scripts may update `dst_domain`, `dst_ip_v4`, `dst_ip_v6`, and `dst_port`
+/// for both tcp or udp traffic.
+///
 /// Setting a destination name or IP clears the other destination address fields.
 /// `dns_query` is a snapshot: changing its tables does not modify the request.
 /// Return a configured outbound tag to route the request, or `nil, error_message`
