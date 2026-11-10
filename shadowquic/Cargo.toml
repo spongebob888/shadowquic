@@ -73,7 +73,7 @@ http-body-util = { version = "0.1", optional = true }
 url = { version = "2", optional = true }
 serde_json = { version = "1", optional = true }
 percent-encoding = { version = "2", optional = true }
-simple-dns = { version = "0.12", optional = true }
+simple-dns = { version = "0.13", optional = true }
 # Version 0.1.0 requires early-data to compile its server implementation.
 # TLS early data remains disabled in DNS and database download clients.
 tokio-rustls-jls = { version = "0.1.0", default-features = false, features = ["early-data"], optional = true }
@@ -103,8 +103,8 @@ socket2 = "0.6.2"
 
 gm-quic = { version = "0.4", default-features = false, optional = true}
 # These types must match the versions used by gm-quic and qunreliable.
-qevent = { version = "0.4", default-features = false, optional = true}
-qbase = { version = "0.4", default-features = false, optional = true}
+qevent = { version = "0.7", default-features = false, optional = true}
+qbase = { version = "0.7", default-features = false, optional = true}
 qunreliable = { version = "0.4", default-features = false, optional = true}
 rustls = { version = "0.23", default-features = false, features = ["std"], optional = true}
 rustls-native-certs = {version = "0.8.3", optional = true}
@@ -120,13 +120,13 @@ notify = { version = "8.2.0", features = ["serde"], optional = true}
 arc-swap = { version = "1.9.1"}
 
 console-subscriber = { version = "0.5.0", optional = true }
-serde-saphyr = "1.1.0"
+serde-saphyr = "2.1.1"
 aws-lc-rs = { version = "1", optional = true, default-features = false }
 ring = { version = "0.17.14", optional = true }
 base64 = { version = "0.23.1", optional = true }
 quick_cache = { version = "0.7", optional = true }
 ipnet = { version = "2", features = ["serde"], optional = true }
-smoltcp = { version = "0.12", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-tcp"], optional = true }
+smoltcp = { version = "0.14", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-tcp"], optional = true }
 
 
 [target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", target_os = "android"))'.dependencies]
