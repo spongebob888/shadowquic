@@ -1,15 +1,11 @@
 //! Shared UDP measurement for the performance executables.
 
-use std::{
-    env,
-    future::Future,
-    io,
-    net::SocketAddr,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-};
+use std::{env, future::Future, io, net::SocketAddr, sync::Arc};
+
+#[cfg(not(target_has_atomic = "64"))]
+use portable_atomic::{AtomicU64, Ordering};
+#[cfg(target_has_atomic = "64")]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use fast_socks5::{client::Socks5Datagram, parse_udp_request};
 use shadowquic::Manager;

@@ -170,7 +170,7 @@ impl Inbound for RestoringInbound {
     async fn accept(&mut self) -> Result<ProxyRequest> {
         let mut req = self.inner.accept().await?;
         let old_dst = req.dst().clone();
-        req.set_dst(self.fake.restore(req.dst())?);
+        *req.dst_mut() = self.fake.restore(req.dst())?;
         if &old_dst != req.dst() {
             tracing::trace!(
                 req_id = req.user_context().req_id,

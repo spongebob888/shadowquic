@@ -473,7 +473,7 @@ async fn completing_dispatch_does_not_cancel_an_in_progress_accept() {
     let (send, recv) = mpsc::channel(2);
     for port in [53, 54] {
         let mut req = request();
-        req.set_dst(SocketAddr::from(([127, 0, 0, 1], port)).into());
+        *req.dst_mut() = SocketAddr::from(([127, 0, 0, 1], port)).into();
         send.send(req)
             .await
             .unwrap_or_else(|_| panic!("request channel closed"));

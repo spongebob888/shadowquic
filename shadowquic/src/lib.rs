@@ -116,12 +116,14 @@ impl ProxyRequest {
         }
     }
 
-    pub(crate) fn set_dst(&mut self, dst: SocksAddr) {
+    #[allow(dead_code)]
+    pub fn dst_mut(&mut self) -> &mut SocksAddr {
         match self {
-            ProxyRequest::Tcp(session) => session.dst = dst,
-            ProxyRequest::Udp(session) => session.dst = dst,
+            ProxyRequest::Tcp(TcpSession { dst, .. }) => dst,
+            ProxyRequest::Udp(UdpSession { dst, .. }) => dst,
         }
     }
+
     pub fn src_addr(&self) -> &Option<SocketAddr> {
         match self {
             ProxyRequest::Tcp(TcpSession { src_addr, .. }) => src_addr,

@@ -21,5 +21,9 @@ bytes = "1.11.0"
 async-trait = "0.1.89"
 webpki-roots = "1.0.11"
 fast-socks5 = "1.0.0"
+
+[target.'cfg(not(target_has_atomic = "64"))'.dependencies]
+portable-atomic = "1"
+
 [dev-dependencies]
 tokio = { version = "1.52.3", features = ["test-util"] }

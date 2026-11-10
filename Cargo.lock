@@ -2487,6 +2487,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "fast-socks5",
+ "portable-atomic",
  "rcgen",
  "shadowquic",
  "thiserror 2.0.20",
