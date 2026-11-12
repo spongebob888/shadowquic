@@ -28,6 +28,11 @@ nix build .#musl
 ## Usage
 ### Ask GPT
 - [Ask ChatGPT](https://chatgpt.com/?q=Read%20documentation%20of%20shadowquic%3A%20https%3A%2F%2Fspongebob888.github.io%2Fshadowquic%2Fmain%2Fconfiguration%2F%0A)
+- Prompt: 
+```
+Read https://spongebob888.github.io/shadowquic/main/configuration/  
+Give a config of client and server. For clients it shoud bypass china local traffic and with api enabled. The router script should be intergrated with config file
+```
 ### Client
 ```bash
 $ shadowquic -c client.yaml
