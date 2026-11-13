@@ -96,7 +96,9 @@ impl UdpRecv for ResolvingRecv {
         let resolved = resolve_destination(&*self.resolver, &original, Some(&self.strategy))
             .await?
             .into();
-        remember(&self.mapping, &resolved, original)?;
+        if resolved != original {
+            remember(&self.mapping, &resolved, original)?;
+        }
         Ok((bytes, resolved))
     }
 }
