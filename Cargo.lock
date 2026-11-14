@@ -2541,6 +2541,7 @@ dependencies = [
  "bytes",
  "fast-socks5",
  "hotpath",
+ "portable-atomic",
  "rcgen",
  "shadowquic",
  "thiserror 2.0.20",
