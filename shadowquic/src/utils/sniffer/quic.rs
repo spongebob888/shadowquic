@@ -1,7 +1,7 @@
 //! RFC 9001 Initial protection; RFC 9369 QUIC v2. Bounded ClientHello assembly across datagrams.
 #[cfg(test)]
 use super::SniffResult;
-use super::{SnifferError, tls};
+use super::{Parse, SnifferError, tls};
 use rustls_jls::quic::{Suite, Version};
 
 pub(super) fn suite() -> Option<Suite> {
@@ -60,8 +60,8 @@ impl<'a> Cursor<'a> {
 #[cfg(test)]
 pub(super) fn parse(datagram: &[u8], limit: usize, suite: &Suite) -> Option<SniffResult> {
     match Parser::default().parse(datagram, limit, suite) {
-        tls::Parse::Done(result) => result,
-        tls::Parse::NeedMore | tls::Parse::Error(_) => None,
+        Parse::Done(result) => result,
+        Parse::NeedMore | Parse::Error(_) => None,
     }
 }
 
@@ -75,28 +75,23 @@ pub(super) struct Parser {
     packets: usize,
 }
 impl Parser {
-    pub(super) fn parse(&mut self, datagram: &[u8], limit: usize, suite: &Suite) -> tls::Parse {
+    pub(super) fn parse(&mut self, datagram: &[u8], limit: usize, suite: &Suite) -> Parse {
         self.parse_inner(datagram, limit, suite)
-            .unwrap_or(tls::Parse::Done(None))
+            .unwrap_or(Parse::Done(None))
     }
-    fn parse_inner(
-        &mut self,
-        mut datagram: &[u8],
-        limit: usize,
-        suite: &Suite,
-    ) -> Option<tls::Parse> {
+    fn parse_inner(&mut self, mut datagram: &[u8], limit: usize, suite: &Suite) -> Option<Parse> {
         self.wire_bytes = self.wire_bytes.checked_add(datagram.len())?;
         if datagram.is_empty() {
             return None;
         }
         if self.wire_bytes > limit {
-            return Some(tls::Parse::Error(SnifferError::Limit));
+            return Some(Parse::Error(SnifferError::Limit));
         }
         // Bound decryption work even for adversarial coalesced packets.
         while !datagram.is_empty() {
             self.packets += 1;
             if self.packets > 32 {
-                return Some(tls::Parse::Error(SnifferError::Limit));
+                return Some(Parse::Error(SnifferError::Limit));
             }
             let mut c = Cursor(datagram);
             let first = c.byte()?;
@@ -176,7 +171,7 @@ impl Parser {
                         let ranges = frames.varint()?;
                         frames.varint()?;
                         if ranges > 4096 {
-                            return Some(tls::Parse::Error(SnifferError::Limit));
+                            return Some(Parse::Error(SnifferError::Limit));
                         }
                         for _ in 0..ranges {
                             frames.varint()?;
@@ -193,7 +188,7 @@ impl Parser {
                         let len = frames.length()?;
                         let end = offset.checked_add(len)?;
                         if end > limit {
-                            return Some(tls::Parse::Error(SnifferError::Limit));
+                            return Some(Parse::Error(SnifferError::Limit));
                         }
                         let data = frames.take(len)?;
                         if self.crypto.is_empty() {
@@ -212,7 +207,7 @@ impl Parser {
                 }
             }
             if !frames.0.is_empty() {
-                return Some(tls::Parse::Error(SnifferError::Limit));
+                return Some(Parse::Error(SnifferError::Limit));
             }
             if self.present.get(..4).is_some_and(|p| p.iter().all(|b| *b)) {
                 let len = match tls::handshake_len(&self.crypto, limit) {
@@ -223,7 +218,7 @@ impl Parser {
                     let mut result = tls::client_hello(&self.crypto[4..len])?;
                     result.protocol = "quic";
                     result.version = label.into();
-                    return Some(tls::Parse::Done(Some(result)));
+                    return Some(Parse::Done(Some(result)));
                 }
             }
             datagram = &datagram[packet_len..];
@@ -234,6 +229,6 @@ impl Parser {
                 break;
             }
         }
-        Some(tls::Parse::NeedMore)
+        Some(Parse::NeedMore)
     }
 }

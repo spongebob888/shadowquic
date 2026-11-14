@@ -1,7 +1,4 @@
-use super::{
-    SniffResult,
-    tls::{Parse, normalize_host},
-};
+use super::{Parse, SniffResult, normalize_host};
 
 pub(super) fn parse(wire: &[u8]) -> Parse {
     // Reject binary and non-HTTP streams without waiting for the deadline.

@@ -1,4 +1,4 @@
-use super::tls::{Parse, Parser};
+use super::tls::Parser;
 use super::*;
 use crate::config::SnifferRule;
 use crate::{TcpSession, TcpTrait, UserContext};

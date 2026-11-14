@@ -1,9 +1,4 @@
-use super::{SniffResult, SnifferError};
-pub(super) enum Parse {
-    NeedMore,
-    Error(SnifferError),
-    Done(Option<SniffResult>),
-}
+use super::{Parse, SniffResult, SnifferError, normalize_host};
 
 #[derive(Default)]
 pub(super) struct Parser {
@@ -183,27 +178,4 @@ pub(super) fn client_hello(bytes: &[u8]) -> Option<SniffResult> {
         protocol: "tls",
         version: format!("1.{}", version - 0x0301),
     })
-}
-
-pub(super) fn normalize_host(name: &[u8]) -> Option<String> {
-    if name.is_empty() || name.len() > 253 {
-        return None;
-    }
-    for label in name.split(|byte| *byte == b'.') {
-        if label.is_empty()
-            || label.len() > 63
-            || !label[0].is_ascii_alphanumeric()
-            || !label[label.len() - 1].is_ascii_alphanumeric()
-            || !label
-                .iter()
-                .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'-')
-        {
-            return None;
-        }
-    }
-    let name = std::str::from_utf8(name).ok()?;
-    if name.parse::<std::net::IpAddr>().is_ok() {
-        return None;
-    }
-    Some(name.to_ascii_lowercase())
 }
