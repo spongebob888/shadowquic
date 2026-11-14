@@ -22,6 +22,9 @@ const CHUNK_LEN: usize = 10 * 1024 * 1024;
 const ROUND: usize = 100;
 #[tokio::main(flavor = "multi_thread", worker_threads = 8)]
 async fn main() {
+    // No-op unless built with `--features hotpath`; the report prints on exit.
+    let _hotpath = hotpath::HotpathGuardBuilder::new("tcp_shadowquic").build();
+    hotpath::tokio_runtime!();
     let socks_server = "127.0.0.1:1089";
     let target_addr = "127.0.0.1";
     let target_port = 1445;
@@ -68,6 +71,10 @@ async fn main() {
     //tokio::join!(fut_1,fut_2);
     fut_1.await;
     fut_2.await;
+    // Close the session and let the relay tasks finish so a `--features hotpath`
+    // report covers the completed request path. Measurements above are unchanged.
+    drop(s);
+    tokio::time::sleep(Duration::from_millis(200)).await;
 }
 
 async fn test_shadowquic() {

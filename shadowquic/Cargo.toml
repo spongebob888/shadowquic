@@ -57,6 +57,9 @@ sunnyquic-noq = ["dep:noq", "dep:rustls", "dep:rustls-native-certs","dep:notify"
 # cost 200k
 tproxy = ["dep:etherparse", "dep:libc"]
 tun = ["dep:tun-rs", "dep:smoltcp", "dep:ipnet"]
+# Profiling passthroughs; never enabled by default.
+hotpath = ["hotpath/hotpath"]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
 
 [dependencies]
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"], optional = true }
@@ -127,6 +130,7 @@ base64 = { version = "0.23.1", optional = true }
 quick_cache = { version = "0.7", optional = true }
 ipnet = { version = "2", features = ["serde"], optional = true }
 smoltcp = { version = "0.12", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-tcp"], optional = true }
+hotpath = { version = "0.31.2", features = ["tokio"] }
 
 
 [target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", target_os = "android"))'.dependencies]
@@ -166,6 +170,7 @@ windows = { version = "0.62.2", features = [
 libc = "0.2"
 
 [dev-dependencies]
+hotpath = { version = "0.31.2", features = ["tokio"] }
 tokio = { version = "1.52.3", features = ["test-util"] }
 tempfile = "3"
 fast-socks5 = "1.0.0"

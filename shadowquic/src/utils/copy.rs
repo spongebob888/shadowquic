@@ -10,6 +10,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 /// Copy until both directions finish, or a half-closed stream becomes idle.
 /// The caller must drop both streams on return, including on timeout.
+#[hotpath::measure]
 pub(crate) async fn copy_bidirectional<A, B>(
     a: &mut A,
     b: &mut B,

@@ -158,6 +158,7 @@ where
     Ok((stream, user.username))
 }
 
+#[hotpath::measure]
 async fn handle_socks<S>(
     users: Arc<Vec<AuthUser>>,
     s: S,

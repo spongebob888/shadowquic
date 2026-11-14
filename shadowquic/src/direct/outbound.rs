@@ -168,6 +168,7 @@ impl DirectOut {
         Self { cfg, dns }
     }
 
+    #[hotpath::measure(impl_type = "DirectOut")]
     async fn connect_tcp(&self, dst: SocketAddr) -> Result<TcpStream, SError> {
         let socket = TcpSocketFactory {
             addr: dst.to_string(),

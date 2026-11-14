@@ -10,6 +10,11 @@ authors = { workspace = true }
 name = "udp_shadowquic"
 bench = false
 
+[features]
+# Forward profiling to the instrumented shadowquic library as well.
+hotpath = ["hotpath/hotpath", "shadowquic/hotpath"]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc", "shadowquic/hotpath-alloc"]
+
 [dependencies]
 shadowquic = {path = "../shadowquic"}
 thiserror = "2.0.18"
@@ -21,9 +26,6 @@ bytes = "1.11.0"
 async-trait = "0.1.89"
 webpki-roots = "1.0.11"
 fast-socks5 = "1.0.0"
-
-[target.'cfg(not(target_has_atomic = "64"))'.dependencies]
-portable-atomic = "1"
-
+hotpath = { version = "0.31.2", features = ["tokio"] }
 [dev-dependencies]
 tokio = { version = "1.52.3", features = ["test-util"] }

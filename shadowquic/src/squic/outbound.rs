@@ -23,6 +23,7 @@ use crate::{
 use super::{SQConn, SQConnStats, inbound::Unsplit};
 
 /// Handling a proxy request and starting proxy task with given squic connection
+#[hotpath::measure]
 pub async fn handle_request<C: QuicConnection>(
     req: ProxyRequest,
     conn: SQConn<C>,

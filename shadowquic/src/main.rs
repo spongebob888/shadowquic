@@ -69,6 +69,11 @@ enum ApiCommand {
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 8)]
 async fn main() {
+    // No-op unless built with `--features hotpath`. The guard API is used
+    // instead of #[hotpath::main] because lib.rs declares a manual
+    // #[global_allocator] (CountingAllocator wrapping jemalloc).
+    let _hotpath = hotpath::HotpathGuardBuilder::new("shadowquic").build();
+    hotpath::tokio_runtime!();
     let cli = Cli::parse();
     let content = std::fs::read_to_string(cli.config).expect("can't open config yaml file");
     let cfg: Config = match serde_saphyr::from_str(&content) {

@@ -518,6 +518,7 @@ impl Router {
         })
     }
 
+    #[hotpath::measure]
     pub async fn route(&self, context: &mut RouteContext) -> Result<String, SError> {
         let started = std::time::Instant::now();
         let result = async {

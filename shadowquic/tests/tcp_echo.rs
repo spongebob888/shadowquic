@@ -22,6 +22,9 @@ const CHUNK_LEN: usize = 1024;
 const ROUND: usize = 100;
 #[tokio::test]
 async fn main() {
+    // No-op unless built with `--features hotpath`; the report prints on exit.
+    let _hotpath = hotpath::HotpathGuardBuilder::new("tcp_echo").build();
+    hotpath::tokio_runtime!();
     let socks_server = "127.0.0.1:1092";
     let target_addr = "127.0.0.1";
     let target_port = 1445;
@@ -73,6 +76,15 @@ async fn main() {
 
     tokio::join!(fut_1, fut_2);
     assert!(sendbuf == recvbuf);
+    // Close the session and let the relay tasks finish so a `--features hotpath`
+    // report covers the completed request path. Measurements above are unchanged.
+    // The halves do not implement Drop; dropping them ends their borrows of `s`.
+    #[allow(clippy::drop_non_drop)]
+    drop(r);
+    #[allow(clippy::drop_non_drop)]
+    drop(w);
+    drop(s);
+    tokio::time::sleep(Duration::from_millis(200)).await;
 }
 
 async fn test_shadowquic() {

@@ -154,6 +154,7 @@ impl Sniffer {
     }
 
     /// Gate, inspect, and log one request. Only I/O errors are returned.
+    #[hotpath::measure]
     pub(crate) async fn sniff(&self, mut request: ProxyRequest) -> Result<ProxyRequest, SError> {
         request.user_context_mut().sniffer = None;
         let udp = matches!(request, ProxyRequest::Udp(_));

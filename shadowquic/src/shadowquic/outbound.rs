@@ -88,6 +88,7 @@ impl ShadowQuicClient {
         );
         Ok(conn)
     }
+    #[hotpath::measure(impl_type = "ShadowQuicClient")]
     async fn prepare_conn(&self) -> Result<ShadowQuicConn, SError> {
         // Serialize cache refreshes so concurrent requests reuse one connection.
         let mut quic_conn = self.quic_conn.lock().await;

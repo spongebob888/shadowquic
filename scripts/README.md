@@ -79,3 +79,34 @@ also checks debug timing output and that graceful shutdown removes the interface
 
 Set `SHADOWQUIC_TUN_TEST_BINARY` to reuse a static binary built with the required
 features. Container setup needs access to the Ubuntu and Python package indexes.
+
+## Memory flamegraph from the REST API
+
+Render an interactive memory flamegraph from a jemalloc heap profile pulled
+through the REST API. Build the profiling binary first, run it, then point the
+script at the API listener:
+
+```sh
+./scripts/build-profiling.sh                 # release build with mem-profile
+./target/release/shadowquic -c shadowquic/config_examples/restful-api.yaml &
+# In another shell (stdlib + atos/addr2line only, no extra dependencies):
+uv run --no-project scripts/mem_flamegraph.py --api http://127.0.0.1:9090 -o mem.svg
+```
+
+The script POSTs to `/api/v1/memory/profile`, parses jemalloc's `heap_v2` dump,
+symbolizes each backtrace against the exact executable, and writes a
+self-contained interactive SVG (click a frame to zoom, hover for details, Search
+to highlight). On macOS it reads the ASLR load address from `vmmap <pid>` and
+uses `atos`; on Linux it reads the base from `/proc/<pid>/maps` (or the dump's
+`MAPPED_LIBRARIES`) and uses `addr2line`. The PID and binary are auto-detected
+from a single running `shadowquic`; override with `--pid`, `--binary`, and
+`--load-address`. Add `--secret` (or `SHADOWQUIC_API_SECRET`) when the API
+requires bearer auth.
+
+Useful options: `--offline --heap-file dump.heap` re-renders a saved dump without
+calling the API; `--metric objects|cumulative` sizes frames by live object count
+or cumulative bytes instead of live bytes; `--collapsed out.collapsed` also
+writes portable collapsed stacks for `flamegraph.pl`, `inferno`, or speedscope;
+`--keep-allocator` retains jemalloc frames at the leaf. Symbolization requires
+the exact profiling build that produced the dump, so copy that binary aside
+before rebuilding.
