@@ -189,9 +189,10 @@ impl Parser {
                             return Some(Parse::Error(SnifferError::Limit));
                         }
                         let data = frames.take(len)?;
-                        if self.crypto.is_empty() {
-                            self.crypto = vec![0; limit];
-                            self.present = vec![false; limit];
+                        // Grow to the highest offset seen; `end <= limit` bounds it.
+                        if end > self.crypto.len() {
+                            self.crypto.resize(end, 0);
+                            self.present.resize(end, false);
                         }
                         for (i, byte) in (offset..end).zip(data) {
                             if self.present[i] && self.crypto[i] != *byte {
@@ -212,7 +213,11 @@ impl Parser {
                     Ok(len) => len,
                     Err(result) => return Some(result),
                 };
-                if self.present[..len].iter().all(|b| *b) {
+                if self
+                    .present
+                    .get(..len)
+                    .is_some_and(|p| p.iter().all(|b| *b))
+                {
                     let hello = tls::client_hello(&self.crypto[4..len])?;
                     return Some(Parse::Done(Some(SniffResult {
                         domain: hello.domain,

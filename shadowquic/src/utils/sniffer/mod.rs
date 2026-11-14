@@ -64,6 +64,15 @@ type Outcome = Result<Option<SniffResult>, SnifferError>;
 
 /// Datagrams collected for one UDP inspection.
 const MAX_DATAGRAMS: usize = 5;
+/// First TCP read size; the prefix then doubles up to `max-bytes`.
+const INITIAL_READ: usize = 4096;
+
+/// Keep only the part of an admission reservation still backing retained bytes.
+fn retain(mut permit: OwnedSemaphorePermit, retained: usize) -> OwnedSemaphorePermit {
+    let excess = permit.num_permits().saturating_sub(retained);
+    drop(permit.split(excess));
+    permit
+}
 
 /// Protocols enabled by every rule matching a request.
 #[derive(Clone, Copy, Default)]
@@ -173,13 +182,16 @@ impl Sniffer {
         let deadline = tokio::time::Instant::now() + Duration::from_millis(self.config.timeout);
         let (mut request, outcome) = match request {
             ProxyRequest::Tcp(mut session) => {
-                let mut prefix = Vec::with_capacity(self.config.max_bytes);
+                let mut prefix = Vec::new();
                 let outcome = self
                     .sniff_tcp(&mut session.stream, protocols, deadline, &mut prefix)
                     .await;
                 if !prefix.is_empty() {
+                    // Parsers are gone; only the replay prefix stays charged.
+                    prefix.shrink_to_fit();
+                    let permit = retain(memory, prefix.capacity());
                     session.stream =
-                        Box::new(ReplayStream::with_permit(prefix, session.stream, memory));
+                        Box::new(ReplayStream::with_permit(prefix, session.stream, permit));
                 }
                 (ProxyRequest::Tcp(session), outcome)
             }
@@ -189,10 +201,11 @@ impl Sniffer {
                     .sniff_udp(&mut session.recv, deadline, &mut buffered)
                     .await;
                 if !buffered.is_empty() {
+                    let retained = buffered.iter().map(|(packet, _)| packet.len()).sum();
                     session.recv = Box::new(ReplayDatagram {
                         buffered,
                         inner: session.recv,
-                        permit: Some(memory),
+                        permit: Some(retain(memory, retained)),
                     });
                 }
                 (ProxyRequest::Udp(session), outcome)
@@ -248,12 +261,10 @@ impl Sniffer {
                 if remaining == 0 {
                     return Ok(Err(SnifferError::Limit));
                 }
-                if (&mut *stream)
-                    .take(remaining as u64)
-                    .read_buf(prefix)
-                    .await?
-                    == 0
-                {
+                // Grow geometrically instead of allocating `max-bytes` up front.
+                let chunk = remaining.min(prefix.len().max(INITIAL_READ));
+                prefix.reserve_exact(chunk);
+                if (&mut *stream).take(chunk as u64).read_buf(prefix).await? == 0 {
                     return Ok(Ok(None));
                 }
             }

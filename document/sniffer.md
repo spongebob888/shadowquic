@@ -91,12 +91,15 @@ the outbound connects, so restrict ports where possible.
 
 Limits are global per configured router: `timeout` 1–60000 ms, `max-bytes`
 256–1048576, `max-concurrent` 1–65536, and `max-buffered-bytes` from four times
-`max-bytes` (plus 65536 when UDP is configured) through 268435456. Each inspection reserves four times `max-bytes`
-for retained wire data, decryption, and reassembly storage. UDP reserves an extra
-65536 bytes for the final datagram that can cross the byte limit. The reservation stays
-held until the replay buffer is drained or dropped, including while waiting for
-an outbound. Default limits allow 64 simultaneous TCP reservations or 42 UDP reservations. Budgets cover
-inspection buffers, excluding allocator overhead and existing transport buffers.
+`max-bytes` (plus 65536 when UDP is configured) through 268435456. Each inspection
+is admitted with a reservation of four times `max-bytes` for retained wire data,
+decryption, and reassembly storage. UDP reserves an extra 65536 bytes for the final
+datagram that can cross the byte limit. Default limits allow 64 simultaneous TCP or
+42 simultaneous UDP inspections. Inspection buffers grow on demand within that
+reservation. When inspection ends, the reservation shrinks to the bytes kept for
+replay: the TCP prefix, or the buffered datagrams. Those stay charged until replayed
+or dropped, including while waiting for an outbound. Budgets cover inspection buffers, excluding allocator
+overhead and existing transport buffers.
 
 Enable `RUST_LOG=shadowquic::utils::sniffer=debug` to log each admitted inspection's
 result and `elapsed` duration (with units), including waiting for input. Successful

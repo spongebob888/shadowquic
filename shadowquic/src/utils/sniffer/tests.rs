@@ -908,3 +908,86 @@ async fn inspection_errors_are_logged_and_preserve_tcp_input() {
         assert!(log.contains("sniffer:skipped"), "{log}");
     }
 }
+
+#[tokio::test]
+async fn replay_holds_only_retained_prefix_bytes() {
+    let mut cfg = config();
+    // Exactly one admission reservation: a second inspection only fits if the
+    // first released its parser share after finishing.
+    cfg.max_buffered_bytes = cfg.reservation_bytes(true);
+    let sniffer = Sniffer::new(cfg).unwrap();
+    let wire = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
+    let mut held = Vec::new();
+    for _ in 0..2 {
+        let (mut client, req) = request(80);
+        client.write_all(wire).await.unwrap();
+        let req = sniffer.sniff(req).await.unwrap();
+        assert_eq!(
+            req.user_context().sniffer.as_ref().unwrap().domain,
+            "example.com"
+        );
+        held.push((client, req));
+    }
+    assert_eq!(
+        sniffer.memory.available_permits(),
+        sniffer.config.max_buffered_bytes - 2 * wire.len()
+    );
+    for (_client, req) in held {
+        replay(req, wire).await;
+    }
+    assert_eq!(
+        sniffer.memory.available_permits(),
+        sniffer.config.max_buffered_bytes
+    );
+}
+
+#[tokio::test]
+async fn udp_replay_holds_only_buffered_datagram_bytes() {
+    let sniffer = Sniffer::new(config()).unwrap();
+    let (tx, rx) = tokio::sync::mpsc::channel(2);
+    let dst: crate::SocksAddr = "192.0.2.1:443"
+        .parse::<std::net::SocketAddr>()
+        .unwrap()
+        .into();
+    let other: crate::SocksAddr = "192.0.2.2:443"
+        .parse::<std::net::SocketAddr>()
+        .unwrap()
+        .into();
+    let hello = hello(b"quic.example");
+    // An incomplete ClientHello keeps inspection waiting for more datagrams.
+    let partial = bytes::Bytes::from(initial(
+        rustls_jls::quic::Version::V1,
+        &crypto_frame(0, &hello[..hello.len() / 2]),
+        0,
+    ));
+    let second = bytes::Bytes::from_static(b"second");
+    tx.send((partial.clone(), dst.clone())).await.unwrap();
+    tx.send((second.clone(), other.clone())).await.unwrap();
+    let req: ProxyRequest = ProxyRequest::Udp(crate::UdpSession {
+        recv: Box::new(rx),
+        send: Arc::new(tx),
+        stream: None,
+        bind_addr: dst.clone(),
+        dst: dst.clone(),
+        src_addr: None,
+        user_context: Default::default(),
+    });
+    let req = sniffer.sniff(req).await.unwrap();
+    assert!(req.user_context().sniffer.is_none());
+    let max = sniffer.config.max_buffered_bytes;
+    assert_eq!(
+        sniffer.memory.available_permits(),
+        max - partial.len() - second.len()
+    );
+    let ProxyRequest::Udp(mut session) = req else {
+        panic!()
+    };
+    let partial_len = partial.len();
+    assert_eq!(session.recv.recv_from().await.unwrap(), (partial, dst));
+    assert_eq!(
+        sniffer.memory.available_permits(),
+        max - partial_len - second.len()
+    );
+    assert_eq!(session.recv.recv_from().await.unwrap(), (second, other));
+    assert_eq!(sniffer.memory.available_permits(), max);
+}
