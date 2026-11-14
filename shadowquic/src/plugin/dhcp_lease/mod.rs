@@ -44,7 +44,7 @@ impl Source {
         match result {
             Ok(snapshot) => {
                 self.snapshot.store(Arc::new(snapshot));
-                debug!(event = "dhcp:leases_reloaded", tag = %self.tag, path = %self.path.display(), "DHCP lease file reloaded");
+                tracing::trace!(event = "dhcp:leases_reloaded", tag = %self.tag, path = %self.path.display(), "DHCP lease file reloaded");
             }
             Err(error) => {
                 warn!(event = "dhcp:reload_failed", tag = %self.tag, path = %self.path.display(), %error, "DHCP lease reload failed; retaining previous snapshot")
