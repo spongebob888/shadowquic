@@ -1,6 +1,7 @@
-use super::SniffResult;
+use super::{SniffResult, SnifferError};
 pub(super) enum Parse {
     NeedMore,
+    Error(SnifferError),
     Done(Option<SniffResult>),
 }
 
@@ -25,16 +26,20 @@ impl Parser {
                 return Parse::NeedMore;
             }
             let len = usize::from(u16::from_be_bytes([record[3], record[4]]));
-            if len == 0 || len > 16384 || self.offset + 5 + len > limit {
+            if len == 0 || len > 16384 {
                 return Parse::Done(None);
+            }
+            if self.offset + 5 + len > limit {
+                return Parse::Error(SnifferError::Limit);
             }
             if record.len() < 5 + len {
                 return Parse::NeedMore;
             }
             let payload = &record[5..5 + len];
             if self.fragmented.is_empty() && payload.len() >= 4 {
-                let Some(hello_len) = handshake_len(payload, limit) else {
-                    return Parse::Done(None);
+                let hello_len = match handshake_len(payload, limit) {
+                    Ok(len) => len,
+                    Err(result) => return result,
                 };
                 if payload.len() >= hello_len {
                     return Parse::Done(client_hello(&payload[4..hello_len]));
@@ -42,7 +47,7 @@ impl Parser {
             }
             let needed = self.fragmented.len() + payload.len();
             if needed > limit {
-                return Parse::Done(None);
+                return Parse::Error(SnifferError::Limit);
             }
             if needed > self.fragmented.capacity() {
                 let capacity = needed.max(self.fragmented.capacity() * 2).min(limit);
@@ -54,8 +59,9 @@ impl Parser {
                 return Parse::Done(None);
             }
             if self.fragmented.len() >= 4 {
-                let Some(hello_len) = handshake_len(&self.fragmented, limit) else {
-                    return Parse::Done(None);
+                let hello_len = match handshake_len(&self.fragmented, limit) {
+                    Ok(len) => len,
+                    Err(result) => return result,
                 };
                 if self.fragmented.len() >= hello_len {
                     return Parse::Done(client_hello(&self.fragmented[4..hello_len]));
@@ -66,9 +72,15 @@ impl Parser {
     }
 }
 
-pub(super) fn handshake_len(bytes: &[u8], limit: usize) -> Option<usize> {
+pub(super) fn handshake_len(bytes: &[u8], limit: usize) -> Result<usize, Parse> {
     let len = ((bytes[1] as usize) << 16) | ((bytes[2] as usize) << 8) | bytes[3] as usize;
-    (bytes[0] == 1 && len + 4 <= limit).then_some(len + 4)
+    if bytes[0] != 1 {
+        Err(Parse::Done(None))
+    } else if len + 4 > limit {
+        Err(Parse::Error(SnifferError::Limit))
+    } else {
+        Ok(len + 4)
+    }
 }
 
 struct Cursor<'a>(&'a [u8]);
@@ -123,10 +135,16 @@ pub(super) fn client_hello(bytes: &[u8]) -> Option<SniffResult> {
     }
     let mut name = None;
     let mut seen_sni = false;
+    let mut seen_versions = false;
     while !extensions.0.is_empty() {
         let kind = extensions.u16()?;
         let extension = extensions.vector16()?;
         if kind == 43 {
+            if seen_versions {
+                return None;
+            }
+            seen_versions = true;
+            let mut advertised = None;
             let mut supported = Cursor(extension);
             let len = supported.u8()?;
             if len == 0 || len % 2 != 0 || supported.0.len() != len {
@@ -135,9 +153,10 @@ pub(super) fn client_hello(bytes: &[u8]) -> Option<SniffResult> {
             while !supported.0.is_empty() {
                 let v = supported.u16()?;
                 if (0x0301..=0x0304).contains(&v) {
-                    version = version.max(v);
+                    advertised = Some(advertised.map_or(v, |previous: usize| previous.max(v)));
                 }
             }
+            version = advertised?;
         }
         if kind != 0 {
             continue;

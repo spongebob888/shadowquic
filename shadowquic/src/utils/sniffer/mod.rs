@@ -37,6 +37,19 @@ impl mlua::UserData for SniffResult {
     }
 }
 
+/// A best-effort inspection failure. Logged without changing routing metadata.
+#[derive(Debug, thiserror::Error)]
+pub enum SnifferError {
+    #[error("inspection timed out")]
+    Timeout,
+    #[error("inspection byte, reassembly, packet, or frame limit reached")]
+    Limit,
+    #[error("concurrent inspection budget exhausted")]
+    ConcurrentLimit,
+    #[error("inspection memory budget exhausted")]
+    MemoryLimit,
+}
+
 pub(crate) struct Sniffer {
     config: SnifferCfg,
     concurrent: Semaphore,
@@ -90,6 +103,7 @@ impl Sniffer {
             return Ok(request);
         }
         let Ok(_active) = self.concurrent.try_acquire() else {
+            tracing::debug!(event = "sniffer:skipped", error = %SnifferError::ConcurrentLimit, "inspection skipped");
             return Ok(request);
         };
         let Ok(memory) = self
@@ -97,10 +111,12 @@ impl Sniffer {
             .clone()
             .try_acquire_many_owned(self.config.reservation_bytes(udp) as u32)
         else {
+            tracing::debug!(event = "sniffer:skipped", error = %SnifferError::MemoryLimit, "inspection skipped");
             return Ok(request);
         };
         let started = Instant::now();
         let deadline = Duration::from_millis(self.config.timeout);
+        let mut inspection_error = None;
         let result: Result<ProxyRequest, SError> = async {
             match request {
                 ProxyRequest::Tcp(mut session) => {
@@ -120,15 +136,22 @@ impl Sniffer {
                             };
                             match parsed {
                                 tls::Parse::Done(result) => return Ok::<_, std::io::Error>(result),
+                                tls::Parse::Error(error) => {
+                                    inspection_error = Some(error);
+                                    return Ok(None);
+                                }
                                 tls::Parse::NeedMore => {}
                             }
                             let remaining = self.config.max_bytes - prefix.len();
-                            if remaining == 0
-                                || (&mut session.stream)
-                                    .take(remaining as u64)
-                                    .read_buf(&mut prefix)
-                                    .await?
-                                    == 0
+                            if remaining == 0 {
+                                inspection_error = Some(SnifferError::Limit);
+                                return Ok(None);
+                            }
+                            if (&mut session.stream)
+                                .take(remaining as u64)
+                                .read_buf(&mut prefix)
+                                .await?
+                                == 0
                             {
                                 return Ok(None);
                             }
@@ -137,7 +160,10 @@ impl Sniffer {
                     .await;
                     session.user_context.sniffer = match result {
                         Ok(result) => result?,
-                        Err(_) => None,
+                        Err(_) => {
+                            inspection_error = Some(SnifferError::Timeout);
+                            None
+                        }
                     };
                     drop(parser);
                     if !prefix.is_empty() {
@@ -150,7 +176,7 @@ impl Sniffer {
                     let expires = tokio::time::Instant::now() + deadline;
                     let mut buffered = VecDeque::new();
                     let mut parser = quic::Parser::default();
-                    for _ in 0..5 {
+                    for index in 0..5 {
                         let packet = match tokio::time::timeout_at(
                             expires,
                             session.recv.recv_from(),
@@ -158,7 +184,10 @@ impl Sniffer {
                         .await
                         {
                             Ok(result) => result?,
-                            Err(_) => break,
+                            Err(_) => {
+                                inspection_error = Some(SnifferError::Timeout);
+                                break;
+                            }
                         };
                         let same_destination = buffered.front().is_none_or(
                             |first: &(bytes::Bytes, crate::SocksAddr)| first.1 == packet.1,
@@ -173,7 +202,15 @@ impl Sniffer {
                             self.config.max_bytes,
                             self.quic_suite.as_ref().expect("validated UDP protocol"),
                         ) {
-                            tls::Parse::NeedMore => {}
+                            tls::Parse::NeedMore => {
+                                if index == 4 {
+                                    inspection_error = Some(SnifferError::Limit);
+                                }
+                            }
+                            tls::Parse::Error(error) => {
+                                inspection_error = Some(error);
+                                break;
+                            }
                             tls::Parse::Done(result) => {
                                 session.user_context.sniffer = result;
                                 break;
@@ -194,15 +231,21 @@ impl Sniffer {
         }
         .await;
         let elapsed = started.elapsed();
-        match &result {
-            Ok(request) => match request.user_context().sniffer {
-                Some(ref sniff) => {
-                    tracing::debug!(event = "sniffer:completed", domain = %sniff.domain, protocol = %sniff.protocol,version = %sniff.version, ?elapsed, "sniff completed")
+        if let Some(error) = inspection_error {
+            tracing::debug!(event = "sniffer:failed", %error, ?elapsed, "inspection failed; continuing without hostname");
+        } else {
+            match &result {
+                Ok(request) => match request.user_context().sniffer {
+                    Some(ref sniff) => {
+                        tracing::debug!(event = "sniffer:completed", domain = %sniff.domain, protocol = %sniff.protocol,version = %sniff.version, ?elapsed, "sniff completed")
+                    }
+                    None => {
+                        tracing::debug!(event = "sniffer:no_match", ?elapsed, "sniffed nothing")
+                    }
+                },
+                Err(error) => {
+                    tracing::warn!(event = "sniffer:failed", %error, ?elapsed, "sniff failed");
                 }
-                None => tracing::debug!(event = "sniffer:no_match", ?elapsed, "sniffed nothing"),
-            },
-            Err(error) => {
-                tracing::warn!(event = "sniffer:failed", %error, ?elapsed, "sniff failed")
             }
         }
         result

@@ -44,6 +44,7 @@ pub(crate) fn records(handshake: &[u8], chunk: usize) -> Vec<u8> {
 fn found(wire: &[u8]) -> Option<String> {
     match Parser::default().parse(wire, 32768) {
         Parse::Done(name) => name.map(|r| r.domain),
+        Parse::Error(_) => None,
         Parse::NeedMore => panic!("expected complete result"),
     }
 }
@@ -136,7 +137,10 @@ fn bounded_parser_handles_mutated_and_truncated_inputs_without_panicking() {
             mutated[index] = value;
             let mut parser = Parser::default();
             for end in 0..=mutated.len() {
-                if matches!(parser.parse(&mutated[..end], 32768), Parse::Done(_)) {
+                if matches!(
+                    parser.parse(&mutated[..end], 32768),
+                    Parse::Done(_) | Parse::Error(_)
+                ) {
                     break;
                 }
             }
@@ -418,7 +422,7 @@ fn quic_trailing_padding_requires_authenticated_initial_and_respects_byte_limit(
         ));
         assert!(matches!(
             quic::Parser::default().parse(&padded, padded.len() - 1, &suite),
-            Parse::Done(None)
+            Parse::Error(SnifferError::Limit)
         ));
         for invalid in [
             vec![0; 299],
@@ -787,5 +791,116 @@ async fn incomplete_quic_times_out_once_and_non_quic_bypasses_waiting() {
             sniffer.memory.available_permits(),
             sniffer.config.max_buffered_bytes
         );
+    }
+}
+
+#[test]
+fn supported_versions_override_legacy_version() {
+    fn with_versions(versions: &[u16], duplicate: bool) -> Vec<u8> {
+        let mut handshake = hello(b"example.com");
+        let mut extension = vec![0, 43];
+        extension.extend_from_slice(&((1 + versions.len() * 2) as u16).to_be_bytes());
+        extension.push((versions.len() * 2) as u8);
+        for version in versions {
+            extension.extend_from_slice(&version.to_be_bytes());
+        }
+        handshake.extend_from_slice(&extension);
+        if duplicate {
+            handshake.extend_from_slice(&extension);
+        }
+        let extensions_len = (handshake.len() - 47) as u16;
+        handshake[45..47].copy_from_slice(&extensions_len.to_be_bytes());
+        let len = handshake.len() - 4;
+        handshake[1..4].copy_from_slice(&[(len >> 16) as u8, (len >> 8) as u8, len as u8]);
+        handshake
+    }
+    for (versions, expected) in [
+        (vec![0x0302], Some("1.1")),
+        (vec![0x0301], Some("1.0")),
+        (vec![0x0302, 0x1a1a, 0x0304, 0x0303], Some("1.3")),
+        (vec![0x1a1a], None),
+        (vec![], None),
+    ] {
+        let handshake = with_versions(&versions, false);
+        let result = tls::client_hello(&handshake[4..]);
+        assert_eq!(result.as_ref().map(|r| r.version.as_str()), expected);
+    }
+    assert_eq!(
+        tls::client_hello(&hello(b"example.com")[4..])
+            .unwrap()
+            .version,
+        "1.2"
+    );
+    assert!(tls::client_hello(&with_versions(&[0x0304], true)[4..]).is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn inspection_errors_are_logged_and_preserve_tcp_input() {
+    #[derive(Clone)]
+    struct Capture(Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Capture {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    let captured = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writer = Capture(captured.clone());
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .without_time()
+        .with_ansi(false)
+        .with_writer(move || writer.clone())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    let mut cfg = config();
+    cfg.max_bytes = 256;
+    let sniffer = Sniffer::new(cfg).unwrap();
+    for (wire, expected) in [
+        (vec![22, 3, 1], SnifferError::Timeout),
+        (vec![b'A'; 300], SnifferError::Limit),
+        (vec![22, 3, 1, 2, 0], SnifferError::Limit),
+    ] {
+        captured.lock().unwrap().clear();
+        let (mut client, req) = request(443);
+        client.write_all(&wire).await.unwrap();
+        let req = sniffer.sniff(req).await.unwrap();
+        assert!(req.user_context().sniffer.is_none());
+        replay(req, &wire).await;
+        let log = String::from_utf8(captured.lock().unwrap().clone()).unwrap();
+        assert!(log.contains(&expected.to_string()), "{log}");
+        assert!(log.contains("sniffer:failed"), "{log}");
+        assert!(!log.contains("sniffer:no_match"), "{log}");
+    }
+    for memory in [false, true] {
+        captured.lock().unwrap().clear();
+        let _permit = if memory {
+            sniffer
+                .memory
+                .try_acquire_many(sniffer.config.max_buffered_bytes as u32)
+                .unwrap()
+        } else {
+            sniffer
+                .concurrent
+                .try_acquire_many(sniffer.config.max_concurrent as u32)
+                .unwrap()
+        };
+        let (mut client, req) = request(80);
+        let wire = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
+        client.write_all(wire).await.unwrap();
+        let req = sniffer.sniff(req).await.unwrap();
+        assert!(req.user_context().sniffer.is_none());
+        replay(req, wire).await;
+        let log = String::from_utf8(captured.lock().unwrap().clone()).unwrap();
+        let expected = if memory {
+            SnifferError::MemoryLimit
+        } else {
+            SnifferError::ConcurrentLimit
+        };
+        assert!(log.contains(&expected.to_string()), "{log}");
+        assert!(log.contains("sniffer:skipped"), "{log}");
     }
 }
