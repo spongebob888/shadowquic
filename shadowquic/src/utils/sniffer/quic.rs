@@ -1,7 +1,5 @@
 //! RFC 9001 Initial protection; RFC 9369 QUIC v2. Bounded ClientHello assembly across datagrams.
-#[cfg(test)]
-use super::SniffResult;
-use super::{Parse, SnifferError, tls};
+use super::{Parse, SniffProtocol, SniffResult, SnifferError, tls};
 use rustls_jls::quic::{Suite, Version};
 
 pub(super) fn suite() -> Option<Suite> {
@@ -215,10 +213,12 @@ impl Parser {
                     Err(result) => return Some(result),
                 };
                 if self.present[..len].iter().all(|b| *b) {
-                    let mut result = tls::client_hello(&self.crypto[4..len])?;
-                    result.protocol = "quic";
-                    result.version = label.into();
-                    return Some(Parse::Done(Some(result)));
+                    let hello = tls::client_hello(&self.crypto[4..len])?;
+                    return Some(Parse::Done(Some(SniffResult {
+                        domain: hello.domain,
+                        protocol: SniffProtocol::Quic,
+                        version: label,
+                    })));
                 }
             }
             datagram = &datagram[packet_len..];

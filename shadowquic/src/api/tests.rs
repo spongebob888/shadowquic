@@ -1550,8 +1550,8 @@ async fn connections_sniffer_metadata_follows_receive_half_lifetime() {
     );
     let metadata = crate::utils::sniffer::SniffResult {
         domain: "sniffed.example".into(),
-        protocol: "tls",
-        version: "1.3".into(),
+        protocol: crate::config::SniffProtocol::Tls,
+        version: "1.3",
     };
     let (mut request, _peer) = tcp_request(SocksAddr::from_domain("rewritten.example".into(), 443));
     request.user_context_mut().sniffer = Some(metadata.clone());
@@ -1589,8 +1589,8 @@ async fn connections_sniffer_metadata_follows_receive_half_lifetime() {
             src_addr: None,
             user_context: crate::UserContext {
                 sniffer: Some(crate::utils::sniffer::SniffResult {
-                    protocol: "quic",
-                    version: "1".into(),
+                    protocol: crate::config::SniffProtocol::Quic,
+                    version: "1",
                     ..metadata.clone()
                 }),
                 ..Default::default()

@@ -27,14 +27,15 @@ use tokio::{
 #[cfg_attr(feature = "restful-api", derive(serde::Serialize))]
 pub struct SniffResult {
     pub domain: String,
-    pub protocol: &'static str,
-    pub version: String,
+    pub protocol: SniffProtocol,
+    /// Protocol version as advertised by the client, e.g. `"1.1"` or `"2"`.
+    pub version: &'static str,
 }
 impl mlua::UserData for SniffResult {
     fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
         fields.add_field_method_get("domain", |_, this| Ok(this.domain.clone()));
-        fields.add_field_method_get("type", |_, this| Ok(this.protocol));
-        fields.add_field_method_get("version", |_, this| Ok(this.version.clone()));
+        fields.add_field_method_get("type", |_, this| Ok(this.protocol.as_str()));
+        fields.add_field_method_get("version", |_, this| Ok(this.version));
     }
 }
 
@@ -200,7 +201,7 @@ impl Sniffer {
         let elapsed = started.elapsed();
         match outcome {
             Ok(Ok(Some(sniff))) => {
-                tracing::debug!(event = "sniffer:completed", domain = %sniff.domain, protocol = %sniff.protocol, version = %sniff.version, ?elapsed, "sniff completed");
+                tracing::debug!(event = "sniffer:completed", domain = %sniff.domain, protocol = %sniff.protocol, version = sniff.version, ?elapsed, "sniff completed");
                 request.user_context_mut().sniffer = Some(sniff);
             }
             Ok(Ok(None)) => {

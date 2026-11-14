@@ -1,4 +1,4 @@
-use super::{Parse, SniffResult, normalize_host};
+use super::{Parse, SniffProtocol, SniffResult, normalize_host};
 
 pub(super) fn parse(wire: &[u8]) -> Parse {
     // Reject binary and non-HTTP streams without waiting for the deadline.
@@ -68,8 +68,8 @@ pub(super) fn parse(wire: &[u8]) -> Parse {
     }
     Parse::Done(host.map(|domain| SniffResult {
         domain,
-        protocol: "http",
-        version: version.into(),
+        protocol: SniffProtocol::Http,
+        version,
     }))
 }
 
@@ -110,7 +110,7 @@ impl Parser {
     }
 }
 
-fn request_version(line: &[u8]) -> Option<&str> {
+fn request_version(line: &[u8]) -> Option<&'static str> {
     let mut parts = std::str::from_utf8(line).ok()?.split(' ');
     let method = parts.next()?;
     let target = parts.next()?;
@@ -120,9 +120,12 @@ fn request_version(line: &[u8]) -> Option<&str> {
         || !method.bytes().all(is_token)
         || target.is_empty()
         || target.bytes().any(|b| b <= 32 || b == 127)
-        || !matches!(version, "HTTP/1.0" | "HTTP/1.1")
     {
         return None;
     }
-    Some(&version[5..])
+    match version {
+        "HTTP/1.0" => Some("1.0"),
+        "HTTP/1.1" => Some("1.1"),
+        _ => None,
+    }
 }

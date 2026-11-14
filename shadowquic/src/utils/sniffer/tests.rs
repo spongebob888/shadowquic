@@ -217,10 +217,14 @@ async fn sniff_replays_bytes_and_exposes_read_only_lua_metadata() {
     for (wire, protocol, version) in [
         (
             b"GET / HTTP/1.1\r\nHost: Example.COM:8080\r\n\r\nbody".to_vec(),
-            "http",
+            SniffProtocol::Http,
             "1.1",
         ),
-        (records(&hello(b"Example.COM"), 11), "tls", "1.2"),
+        (
+            records(&hello(b"Example.COM"), 11),
+            SniffProtocol::Tls,
+            "1.2",
+        ),
     ] {
         let (mut client, req) = request(443);
         let dst = req.dst().clone();
@@ -229,7 +233,7 @@ async fn sniff_replays_bytes_and_exposes_read_only_lua_metadata() {
         assert_eq!(req.dst(), &dst);
         let result = req.user_context().sniffer.as_ref().unwrap();
         assert_eq!(
-            (&*result.domain, result.protocol, &*result.version),
+            (&*result.domain, result.protocol, result.version),
             ("example.com", protocol, version)
         );
         let mut ctx = crate::plugin::router::RouteContext::from_request(&req);
@@ -352,7 +356,7 @@ fn quic_v1_v2_authentication_reassembly_and_first_datagram_limit() {
         let packet = initial(v, &frames, 0);
         let result = quic::parse(&packet, 32768, &suite).unwrap();
         assert_eq!(result.domain, "quic.example");
-        assert_eq!(result.protocol, "quic");
+        assert_eq!(result.protocol, SniffProtocol::Quic);
         assert_eq!(
             result.version,
             if matches!(v, rustls_jls::quic::Version::V2) {
@@ -396,7 +400,7 @@ fn quic_reassembles_client_hello_with_trailing_datagram_padding() {
                     panic!("padded Initials should yield a complete ClientHello");
                 };
                 assert_eq!(result.domain, "accounts.google.com");
-                assert_eq!(result.protocol, "quic");
+                assert_eq!(result.protocol, SniffProtocol::Quic);
             }
         }
     }
@@ -823,7 +827,7 @@ fn supported_versions_override_legacy_version() {
     ] {
         let handshake = with_versions(&versions, false);
         let result = tls::client_hello(&handshake[4..]);
-        assert_eq!(result.as_ref().map(|r| r.version.as_str()), expected);
+        assert_eq!(result.as_ref().map(|r| r.version), expected);
     }
     assert_eq!(
         tls::client_hello(&hello(b"example.com")[4..])

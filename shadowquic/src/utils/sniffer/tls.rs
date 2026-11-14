@@ -1,4 +1,4 @@
-use super::{Parse, SniffResult, SnifferError, normalize_host};
+use super::{Parse, SniffProtocol, SniffResult, SnifferError, normalize_host};
 
 #[derive(Default)]
 pub(super) struct Parser {
@@ -37,7 +37,7 @@ impl Parser {
                     Err(result) => return result,
                 };
                 if payload.len() >= hello_len {
-                    return Parse::Done(client_hello(&payload[4..hello_len]));
+                    return Parse::Done(client_hello(&payload[4..hello_len]).map(sniff_result));
                 }
             }
             let needed = self.fragmented.len() + payload.len();
@@ -59,7 +59,9 @@ impl Parser {
                     Err(result) => return result,
                 };
                 if self.fragmented.len() >= hello_len {
-                    return Parse::Done(client_hello(&self.fragmented[4..hello_len]));
+                    return Parse::Done(
+                        client_hello(&self.fragmented[4..hello_len]).map(sniff_result),
+                    );
                 }
             }
             self.offset += 5 + len;
@@ -102,8 +104,23 @@ impl<'a> Cursor<'a> {
     }
 }
 
+/// Fields of a ClientHello shared by TLS and QUIC inspection.
+pub(super) struct ClientHello {
+    pub(super) domain: String,
+    /// Highest recognized TLS version, `"1.0"` through `"1.3"`.
+    pub(super) version: &'static str,
+}
+
+fn sniff_result(hello: ClientHello) -> SniffResult {
+    SniffResult {
+        domain: hello.domain,
+        protocol: SniffProtocol::Tls,
+        version: hello.version,
+    }
+}
+
 /// Parse only once a complete handshake is available; borrow all intermediate fields.
-pub(super) fn client_hello(bytes: &[u8]) -> Option<SniffResult> {
+pub(super) fn client_hello(bytes: &[u8]) -> Option<ClientHello> {
     let mut hello = Cursor(bytes);
     let mut version = hello.u16()?;
     if !(0x0301..=0x0303).contains(&version) {
@@ -173,9 +190,8 @@ pub(super) fn client_hello(bytes: &[u8]) -> Option<SniffResult> {
             name = Some(names.vector16()?);
         }
     }
-    Some(SniffResult {
+    Some(ClientHello {
         domain: normalize_host(name?)?,
-        protocol: "tls",
-        version: format!("1.{}", version - 0x0301),
+        version: ["1.0", "1.1", "1.2", "1.3"][version - 0x0301],
     })
 }

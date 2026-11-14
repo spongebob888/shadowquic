@@ -8,6 +8,21 @@ pub enum SniffProtocol {
     Tls,
     Quic,
 }
+impl SniffProtocol {
+    /// Lowercase name, matching the configuration and serialized form.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Http => "http",
+            Self::Tls => "tls",
+            Self::Quic => "quic",
+        }
+    }
+}
+impl std::fmt::Display for SniffProtocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
