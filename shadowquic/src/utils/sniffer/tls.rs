@@ -1,8 +1,4 @@
-use super::SniffResult;
-pub(super) enum Parse {
-    NeedMore,
-    Done(Option<SniffResult>),
-}
+use super::{Parse, SniffProtocol, SniffResult, SnifferError, normalize_host};
 
 #[derive(Default)]
 pub(super) struct Parser {
@@ -25,24 +21,28 @@ impl Parser {
                 return Parse::NeedMore;
             }
             let len = usize::from(u16::from_be_bytes([record[3], record[4]]));
-            if len == 0 || len > 16384 || self.offset + 5 + len > limit {
+            if len == 0 || len > 16384 {
                 return Parse::Done(None);
+            }
+            if self.offset + 5 + len > limit {
+                return Parse::Error(SnifferError::Limit);
             }
             if record.len() < 5 + len {
                 return Parse::NeedMore;
             }
             let payload = &record[5..5 + len];
             if self.fragmented.is_empty() && payload.len() >= 4 {
-                let Some(hello_len) = handshake_len(payload, limit) else {
-                    return Parse::Done(None);
+                let hello_len = match handshake_len(payload, limit) {
+                    Ok(len) => len,
+                    Err(result) => return result,
                 };
                 if payload.len() >= hello_len {
-                    return Parse::Done(client_hello(&payload[4..hello_len]));
+                    return Parse::Done(client_hello(&payload[4..hello_len]).map(sniff_result));
                 }
             }
             let needed = self.fragmented.len() + payload.len();
             if needed > limit {
-                return Parse::Done(None);
+                return Parse::Error(SnifferError::Limit);
             }
             if needed > self.fragmented.capacity() {
                 let capacity = needed.max(self.fragmented.capacity() * 2).min(limit);
@@ -54,11 +54,14 @@ impl Parser {
                 return Parse::Done(None);
             }
             if self.fragmented.len() >= 4 {
-                let Some(hello_len) = handshake_len(&self.fragmented, limit) else {
-                    return Parse::Done(None);
+                let hello_len = match handshake_len(&self.fragmented, limit) {
+                    Ok(len) => len,
+                    Err(result) => return result,
                 };
                 if self.fragmented.len() >= hello_len {
-                    return Parse::Done(client_hello(&self.fragmented[4..hello_len]));
+                    return Parse::Done(
+                        client_hello(&self.fragmented[4..hello_len]).map(sniff_result),
+                    );
                 }
             }
             self.offset += 5 + len;
@@ -66,9 +69,15 @@ impl Parser {
     }
 }
 
-pub(super) fn handshake_len(bytes: &[u8], limit: usize) -> Option<usize> {
+pub(super) fn handshake_len(bytes: &[u8], limit: usize) -> Result<usize, Parse> {
     let len = ((bytes[1] as usize) << 16) | ((bytes[2] as usize) << 8) | bytes[3] as usize;
-    (bytes[0] == 1 && len + 4 <= limit).then_some(len + 4)
+    if bytes[0] != 1 {
+        Err(Parse::Done(None))
+    } else if len + 4 > limit {
+        Err(Parse::Error(SnifferError::Limit))
+    } else {
+        Ok(len + 4)
+    }
 }
 
 struct Cursor<'a>(&'a [u8]);
@@ -95,8 +104,23 @@ impl<'a> Cursor<'a> {
     }
 }
 
+/// Fields of a ClientHello shared by TLS and QUIC inspection.
+pub(super) struct ClientHello {
+    pub(super) domain: String,
+    /// Highest recognized TLS version, `"1.0"` through `"1.3"`.
+    pub(super) version: &'static str,
+}
+
+fn sniff_result(hello: ClientHello) -> SniffResult {
+    SniffResult {
+        domain: hello.domain,
+        protocol: SniffProtocol::Tls,
+        version: hello.version,
+    }
+}
+
 /// Parse only once a complete handshake is available; borrow all intermediate fields.
-pub(super) fn client_hello(bytes: &[u8]) -> Option<SniffResult> {
+pub(super) fn client_hello(bytes: &[u8]) -> Option<ClientHello> {
     let mut hello = Cursor(bytes);
     let mut version = hello.u16()?;
     if !(0x0301..=0x0303).contains(&version) {
@@ -123,10 +147,16 @@ pub(super) fn client_hello(bytes: &[u8]) -> Option<SniffResult> {
     }
     let mut name = None;
     let mut seen_sni = false;
+    let mut seen_versions = false;
     while !extensions.0.is_empty() {
         let kind = extensions.u16()?;
         let extension = extensions.vector16()?;
         if kind == 43 {
+            if seen_versions {
+                return None;
+            }
+            seen_versions = true;
+            let mut advertised = None;
             let mut supported = Cursor(extension);
             let len = supported.u8()?;
             if len == 0 || len % 2 != 0 || supported.0.len() != len {
@@ -135,9 +165,10 @@ pub(super) fn client_hello(bytes: &[u8]) -> Option<SniffResult> {
             while !supported.0.is_empty() {
                 let v = supported.u16()?;
                 if (0x0301..=0x0304).contains(&v) {
-                    version = version.max(v);
+                    advertised = Some(advertised.map_or(v, |previous: usize| previous.max(v)));
                 }
             }
+            version = advertised?;
         }
         if kind != 0 {
             continue;
@@ -159,32 +190,8 @@ pub(super) fn client_hello(bytes: &[u8]) -> Option<SniffResult> {
             name = Some(names.vector16()?);
         }
     }
-    Some(SniffResult {
+    Some(ClientHello {
         domain: normalize_host(name?)?,
-        protocol: "tls",
-        version: format!("1.{}", version - 0x0301),
+        version: ["1.0", "1.1", "1.2", "1.3"][version - 0x0301],
     })
-}
-
-pub(super) fn normalize_host(name: &[u8]) -> Option<String> {
-    if name.is_empty() || name.len() > 253 {
-        return None;
-    }
-    for label in name.split(|byte| *byte == b'.') {
-        if label.is_empty()
-            || label.len() > 63
-            || !label[0].is_ascii_alphanumeric()
-            || !label[label.len() - 1].is_ascii_alphanumeric()
-            || !label
-                .iter()
-                .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'-')
-        {
-            return None;
-        }
-    }
-    let name = std::str::from_utf8(name).ok()?;
-    if name.parse::<std::net::IpAddr>().is_ok() {
-        return None;
-    }
-    Some(name.to_ascii_lowercase())
 }

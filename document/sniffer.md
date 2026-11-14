@@ -54,8 +54,10 @@ hostname was obtained. Its fields are:
 | `type` | `"http"`, `"tls"`, or `"quic"` |
 | `version` | String: HTTP `"1.0"` / `"1.1"`, TLS `"1.0"`–`"1.3"`, QUIC `"1"` / `"2"` |
 
-TLS version means the highest recognized version advertised in ClientHello, not
-a negotiated server version. No metadata is published without a valid hostname.
+TLS version means the highest recognized entry in ClientHello `supported_versions`,
+using the legacy ClientHello version only when that extension is absent. Duplicate
+version extensions or lists without a recognized version produce no metadata.
+This is not a negotiated server version. No metadata is published without a valid hostname.
 Sniffing never changes the destination; rewriting remains an explicit router
 operation. Client-provided hostnames are routing hints, not authenticated service
 identities. ECH only exposes the outer ClientHello name.
@@ -89,18 +91,25 @@ the outbound connects, so restrict ports where possible.
 
 Limits are global per configured router: `timeout` 1–60000 ms, `max-bytes`
 256–1048576, `max-concurrent` 1–65536, and `max-buffered-bytes` from four times
-`max-bytes` (plus 65536 when UDP is configured) through 268435456. Each inspection reserves four times `max-bytes`
-for retained wire data, decryption, and reassembly storage. UDP reserves an extra
-65536 bytes for the final datagram that can cross the byte limit. The reservation stays
-held until the replay buffer is drained or dropped, including while waiting for
-an outbound. Default limits allow 64 simultaneous TCP reservations or 42 UDP reservations. Budgets cover
-inspection buffers, excluding allocator overhead and existing transport buffers.
+`max-bytes` (plus 65536 when UDP is configured) through 268435456. Each inspection
+is admitted with a reservation of four times `max-bytes` for retained wire data,
+decryption, and reassembly storage. UDP reserves an extra 65536 bytes for the final
+datagram that can cross the byte limit. Default limits allow 64 simultaneous TCP or
+42 simultaneous UDP inspections. Inspection buffers grow on demand within that
+reservation. When inspection ends, the reservation shrinks to the bytes kept for
+replay: the TCP prefix, or the buffered datagrams. Those stay charged until replayed
+or dropped, including while waiting for an outbound. Budgets cover inspection buffers, excluding allocator
+overhead and existing transport buffers.
 
 Enable `RUST_LOG=shadowquic::utils::sniffer=debug` to log each admitted inspection's
 result and `elapsed` duration (with units), including waiting for input. Successful
 hostname extraction logs the domain, protocol, and version; unsuccessful
-inspection logs `result=None`, and I/O failures log the error. Requests skipped
-by port rules or exhausted budgets do not produce an inspection log.
+inspection without a match logs `sniffer:no_match`. Timeouts and inspection
+limits log a `SnifferError` under `sniffer:failed`; exhausted concurrency or memory
+budgets log the corresponding `SnifferError` under `sniffer:skipped`. These are
+debug logs and preserve the existing fallback with no hostname metadata. I/O
+failures remain warnings and close the request. Port-rule skips do not log.
+Errors are not exposed to Lua or added to the routing context.
 
 Run regression tests with:
 
