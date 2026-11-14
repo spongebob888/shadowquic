@@ -1,21 +1,21 @@
-use super::{Parse, SniffProtocol, SniffResult, normalize_host};
+use super::{ParseState, SniffProtocol, SniffResult, normalize_host};
 
-pub(super) fn parse(wire: &[u8]) -> Parse {
+pub(super) fn parse(wire: &[u8]) -> ParseState {
     // Reject binary and non-HTTP streams without waiting for the deadline.
     if wire.first().is_some_and(|b| !is_token(*b)) {
-        return Parse::Done(None);
+        return ParseState::Done(None);
     }
     let Some(line_end) = wire.windows(2).position(|w| w == b"\r\n") else {
-        return Parse::NeedMore;
+        return ParseState::NeedMore;
     };
     let Some(version) = request_version(&wire[..line_end]) else {
-        return Parse::Done(None);
+        return ParseState::Done(None);
     };
     let Some(end) = wire.windows(4).position(|w| w == b"\r\n\r\n") else {
-        return Parse::NeedMore;
+        return ParseState::NeedMore;
     };
     if end < line_end {
-        return Parse::Done(None);
+        return ParseState::Done(None);
     }
     let mut host = None;
     for line in wire[line_end + 2..end + 2].split(|b| *b == b'\n') {
@@ -23,30 +23,30 @@ pub(super) fn parse(wire: &[u8]) -> Parse {
             continue;
         }
         let Some(line) = line.strip_suffix(b"\r") else {
-            return Parse::Done(None);
+            return ParseState::Done(None);
         };
         let Some(colon) = line.iter().position(|b| *b == b':') else {
-            return Parse::Done(None);
+            return ParseState::Done(None);
         };
         if colon == 0
             || !line[..colon]
                 .iter()
                 .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(b))
         {
-            return Parse::Done(None);
+            return ParseState::Done(None);
         }
         if line[colon + 1..]
             .iter()
             .any(|b| (*b < 32 && *b != b'\t') || *b == 127)
         {
-            return Parse::Done(None);
+            return ParseState::Done(None);
         }
         if line[..colon].eq_ignore_ascii_case(b"host") {
             if host.is_some() {
-                return Parse::Done(None);
+                return ParseState::Done(None);
             }
             let Ok(value) = std::str::from_utf8(&line[colon + 1..]) else {
-                return Parse::Done(None);
+                return ParseState::Done(None);
             };
             let value = value.trim_matches([' ', '\t']);
             let domain = if let Some((domain, port)) = value.split_once(':') {
@@ -54,7 +54,7 @@ pub(super) fn parse(wire: &[u8]) -> Parse {
                     || !port.bytes().all(|b| b.is_ascii_digit())
                     || port.parse::<u16>().is_err()
                 {
-                    return Parse::Done(None);
+                    return ParseState::Done(None);
                 }
                 domain
             } else {
@@ -62,11 +62,11 @@ pub(super) fn parse(wire: &[u8]) -> Parse {
             };
             host = normalize_host(domain.strip_suffix('.').unwrap_or(domain).as_bytes());
             if host.is_none() {
-                return Parse::Done(None);
+                return ParseState::Done(None);
             }
         }
     }
-    Parse::Done(host.map(|domain| SniffResult {
+    ParseState::Done(host.map(|domain| SniffResult {
         domain,
         protocol: SniffProtocol::Http,
         version,
@@ -83,9 +83,9 @@ pub(super) struct Parser {
     line_checked: bool,
 }
 impl Parser {
-    pub(super) fn parse(&mut self, wire: &[u8]) -> Parse {
+    pub(super) fn parse(&mut self, wire: &[u8]) -> ParseState {
         if wire.first().is_some_and(|b| !is_token(*b)) {
-            return Parse::Done(None);
+            return ParseState::Done(None);
         }
         if !self.line_checked
             && let Some(end) = wire[self.scanned.saturating_sub(1)..]
@@ -94,7 +94,7 @@ impl Parser {
         {
             let end = self.scanned.saturating_sub(1) + end;
             if request_version(&wire[..end]).is_none() {
-                return Parse::Done(None);
+                return ParseState::Done(None);
             }
             self.line_checked = true;
         }
@@ -105,7 +105,7 @@ impl Parser {
         if complete {
             parse(wire)
         } else {
-            Parse::NeedMore
+            ParseState::NeedMore
         }
     }
 }

@@ -53,7 +53,7 @@ pub enum SnifferError {
 }
 
 /// Incremental parser state shared by all protocol parsers.
-pub(super) enum Parse {
+pub(super) enum ParseState {
     NeedMore,
     Error(SnifferError),
     Done(Option<SniffResult>),
@@ -118,7 +118,7 @@ impl TcpParser {
             None
         }
     }
-    fn parse(&mut self, wire: &[u8], limit: usize) -> Parse {
+    fn parse(&mut self, wire: &[u8], limit: usize) -> ParseState {
         match self {
             Self::Tls(parser) => parser.parse(wire, limit),
             Self::Http(parser) => parser.parse(wire),
@@ -253,9 +253,9 @@ impl Sniffer {
                         },
                     };
                     match parser.parse(prefix, limit) {
-                        Parse::Done(result) => return Ok(Ok(result)),
-                        Parse::Error(error) => return Ok(Err(error)),
-                        Parse::NeedMore => {}
+                        ParseState::Done(result) => return Ok(Ok(result)),
+                        ParseState::Error(error) => return Ok(Err(error)),
+                        ParseState::NeedMore => {}
                     }
                 }
                 let remaining = limit - prefix.len();
@@ -296,9 +296,9 @@ impl Sniffer {
             }
             let packet = &buffered.back().expect("just buffered").0;
             match parser.parse(packet, self.config.max_bytes, suite) {
-                Parse::NeedMore => {}
-                Parse::Error(error) => return Ok(Err(error)),
-                Parse::Done(result) => return Ok(Ok(result)),
+                ParseState::NeedMore => {}
+                ParseState::Error(error) => return Ok(Err(error)),
+                ParseState::Done(result) => return Ok(Ok(result)),
             }
         }
         Ok(Err(SnifferError::Limit))

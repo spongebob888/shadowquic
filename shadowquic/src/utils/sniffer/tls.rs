@@ -1,4 +1,4 @@
-use super::{Parse, SniffProtocol, SniffResult, SnifferError, normalize_host};
+use super::{ParseState, SniffProtocol, SniffResult, SnifferError, normalize_host};
 
 #[derive(Default)]
 pub(super) struct Parser {
@@ -8,27 +8,27 @@ pub(super) struct Parser {
 }
 
 impl Parser {
-    pub(super) fn parse(&mut self, wire: &[u8], limit: usize) -> Parse {
+    pub(super) fn parse(&mut self, wire: &[u8], limit: usize) -> ParseState {
         loop {
             let record = &wire[self.offset..];
             if record.first().is_some_and(|byte| *byte != 22)
                 || record.get(1).is_some_and(|byte| *byte != 3)
                 || record.get(2).is_some_and(|byte| !(1..=3).contains(byte))
             {
-                return Parse::Done(None);
+                return ParseState::Done(None);
             }
             if record.len() < 5 {
-                return Parse::NeedMore;
+                return ParseState::NeedMore;
             }
             let len = usize::from(u16::from_be_bytes([record[3], record[4]]));
             if len == 0 || len > 16384 {
-                return Parse::Done(None);
+                return ParseState::Done(None);
             }
             if self.offset + 5 + len > limit {
-                return Parse::Error(SnifferError::Limit);
+                return ParseState::Error(SnifferError::Limit);
             }
             if record.len() < 5 + len {
-                return Parse::NeedMore;
+                return ParseState::NeedMore;
             }
             let payload = &record[5..5 + len];
             if self.fragmented.is_empty() && payload.len() >= 4 {
@@ -37,12 +37,12 @@ impl Parser {
                     Err(result) => return result,
                 };
                 if payload.len() >= hello_len {
-                    return Parse::Done(client_hello(&payload[4..hello_len]).map(sniff_result));
+                    return ParseState::Done(client_hello(&payload[4..hello_len]).map(sniff_result));
                 }
             }
             let needed = self.fragmented.len() + payload.len();
             if needed > limit {
-                return Parse::Error(SnifferError::Limit);
+                return ParseState::Error(SnifferError::Limit);
             }
             if needed > self.fragmented.capacity() {
                 let capacity = needed.max(self.fragmented.capacity() * 2).min(limit);
@@ -51,7 +51,7 @@ impl Parser {
             }
             self.fragmented.extend_from_slice(payload);
             if self.fragmented[0] != 1 {
-                return Parse::Done(None);
+                return ParseState::Done(None);
             }
             if self.fragmented.len() >= 4 {
                 let hello_len = match handshake_len(&self.fragmented, limit) {
@@ -59,7 +59,7 @@ impl Parser {
                     Err(result) => return result,
                 };
                 if self.fragmented.len() >= hello_len {
-                    return Parse::Done(
+                    return ParseState::Done(
                         client_hello(&self.fragmented[4..hello_len]).map(sniff_result),
                     );
                 }
@@ -69,12 +69,12 @@ impl Parser {
     }
 }
 
-pub(super) fn handshake_len(bytes: &[u8], limit: usize) -> Result<usize, Parse> {
+pub(super) fn handshake_len(bytes: &[u8], limit: usize) -> Result<usize, ParseState> {
     let len = ((bytes[1] as usize) << 16) | ((bytes[2] as usize) << 8) | bytes[3] as usize;
     if bytes[0] != 1 {
-        Err(Parse::Done(None))
+        Err(ParseState::Done(None))
     } else if len + 4 > limit {
-        Err(Parse::Error(SnifferError::Limit))
+        Err(ParseState::Error(SnifferError::Limit))
     } else {
         Ok(len + 4)
     }

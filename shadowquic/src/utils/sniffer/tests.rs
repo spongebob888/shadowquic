@@ -43,9 +43,9 @@ pub(crate) fn records(handshake: &[u8], chunk: usize) -> Vec<u8> {
 
 fn found(wire: &[u8]) -> Option<String> {
     match Parser::default().parse(wire, 32768) {
-        Parse::Done(name) => name.map(|r| r.domain),
-        Parse::Error(_) => None,
-        Parse::NeedMore => panic!("expected complete result"),
+        ParseState::Done(name) => name.map(|r| r.domain),
+        ParseState::Error(_) => None,
+        ParseState::NeedMore => panic!("expected complete result"),
     }
 }
 
@@ -56,10 +56,10 @@ fn every_read_boundary_and_record_fragmentation_preserves_sni() {
         let wire = records(&handshake, chunk);
         let mut parser = Parser::default();
         for end in 0..wire.len() {
-            assert!(matches!(parser.parse(&wire[..end], 32768), Parse::NeedMore));
+            assert!(matches!(parser.parse(&wire[..end], 32768), ParseState::NeedMore));
         }
         assert!(
-            matches!(parser.parse(&wire, 32768), Parse::Done(Some(name)) if name.domain == "api.example.com")
+            matches!(parser.parse(&wire, 32768), ParseState::Done(Some(name)) if name.domain == "api.example.com")
         );
     }
     // Every possible two-record split, including inside the handshake header.
@@ -92,7 +92,7 @@ fn malformed_lengths_names_and_non_tls_are_not_used_for_routing() {
     ] {
         assert!(matches!(
             Parser::default().parse(wire, 32768),
-            Parse::Done(None)
+            ParseState::Done(None)
         ));
     }
     let mut handshake = hello(b"valid.example");
@@ -139,7 +139,7 @@ fn bounded_parser_handles_mutated_and_truncated_inputs_without_panicking() {
             for end in 0..=mutated.len() {
                 if matches!(
                     parser.parse(&mutated[..end], 32768),
-                    Parse::Done(_) | Parse::Error(_)
+                    ParseState::Done(_) | ParseState::Error(_)
                 ) {
                     break;
                 }
@@ -288,13 +288,13 @@ fn http_rejects_ambiguous_hosts_and_handles_fragmentation() {
         b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
         b"GET / HTTP/1.1\r\n\r\n",
     ] {
-        assert!(matches!(http::parse(wire), Parse::Done(None)));
+        assert!(matches!(http::parse(wire), ParseState::Done(None)));
     }
     let wire = b"GET http://other.example/ HTTP/1.1\r\nhOsT: Example.COM\r\n\r\n";
     for n in 0..wire.len() {
-        assert!(matches!(http::parse(&wire[..n]), Parse::NeedMore));
+        assert!(matches!(http::parse(&wire[..n]), ParseState::NeedMore));
     }
-    assert!(matches!(http::parse(wire), Parse::Done(Some(r)) if r.domain == "example.com"));
+    assert!(matches!(http::parse(wire), ParseState::Done(Some(r)) if r.domain == "example.com"));
 }
 
 fn varint(value: usize) -> Vec<u8> {
@@ -394,9 +394,9 @@ fn quic_reassembles_client_hello_with_trailing_datagram_padding() {
             packet.resize(packet.len() + 299, 0);
             let result = parser.parse(&packet, 32768, &suite);
             if i < 2 {
-                assert!(matches!(result, Parse::NeedMore));
+                assert!(matches!(result, ParseState::NeedMore));
             } else {
-                let Parse::Done(Some(result)) = result else {
+                let ParseState::Done(Some(result)) = result else {
                     panic!("padded Initials should yield a complete ClientHello");
                 };
                 assert_eq!(result.domain, "accounts.google.com");
@@ -417,16 +417,16 @@ fn quic_trailing_padding_requires_authenticated_initial_and_respects_byte_limit(
         let mut parser = quic::Parser::default();
         assert!(matches!(
             parser.parse(&padded, padded.len(), &suite),
-            Parse::NeedMore
+            ParseState::NeedMore
         ));
         // A separate all-zero datagram is still non-QUIC, even after an Initial.
         assert!(matches!(
             parser.parse(&[0; 299], 32768, &suite),
-            Parse::Done(None)
+            ParseState::Done(None)
         ));
         assert!(matches!(
             quic::Parser::default().parse(&padded, padded.len() - 1, &suite),
-            Parse::Error(SnifferError::Limit)
+            ParseState::Error(SnifferError::Limit)
         ));
         for invalid in [
             vec![0; 299],
@@ -440,7 +440,7 @@ fn quic_trailing_padding_requires_authenticated_initial_and_respects_byte_limit(
         ] {
             assert!(matches!(
                 quic::Parser::default().parse(&invalid, 32768, &suite),
-                Parse::Done(None)
+                ParseState::Done(None)
             ));
         }
     }
@@ -618,7 +618,7 @@ fn actual_tls13_client_hello_reports_advertised_version() {
             .unwrap();
     let mut wire = Vec::new();
     conn.write_tls(&mut wire).unwrap();
-    let Parse::Done(Some(result)) = Parser::default().parse(&wire, 32768) else {
+    let ParseState::Done(Some(result)) = Parser::default().parse(&wire, 32768) else {
         panic!("missing ClientHello")
     };
     assert_eq!(result.version, "1.3");
@@ -653,14 +653,14 @@ fn incremental_http_scan_handles_every_read_boundary() {
     let wire = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
     for split in 0..wire.len() {
         let mut parser = http::Parser::default();
-        assert!(matches!(parser.parse(&wire[..split]), Parse::NeedMore));
-        assert!(matches!(parser.parse(wire),Parse::Done(Some(r)) if r.domain == "example.com"));
+        assert!(matches!(parser.parse(&wire[..split]), ParseState::NeedMore));
+        assert!(matches!(parser.parse(wire),ParseState::Done(Some(r)) if r.domain == "example.com"));
     }
     let mut parser = http::Parser::default();
     for end in 0..wire.len() {
-        assert!(matches!(parser.parse(&wire[..end]), Parse::NeedMore));
+        assert!(matches!(parser.parse(&wire[..end]), ParseState::NeedMore));
     }
-    assert!(matches!(parser.parse(wire), Parse::Done(Some(_))));
+    assert!(matches!(parser.parse(wire), ParseState::Done(Some(_))));
 }
 
 #[tokio::test(start_paused = true)]
