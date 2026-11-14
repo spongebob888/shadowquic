@@ -14,6 +14,7 @@ use mlua::{Function, Lua, LuaOptions, StdLib, UserData, UserDataFields, chunk::C
 
 #[cfg(feature = "router-db")]
 use super::database::Databases;
+use crate::config::DnsStrategy;
 use crate::dns::ResolverManager;
 use crate::{
     DnsQuery, ProxyRequest, StatsContext, TcpSession, UdpRecv, UdpSend, UdpSession,
@@ -50,6 +51,8 @@ pub struct RouteContext {
     /// Outbound the accepting inbound prefers; a routing hint the script may
     /// honor or override. `None` means no preference was declared.
     pub preferred_outbound: Option<String>,
+    /// DNS strategy for this request, overriding the outbound config.
+    pub dns_strategy: Option<DnsStrategy>,
     /// DNS questions attached to the request; empty for requests without DNS metadata.
     pub dns_query: Vec<DnsQuery>,
     /// Only valid for shadowquic/sunnyquic inbound requests.
@@ -64,6 +67,28 @@ impl UserData for RouteContext {
         fields.add_field_method_get("inbound_tag", |_, this| Ok(this.inbound_tag.clone()));
         fields.add_field_method_get("preferred_outbound", |_, this| {
             Ok(this.preferred_outbound.clone())
+        });
+        fields.add_field_method_get("dns_strategy", |_, this| {
+            Ok(this.dns_strategy.map(|strategy| match strategy {
+                DnsStrategy::PreferIpv4 => "prefer-ipv4",
+                DnsStrategy::PreferIpv6 => "prefer-ipv6",
+                DnsStrategy::Ipv4Only => "ipv4-only",
+                DnsStrategy::Ipv6Only => "ipv6-only",
+            }))
+        });
+        fields.add_field_method_set("dns_strategy", |_, this, value: Option<String>| {
+            this.dns_strategy = value
+                .map(|value| match value.as_str() {
+                    "prefer-ipv4" => Ok(DnsStrategy::PreferIpv4),
+                    "prefer-ipv6" => Ok(DnsStrategy::PreferIpv6),
+                    "ipv4-only" => Ok(DnsStrategy::Ipv4Only),
+                    "ipv6-only" => Ok(DnsStrategy::Ipv6Only),
+                    _ => Err(mlua::Error::external(format!(
+                        "invalid dns_strategy {value:?}: expected prefer-ipv4, prefer-ipv6, ipv4-only, ipv6-only, or nil"
+                    ))),
+                })
+                .transpose()?;
+            Ok(())
         });
         fields.add_field_method_get("dns_query", |lua, this| {
             let queries = lua.create_table()?;
@@ -162,7 +187,6 @@ impl UserData for RouteContext {
 
 impl RouteContext {
     pub(crate) fn from_request(req: &ProxyRequest) -> Self {
-        #[allow(unused_mut)]
         let mut context = match req {
             ProxyRequest::Tcp(TcpSession {
                 dst,
@@ -193,6 +217,7 @@ impl RouteContext {
                 &user_context.dns_query,
             ),
         };
+        context.dns_strategy = req.user_context().dns_strategy;
         #[cfg(feature = "sniffer")]
         {
             context.sniffer = req.user_context().sniffer.clone();
@@ -239,6 +264,7 @@ impl RouteContext {
             src_addr,
             inbound_tag: inbound_tag.to_owned(),
             preferred_outbound,
+            dns_strategy: None,
             dns_query: dns_query.to_vec(),
             stats_context,
             network_type,
@@ -961,6 +987,7 @@ mod tests {
             src_port: Some(54321),
             inbound_tag: "socks-in".into(),
             preferred_outbound: None,
+            dns_strategy: None,
             dns_query: Vec::new(),
             stats_context: None,
             network_type: NetworkType::Tcp,
@@ -1179,6 +1206,89 @@ mod tests {
         assert_eq!(router.route(&mut context).await.unwrap(), "proxy-a");
         context.preferred_outbound = None;
         assert_eq!(router.route(&mut context).await.unwrap(), "direct");
+    }
+
+    #[tokio::test]
+    async fn lua_router_reads_sets_and_clears_request_dns_strategy() {
+        struct Capture(tokio::sync::mpsc::Sender<ProxyRequest>);
+        #[async_trait::async_trait]
+        impl crate::Outbound for Capture {
+            async fn handle(&self, req: ProxyRequest) -> Result<(), SError> {
+                self.0
+                    .send(req)
+                    .await
+                    .map_err(|_| SError::OutboundUnavailable)
+            }
+        }
+
+        for initial in [None, Some(DnsStrategy::Ipv4Only)] {
+            for (value, expected) in [
+                ("nil", None),
+                ("'prefer-ipv4'", Some(DnsStrategy::PreferIpv4)),
+                ("'prefer-ipv6'", Some(DnsStrategy::PreferIpv6)),
+                ("'ipv4-only'", Some(DnsStrategy::Ipv4Only)),
+                ("'ipv6-only'", Some(DnsStrategy::Ipv6Only)),
+            ] {
+                let initial_lua = if initial.is_some() {
+                    "'ipv4-only'"
+                } else {
+                    "nil"
+                };
+                let router = Router::from_source(&format!(
+                    r#"
+                    return function(ctx)
+                        assert(ctx.dns_strategy == {initial_lua})
+                        for _, invalid in ipairs({{"invalid", "", 123, true, {{}}}}) do
+                            assert(not pcall(function() ctx.dns_strategy = invalid end))
+                            assert(ctx.dns_strategy == {initial_lua})
+                        end
+                        ctx.dns_strategy = {value}
+                        assert(ctx.dns_strategy == {value})
+                        return "capture"
+                    end
+                "#
+                ))
+                .unwrap();
+                let (captured, mut requests) = tokio::sync::mpsc::channel(2);
+                let dispatcher = crate::RequestDispatcher {
+                    outbounds: std::collections::HashMap::from([(
+                        "capture".into(),
+                        Arc::new(Capture(captured)) as Arc<dyn crate::Outbound>,
+                    )]),
+                    default_outbound: "capture".into(),
+                    router: Some(Arc::new(router)),
+                };
+                let context = crate::UserContext {
+                    dns_strategy: initial,
+                    ..Default::default()
+                };
+                let dst = SocksAddr::from_domain("strategy.test".into(), 443);
+                let (stream, _peer) = tokio::io::duplex(64);
+                let (send, recv) = tokio::sync::mpsc::channel(1);
+                let pending: [ProxyRequest; 2] = [
+                    ProxyRequest::Tcp(TcpSession {
+                        stream: Box::new(stream),
+                        dst: dst.clone(),
+                        src_addr: None,
+                        user_context: context.clone(),
+                    }),
+                    ProxyRequest::Udp(UdpSession {
+                        recv: Box::new(recv),
+                        send: Arc::new(send),
+                        stream: None,
+                        bind_addr: "0.0.0.0:0".parse().unwrap(),
+                        dst,
+                        src_addr: None,
+                        user_context: context,
+                    }),
+                ];
+                for request in pending {
+                    dispatcher.dispatch(request).await;
+                    let request = requests.try_recv().expect("router did not select outbound");
+                    assert_eq!(request.user_context().dns_strategy, expected);
+                }
+            }
+        }
     }
 
     #[tokio::test]

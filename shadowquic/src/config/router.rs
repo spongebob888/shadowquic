@@ -110,6 +110,7 @@ use std::sync::Arc;
 /// | `inbound_tag` | Tag of the inbound listener |
 /// | `sniffer` | Read-only hostname metadata (`domain`, `type`, `version`), or nil; requires `sniffer` and `router.sniffer` |
 /// | `dns_query` | Array of tables with `name` and numeric `record_type`; empty when no DNS metadata is attached |
+/// | `dns_strategy` | Writable DNS strategy: `"prefer-ipv4"`, `"prefer-ipv6"`, `"ipv4-only"`, `"ipv6-only"`, or nil (default) |
 /// | `network_type` | `"tcp"` or `"udp"` |
 /// | `dst_domain`, `dst_ip_v4`, `dst_ip_v6` | Destination name or IP string; unused fields are nil |
 /// | `dst_port` | Destination port number |
@@ -119,6 +120,12 @@ use std::sync::Arc;
 ///
 /// Scripts may update `dst_domain`, `dst_ip_v4`, `dst_ip_v6`, and `dst_port`
 /// for both tcp or udp traffic.
+///
+/// Set `ctx.dns_strategy = "prefer-ipv6"` to select a DNS strategy for TCP
+/// and all datagrams in a UDP session. Set it to nil to clear the preference.
+/// The request's strategy takes priority over the outbound `dns-strategy`;
+/// when neither is set, destination resolution prefers IPv4. Proxy outbounds use this preference
+/// only when `dns` is configured to resolve destinations locally.
 ///
 /// Setting a destination name or IP clears the other destination address fields.
 /// `dns_query` is a snapshot: changing its tables does not modify the request.

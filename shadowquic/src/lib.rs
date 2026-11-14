@@ -258,6 +258,8 @@ pub struct UserContext {
     /// A router script may honor or override it; without one it selects the
     /// outbound, and `None` falls back to the global default.
     pub preferred_outbound: Option<String>,
+    /// DNS strategy for this request, overriding the selected outbound's strategy.
+    pub dns_strategy: Option<config::DnsStrategy>,
     pub dns_query: Vec<DnsQuery>,
     pub stats: Option<StatsContext>,
     pub req_id: u32,
@@ -270,6 +272,7 @@ impl Default for UserContext {
             inbound_tag: Default::default(),
             observer: Weak::new(),
             preferred_outbound: None,
+            dns_strategy: None,
             dns_query: Vec::new(),
             stats: None,
             req_id: fetch_add_req_cnt(),
@@ -412,6 +415,7 @@ impl RequestDispatcher {
                     Ok(outbound_tag) => match context.destination() {
                         Ok(dst) => {
                             plugin::router::rewrite_dst(&mut req, dst);
+                            req.user_context_mut().dns_strategy = context.dns_strategy;
                             outbound_tag
                         }
                         Err(error) => {

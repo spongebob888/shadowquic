@@ -847,6 +847,98 @@ impl Outbound for Capture {
 }
 
 #[tokio::test]
+async fn resolving_outbound_dns_strategy_uses_request_then_config_for_tcp_and_udp() {
+    use crate::config::DnsStrategy;
+
+    struct DualStackDns;
+    #[async_trait]
+    impl DnsService for DualStackDns {
+        async fn exchange(&self, _: &[u8]) -> Result<Vec<u8>> {
+            unreachable!("test DNS uses resolve directly")
+        }
+
+        async fn resolve(&self, _: &str) -> Result<Vec<std::net::IpAddr>> {
+            Ok(vec!["::1".parse().unwrap(), "127.0.0.1".parse().unwrap()])
+        }
+    }
+
+    for (config, request, ip) in [
+        (DnsStrategy::default(), None, "127.0.0.1"),
+        (DnsStrategy::default(), Some(DnsStrategy::Ipv6Only), "::1"),
+        (DnsStrategy::Ipv6Only, None, "::1"),
+        (DnsStrategy::Ipv4Only, Some(DnsStrategy::Ipv6Only), "::1"),
+        (
+            DnsStrategy::Ipv6Only,
+            Some(DnsStrategy::Ipv4Only),
+            "127.0.0.1",
+        ),
+    ] {
+        let (captured, mut requests) = mpsc::channel(2);
+        let outbound = ResolvingOutbound {
+            inner: Arc::new(Capture(captured)),
+            resolver: Arc::new(DualStackDns),
+            strategy: config,
+        };
+        let context = UserContext {
+            dns_strategy: request,
+            ..Default::default()
+        };
+        let dst = SocksAddr::from_domain("strategy.test".into(), 1234);
+        let expected: SocksAddr = SocketAddr::new(ip.parse().unwrap(), 1234).into();
+        let (stream, _peer) = tokio::io::duplex(64);
+        outbound
+            .handle(ProxyRequest::Tcp(TcpSession {
+                stream: Box::new(stream),
+                dst: dst.clone(),
+                src_addr: None,
+                user_context: context.clone(),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(requests.try_recv().unwrap().dst(), &expected);
+
+        let (packets, recv) = mpsc::channel(2);
+        let (send, mut replies) = mpsc::channel(2);
+        outbound
+            .handle(ProxyRequest::Udp(UdpSession {
+                recv: Box::new(recv),
+                send: Arc::new(send),
+                stream: None,
+                bind_addr: "0.0.0.0:0".parse().unwrap(),
+                dst: dst.clone(),
+                src_addr: None,
+                user_context: context,
+            }))
+            .await
+            .unwrap();
+        let ProxyRequest::Udp(mut session) = requests.try_recv().unwrap() else {
+            panic!()
+        };
+        assert_eq!(session.dst, expected);
+        for port in [1234, 5678] {
+            let original = SocksAddr {
+                port,
+                ..dst.clone()
+            };
+            packets
+                .send((Bytes::from_static(b"test"), original.clone()))
+                .await
+                .unwrap();
+            let (bytes, resolved) = session.recv.recv_from().await.unwrap();
+            assert_eq!(
+                resolved,
+                SocksAddr {
+                    port,
+                    ..expected.clone()
+                }
+            );
+            session.send.send_to(bytes, resolved).await.unwrap();
+            assert_eq!(replies.try_recv().unwrap().1, original);
+        }
+    }
+}
+
+#[tokio::test]
 async fn resolving_outbound_preserves_request_span_in_spawned_task() {
     use tracing::Instrument;
 

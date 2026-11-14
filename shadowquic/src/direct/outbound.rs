@@ -62,7 +62,11 @@ impl Default for DirectOut {
 impl Outbound for DirectOut {
     #[instrument(name = "outbound", skip_all, fields(tag = %self.cfg.tag))]
     async fn handle(&self, req: crate::ProxyRequest) -> Result<(), crate::error::SError> {
-        let dns_strategy = self.cfg.dns_strategy.clone();
+        let dns_strategy = req
+            .user_context()
+            .dns_strategy
+            .or(self.cfg.dns_strategy)
+            .unwrap_or_default();
         let self_clone = self.clone();
 
         match req {
@@ -220,7 +224,11 @@ impl DirectOut {
 
         let dns_cache = DnsResolve(Default::default(), self.dns.clone());
         let dns_cache_clone = dns_cache.clone();
-        let dns_strategy = self.cfg.dns_strategy.clone();
+        let dns_strategy = udp_session
+            .user_context
+            .dns_strategy
+            .or(self.cfg.dns_strategy)
+            .unwrap_or_default();
         let mut upload: u64 = 0;
         let mut download: u64 = 0;
         let fut1 = async {
@@ -280,6 +288,121 @@ impl DirectOut {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    struct DualStackDns;
+
+    #[async_trait]
+    impl DnsService for DualStackDns {
+        #[cfg(feature = "dns-server")]
+        async fn exchange(&self, _: &[u8]) -> Result<Vec<u8>, SError> {
+            unreachable!("test DNS uses resolve directly")
+        }
+
+        async fn resolve(&self, _: &str) -> Result<Vec<std::net::IpAddr>, SError> {
+            Ok(vec!["::1".parse().unwrap(), "127.0.0.1".parse().unwrap()])
+        }
+    }
+
+    #[test]
+    fn dns_strategy_config_is_optional() {
+        for (field, expected) in [
+            ("", None),
+            ("dns-strategy: null", None),
+            ("dns-strategy: prefer-ipv4", Some(DnsStrategy::PreferIpv4)),
+            ("dns-strategy: ipv6-only", Some(DnsStrategy::Ipv6Only)),
+        ] {
+            let cfg: DirectOutCfg =
+                serde_saphyr::from_str(&format!("tag: direct\n{field}")).unwrap();
+            assert_eq!(cfg.dns_strategy, expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn dns_strategy_uses_request_then_config_for_tcp_and_udp() {
+        use crate::{ProxyRequest, TcpSession, UserContext};
+        use tokio::time::{Duration, timeout};
+        use tokio::{net::TcpListener, net::UdpSocket, sync::mpsc};
+
+        assert_eq!(DirectOutCfg::default().dns_strategy, None);
+        assert_eq!(UserContext::default().dns_strategy, None);
+        for (config, request, ip) in [
+            (None, None, "127.0.0.1"),
+            (None, Some(DnsStrategy::Ipv6Only), "::1"),
+            (None, Some(DnsStrategy::PreferIpv6), "::1"),
+            (Some(DnsStrategy::Ipv6Only), None, "::1"),
+            (
+                Some(DnsStrategy::Ipv4Only),
+                Some(DnsStrategy::Ipv6Only),
+                "::1",
+            ),
+            (
+                Some(DnsStrategy::Ipv6Only),
+                Some(DnsStrategy::Ipv4Only),
+                "127.0.0.1",
+            ),
+        ] {
+            timeout(Duration::from_secs(5), async {
+                let ip: std::net::IpAddr = ip.parse().unwrap();
+                let direct = DirectOut {
+                    cfg: DirectOutCfg {
+                        dns_strategy: config,
+                        ..Default::default()
+                    },
+                    dns: Arc::new(DualStackDns),
+                };
+                let context = UserContext {
+                    dns_strategy: request,
+                    ..Default::default()
+                };
+                let listener = TcpListener::bind(SocketAddr::new(ip, 0)).await.unwrap();
+                let dst = SocksAddr::from_domain("strategy.test".into(), listener.local_addr().unwrap().port());
+                let (stream, peer) = tokio::io::duplex(64);
+                let (read, write) = tokio::io::split(stream);
+                drop(peer);
+                let tcp = direct.handle(ProxyRequest::Tcp(TcpSession {
+                    stream: Box::new(crate::squic::inbound::Unsplit { s: write, r: read }),
+                    dst,
+                    src_addr: None,
+                    user_context: context.clone(),
+                }));
+                let (result, ()) = tokio::join!(tcp, async {
+                    let (stream, _) = listener.accept().await.unwrap();
+                    drop(stream);
+                });
+                result.unwrap();
+
+                let receiver = UdpSocket::bind(SocketAddr::new(ip, 0)).await.unwrap();
+                let (packets, recv) = mpsc::channel(2);
+                let (send, mut replies) = mpsc::channel(2);
+                let dst = SocksAddr::from_domain("strategy.test".into(), receiver.local_addr().unwrap().port());
+                let session: UdpSession = UdpSession {
+                    recv: Box::new(recv),
+                    send: Arc::new(send),
+                    stream: None,
+                    bind_addr: "[::]:0".parse().unwrap(),
+                    dst: dst.clone(),
+                    src_addr: None,
+                    user_context: context,
+                };
+                let exchange = async {
+                    for _ in 0..2 {
+                        packets.send((bytes::Bytes::from_static(b"ping"), dst.clone())).await.unwrap();
+                        let mut buf = [0; 4];
+                        let (len, peer) = receiver.recv_from(&mut buf).await.unwrap();
+                        assert_eq!(&buf[..len], b"ping");
+                        receiver.send_to(b"pong", peer).await.unwrap();
+                        let (bytes, addr) = replies.recv().await.unwrap();
+                        assert_eq!(&bytes[..], b"pong");
+                        assert_eq!(addr, dst);
+                    }
+                };
+                tokio::select! {
+                    result = direct.handle(ProxyRequest::Udp(session)) => panic!("UDP outbound stopped: {result:?}"),
+                    () = exchange => {}
+                }
+            }).await.unwrap();
+        }
+    }
 
     #[tokio::test]
     async fn tcp_keep_alive_defaults_to_disabled_and_applies_to_connected_sockets() {

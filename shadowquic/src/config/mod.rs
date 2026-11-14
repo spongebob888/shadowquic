@@ -462,7 +462,7 @@ impl Config {
                     .dns()
                     .map(|tag| resolver_manager.resolver(tag).expect("validated DNS tag"));
                 let strategy = match &cfg {
-                    OutboundCfg::Direct(cfg) => cfg.dns_strategy.clone(),
+                    OutboundCfg::Direct(cfg) => cfg.dns_strategy.unwrap_or_default(),
                     _ => DnsStrategy::default(),
                 };
                 let inner: Arc<dyn Outbound> = cfg
@@ -1130,8 +1130,9 @@ pub struct DirectOutCfg {
     pub dns: Option<String>,
     /// Required label for this endpoint.
     pub tag: String,
+    /// Used when the request has no DNS strategy. When both are unset, prefer IPv4.
     #[serde(default)]
-    pub dns_strategy: DnsStrategy,
+    pub dns_strategy: Option<DnsStrategy>,
     /// Socket options like bind interface and fwmark
     #[serde(flatten)]
     pub socket_opt: SocketOpt,
@@ -1173,7 +1174,7 @@ impl Default for DirectOutCfg {
             #[cfg(feature = "dns-server")]
             dns: None,
             tag: String::new(),
-            dns_strategy: DnsStrategy::default(),
+            dns_strategy: None,
             socket_opt: SocketOpt::default(),
         }
     }
@@ -1193,7 +1194,7 @@ pub struct DropOutCfg {
 /// - `prefer-ipv6`: try to use ipv6 first, if no ipv6 address, use ipv4
 /// - `ipv4-only`: only use ipv4 address
 /// - `ipv6-only`: only use ipv6 address
-#[derive(Deserialize, Clone, Debug, Default)]
+#[derive(Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum DnsStrategy {
     /// try to use ipv4 first, if no ipv4 address, use ipv6
@@ -1590,7 +1591,7 @@ log-level: debug
         };
         assert!(matches!(
             outbound.dns_strategy,
-            super::DnsStrategy::Ipv6Only
+            Some(super::DnsStrategy::Ipv6Only)
         ));
     }
 

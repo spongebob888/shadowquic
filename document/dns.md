@@ -127,8 +127,22 @@ any port-53 hijacking rule, to avoid recursive DNS interception.
 `direct`, `socks`, `shadowquic`, and `sunnyquic` outbounds accept an optional
 `dns: <service-tag>`. This resolves **requested destination domains after
 routing**, including each UDP datagram, using that DNS service. It preserves
-ports and original UDP reply addresses. Direct outbounds retain their
-`dns-strategy`; proxy outbounds prefer IPv4. Omit `dns` to retain existing
+ports and original UDP reply addresses. Direct outbounds and proxy outbounds
+with `dns` first use `ctx.dns_strategy` set by the router script. When it is nil,
+direct outbounds use their configured `dns-strategy`. When neither is set,
+resolution falls back to `prefer-ipv4`. The request's strategy
+defaults to nil and applies to TCP and every datagram in a UDP session:
+
+```lua
+return function(ctx)
+    ctx.dns_strategy = "prefer-ipv6" -- or prefer-ipv4, ipv4-only, ipv6-only
+    return "direct"
+end
+```
+
+Set `ctx.dns_strategy = nil` to clear the request's preference. Direct
+outbounds also honor this preference when `dns` is omitted.
+Omit `dns` to retain existing
 resolution behavior (including remote destination resolution by proxy
 outbounds). This option does not change bootstrap resolution of a proxy
 server's own `addr`. Fake-IP services cannot be selected for outbound

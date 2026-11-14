@@ -50,7 +50,7 @@ impl Outbound for ResolvingOutbound {
     async fn handle(&self, req: ProxyRequest) -> Result<()> {
         let inner = self.inner.clone();
         let resolver = self.resolver.clone();
-        let strategy = self.strategy.clone();
+        let strategy = req.user_context().dns_strategy.unwrap_or(self.strategy);
         // The manager must remain free to route this resolver's upstream sessions.
 
         let req = match req {
