@@ -8,7 +8,11 @@ use crate::{
     ProxyRequest, StatsContext, TcpSession, TcpTrait, UserContext,
     error::SError,
     msgs::socks5::{AddrOrDomain, SocksAddr},
-    utils::{dual_socket::to_ipv4_mapped, log::REQ_ID, replay_stream::ReplayStream},
+    utils::{
+        dual_socket::to_ipv4_mapped,
+        log::{REQ_ID, fetch_add_req_cnt},
+        replay_stream::ReplayStream,
+    },
 };
 
 #[derive(Clone, Debug)]
@@ -78,7 +82,7 @@ impl HttpProxyServer {
                 username,
                 ..Default::default()
             }),
-            req_id: REQ_ID.with(|id| *id),
+            req_id: REQ_ID.try_with(|id| *id).unwrap_or(fetch_add_req_cnt()),
             ..Default::default()
         };
 

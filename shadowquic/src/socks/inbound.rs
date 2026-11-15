@@ -60,7 +60,7 @@ impl SocksServer {
                 username,
                 ..Default::default()
             }),
-            req_id: REQ_ID.with(|id| *id), // called by handle_connection, so REQ_ID is set
+            req_id: REQ_ID.try_with(|id| *id).unwrap_or(fetch_add_req_cnt()), // called by handle_connection, so REQ_ID is set
             ..Default::default()
         };
         match req.cmd {
@@ -239,7 +239,7 @@ async fn handle_tcp(
             username,
             ..Default::default()
         }),
-        req_id: REQ_ID.with(|id| *id),
+        req_id: REQ_ID.try_with(|id| *id).unwrap_or(fetch_add_req_cnt()),
         ..Default::default()
     };
     let req = match req.cmd {

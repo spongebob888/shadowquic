@@ -103,7 +103,9 @@ impl<C: QuicConnection> SQServerConn<C> {
         }
 
         let req = SQReq::decode_with_tag(cmd, &mut recv).await?;
-        let (req_id, inbound_span) = TRACE_CTX.with(|ctx| (ctx.req_id, ctx.inbound_span.clone()));
+        let (req_id, inbound_span) = TRACE_CTX
+            .try_with(|ctx| (ctx.req_id, ctx.inbound_span.clone()))
+            .unwrap_or((fetch_add_req_cnt(), tracing::Span::current()));
         // let rate: f32 = (self.0.conn.stats().path.lost_packets as f32)
         //     / ((self.0.conn.stats().path.sent_packets + 1) as f32);
         // info!(
