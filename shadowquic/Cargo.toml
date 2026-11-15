@@ -44,9 +44,11 @@ aws-lc-rs = [
     "quinn?/rustls-aws-lc-rs",
     "quinn_proto?/rustls-aws-lc-rs",
     "rustls_jls?/aws_lc_rs",
+    "rustls_jls?/prefer-post-quantum",
     "noq?/rustls-aws-lc-rs",
     "noq-proto?/rustls-aws-lc-rs",
     "rustls?/aws-lc-rs",
+    "rustls?/prefer-post-quantum",
     "rcgen/aws_lc_rs",
 ]
 tokio-console = ["dep:console-subscriber","tokio/tracing"]
