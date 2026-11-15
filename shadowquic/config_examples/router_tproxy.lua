@@ -21,7 +21,7 @@ return function(ctx)
     if #ctx.dns_query > 0 and ctx.dns_query[1].name:sub(-4) == ".lan" then
       return "lan-dns"
     end
-    if #ctx.dns_query > 0 and find_domain("geosite-db", "geolocation-cn", ctx.dns_query[1].name) then
+    if #ctx.dns_query > 0 and find_domain("geosite-db", "cn", ctx.dns_query[1].name) then
       return "tls-dns"
     end
     return "fake-dns"
@@ -39,7 +39,7 @@ return function(ctx)
 
   -- CN domain names.
   if ctx.dst_domain then
-    local ok, cn = pcall(find_domain, "geosite-db", "geolocation-cn", ctx.dst_domain)
+    local ok, cn = pcall(find_domain, "geosite-db", "cn", ctx.dst_domain)
     if ok and cn then return "direct" end
   end
 
