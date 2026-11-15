@@ -972,16 +972,15 @@ async fn inspection_outcomes_are_logged_and_preserve_tcp_input() {
         .with_ansi(false)
         .with_writer(move || writer.clone())
         .finish();
+    // Keep two dispatchers alive so parallel callsite registration uses the
+    // subscriber registry rather than another thread's empty default.
+    let _empty_dispatch = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
     // Keep the capture active when a timed-out inspection is polled again.
     let dispatch = tracing::Dispatch::new(subscriber);
     let mut cfg = config();
     cfg.max_bytes = 256;
     let sniffer = Sniffer::new(cfg).unwrap();
-    for wire in [
-        b"not HTTP\r\n".as_slice(),
-        &[22, 4],
-        b"GET / HTTP/1.1\r\n\r\n",
-    ] {
+    for wire in [b"not HTTP\r\n".as_slice(), &[22, 4]] {
         captured.lock().unwrap().clear();
         let (mut client, req) = request(443);
         client.write_all(wire).await.unwrap();
@@ -998,11 +997,18 @@ async fn inspection_outcomes_are_logged_and_preserve_tcp_input() {
         assert!(!log.contains("WARN"), "{log}");
         assert!(!log.contains("sniffer:failed"), "{log}");
     }
-    for wire in [
-        b"GET / HTTP/1.1\r\nHost: example.com:bad\r\n\r\n".as_slice(),
-        &[22, 3, 3, 0, 0],
-        &[22, 3, 3],
-        b"GET / HTTP/1.1\r\nHost: example.com",
+    for (wire, expected) in [
+        (
+            b"GET / HTTP/1.1\r\nHost: example.com:bad\r\n\r\n".as_slice(),
+            "invalid http protocol",
+        ),
+        (&[22, 3, 3, 0, 0], "invalid tls protocol"),
+        (&[22, 3, 3], "invalid tls protocol"),
+        (
+            b"GET / HTTP/1.1\r\nHost: example.com",
+            "invalid http protocol",
+        ),
+        (b"GET / HTTP/1.1\r\n\r\n", "no usable hostname found"),
     ] {
         captured.lock().unwrap().clear();
         let (mut client, req) = request(443);
@@ -1016,7 +1022,7 @@ async fn inspection_outcomes_are_logged_and_preserve_tcp_input() {
         assert!(req.user_context().sniffer.is_none());
         replay(req, wire).await;
         let log = String::from_utf8(captured.lock().unwrap().clone()).unwrap();
-        assert!(log.contains("invalid "), "{log}");
+        assert!(log.contains(expected), "{log}");
         assert!(log.contains("sniffer:failed"), "{log}");
         assert!(log.contains("WARN"), "{log}");
         assert!(!log.contains("sniffer:no_match"), "{log}");
