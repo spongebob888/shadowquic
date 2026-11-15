@@ -287,7 +287,7 @@ impl RouterCfg {
                 router.sniffer = self
                     .sniffer
                     .clone()
-                    .map(crate::utils::sniffer::Sniffer::new)
+                    .map(crate::plugin::sniffer::Sniffer::new)
                     .transpose()?
                     .map(Arc::new);
                 Ok::<_, SError>(router)

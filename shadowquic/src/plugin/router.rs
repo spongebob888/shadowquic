@@ -31,7 +31,7 @@ pub enum NetworkType {
 #[derive(Clone)]
 pub struct RouteContext {
     #[cfg(feature = "sniffer")]
-    pub sniffer: Option<crate::utils::sniffer::SniffResult>,
+    pub sniffer: Option<crate::plugin::sniffer::SniffResult>,
     /// Destination domain. Scripts may update these for TCP requests only.
     /// Setting one of these clears the others.
     pub dst_domain: Option<String>,
@@ -276,7 +276,7 @@ impl RouteContext {
 /// RouteContext table and returns an outbound tag or nil plus an error message.
 pub struct Router {
     #[cfg(feature = "sniffer")]
-    pub(crate) sniffer: Option<Arc<crate::utils::sniffer::Sniffer>>,
+    pub(crate) sniffer: Option<Arc<crate::plugin::sniffer::Sniffer>>,
     // Dropping the router stops watching the directory. The callback holds only
     // a weak reference to the runtime so it cannot keep the router alive.
     _watcher: Option<notify::RecommendedWatcher>,

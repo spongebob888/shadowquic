@@ -18,5 +18,3 @@ pub(crate) mod tls;
 pub mod protect_socket;
 
 pub mod replay_stream;
-#[cfg(feature = "sniffer")]
-pub mod sniffer;

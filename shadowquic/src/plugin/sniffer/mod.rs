@@ -5,7 +5,7 @@ mod quic;
 mod tests;
 mod tls;
 
-use super::replay_stream::ReplayStream;
+use crate::utils::replay_stream::ReplayStream;
 use crate::{
     AnyTcp, AnyUdpRecv, ProxyRequest, UdpRecv,
     config::{SniffProtocol, SnifferCfg, SnifferRule},

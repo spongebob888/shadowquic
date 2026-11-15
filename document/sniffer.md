@@ -101,7 +101,7 @@ replay: the TCP prefix, or the buffered datagrams. Those stay charged until repl
 or dropped, including while waiting for an outbound. Budgets cover inspection buffers, excluding allocator
 overhead and existing transport buffers.
 
-Enable `RUST_LOG=shadowquic::utils::sniffer=debug` to log each admitted inspection's
+Enable `RUST_LOG=shadowquic::plugin::sniffer=debug` to log each admitted inspection's
 result and `elapsed` duration (with units), including waiting for input. Successful
 hostname extraction logs the domain, protocol, and version. Nonmatching preludes
 and valid messages without a usable hostname log `sniffer:no_match` at debug level.

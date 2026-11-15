@@ -56,7 +56,7 @@ struct ConnectionsSnapshot<'a> {
 #[derive(Serialize)]
 struct ConnectionSnapshot<'a> {
     #[cfg(feature = "sniffer")]
-    sniffer: Option<crate::utils::sniffer::SniffResult>,
+    sniffer: Option<crate::plugin::sniffer::SniffResult>,
     #[cfg(not(feature = "sniffer"))]
     sniffer: Option<()>,
     id: String,

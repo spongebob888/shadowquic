@@ -290,7 +290,7 @@ impl TrackedSendStats {
 
 pub struct TrackedRecvStats {
     #[cfg(all(feature = "restful-api", feature = "sniffer"))]
-    pub sniffer: Option<crate::utils::sniffer::SniffResult>,
+    pub sniffer: Option<crate::plugin::sniffer::SniffResult>,
 
     conns: Arc<AtomicU64>,
     pub bytes_recv: AtomicU64,
@@ -306,7 +306,7 @@ impl TrackedRecvStats {
         conns: Arc<AtomicU64>,
         id: u32,
         #[cfg(all(feature = "restful-api", feature = "sniffer"))] sniffer: Option<
-            crate::utils::sniffer::SniffResult,
+            crate::plugin::sniffer::SniffResult,
         >,
     ) -> Self {
         conns.fetch_add(1, Ordering::Relaxed);
@@ -346,7 +346,7 @@ impl TrackedTcp {
         outbound: String,
         id: u32,
         #[cfg(all(feature = "restful-api", feature = "sniffer"))] sniffer: Option<
-            crate::utils::sniffer::SniffResult,
+            crate::plugin::sniffer::SniffResult,
         >,
     ) -> Self {
         let (global_bytes_recv, global_bytes_sent, tcp_conns) = stats.tcp_counters();

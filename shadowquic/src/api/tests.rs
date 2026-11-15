@@ -1548,7 +1548,7 @@ async fn connections_sniffer_metadata_follows_receive_half_lifetime() {
         #[cfg(feature = "dns-server")]
         None,
     );
-    let metadata = crate::utils::sniffer::SniffResult {
+    let metadata = crate::plugin::sniffer::SniffResult {
         domain: "sniffed.example".into(),
         protocol: crate::config::SniffProtocol::Tls,
         version: "1.3",
@@ -1588,7 +1588,7 @@ async fn connections_sniffer_metadata_follows_receive_half_lifetime() {
             dst,
             src_addr: None,
             user_context: crate::UserContext {
-                sniffer: Some(crate::utils::sniffer::SniffResult {
+                sniffer: Some(crate::plugin::sniffer::SniffResult {
                     protocol: crate::config::SniffProtocol::Quic,
                     version: "1",
                     ..metadata.clone()

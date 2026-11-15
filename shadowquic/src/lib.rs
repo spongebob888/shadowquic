@@ -251,7 +251,7 @@ pub struct DnsQuery {
 #[derive(Clone)]
 pub struct UserContext {
     #[cfg(feature = "sniffer")]
-    pub sniffer: Option<utils::sniffer::SniffResult>,
+    pub sniffer: Option<plugin::sniffer::SniffResult>,
     pub inbound_tag: String,
     pub observer: Weak<Observer>,
     /// Outbound preference stamped by the accepting inbound on every request.
