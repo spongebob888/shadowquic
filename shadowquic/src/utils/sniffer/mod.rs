@@ -39,6 +39,29 @@ impl mlua::UserData for SniffResult {
     }
 }
 
+/// A protocol parser's reason for finishing without hostname metadata.
+#[derive(Debug, thiserror::Error)]
+pub enum ProtocolError {
+    #[error("protocol prelude did not match")]
+    NoMatch,
+    #[error("no usable hostname found")]
+    NoHostname,
+    #[error("invalid {protocol} protocol: {reason}")]
+    Invalid {
+        protocol: SniffProtocol,
+        reason: &'static str,
+    },
+}
+
+impl ProtocolError {
+    fn with_protocol(self, protocol: SniffProtocol) -> Self {
+        match self {
+            Self::Invalid { reason, .. } => Self::Invalid { protocol, reason },
+            other => other,
+        }
+    }
+}
+
 /// A best-effort inspection failure. Logged without changing routing metadata.
 #[derive(Debug, thiserror::Error)]
 pub enum SnifferError {
@@ -53,14 +76,15 @@ pub enum SnifferError {
 }
 
 /// Incremental parser state shared by all protocol parsers.
+#[derive(Debug)]
 pub(super) enum ParseState {
     NeedMore,
     Error(SnifferError),
-    Done(Option<SniffResult>),
+    Done(Result<SniffResult, ProtocolError>),
 }
 
 /// Result of an admitted inspection; I/O errors are reported separately.
-type Outcome = Result<Option<SniffResult>, SnifferError>;
+type Outcome = Result<Result<SniffResult, ProtocolError>, SnifferError>;
 
 /// Datagrams collected for one UDP inspection.
 const MAX_DATAGRAMS: usize = 5;
@@ -109,6 +133,13 @@ enum TcpParser {
     Http(http::Parser),
 }
 impl TcpParser {
+    fn matched_protocol(&self) -> Option<SniffProtocol> {
+        match self {
+            Self::Tls(parser) if parser.matched() => Some(SniffProtocol::Tls),
+            Self::Http(parser) if parser.matched() => Some(SniffProtocol::Http),
+            _ => None,
+        }
+    }
     fn select(first: u8, protocols: Protocols) -> Option<Self> {
         if first == 22 && protocols.tls {
             Some(Self::Tls(tls::Parser::default()))
@@ -214,12 +245,16 @@ impl Sniffer {
         };
         let elapsed = started.elapsed();
         match outcome {
-            Ok(Ok(Some(sniff))) => {
+            Ok(Ok(Ok(sniff))) => {
                 tracing::debug!(event = "sniffer:completed", domain = %sniff.domain, protocol = %sniff.protocol, version = sniff.version, ?elapsed, "sniff completed");
                 request.user_context_mut().sniffer = Some(sniff);
             }
-            Ok(Ok(None)) => {
+            Ok(Ok(Err(ProtocolError::NoMatch))) => {
                 tracing::debug!(event = "sniffer:no_match", ?elapsed, "sniffed nothing");
+            }
+
+            Ok(Ok(Err(error))) => {
+                tracing::warn!(event = "sniffer:failed", %error, ?elapsed, "inspection failed; continuing without hostname");
             }
             Ok(Err(error)) => {
                 tracing::debug!(event = "sniffer:failed", %error, ?elapsed, "inspection failed; continuing without hostname");
@@ -249,7 +284,7 @@ impl Sniffer {
                         Some(parser) => parser,
                         None => match TcpParser::select(first, protocols) {
                             Some(selected) => parser.insert(selected),
-                            None => return Ok(Ok(None)),
+                            None => return Ok(Ok(Err(ProtocolError::NoMatch))),
                         },
                     };
                     match parser.parse(prefix, limit) {
@@ -266,7 +301,13 @@ impl Sniffer {
                 let chunk = remaining.min(prefix.len().max(INITIAL_READ));
                 prefix.reserve_exact(chunk);
                 if (&mut *stream).take(chunk as u64).read_buf(prefix).await? == 0 {
-                    return Ok(Ok(None));
+                    if let Some(protocol) = parser.as_ref().and_then(TcpParser::matched_protocol) {
+                        return Ok(Ok(Err(ProtocolError::Invalid {
+                            protocol,
+                            reason: "unexpected end of stream",
+                        })));
+                    }
+                    return Ok(Ok(Err(ProtocolError::NoMatch)));
                 }
             }
         };
@@ -292,7 +333,7 @@ impl Sniffer {
             let same_destination = buffered.front().is_none_or(|first| first.1 == packet.1);
             buffered.push_back(packet);
             if !same_destination {
-                return Ok(Ok(None));
+                return Ok(Ok(Err(ProtocolError::NoMatch)));
             }
             let packet = &buffered.back().expect("just buffered").0;
             match parser.parse(packet, self.config.max_bytes, suite) {

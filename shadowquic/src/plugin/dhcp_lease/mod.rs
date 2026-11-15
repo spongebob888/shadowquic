@@ -15,7 +15,7 @@ use std::{
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tracing::{debug, warn};
+use tracing::warn;
 
 use crate::{config::DhcpLeaseCfg, error::SError};
 use parse::{Snapshot, parse};

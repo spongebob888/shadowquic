@@ -43,7 +43,7 @@ pub(crate) fn records(handshake: &[u8], chunk: usize) -> Vec<u8> {
 
 fn found(wire: &[u8]) -> Option<String> {
     match Parser::default().parse(wire, 32768) {
-        ParseState::Done(name) => name.map(|r| r.domain),
+        ParseState::Done(name) => name.ok().map(|r| r.domain),
         ParseState::Error(_) => None,
         ParseState::NeedMore => panic!("expected complete result"),
     }
@@ -56,10 +56,13 @@ fn every_read_boundary_and_record_fragmentation_preserves_sni() {
         let wire = records(&handshake, chunk);
         let mut parser = Parser::default();
         for end in 0..wire.len() {
-            assert!(matches!(parser.parse(&wire[..end], 32768), ParseState::NeedMore));
+            assert!(matches!(
+                parser.parse(&wire[..end], 32768),
+                ParseState::NeedMore
+            ));
         }
         assert!(
-            matches!(parser.parse(&wire, 32768), ParseState::Done(Some(name)) if name.domain == "api.example.com")
+            matches!(parser.parse(&wire, 32768), ParseState::Done(Ok(name)) if name.domain == "api.example.com")
         );
     }
     // Every possible two-record split, including inside the handshake header.
@@ -84,15 +87,19 @@ fn malformed_lengths_names_and_non_tls_are_not_used_for_routing() {
     ] {
         assert_eq!(found(&records(&hello(name), 16384)), None);
     }
-    for wire in [
-        b"GET /".as_slice(),
-        &[22, 4],
-        &[22, 3, 3, 0, 0],
-        &[22, 3, 3, 0x40, 1],
-    ] {
+    for wire in [b"GET /".as_slice(), &[22, 4]] {
         assert!(matches!(
             Parser::default().parse(wire, 32768),
-            ParseState::Done(None)
+            ParseState::Done(Err(ProtocolError::NoMatch))
+        ));
+    }
+    for wire in [&[22, 3, 3, 0, 0], &[22, 3, 3, 0x40, 1]] {
+        assert!(matches!(
+            Parser::default().parse(wire, 32768),
+            ParseState::Done(Err(ProtocolError::Invalid {
+                protocol: SniffProtocol::Tls,
+                ..
+            }))
         ));
     }
     let mut handshake = hello(b"valid.example");
@@ -285,16 +292,113 @@ fn http_rejects_ambiguous_hosts_and_handles_fragmentation() {
         b"GET / HTTP/1.1\r\nHost: a.example\r\nHost: b.example\r\n\r\n".as_slice(),
         b"GET / HTTP/1.1\r\nHost: example.com:bad\r\n\r\n",
         b"GET / HTTP/1.1\r\n Host: example.com\r\n\r\n",
-        b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+        b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nHost: b.example\r\n\r\n",
+        b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nbroken header\r\n\r\n",
+        b"GET / HTTP/1.1\r\nHost: [::1]:bad\r\n\r\n",
+    ] {
+        assert!(matches!(
+            http::parse(wire),
+            ParseState::Done(Err(ProtocolError::Invalid {
+                protocol: SniffProtocol::Http,
+                ..
+            }))
+        ));
+    }
+    assert!(matches!(
+        http::parse(b"not HTTP\r\n"),
+        ParseState::Done(Err(ProtocolError::NoMatch))
+    ));
+    for wire in [
+        b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".as_slice(),
+        b"GET / HTTP/1.1\r\nHost: [::1]\r\n\r\n",
+        b"GET / HTTP/1.1\r\nHost: [::1]:443\r\n\r\n",
         b"GET / HTTP/1.1\r\n\r\n",
     ] {
-        assert!(matches!(http::parse(wire), ParseState::Done(None)));
+        assert!(matches!(
+            http::parse(wire),
+            ParseState::Done(Err(ProtocolError::NoHostname))
+        ));
     }
     let wire = b"GET http://other.example/ HTTP/1.1\r\nhOsT: Example.COM\r\n\r\n";
     for n in 0..wire.len() {
         assert!(matches!(http::parse(&wire[..n]), ParseState::NeedMore));
     }
-    assert!(matches!(http::parse(wire), ParseState::Done(Some(r)) if r.domain == "example.com"));
+    assert!(matches!(http::parse(wire), ParseState::Done(Ok(r)) if r.domain == "example.com"));
+}
+
+#[test]
+fn recognized_preludes_report_malformed_messages_as_errors() {
+    let mut http = http::Parser::default();
+    let prelude = b"GET / HTTP/1.1\r\n";
+    assert!(matches!(http.parse(prelude), ParseState::NeedMore));
+    assert!(matches!(
+        http.parse(&[prelude.as_slice(), b"broken header\r\n\r\n"].concat()),
+        ParseState::Done(Err(ProtocolError::Invalid {
+            protocol: SniffProtocol::Http,
+            ..
+        }))
+    ));
+
+    let handshake = hello(b"valid.example");
+    let mut wire = records(&handshake[..10], 10);
+    let mut tls = tls::Parser::default();
+    assert!(matches!(tls.parse(&wire, 32768), ParseState::NeedMore));
+    wire.extend_from_slice(&[23, 3, 3]);
+    assert!(matches!(
+        tls.parse(&wire, 32768),
+        ParseState::Done(Err(ProtocolError::Invalid {
+            protocol: SniffProtocol::Tls,
+            ..
+        }))
+    ));
+    let mut malformed = handshake.clone();
+    malformed[45..47].copy_from_slice(&u16::MAX.to_be_bytes());
+    assert!(matches!(
+        tls::Parser::default().parse(&records(&malformed, 16384), 32768),
+        ParseState::Done(Err(ProtocolError::Invalid {
+            protocol: SniffProtocol::Tls,
+            ..
+        }))
+    ));
+
+    let suite = quic::suite().unwrap();
+    let mut no_sni = handshake.clone();
+    no_sni.truncate(45);
+    no_sni[3] = 41;
+    assert!(matches!(
+        tls::Parser::default().parse(&records(&no_sni, 16384), 32768),
+        ParseState::Done(Err(ProtocolError::NoHostname))
+    ));
+    for version in [rustls_jls::quic::Version::V1, rustls_jls::quic::Version::V2] {
+        let mut truncated = initial(version, &crypto_frame(0, &handshake), 0);
+        truncated.truncate(20);
+        let mut wrong_handshake = handshake.clone();
+        wrong_handshake[0] = 2;
+        for packet in [
+            initial(version, &crypto_frame(0, &malformed), 0),
+            initial(version, &crypto_frame(0, &wrong_handshake), 0),
+            initial(version, &[0x3f], 0), // Illegal frame type in an Initial.
+            truncated,
+        ] {
+            assert!(matches!(
+                quic::Parser::default().parse(&packet, 32768, &suite),
+                ParseState::Done(Err(ProtocolError::Invalid {
+                    protocol: SniffProtocol::Quic,
+                    ..
+                }))
+            ));
+        }
+        let packet = initial(version, &crypto_frame(0, &no_sni), 0);
+        assert!(matches!(
+            quic::Parser::default().parse(&packet, 32768, &suite),
+            ParseState::Done(Err(ProtocolError::NoHostname))
+        ));
+        let close = initial(version, &[0x1c, 0, 0, 0], 0);
+        assert!(matches!(
+            quic::Parser::default().parse(&close, 32768, &suite),
+            ParseState::Done(Err(ProtocolError::NoHostname))
+        ));
+    }
 }
 
 fn varint(value: usize) -> Vec<u8> {
@@ -366,18 +470,18 @@ fn quic_v1_v2_authentication_reassembly_and_first_datagram_limit() {
             }
         );
         for end in 0..packet.len() {
-            assert!(quic::parse(&packet[..end], 32768, &suite).is_none());
+            assert!(quic::parse(&packet[..end], 32768, &suite).is_err());
         }
         let mut bad = packet.clone();
         *bad.last_mut().unwrap() ^= 1;
-        assert!(quic::parse(&bad, 32768, &suite).is_none());
+        assert!(quic::parse(&bad, 32768, &suite).is_err());
         let part = initial(v, &crypto_frame(0, &hello[..split]), 0);
-        assert!(quic::parse(&part, 32768, &suite).is_none());
+        assert!(quic::parse(&part, 32768, &suite).is_err());
         let mut coalesced = part;
         coalesced.extend(initial(v, &crypto_frame(split, &hello[split..]), 1));
-        assert!(quic::parse(&coalesced, 32768, &suite).is_some());
+        assert!(quic::parse(&coalesced, 32768, &suite).is_ok());
     }
-    assert!(quic::parse(b"not QUIC", 32768, &suite).is_none());
+    assert!(quic::parse(b"not QUIC", 32768, &suite).is_err());
 }
 
 #[test]
@@ -396,7 +500,7 @@ fn quic_reassembles_client_hello_with_trailing_datagram_padding() {
             if i < 2 {
                 assert!(matches!(result, ParseState::NeedMore));
             } else {
-                let ParseState::Done(Some(result)) = result else {
+                let ParseState::Done(Ok(result)) = result else {
                     panic!("padded Initials should yield a complete ClientHello");
                 };
                 assert_eq!(result.domain, "accounts.google.com");
@@ -419,28 +523,35 @@ fn quic_trailing_padding_requires_authenticated_initial_and_respects_byte_limit(
             parser.parse(&padded, padded.len(), &suite),
             ParseState::NeedMore
         ));
-        // A separate all-zero datagram is still non-QUIC, even after an Initial.
+        // Once an Initial matched, invalid follow-up datagrams are errors.
         assert!(matches!(
             parser.parse(&[0; 299], 32768, &suite),
-            ParseState::Done(None)
+            ParseState::Done(Err(ProtocolError::Invalid {
+                protocol: SniffProtocol::Quic,
+                ..
+            }))
         ));
         assert!(matches!(
             quic::Parser::default().parse(&padded, padded.len() - 1, &suite),
             ParseState::Error(SnifferError::Limit)
         ));
-        for invalid in [
-            vec![0; 299],
-            [vec![0], partial.clone()].concat(),
-            [padded.clone(), vec![1]].concat(),
-            {
-                let mut corrupted = padded;
-                corrupted[partial.len() - 1] ^= 1;
-                corrupted
-            },
-        ] {
+        for invalid in [vec![0; 299], [vec![0], partial.clone()].concat()] {
             assert!(matches!(
                 quic::Parser::default().parse(&invalid, 32768, &suite),
-                ParseState::Done(None)
+                ParseState::Done(Err(ProtocolError::NoMatch))
+            ));
+        }
+        for invalid in [[padded.clone(), vec![1]].concat(), {
+            let mut corrupted = padded;
+            corrupted[partial.len() - 1] ^= 1;
+            corrupted
+        }] {
+            assert!(matches!(
+                quic::Parser::default().parse(&invalid, 32768, &suite),
+                ParseState::Done(Err(ProtocolError::Invalid {
+                    protocol: SniffProtocol::Quic,
+                    ..
+                }))
             ));
         }
     }
@@ -618,7 +729,7 @@ fn actual_tls13_client_hello_reports_advertised_version() {
             .unwrap();
     let mut wire = Vec::new();
     conn.write_tls(&mut wire).unwrap();
-    let ParseState::Done(Some(result)) = Parser::default().parse(&wire, 32768) else {
+    let ParseState::Done(Ok(result)) = Parser::default().parse(&wire, 32768) else {
         panic!("missing ClientHello")
     };
     assert_eq!(result.version, "1.3");
@@ -654,13 +765,13 @@ fn incremental_http_scan_handles_every_read_boundary() {
     for split in 0..wire.len() {
         let mut parser = http::Parser::default();
         assert!(matches!(parser.parse(&wire[..split]), ParseState::NeedMore));
-        assert!(matches!(parser.parse(wire),ParseState::Done(Some(r)) if r.domain == "example.com"));
+        assert!(matches!(parser.parse(wire),ParseState::Done(Ok(r)) if r.domain == "example.com"));
     }
     let mut parser = http::Parser::default();
     for end in 0..wire.len() {
         assert!(matches!(parser.parse(&wire[..end]), ParseState::NeedMore));
     }
-    assert!(matches!(parser.parse(wire), ParseState::Done(Some(_))));
+    assert!(matches!(parser.parse(wire), ParseState::Done(Ok(_))));
 }
 
 #[tokio::test(start_paused = true)]
@@ -823,10 +934,9 @@ fn supported_versions_override_legacy_version() {
         (vec![0x0301], Some("1.0")),
         (vec![0x0302, 0x1a1a, 0x0304, 0x0303], Some("1.3")),
         (vec![0x1a1a], None),
-        (vec![], None),
     ] {
         let handshake = with_versions(&versions, false);
-        let result = tls::client_hello(&handshake[4..]);
+        let result = tls::client_hello(&handshake[4..]).ok();
         assert_eq!(result.as_ref().map(|r| r.version), expected);
     }
     assert_eq!(
@@ -835,11 +945,14 @@ fn supported_versions_override_legacy_version() {
             .version,
         "1.2"
     );
-    assert!(tls::client_hello(&with_versions(&[0x0304], true)[4..]).is_none());
+    assert!(tls::client_hello(&with_versions(&[0x0304], true)[4..]).is_err());
+    assert!(tls::client_hello(&with_versions(&[], false)[4..]).is_err());
 }
 
 #[tokio::test(start_paused = true)]
-async fn inspection_errors_are_logged_and_preserve_tcp_input() {
+async fn inspection_outcomes_are_logged_and_preserve_tcp_input() {
+    use tracing::instrument::WithSubscriber;
+
     #[derive(Clone)]
     struct Capture(Arc<std::sync::Mutex<Vec<u8>>>);
     impl std::io::Write for Capture {
@@ -859,10 +972,101 @@ async fn inspection_errors_are_logged_and_preserve_tcp_input() {
         .with_ansi(false)
         .with_writer(move || writer.clone())
         .finish();
-    let _guard = tracing::subscriber::set_default(subscriber);
+    // Keep the capture active when a timed-out inspection is polled again.
+    let dispatch = tracing::Dispatch::new(subscriber);
     let mut cfg = config();
     cfg.max_bytes = 256;
     let sniffer = Sniffer::new(cfg).unwrap();
+    for wire in [
+        b"not HTTP\r\n".as_slice(),
+        &[22, 4],
+        b"GET / HTTP/1.1\r\n\r\n",
+    ] {
+        captured.lock().unwrap().clear();
+        let (mut client, req) = request(443);
+        client.write_all(wire).await.unwrap();
+        let req = sniffer
+            .sniff(req)
+            .with_subscriber(dispatch.clone())
+            .await
+            .unwrap();
+        assert!(req.user_context().sniffer.is_none());
+        replay(req, wire).await;
+        let log = String::from_utf8(captured.lock().unwrap().clone()).unwrap();
+        assert!(log.contains("sniffer:no_match"), "{log}");
+        assert!(log.contains("DEBUG"), "{log}");
+        assert!(!log.contains("WARN"), "{log}");
+        assert!(!log.contains("sniffer:failed"), "{log}");
+    }
+    for wire in [
+        b"GET / HTTP/1.1\r\nHost: example.com:bad\r\n\r\n".as_slice(),
+        &[22, 3, 3, 0, 0],
+        &[22, 3, 3],
+        b"GET / HTTP/1.1\r\nHost: example.com",
+    ] {
+        captured.lock().unwrap().clear();
+        let (mut client, req) = request(443);
+        client.write_all(wire).await.unwrap();
+        client.shutdown().await.unwrap();
+        let req = sniffer
+            .sniff(req)
+            .with_subscriber(dispatch.clone())
+            .await
+            .unwrap();
+        assert!(req.user_context().sniffer.is_none());
+        replay(req, wire).await;
+        let log = String::from_utf8(captured.lock().unwrap().clone()).unwrap();
+        assert!(log.contains("invalid "), "{log}");
+        assert!(log.contains("sniffer:failed"), "{log}");
+        assert!(log.contains("WARN"), "{log}");
+        assert!(!log.contains("sniffer:no_match"), "{log}");
+    }
+    // QUIC errors also warn and replay the original datagram.
+    let udp_sniffer = Sniffer::new(config()).unwrap();
+    for malformed in [false, true] {
+        captured.lock().unwrap().clear();
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let dst: SocksAddr = "192.0.2.1:443"
+            .parse::<std::net::SocketAddr>()
+            .unwrap()
+            .into();
+        let wire = if malformed {
+            initial(rustls_jls::quic::Version::V1, &[0x3f], 0)
+        } else {
+            b"not QUIC".to_vec()
+        };
+        let packet = (bytes::Bytes::from(wire), dst.clone());
+        tx.send(packet.clone()).await.unwrap();
+        let req: ProxyRequest = ProxyRequest::Udp(crate::UdpSession {
+            recv: Box::new(rx),
+            send: Arc::new(tx),
+            stream: None,
+            bind_addr: dst.clone(),
+            dst,
+            src_addr: None,
+            user_context: Default::default(),
+        });
+        let req = udp_sniffer
+            .sniff(req)
+            .with_subscriber(dispatch.clone())
+            .await
+            .unwrap();
+        assert!(req.user_context().sniffer.is_none());
+        let ProxyRequest::Udp(mut session) = req else {
+            panic!()
+        };
+        assert_eq!(session.recv.recv_from().await.unwrap(), packet);
+        let log = String::from_utf8(captured.lock().unwrap().clone()).unwrap();
+        if malformed {
+            assert!(log.contains("invalid quic protocol"), "{log}");
+            assert!(log.contains("sniffer:failed"), "{log}");
+            assert!(log.contains("WARN"), "{log}");
+            assert!(!log.contains("sniffer:no_match"), "{log}");
+        } else {
+            assert!(log.contains("sniffer:no_match"), "{log}");
+            assert!(!log.contains("WARN"), "{log}");
+        }
+    }
     for (wire, expected) in [
         (vec![22, 3, 1], SnifferError::Timeout),
         (vec![b'A'; 300], SnifferError::Limit),
@@ -871,7 +1075,11 @@ async fn inspection_errors_are_logged_and_preserve_tcp_input() {
         captured.lock().unwrap().clear();
         let (mut client, req) = request(443);
         client.write_all(&wire).await.unwrap();
-        let req = sniffer.sniff(req).await.unwrap();
+        let req = sniffer
+            .sniff(req)
+            .with_subscriber(dispatch.clone())
+            .await
+            .unwrap();
         assert!(req.user_context().sniffer.is_none());
         replay(req, &wire).await;
         let log = String::from_utf8(captured.lock().unwrap().clone()).unwrap();
@@ -895,7 +1103,11 @@ async fn inspection_errors_are_logged_and_preserve_tcp_input() {
         let (mut client, req) = request(80);
         let wire = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
         client.write_all(wire).await.unwrap();
-        let req = sniffer.sniff(req).await.unwrap();
+        let req = sniffer
+            .sniff(req)
+            .with_subscriber(dispatch.clone())
+            .await
+            .unwrap();
         assert!(req.user_context().sniffer.is_none());
         replay(req, wire).await;
         let log = String::from_utf8(captured.lock().unwrap().clone()).unwrap();

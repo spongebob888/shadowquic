@@ -103,12 +103,18 @@ overhead and existing transport buffers.
 
 Enable `RUST_LOG=shadowquic::utils::sniffer=debug` to log each admitted inspection's
 result and `elapsed` duration (with units), including waiting for input. Successful
-hostname extraction logs the domain, protocol, and version; unsuccessful
-inspection without a match logs `sniffer:no_match`. Timeouts and inspection
-limits log a `SnifferError` under `sniffer:failed`; exhausted concurrency or memory
-budgets log the corresponding `SnifferError` under `sniffer:skipped`. These are
-debug logs and preserve the existing fallback with no hostname metadata. I/O
-failures remain warnings and close the request. Port-rule skips do not log.
+hostname extraction logs the domain, protocol, and version. Nonmatching preludes
+and valid messages without a usable hostname log `sniffer:no_match` at debug level.
+After recognizing an HTTP request line, TLS handshake record header, or supported
+QUIC Initial header, malformed data produces `ProtocolError::Invalid` and
+logs `sniffer:failed` at warning level. This includes TCP EOF before a recognized
+message finishes. Completed parsers return `Result<SniffResult, ProtocolError>`;
+`ProtocolError::NoMatch` and `ProtocolError::NoHostname` remain debug outcomes.
+Timeouts and inspection limits log a `SnifferError` under
+`sniffer:failed` at debug level; exhausted concurrency or memory budgets log the
+corresponding `SnifferError` under `sniffer:skipped` at debug level. These outcomes
+preserve the existing fallback with no hostname metadata and replay inspected
+bytes. I/O failures remain warnings and close the request. Port-rule skips do not log.
 Errors are not exposed to Lua or added to the routing context.
 
 Run regression tests with:
