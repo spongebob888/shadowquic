@@ -1,0 +1,239 @@
+name: Custom build
+run-name: Custom build · ${{ inputs.target }} · ${{ inputs.profile }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Target environment (OS, architecture, and ABI)
+        type: choice
+        default: x86_64-unknown-linux-musl
+        options:
+          - x86_64-unknown-linux-gnu
+          - i686-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+          - i686-unknown-linux-musl
+          - aarch64-unknown-linux-gnu
+          - armv7-unknown-linux-gnueabi
+          - armv7-unknown-linux-gnueabihf
+          - aarch64-unknown-linux-musl
+          - armv7-unknown-linux-musleabi
+          - armv7-unknown-linux-musleabihf
+          - x86_64-pc-windows-msvc
+          - i686-pc-windows-msvc
+          - aarch64-pc-windows-msvc
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+          - x86_64-unknown-freebsd
+          - i686-unknown-freebsd
+          - riscv64gc-unknown-linux-gnu
+          - loongarch64-unknown-linux-gnu
+          - aarch64-linux-android
+          - armv7-linux-androideabi
+          - i686-linux-android
+          - x86_64-linux-android
+          - mips-unknown-linux-musl
+          - mipsel-unknown-linux-musl
+          - mips64-unknown-linux-muslabi64
+          - mips64el-unknown-linux-muslabi64
+      features:
+        description: Additional Cargo features, separated by commas or spaces
+        type: string
+        default: ''
+      no-default-features:
+        description: Disable the default Cargo features
+        type: boolean
+        default: false
+      profile:
+        description: Build profile
+        type: choice
+        default: release
+        options:
+          - release
+          - debug
+      opt-level:
+        description: Optimization (profile uses release=3, debug=0)
+        type: choice
+        default: profile
+        options:
+          - profile
+          - '0'
+          - '1'
+          - '2'
+          - '3'
+          - s
+          - z
+      debug-info:
+        description: Debug information (profile uses release=none, debug=full)
+        type: choice
+        default: profile
+        options:
+          - profile
+          - none
+          - line-tables-only
+          - limited
+          - full
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ inputs.target }} (${{ inputs.profile }})
+    runs-on: >-
+      ${{ contains(inputs.target, '-windows-') && 'windows-latest' ||
+          inputs.target == 'x86_64-apple-darwin' && 'macos-15-intel' ||
+          inputs.target == 'aarch64-apple-darwin' && 'macos-15' ||
+          inputs.target == 'aarch64-unknown-linux-gnu' && 'ubuntu-24.04-arm' ||
+          startsWith(inputs.target, 'i686-unknown-linux-') && 'ubuntu-26.04' ||
+          'ubuntu-latest' }}
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET: ${{ inputs.target }}
+      BUILD_PROFILE: ${{ inputs.profile }}
+      FEATURES: ${{ inputs.features }}
+      NO_DEFAULT_FEATURES: ${{ inputs.no-default-features }}
+      OPT_LEVEL: ${{ inputs.opt-level }}
+      DEBUG_INFO: ${{ inputs.debug-info }}
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          # Match the release workflow's toolchain for tier-3 MIPS targets.
+          toolchain: ${{ startsWith(inputs.target, 'mips') && 'nightly-2026-05-15' || 'stable' }}
+          targets: ${{ !startsWith(inputs.target, 'mips') && inputs.target || '' }}
+          components: ${{ startsWith(inputs.target, 'mips') && 'rust-src' || '' }}
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: custom-build-${{ inputs.target }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            custom-build-${{ inputs.target }}-
+
+      # Keep the platform workarounds used by the release workflow.
+      - name: Set up Docker for i686 socket compatibility
+        if: startsWith(inputs.target, 'i686-unknown-linux-')
+        uses: docker/setup-docker-action@v4
+        with:
+          version: v29.9.1
+          set-host: true
+
+      - name: Install cross and build dependencies
+        if: runner.os == 'Linux' && inputs.target != 'aarch64-unknown-linux-gnu'
+        run: |
+          cargo +stable install cross --locked --version 0.2.5
+          sudo apt-get update
+          sudo apt-get install -y build-essential libstdc++-14-dev g++-14 g++-arm-linux-gnueabi g++-arm-linux-gnueabihf g++-aarch64-linux-gnu
+          bash scripts/fix-cross-seccomp.sh
+
+      - name: Configure Windows ARM compiler environment
+        if: inputs.target == 'aarch64-pc-windows-msvc'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_arm64
+
+      - name: Build customized binary
+        run: |
+          set -euo pipefail
+          build_tool=cargo
+          if [[ "$RUNNER_OS" == Linux && "$TARGET" != aarch64-unknown-linux-gnu ]]; then
+            build_tool=cross
+          fi
+
+          cargo_profile=dev
+          args=(build --locked -p shadowquic --bin shadowquic --target "$TARGET")
+          if [[ "$BUILD_PROFILE" == release ]]; then
+            cargo_profile=release
+            args+=(--release)
+          fi
+          if [[ "$TARGET" == mips* ]]; then
+            args+=(-Z "build-std=std,panic_abort")
+          fi
+          if [[ "$NO_DEFAULT_FEATURES" == true ]]; then
+            args+=(--no-default-features)
+          fi
+          if [[ -n "$FEATURES" ]]; then
+            args+=(--features "$FEATURES")
+          fi
+
+          # Cargo config arguments reach cross's container as well as native builds.
+          case "$OPT_LEVEL" in
+            profile) ;;
+            s|z) args+=(--config "profile.$cargo_profile.opt-level=\"$OPT_LEVEL\"") ;;
+            *) args+=(--config "profile.$cargo_profile.opt-level=$OPT_LEVEL") ;;
+          esac
+          if [[ "$DEBUG_INFO" != profile ]]; then
+            args+=(--config "profile.$cargo_profile.debug=\"$DEBUG_INFO\"")
+            if [[ "$DEBUG_INFO" != none ]]; then
+              # The workspace release profile normally strips all symbols.
+              args+=(--config "profile.$cargo_profile.strip=\"none\"")
+            fi
+          fi
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            # Keep debug symbols in a portable .dSYM bundle rather than build paths.
+            args+=(--config "profile.$cargo_profile.split-debuginfo=\"packed\"")
+          fi
+          if [[ "$TARGET" == x86_64-unknown-linux-musl && "$BUILD_PROFILE" == release &&
+                "$DEBUG_INFO" != profile && "$DEBUG_INFO" != none ]]; then
+            # Like build-profiling.sh, avoid GNU ld's debug-only Rustls/LTO errors.
+            # Cross mounts the selected Rust toolchain at /rust.
+            args[0]=rustc
+            args+=(-- -C link-arg=-B/rust/lib/rustlib/x86_64-unknown-linux-gnu/bin/gcc-ld -C link-arg=-fuse-ld=lld)
+          fi
+
+          mkdir -p dist/package
+          {
+            printf 'Commit: %s\nTarget: %s\nProfile: %s\n' "$GITHUB_SHA" "$TARGET" "$BUILD_PROFILE"
+            printf 'Features: %s\nNo default features: %s\n' "$FEATURES" "$NO_DEFAULT_FEATURES"
+            printf 'Optimization: %s\nDebug info: %s\n' "$OPT_LEVEL" "$DEBUG_INFO"
+            rustc --version
+            printf 'Command: %q ' "$build_tool"
+            printf '%q ' "${args[@]}"
+            printf '\n'
+          } > dist/package/build-settings.txt
+          cat dist/package/build-settings.txt
+          "$build_tool" "${args[@]}"
+
+      - name: Package binary and debug symbols
+        run: |
+          set -euo pipefail
+          binary=shadowquic
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            binary=shadowquic.exe
+          fi
+          output_dir="target/$TARGET/$BUILD_PROFILE"
+          cp "$output_dir/$binary" dist/package/
+          for symbols in "$output_dir/shadowquic.pdb" "$output_dir/shadowquic.dSYM"; do
+            if [[ -e "$symbols" ]]; then
+              cp -R "$symbols" dist/package/
+            fi
+          done
+          cp LICENSE dist/package/
+          # Tar preserves Unix executable permissions through artifact downloads.
+          tar -czf "dist/shadowquic-$TARGET-$BUILD_PROFILE.tar.gz" -C dist/package .
+          {
+            printf '### Custom build\n\nDownload the artifact below for the binary and build settings.\n\n'
+            printf '```text\n'
+            cat dist/package/build-settings.txt
+            printf '```\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload customized build
+        uses: actions/upload-artifact@v7
+        with:
+          name: shadowquic-${{ inputs.target }}-${{ inputs.profile }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
