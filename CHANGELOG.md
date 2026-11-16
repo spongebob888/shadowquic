@@ -5,6 +5,23 @@ Git tags and commits; dates are the dates of the tagged commits. Routine version
 bumps, formatting, and dependency updates are omitted unless they affect behavior.
 Version links compare each release with the preceding tag.
 
+## [0.4.12](https://github.com/spongebob888/shadowquic/compare/v0.4.11...v0.4.12) - 2026-11-16
+
+### Added
+
+- Manually triggered GitHub Actions builds with selectable target environments,
+  Cargo features, debug/release profiles, optimization levels, debug information,
+  and default-feature control. Downloadable artifacts include the binary, debug
+  symbols, and build settings.
+- A [custom build guide](document/custom-build.md) covering workflow options and
+  artifact downloads.
+
+### Fixed
+
+- Enable `prefer-post-quantum` for `aws-lc-rs` builds for mihomo compatibility.
+- Use the `cn` Geosite list in the TUN and TPROXY routing examples for Chinese
+  domain routing and DNS selection.
+
 ## [0.4.11](https://github.com/spongebob888/shadowquic/compare/v0.4.10...v0.4.11) - 2026-11-15
 
 ### Added
