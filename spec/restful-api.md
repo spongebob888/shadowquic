@@ -275,12 +275,13 @@ reading them, as specified in the [jemalloc manual](https://jemalloc.net/jemallo
 These are allocator metrics; they do not represent total process RSS.
 
 The independent `jemalloc` feature is enabled by default and installs the global
-allocator in the library, covering both the CLI and library embeddings even
-without `restful-api`. Keep allocator dependencies platform-gated and support
+allocator in the CLI, even without `restful-api`. Library embeddings choose
+their own global allocator. Keep allocator dependencies platform-gated and support
 Linux and macOS on x86_64 and aarch64, plus Android on aarch64, armv7, i686,
 and x86_64. Build 64-bit Android jemalloc with `JEMALLOC_SYS_WITH_LG_PAGE=14`
-for compatibility with both 4 KB and 16 KB system pages. An embedding defining
-its own global allocator must disable `jemalloc`.
+for compatibility with both 4 KB and 16 KB system pages. Embeddings can define
+their own global allocator while keeping `jemalloc` enabled; memory statistics
+cover only allocations served by jemalloc.
 
 Without `jemalloc`, do not compile the memory module or register the memory
 endpoint; `/api/v1/memory` returns `404`. With both features, where statistics are

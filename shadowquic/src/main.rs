@@ -13,6 +13,37 @@ use tracing_subscriber::{
     Layer, fmt::time::LocalTime, layer::SubscriberExt, util::SubscriberInitExt,
 };
 
+// CountingAllocator is a pure pass-through to jemalloc unless the
+// `hotpath-alloc` feature is enabled, in which case it counts allocations
+// per function while still serving them from jemalloc.
+#[cfg(all(
+    feature = "jemalloc",
+    any(
+        target_os = "android",
+        all(
+            any(target_os = "linux", target_os = "macos"),
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    )
+))]
+#[global_allocator]
+static ALLOCATOR: hotpath::CountingAllocator<tikv_jemallocator::Jemalloc> =
+    hotpath::CountingAllocator::with(tikv_jemallocator::Jemalloc);
+
+// Without jemalloc, allocation tracking wraps the system allocator instead.
+#[cfg(not(all(
+    feature = "jemalloc",
+    any(
+        target_os = "android",
+        all(
+            any(target_os = "linux", target_os = "macos"),
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    )
+)))]
+#[global_allocator]
+static ALLOCATOR: hotpath::CountingAllocator = hotpath::CountingAllocator::new();
+
 #[derive(Parser)]
 #[clap(author, about, long_about = None, version)]
 struct Cli {
@@ -70,7 +101,7 @@ enum ApiCommand {
 #[tokio::main(flavor = "multi_thread", worker_threads = 8)]
 async fn main() {
     // No-op unless built with `--features hotpath`. The guard API is used
-    // instead of #[hotpath::main] because lib.rs declares a manual
+    // instead of #[hotpath::main] because this binary declares a manual
     // #[global_allocator] (CountingAllocator wrapping jemalloc).
     let _hotpath = hotpath::HotpathGuardBuilder::new("shadowquic").build();
     hotpath::tokio_runtime!();

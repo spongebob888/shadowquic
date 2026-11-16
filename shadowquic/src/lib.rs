@@ -17,37 +17,6 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 use tracing::{Instrument, error, info, info_span};
 
-// CountingAllocator is a pure pass-through to jemalloc unless the
-// `hotpath-alloc` feature is enabled, in which case it counts allocations
-// per function while still serving them from jemalloc.
-#[cfg(all(
-    feature = "jemalloc",
-    any(
-        target_os = "android",
-        all(
-            any(target_os = "linux", target_os = "macos"),
-            any(target_arch = "x86_64", target_arch = "aarch64")
-        )
-    )
-))]
-#[global_allocator]
-static ALLOCATOR: hotpath::CountingAllocator<tikv_jemallocator::Jemalloc> =
-    hotpath::CountingAllocator::with(tikv_jemallocator::Jemalloc);
-
-// Without jemalloc, allocation tracking wraps the system allocator instead.
-#[cfg(not(all(
-    feature = "jemalloc",
-    any(
-        target_os = "android",
-        all(
-            any(target_os = "linux", target_os = "macos"),
-            any(target_arch = "x86_64", target_arch = "aarch64")
-        )
-    )
-)))]
-#[global_allocator]
-static ALLOCATOR: hotpath::CountingAllocator = hotpath::CountingAllocator::new();
-
 // jemalloc reads this before main, so profiling includes startup allocations.
 #[cfg(all(
     feature = "mem-profile",

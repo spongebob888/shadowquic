@@ -17,6 +17,20 @@ use tokio::{
     net::{TcpListener, TcpStream},
 };
 
+// Memory API tests explicitly select jemalloc as their host allocator.
+#[cfg(all(
+    feature = "jemalloc",
+    any(
+        target_os = "android",
+        all(
+            any(target_os = "linux", target_os = "macos"),
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    )
+))]
+#[global_allocator]
+static ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 async fn call(address: SocketAddr, method: &str, path: &str, body: Value) -> (StatusCode, Value) {
     call_with_authorization(address, method, path, body, None).await
 }

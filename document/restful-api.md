@@ -5,8 +5,8 @@ enables statistics and adds an HTTP API alongside the proxy listeners. It is
 enabled by default.
 It is separate from the `api` CLI subcommand for remote user management.
 The entire API module is compiled only with `restful-api`. The independent
-`jemalloc` feature is enabled by default and selects the global allocator on
-supported targets; enabling `restful-api` does not enable `jemalloc`.
+`jemalloc` feature is enabled by default and selects the CLI's global allocator
+on supported targets; enabling `restful-api` does not enable `jemalloc`.
 
 Enable it in your proxy configuration:
 
@@ -440,11 +440,12 @@ remain until replaced; use `measured_at` to assess freshness.
 
 The `jemalloc` feature is enabled by default. On Linux and macOS, for x86_64
 and aarch64, and on Android (aarch64, armv7, i686, and x86_64), it installs
-jemalloc as the global allocator for both the CLI and library embeddings,
-independently of `restful-api`. Use `--no-default-features`
+jemalloc as the CLI's global allocator, independently of `restful-api`.
+Library embeddings choose their own global allocator; enable jemalloc in the
+host application to collect statistics for its allocations. Use `--no-default-features`
 and select the required protocol features without `jemalloc` to use the system
-allocator. An embedding supplying its own global allocator must disable the
-crate's `jemalloc` feature to avoid conflicting allocator definitions.
+allocator in the CLI. Library embeddings can keep the `jemalloc` feature
+enabled while supplying their own global allocator.
 
 The repository's Cargo configuration sets the jemalloc allocator page size to
 16 KB for aarch64 and x86_64 Android, covering both 4 KB and 16 KB system pages.
