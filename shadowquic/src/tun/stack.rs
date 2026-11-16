@@ -300,6 +300,12 @@ impl Stack {
                         src_addr: Some(key.client),
                         user_context: self.context(),
                     });
+                    tracing::info!(event = "tun:connection_started",
+                        src = %key.client,
+                        dst = %key.destination,
+                        req_id = %&request.user_context().req_id,
+                        "accepted TUN TCP session"
+                    );
                     self.tcp.insert(
                         key,
                         TcpFlow {
@@ -360,10 +366,16 @@ impl Stack {
                         src_addr: Some(client),
                         user_context: self.context(),
                     });
+                    tracing::info!(
+                        event = "tun:udp_session_started", 
+                        src = %client,
+                        dst = %destination,
+                        req_id = request.user_context().req_id,
+                        "accepted TUN UDP session");
                     if self.requests.try_send(request).is_err() {
                         return;
                     }
-                    tracing::info!(event = "tun:udp_session_started", src = %client, dst = %destination, "accepted TUN UDP session");
+
                     self.udp.insert(
                         client,
                         UdpFlow {
@@ -405,7 +417,7 @@ impl Stack {
 
     fn bridges(&mut self, cx: &mut Context<'_>) -> Poll<()> {
         let mut progress = false;
-        for (key, flow) in &mut self.tcp {
+        for flow in self.tcp.values_mut() {
             let socket = self.sockets.get_mut::<tcp::Socket>(flow.handle);
             if matches!(
                 socket.state(),
@@ -414,12 +426,6 @@ impl Stack {
             {
                 if self.requests.try_send(request).is_err() {
                     socket.abort();
-                } else {
-                    tracing::info!(event = "tun:connection_started",
-                        src = %key.client,
-                        dst = %key.destination,
-                        "accepted TUN TCP session"
-                    );
                 }
                 progress = true;
             }
