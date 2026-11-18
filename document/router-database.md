@@ -1,5 +1,8 @@
 # Router databases
 
+Use the [MMDB inspector](mmdb-formats.md) to examine country database record
+formats and compatibility with Shadowquic's country decoder.
+
 Use the [IP lookup benchmark](ip-lookup-benchmark.md) to compare country lookup
 backends, and the [geosite lookup benchmark](geosite-lookup-benchmark.md) to
 measure domain search speed and memory usage.

@@ -172,6 +172,7 @@ windows = { version = "0.62.2", features = [
 libc = "0.2"
 
 [dev-dependencies]
+serde_json = "1"
 hotpath = { version = "0.31.2", features = ["tokio"] }
 tokio = { version = "1.52.3", features = ["test-util"] }
 tempfile = "3"
@@ -180,6 +181,10 @@ rand = "0.10.1"
 
 [build-dependencies]
 cc = "1"
+
+[[example]]
+name = "mmdb_inspect"
+required-features = ["router-db"]
 
 [[example]]
 name = "ip_lookup_bench"
