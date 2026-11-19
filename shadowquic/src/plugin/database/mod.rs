@@ -1,5 +1,6 @@
 //! Routing membership databases: memory-mapped MMDB country lookups or
 //! indexed redb lookups with a bounded page cache.
+mod country;
 mod download;
 mod geosite;
 #[cfg(test)]
@@ -10,11 +11,12 @@ use crate::{
     config::{RouterDBKind, RouterDatabaseCfg},
     error::SError,
 };
+pub use country::MmdbCountryRecord;
 use geosite::{GeositeTable, import_geosite};
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition, TableHandle};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::Read,
     net::IpAddr,
     path::Path,
@@ -94,9 +96,8 @@ impl RouterDB for MmdbDatabase {
         Ok(self
             .reader
             .lookup(ip)?
-            .decode::<maxminddb::geoip2::Country>()?
-            .and_then(|record| record.country.iso_code)
-            .is_some_and(|code| code.eq_ignore_ascii_case(list)))
+            .decode::<MmdbCountryRecord>()?
+            .is_some_and(|record| record.contains(list)))
     }
 
     fn find_domain(&self, _list: &str, _domain: &str) -> Result<bool> {
@@ -402,35 +403,39 @@ fn import_country(source: &Path, write: &redb::WriteTransaction) -> Result<()> {
     let mut count = 0;
     for entry in reader.networks(Default::default())? {
         let entry = entry?;
-        let Some(record) = entry.decode::<maxminddb::geoip2::Country>()? else {
-            continue;
-        };
-        let Some(code) = record.country.iso_code else {
+        let Some(record) = entry.decode::<MmdbCountryRecord>()? else {
             continue;
         };
         let network = entry.network()?;
-        let v4_name = country_table_name(code, 4);
-        let v6_name = country_table_name(code, 6);
-        let mut v4 = write.open_table(CountryV4Table::new(&v4_name))?;
-        let mut v6 = write.open_table(CountryV6Table::new(&v6_name))?;
-        match (network.network(), network.broadcast()) {
-            (IpAddr::V4(start), IpAddr::V4(end)) => {
-                insert_country_range(
-                    &mut v4,
-                    u32::from_be_bytes(start.octets()),
-                    u32::from_be_bytes(end.octets()),
-                )?;
+        let mut seen = HashSet::new();
+        for code in record.codes() {
+            // Case variants share a table. Insert each range only once per list.
+            if !seen.insert(code.to_ascii_lowercase()) {
+                continue;
             }
-            (IpAddr::V6(start), IpAddr::V6(end)) => {
-                insert_country_range(
-                    &mut v6,
-                    u128::from_be_bytes(start.octets()),
-                    u128::from_be_bytes(end.octets()),
-                )?;
+            let v4_name = country_table_name(code, 4);
+            let v6_name = country_table_name(code, 6);
+            let mut v4 = write.open_table(CountryV4Table::new(&v4_name))?;
+            let mut v6 = write.open_table(CountryV6Table::new(&v6_name))?;
+            match (network.network(), network.broadcast()) {
+                (IpAddr::V4(start), IpAddr::V4(end)) => {
+                    insert_country_range(
+                        &mut v4,
+                        u32::from_be_bytes(start.octets()),
+                        u32::from_be_bytes(end.octets()),
+                    )?;
+                }
+                (IpAddr::V6(start), IpAddr::V6(end)) => {
+                    insert_country_range(
+                        &mut v6,
+                        u128::from_be_bytes(start.octets()),
+                        u128::from_be_bytes(end.octets()),
+                    )?;
+                }
+                _ => unreachable!("network endpoints have the same address family"),
             }
-            _ => unreachable!("network endpoints have the same address family"),
+            count += 1;
         }
-        count += 1;
     }
     if count == 0 {
         return Err("MMDB contains no country networks".into());

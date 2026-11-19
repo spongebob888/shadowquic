@@ -85,6 +85,97 @@ fn country_config(dir: &Path, filename: &str) -> RouterDatabaseCfg {
 }
 
 #[test]
+fn mihomo_and_sing_country_records_preserve_all_memberships_in_both_backends() {
+    for (fixture, multiple, ipv6) in [
+        ("Mihomo-Test.mmdb", true, true),
+        ("Sing-GeoIP-Test.mmdb", false, false),
+    ] {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/router-database")
+            .join(fixture);
+        for filename in ["country.mmdb", "country.redb"] {
+            let dir = tempfile::tempdir().unwrap();
+            let cfg = country_config(dir.path(), filename);
+            drop(import_database(&cfg, &source).unwrap());
+            let db = open_database(&cfg).unwrap();
+            for (list, address, expected) in [
+                ("us", "8.8.8.8", true),
+                ("US", "8.8.8.8", true),
+                ("google", "8.8.8.8", multiple),
+                ("GoOgLe", "8.8.8.8", multiple),
+                ("cn", "8.8.8.8", false),
+                ("us", "8.8.8.0", true),
+                ("us", "8.8.8.255", true),
+                ("us", "8.8.7.255", false),
+                ("us", "8.8.9.0", false),
+                ("us", "8.8.4.4", multiple),
+                ("google", "8.8.4.4", multiple),
+                ("", "8.8.4.4", false),
+                ("cn", "223.5.5.5", true),
+                ("google", "223.5.5.5", false),
+                ("private", "192.168.1.1", true),
+                ("us", "2001:4860:4860::8888", ipv6),
+                ("GOOGLE", "2001:4860:4860::8888", ipv6),
+                ("test", "2001:db8::1", ipv6),
+                ("cn", "2001:db8::1", false),
+                ("us", "9.9.9.9", false),
+                ("", "9.9.9.9", false),
+                ("", "9.9.10.1", false),
+                ("missing", "8.8.8.8", false),
+                ("us", "127.0.0.1", false),
+            ] {
+                assert_eq!(
+                    db.find_ip(list, address.parse().unwrap()).unwrap(),
+                    expected,
+                    "{fixture} {filename}: {list} {address}"
+                );
+            }
+
+            drop(db);
+            let manager =
+                Databases::build(std::slice::from_ref(&cfg), &mut HashMap::new()).unwrap();
+            let lua = mlua::Lua::new();
+            manager.install(&lua).unwrap();
+            assert!(
+                lua.load("find_ip_v4('db', 'US', '8.8.8.8')")
+                    .eval::<bool>()
+                    .unwrap()
+            );
+            assert_eq!(
+                lua.load(
+                    "find_ip_v4('db', 'us', '8.8.8.8') and find_ip_v4('db', 'google', '8.8.8.8')"
+                )
+                .eval::<bool>()
+                .unwrap(),
+                multiple
+            );
+            assert_eq!(
+                lua.load("find_ip_v6('db', 'us', '2001:4860:4860::8888') and find_ip_v6('db', 'google', '2001:4860:4860::8888')")
+                    .eval::<bool>()
+                    .unwrap(),
+                ipv6
+            );
+        }
+    }
+}
+
+#[test]
+fn malformed_mihomo_records_error_and_redb_import_is_not_published() {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/router-database/Mihomo-Invalid-Test.mmdb");
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = country_config(dir.path(), "country.mmdb");
+    let db = import_database(&cfg, &source).unwrap();
+    for address in ["8.8.8.8", "9.9.9.9"] {
+        assert!(db.find_ip("us", address.parse().unwrap()).is_err());
+    }
+    assert!(db.find_ip("cn", "223.5.5.5".parse().unwrap()).unwrap());
+    let cfg = country_config(dir.path(), "country.redb");
+    assert!(RedbDatabase::import(&cfg, &source).is_err());
+    assert!(!cfg.path().exists());
+}
+
+#[test]
 fn mmap_country_matches_in_memory_reader_at_all_fixture_range_boundaries() {
     let dir = tempfile::tempdir().unwrap();
     let cfg = country_config(dir.path(), "country.mmdb");

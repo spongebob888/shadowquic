@@ -53,7 +53,8 @@ pub enum RouterDatabaseCfg {
     Geosite(GeositeDbCfg),
 }
 
-/// Country IP database sourced from MMDB.
+/// Country/category IP database sourced from MMDB. Records may contain
+/// `country.iso_code`, a single string, or an array of string labels.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CountryDbCfg {

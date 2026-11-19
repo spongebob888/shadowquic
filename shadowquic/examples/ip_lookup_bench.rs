@@ -1,10 +1,10 @@
 //! See document/ip-lookup-benchmark.md for methodology and usage.
 use clap::{Parser, ValueEnum};
-use maxminddb::{Reader, geoip2::Country};
+use maxminddb::Reader;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use shadowquic::{
     config::{CountryDbCfg, RouterDatabaseCfg},
-    plugin::database::{MmdbDatabase, RedbDatabase, Result, RouterDB},
+    plugin::database::{MmdbCountryRecord, MmdbDatabase, RedbDatabase, Result, RouterDB},
 };
 use std::{
     fs,
@@ -84,11 +84,13 @@ fn config(dir: &Path) -> RouterDatabaseCfg {
 }
 
 fn mmdb_find<S: AsRef<[u8]>>(reader: &Reader<S>, country: &str, ip: IpAddr) -> Result<bool> {
+    if ip.is_ipv6() && reader.metadata().ip_version == 4 {
+        return Ok(false);
+    }
     Ok(reader
         .lookup(ip)?
-        .decode::<Country>()?
-        .and_then(|record| record.country.iso_code)
-        .is_some_and(|code| code.eq_ignore_ascii_case(country)))
+        .decode::<MmdbCountryRecord>()?
+        .is_some_and(|record| record.contains(country)))
 }
 
 fn prepare(args: &Args, dir: &Path) -> Result<()> {
@@ -112,10 +114,9 @@ fn prepare(args: &Args, dir: &Path) -> Result<()> {
         let mut networks = [Vec::new(), Vec::new()];
         for entry in reader.networks(Default::default())? {
             let entry = entry?;
-            if entry
-                .decode::<Country>()?
-                .and_then(|r| r.country.iso_code)
-                .is_none()
+            if !entry
+                .decode::<MmdbCountryRecord>()?
+                .is_some_and(|record| record.codes().next().is_some())
             {
                 continue;
             }
@@ -313,8 +314,8 @@ fn worker(args: &Args) -> Result<()> {
 
 fn main() -> Result<()> {
     let mut args = Args::parse();
-    if args.country.len() != 2 || !args.country.bytes().all(|b| b.is_ascii_alphabetic()) {
-        return Err("--country must be a two-letter ISO country code".into());
+    if args.country.is_empty() {
+        return Err("--country must be a nonempty country code or category label".into());
     }
     if args.worker.is_some() {
         return worker(&args);

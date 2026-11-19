@@ -1,8 +1,9 @@
 //! Inspect MMDB metadata, raw records, and compatibility with country lookups.
 //! See document/mmdb-formats.md for usage and record formats.
 use clap::Parser;
-use maxminddb::{LookupResult, Reader, geoip2::Country};
+use maxminddb::{LookupResult, Reader};
 use serde_json::{Value, json};
+use shadowquic::plugin::database::MmdbCountryRecord;
 use std::{error::Error, net::IpAddr, path::PathBuf, process::ExitCode};
 
 #[derive(Debug, Parser)]
@@ -27,10 +28,10 @@ fn record(result: LookupResult<'_, Vec<u8>>) -> Result<Value, Box<dyn Error>> {
     // A dynamic value preserves maps, strings, and arrays instead of assuming
     // that every MMDB stores MaxMind's nested country object.
     let raw = result.decode::<Value>()?;
-    // Exercise the same decoder and field used by Shadowquic's country router.
-    let country = match result.decode::<Country>() {
+    // Exercise the same decoder used by Shadowquic's country router.
+    let country = match result.decode::<MmdbCountryRecord>() {
         Ok(value) => json!({
-            "iso_code": value.and_then(|country| country.country.iso_code),
+            "codes": value.map(|record| record.codes().map(str::to_owned).collect::<Vec<_>>()).unwrap_or_default(),
         }),
         Err(error) => json!({ "error": error.to_string() }),
     };
