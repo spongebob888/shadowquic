@@ -2201,35 +2201,41 @@ The sniffing result can be obtained by router script and exposed as
 <h3 id="tcp"><code>tcp</code><a class="headerlink" href="#tcp" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Type:</strong> list of <a href="../snifferrule/"><code>SnifferRule</code></a></li>
-<li><strong>Required:</strong> <strong>yes</strong></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <em>(type default)</em></li>
 </ul>
 <p>TCP sniffer rules. Empty means no sniffing. Supports HTTP and TLS.</p>
 <h3 id="udp"><code>udp</code><a class="headerlink" href="#udp" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Type:</strong> list of <a href="../snifferrule/"><code>SnifferRule</code></a></li>
-<li><strong>Required:</strong> <strong>yes</strong></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <em>(type default)</em></li>
 </ul>
 <p>UDP sniffer rules. Empty means no sniffing. Supports QUIC.</p>
 <h3 id="timeout"><code>timeout</code><a class="headerlink" href="#timeout" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Type:</strong> <code>u64</code></li>
-<li><strong>Required:</strong> <strong>yes</strong></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <code>100</code></li>
 </ul>
 <p>Absolute inspection deadline in milliseconds.</p>
 <h3 id="max-bytes"><code>max-bytes</code><a class="headerlink" href="#max-bytes" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Type:</strong> <code>usize</code></li>
-<li><strong>Required:</strong> <strong>yes</strong></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <code>32768</code></li>
 </ul>
 <h3 id="max-concurrent"><code>max-concurrent</code><a class="headerlink" href="#max-concurrent" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Type:</strong> <code>usize</code></li>
-<li><strong>Required:</strong> <strong>yes</strong></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <code>256</code></li>
 </ul>
 <h3 id="max-buffered-bytes"><code>max-buffered-bytes</code><a class="headerlink" href="#max-buffered-bytes" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Type:</strong> <code>usize</code></li>
-<li><strong>Required:</strong> <strong>yes</strong></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <code>8 * 1024 * 1024</code></li>
 </ul>
 
 
