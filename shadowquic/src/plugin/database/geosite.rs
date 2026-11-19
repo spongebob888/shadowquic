@@ -1,21 +1,90 @@
 use super::Result;
-use redb::{ReadableTable, TableDefinition};
+use redb::{Key, ReadableTable, TableDefinition, TypeName, Value};
 use regex_automata::{
     Input,
     dfa::{Automaton, StartKind, dense, sparse},
 };
 use serde::Deserialize;
-use std::{collections::HashSet, path::Path};
+use std::{borrow::Cow, cmp::Ordering, collections::HashSet, path::Path};
 
 // Schema 3 stores u32 attribute masks; compiled regexes are DFA keys.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-enum SiteMatchType {
-    Full = 0,
-    Domain = 1,
-    Regex = 2,
-    Keyword = 3,
-    CompiledRegex = 4,
+pub(super) enum SiteMatchType<'a> {
+    Full(&'a str) = 0,
+    Domain(&'a str) = 1,
+    Regex(&'a str) = 2,
+    Keyword(&'a str) = 3,
+    CompiledRegex(&'a [u8]) = 4,
+}
+
+impl SiteMatchType<'_> {
+    fn as_tuple(&self) -> (u8, &[u8]) {
+        match self {
+            Self::Full(value) => (0, value.as_bytes()),
+            Self::Domain(value) => (1, value.as_bytes()),
+            Self::Regex(value) => (2, value.as_bytes()),
+            Self::Keyword(value) => (3, value.as_bytes()),
+            Self::CompiledRegex(value) => (4, value),
+        }
+    }
+}
+
+// Keep schema 3's tuple encoding, ordering, and type identity so existing
+// databases can be opened without rebuilding their tables.
+impl Value for SiteMatchType<'_> {
+    type SelfType<'a>
+        = SiteMatchType<'a>
+    where
+        Self: 'a;
+    type AsBytes<'a>
+        = Vec<u8>
+    where
+        Self: 'a;
+
+    fn fixed_width() -> Option<usize> {
+        <(u8, &[u8])>::fixed_width()
+    }
+
+    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
+    where
+        Self: 'a,
+    {
+        let (kind, value) = <(u8, &[u8])>::from_bytes(data);
+        match kind {
+            0 => SiteMatchType::Full(std::str::from_utf8(value).unwrap()),
+            1 => SiteMatchType::Domain(std::str::from_utf8(value).unwrap()),
+            2 => SiteMatchType::Regex(std::str::from_utf8(value).unwrap()),
+            3 => SiteMatchType::Keyword(std::str::from_utf8(value).unwrap()),
+            4 => SiteMatchType::CompiledRegex(value),
+            _ => panic!("invalid geosite rule type: {kind}"),
+        }
+    }
+
+    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
+    where
+        Self: 'b,
+    {
+        <(u8, &[u8])>::as_bytes(&value.as_tuple())
+    }
+
+    fn type_name() -> TypeName {
+        <(u8, &[u8])>::type_name()
+    }
+}
+
+impl Key for SiteMatchType<'_> {
+    fn compare(data1: &[u8], data2: &[u8]) -> Ordering {
+        <(u8, &[u8])>::compare(data1, data2)
+    }
+
+    fn separator<'a>(left: &'a [u8], right: &'a [u8]) -> Cow<'a, [u8]> {
+        <(u8, &[u8])>::separator(left, right)
+    }
+
+    fn min_encoded_key() -> Option<Cow<'static, [u8]>> {
+        <(u8, &[u8])>::min_encoded_key()
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -44,7 +113,7 @@ impl AttrType {
     }
 }
 
-pub(super) type GeositeTable<'a> = TableDefinition<'a, (u8, &'static [u8]), u32>;
+pub(super) type GeositeTable<'a> = TableDefinition<'a, SiteMatchType<'static>, u32>;
 
 pub(super) fn geosite_table_name(list: &str) -> String {
     format!("geosite_{}", list.to_ascii_lowercase())
@@ -70,18 +139,18 @@ pub(super) fn find_domain(read: &redb::ReadTransaction, list: &str, domain: &str
         Err(redb::TableError::TableDoesNotExist(_)) => return Ok(false),
         Err(error) => return Err(error.into()),
     };
-    let indexed = |kind: SiteMatchType, value: &str| -> Result<bool> {
+    let indexed = |key: SiteMatchType| -> Result<bool> {
         Ok(table
-            .get((kind as u8, value.as_bytes()))?
+            .get(key)?
             .is_some_and(|stored| attribute.matches(stored.value())))
     };
     let domain = domain.trim_end_matches('.').to_ascii_lowercase();
-    if indexed(SiteMatchType::Full, &domain)? {
+    if indexed(SiteMatchType::Full(&domain))? {
         return Ok(true);
     }
     let mut suffix = domain.as_str();
     loop {
-        if indexed(SiteMatchType::Domain, suffix)? {
+        if indexed(SiteMatchType::Domain(suffix))? {
             return Ok(true);
         }
         match suffix.split_once('.') {
@@ -89,45 +158,39 @@ pub(super) fn find_domain(read: &redb::ReadTransaction, list: &str, domain: &str
             None => break,
         }
     }
-    for entry in table.range(
-        (SiteMatchType::Keyword as u8, &b""[..])..((SiteMatchType::Keyword as u8 + 1), &b""[..]),
-    )? {
+    for entry in table.range(SiteMatchType::Keyword("")..SiteMatchType::CompiledRegex(&[]))? {
         let (key, stored_attribute) = entry?;
         if !attribute.matches(stored_attribute.value()) {
             continue;
         }
-        let (_, pattern) = key.value();
-        if domain
-            .as_bytes()
-            .windows(pattern.len())
-            .any(|window| window == pattern)
-        {
+        let SiteMatchType::Keyword(pattern) = key.value() else {
+            unreachable!("keyword range contains a different rule type");
+        };
+        if domain.contains(pattern) {
             return Ok(true);
         }
     }
-    for entry in table.range(
-        (SiteMatchType::CompiledRegex as u8, &b""[..])
-            ..((SiteMatchType::CompiledRegex as u8 + 1), &b""[..]),
-    )? {
+    for entry in table.range(SiteMatchType::CompiledRegex(&[])..)? {
         let (key, stored_attribute) = entry?;
         if !attribute.matches(stored_attribute.value()) {
             continue;
         }
-        let (_, dfa_bytes) = key.value();
+        let SiteMatchType::CompiledRegex(dfa_bytes) = key.value() else {
+            unreachable!("compiled regex range contains a different rule type");
+        };
         let dfa = deserialize_dfa(dfa_bytes)?;
         if dfa.try_search_fwd(&Input::new(&domain))?.is_some() {
             return Ok(true);
         }
     }
-    for entry in table.range(
-        (SiteMatchType::Regex as u8, &b""[..])..((SiteMatchType::Regex as u8 + 1), &b""[..]),
-    )? {
+    for entry in table.range(SiteMatchType::Regex("")..SiteMatchType::Keyword(""))? {
         let (key, stored_attribute) = entry?;
         if !attribute.matches(stored_attribute.value()) {
             continue;
         }
-        let (_, pattern) = key.value();
-        let pattern = std::str::from_utf8(pattern)?;
+        let SiteMatchType::Regex(pattern) = key.value() else {
+            unreachable!("regex range contains a different rule type");
+        };
         if regex::Regex::new(pattern)?.is_match(&domain) {
             return Ok(true);
         }
@@ -199,13 +262,6 @@ pub(super) fn import_geosite(
             if value.is_empty() || value.contains('\0') {
                 return Err("empty or invalid geosite rule".into());
             }
-            let kind = match kind {
-                "full" => SiteMatchType::Full,
-                "domain" => SiteMatchType::Domain,
-                "regexp" => SiteMatchType::Regex,
-                "keyword" => SiteMatchType::Keyword,
-                _ => return Err(format!("unsupported geosite rule type: {kind}").into()),
-            };
             let mut attributes = 0u32;
             for attribute in attribute.split(',') {
                 let attribute = attribute
@@ -223,23 +279,33 @@ pub(super) fn import_geosite(
                     None => {}
                 }
             }
-            let (kind, key_value) = if kind == SiteMatchType::Regex {
+            let normalized;
+            let dfa_bytes;
+            let key = if kind == "regexp" {
                 let compiled = dense::Builder::new()
                     .configure(dense::Config::new().start_kind(StartKind::Unanchored))
                     .build(value)
                     .ok()
                     .and_then(|dfa| dfa.to_sparse().ok());
                 match compiled {
-                    Some(dfa) => (SiteMatchType::CompiledRegex, dfa.to_bytes_little_endian()),
+                    Some(dfa) => {
+                        dfa_bytes = dfa.to_bytes_little_endian();
+                        SiteMatchType::CompiledRegex(&dfa_bytes)
+                    }
                     None => {
                         regex::Regex::new(value)?;
-                        (SiteMatchType::Regex, value.as_bytes().to_vec())
+                        SiteMatchType::Regex(value)
                     }
                 }
             } else {
-                (kind, value.to_ascii_lowercase().into_bytes())
+                normalized = value.to_ascii_lowercase();
+                match kind {
+                    "full" => SiteMatchType::Full(&normalized),
+                    "domain" => SiteMatchType::Domain(&normalized),
+                    "keyword" => SiteMatchType::Keyword(&normalized),
+                    _ => return Err(format!("unsupported geosite rule type: {kind}").into()),
+                }
             };
-            let key = (kind as u8, key_value.as_slice());
             // Repeated rules and case-insensitive list aliases retain every attribute.
             let attributes = table
                 .get(key)?

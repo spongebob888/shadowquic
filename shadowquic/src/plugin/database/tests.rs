@@ -410,8 +410,64 @@ fn geosite_indexed_and_sequential_rules_and_metadata_survive_reopen() {
     assert!(error.contains("restart Shadowquic to download and rebuild it"));
 }
 #[test]
+fn geosite_typed_keys_read_and_write_schema_three_tuple_tables() {
+    use super::geosite::{GeositeTable, SiteMatchType};
+    use redb::ReadableTableMetadata;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("geosite.redb");
+    let raw_table = TableDefinition::<(u8, &[u8]), u32>::new("geosite_test");
+    let keys = [
+        SiteMatchType::Full("exact.example"),
+        SiteMatchType::Domain("tree.example"),
+        SiteMatchType::Regex(r"^\bfallback\.example$"),
+        SiteMatchType::Keyword("例子"),
+        SiteMatchType::CompiledRegex(&[0, 255, 128, 0]),
+    ];
+    let raw_keys: [(u8, &[u8]); 5] = [
+        (0, b"exact.example"),
+        (1, b"tree.example"),
+        (2, br"^\bfallback\.example$"),
+        (3, "例子".as_bytes()),
+        (4, &[0, 255, 128, 0]),
+    ];
+    {
+        let db = Database::create(&path).unwrap();
+        let write = db.begin_write().unwrap();
+        {
+            let mut table = write.open_table(raw_table).unwrap();
+            for key in raw_keys {
+                table.insert(key, 1u32 << key.0).unwrap();
+            }
+        }
+        write.commit().unwrap();
+    }
+    let db = Database::open(&path).unwrap();
+    let write = db.begin_write().unwrap();
+    {
+        let mut table = write.open_table(GeositeTable::new("geosite_test")).unwrap();
+        assert_eq!(table.len().unwrap(), keys.len() as u64);
+        for (entry, expected) in table.iter().unwrap().zip(keys) {
+            assert_eq!(entry.unwrap().0.value(), expected);
+        }
+        for (index, key) in keys.into_iter().enumerate() {
+            assert_eq!(table.get(key).unwrap().unwrap().value(), 1 << index);
+            table.insert(key, (1u32 << index) | 8).unwrap();
+        }
+    }
+    write.commit().unwrap();
+    let read = db.begin_read().unwrap();
+    let table = read.open_table(raw_table).unwrap();
+    for key in raw_keys {
+        assert_eq!(
+            table.get(key).unwrap().unwrap().value(),
+            (1u32 << key.0) | 8
+        );
+    }
+}
+
+#[test]
 fn geosite_schema_three_tables_preserve_attribute_masks_and_isolate_lists() {
-    use super::geosite::GeositeTable;
     use redb::ReadableTableMetadata;
     use regex_automata::dfa::Automaton;
 
@@ -493,7 +549,10 @@ fn geosite_schema_three_tables_preserve_attribute_masks_and_isolate_lists() {
             "metadata"
         ]
     );
-    let table = read.open_table(GeositeTable::new("geosite_test")).unwrap();
+    // Inspect the original schema directly to verify typed keys remain compatible.
+    let table = read
+        .open_table(TableDefinition::<(u8, &[u8]), u32>::new("geosite_test"))
+        .unwrap();
     assert_eq!(table.len().unwrap(), 9);
     assert_eq!(
         table
