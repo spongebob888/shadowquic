@@ -28,6 +28,7 @@ fn config(dir: &Path, kind: RouterDBKind) -> RouterDatabaseCfg {
             path: dir.join("db.redb"),
         }),
         RouterDBKind::Geosite => RouterDatabaseCfg::Geosite(GeositeDbCfg {
+            cache_size: 4 * 1024 * 1024,
             list_include: Vec::new(),
             tag: "db".into(),
             url: "https://example.test/db".into(),
@@ -84,6 +85,37 @@ fn legacy_geosite(cfg: &RouterDatabaseCfg, version: &str) {
             .unwrap();
     }
     write.commit().unwrap();
+}
+
+#[test]
+fn geosite_cache_size_changes_without_invalidating_imported_or_rebuilt_databases() {
+    for legacy in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = config(dir.path(), RouterDBKind::Geosite);
+        let RouterDatabaseCfg::Geosite(site) = &mut cfg else {
+            unreachable!()
+        };
+        site.cache_size = 0;
+        if legacy {
+            legacy_geosite(&cfg, "3");
+        }
+        let source = dir.path().join("source.yml");
+        std::fs::write(&source, YAML).unwrap();
+        let db = RedbDatabase::import(&cfg, &source).unwrap();
+        assert!(db.find_domain("test@ads", "api.tree.example").unwrap());
+        assert!(db.find_domain("test", "rx123.example").unwrap());
+        assert!(!db.find_domain("test", "missing.invalid").unwrap());
+        drop(db);
+
+        // Cache size is a runtime setting, independent of source identity.
+        let RouterDatabaseCfg::Geosite(site) = &mut cfg else {
+            unreachable!()
+        };
+        site.cache_size = 64 * 1024;
+        let db = RedbDatabase::open(&cfg).unwrap();
+        assert!(db.find_domain("test", "exact.example").unwrap());
+        assert!(!db.find_domain("test", "old.example").unwrap());
+    }
 }
 
 fn country_fixture() -> &'static [u8] {
@@ -1227,6 +1259,7 @@ fn database_config_rejects_tag_collisions_and_bad_urls() {
         config.router.database = (0..count)
             .map(|i| {
                 RouterDatabaseCfg::Geosite(GeositeDbCfg {
+                    cache_size: 4 * 1024 * 1024,
                     list_include: Vec::new(),
                     tag: tag.into(),
                     url: "https://example.test/db".into(),

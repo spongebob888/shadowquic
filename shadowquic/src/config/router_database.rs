@@ -8,6 +8,10 @@ pub fn default_geosite_url() -> String {
     "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat_plain.yml"
         .into()
 }
+
+fn default_cache_size() -> usize {
+    4 * 1024 * 1024
+}
 /// A routing database stored as a country MMDB or an indexed redb file.
 ///
 /// Example configuration:
@@ -87,9 +91,19 @@ pub struct GeositeDbCfg {
     /// Persistent converted redb file, relative to the working directory.
     /// Cost about 16m for full geosite db. 1Mb for only cn list.
     pub path: PathBuf,
+    /// redb page-cache budget in bytes. Defaults to 4 MiB; zero disables caching.
+    #[serde(default = "default_cache_size")]
+    pub cache_size: usize,
 }
 
 impl RouterDatabaseCfg {
+    pub(crate) fn cache_size(&self) -> usize {
+        match self {
+            Self::Country(_) => default_cache_size(),
+            Self::Geosite(cfg) => cfg.cache_size,
+        }
+    }
+
     pub(crate) fn uses_mmdb(&self) -> bool {
         self.kind() == RouterDBKind::Country
             && self
@@ -137,6 +151,46 @@ pub enum RouterDBKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn geosite_cache_size_defaults_and_round_trips_in_bytes() {
+        for (field, expected) in [
+            ("", 4 * 1024 * 1024),
+            ("cache-size: 0", 0),
+            ("cache-size: 16777216", 16 * 1024 * 1024),
+        ] {
+            let cfg: RouterDatabaseCfg = serde_saphyr::from_str(&format!(
+                "type: geosite\ntag: db\npath: db.redb\n{field}\n"
+            ))
+            .unwrap();
+            assert_eq!(cfg.cache_size(), expected);
+            let encoded = serde_saphyr::to_string(&cfg).unwrap();
+            let RouterDatabaseCfg::Geosite(decoded) =
+                serde_saphyr::from_str::<RouterDatabaseCfg>(&encoded).unwrap()
+            else {
+                unreachable!()
+            };
+            assert_eq!(decoded.cache_size, expected);
+            assert!(encoded.contains(&format!("cache-size: {expected}")));
+        }
+        for value in ["-1", "1.5", "8MiB"] {
+            assert!(
+                serde_saphyr::from_str::<RouterDatabaseCfg>(&format!(
+                    "type: geosite\ntag: db\npath: db.redb\ncache-size: {value}\n"
+                ))
+                .is_err()
+            );
+        }
+        let country: RouterDatabaseCfg =
+            serde_saphyr::from_str("type: country\ntag: db\npath: db.redb\n").unwrap();
+        assert_eq!(country.cache_size(), 4 * 1024 * 1024);
+        assert!(
+            serde_saphyr::from_str::<RouterDatabaseCfg>(
+                "type: country\ntag: db\npath: db.redb\ncache-size: 1024\n"
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn geosite_list_defaults_and_round_trips() {

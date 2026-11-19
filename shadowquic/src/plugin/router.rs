@@ -1541,6 +1541,7 @@ mod tests {
         use crate::plugin::database::RedbDatabase;
         let dir = tempfile::tempdir().unwrap();
         let cfg = RouterDatabaseCfg::Geosite(GeositeDbCfg {
+            cache_size: 4 * 1024 * 1024,
             list_include: Vec::new(),
             tag: "site".into(),
             url: "https://example.test/db".into(),

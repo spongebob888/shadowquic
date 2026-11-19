@@ -13,6 +13,7 @@ router:
       type: geosite
       url: https://raw.githubusercontent.com/v2fly/domain-list-community/release/dlc.dat_plain.yml
       path: data/geosite.redb
+      cache-size: 4194304 # redb cache bytes; default 4 MiB, 0 disables caching.
       list-include: [category-ads-all] # Omit or use [] to import all domain sets.
   src: |
     return function(ctx)

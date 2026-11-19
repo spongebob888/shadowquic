@@ -166,7 +166,7 @@ impl RedbDatabase {
     /// Open a converted database, checking format and source identity.
     pub fn open(cfg: &RouterDatabaseCfg) -> Result<Self> {
         let db = Database::builder()
-            .set_cache_size(8 * 1024 * 1024)
+            .set_cache_size(cfg.cache_size())
             .open(cfg.path())?;
         if let Some(version) = Self::legacy_geosite_schema(cfg, &db)? {
             return Err(GeositeRebuildRequired(version).into());
@@ -255,7 +255,7 @@ impl RedbDatabase {
         std::fs::create_dir_all(parent)?;
         let legacy = if cfg.kind() == RouterDBKind::Geosite && cfg.path().try_exists()? {
             let db = Database::builder()
-                .set_cache_size(8 * 1024 * 1024)
+                .set_cache_size(cfg.cache_size())
                 .open(cfg.path())?;
             if Self::legacy_geosite_schema(cfg, &db)?.is_none() {
                 return Err(std::io::Error::new(
@@ -277,7 +277,7 @@ impl RedbDatabase {
         let mut db = match legacy {
             Some(db) => db,
             None => Database::builder()
-                .set_cache_size(8 * 1024 * 1024)
+                .set_cache_size(cfg.cache_size())
                 .create(temporary.as_ref().unwrap().path())?,
         };
         let write = db.begin_write()?;
@@ -327,7 +327,7 @@ impl RedbDatabase {
             }
         }
         write.commit()?;
-        db.compact()?;
+        db.compact(redb::CompactionMode::Maximum)?;
         drop(db);
         if let Some(temporary) = temporary {
             temporary.persist_noclobber(cfg.path())?;

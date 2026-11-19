@@ -67,7 +67,7 @@ hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"], optional = true }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"], optional = true }
 tempfile = { version = "3", optional = true }
-redb = { version = "4", optional = true }
+redb = { version = "5", optional = true }
 maxminddb = { version = "0.32", features = ["mmap"], optional = true }
 sha2 = { version = "0.11", optional = true }
 regex = { version = "1", optional = true }

@@ -13,15 +13,16 @@ routing without database support, build with `--no-default-features` and select
 `plugin` alongside the other features you need.
 
 `router.database` makes Country MMDB and v2fly Geosite lists available to Lua.
-This requires the `plugin` feature. Each entry has four required fields:
+This requires the `plugin` feature. Each entry supports these fields:
 
 | Field | Meaning |
 | --- | --- |
 | `tag` | Unique name across databases, inbounds, outbounds, and DNS services |
 | `type` | `country` for Country MMDB, or `geosite` for the plain YAML export |
 | `url` | HTTP(S) download URL |
-| `list` | Optional, geosite only: base domain set names to import, matched case-insensitively. Omitted or `[]` imports all sets in the YAML source |
+| `list-include` | Optional, geosite only: base domain set names to import, matched case-insensitively. Omitted or `[]` imports all sets in the YAML source |
 | `path` | Persistent database file, relative to the working directory; Country `.mmdb` paths use direct MMDB lookups, other paths use redb |
+| `cache-size` | Optional, geosite only: redb page-cache budget in bytes. Defaults to `4194304` (4 MiB); `0` disables caching |
 
 ```yaml
 router:
@@ -30,7 +31,8 @@ router:
       type: geosite
       url: https://raw.githubusercontent.com/v2fly/domain-list-community/release/dlc.dat_plain.yml
       path: data/geosite.redb
-      list: [google]
+      cache-size: 4194304
+      list-include: [google]
   src: |
     return function(ctx)
       -- Downloads must route without depending on the database being downloaded.
@@ -131,10 +133,15 @@ traffic and any DNS upstream traffic needed by its outbound before these calls.
 Lua script reloads retain the same database handles.
 
 Geosite imports retain all rules and attributes within each selected base set.
-Unknown set names fail the import. Changing `list` requires removing the converted
+Unknown set names fail the import. Changing `list-include` requires removing the converted
 database file and restarting to rebuild it; selection order, case, and duplicates
 do not affect cache compatibility. Existing unfiltered databases remain compatible
-with an omitted or empty `list`.
+with an omitted or empty `list-include`.
+
+`cache-size` applies when a Geosite database is opened, imported, or rebuilt.
+Changing it takes effect after restarting and does not require rebuilding the
+converted file. The budget covers redb's page cache; other process allocations
+use additional memory.
 
 Each redb stores a format version, the creating Shadowquic version, source URL,
 database type, and SHA-256 of the downloaded source bytes. Schema versions are
@@ -198,5 +205,5 @@ Direct MMDB uses a read-only memory mapping instead of copying the entire file
 into a heap buffer. Accessed pages still count toward resident memory (RSS).
 Do not modify or truncate an MMDB while Shadowquic is running: stop Shadowquic
 before updating the file. The mapping stays alive across Lua script reloads.
-redb imports temporarily parse the source; redb lookups retain a bounded 8 MiB
-page cache per database.
+redb imports temporarily parse the source. Geosite uses a configurable page cache
+with a 4 MiB default; converted Country databases use a 4 MiB page cache.
