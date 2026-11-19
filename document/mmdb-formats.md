@@ -24,8 +24,8 @@ cargo run -p shadowquic --example mmdb_inspect -- \
 
 `found: false` means no record exists for the address. An IPv4-only database
 reports IPv6 as unsupported. A `shadowquic_country_decode.error` reports a
-record that the current country router cannot decode; `iso_code: null` means
-there is no country code to match. These compatibility results are diagnostic
+record that the current country router cannot decode; `codes: []` means
+there are no country or category labels to match. These compatibility results are diagnostic
 and do not fail inspection. File, lookup, or raw decode errors produce a
 nonzero exit status; other files are still inspected. Sampling and lookups do
 not validate every record in a database.
@@ -64,10 +64,17 @@ currently downloads `geoip.metadb` from MetaCubeX; this is still an MMDB
 container despite the extension. A custom Mihomo download URL may use another
 supported schema.
 
-Shadowquic currently reads `country.iso_code` in both its direct MMDB backend
-and country-to-redb importer. Nested country records are supported; root string
-and array formats require a different decoder. The inspector accepts all three
-record shapes to make this difference visible.
+Shadowquic uses the same decoder in its direct MMDB backend, country-to-redb
+importer, inspector, and IP lookup benchmark. It accepts all three record
+shapes, preserving every array label as a separate case-insensitive membership.
+Empty labels are ignored, and unsupported record types or non-string array
+elements report decode errors. The inspector's `shadowquic_country_decode.codes`
+field shows all labels accepted by this decoder.
+
+Loyalsoldier's enhanced Country export stores one label per IP, so an additional
+category can replace the geographic country. A decoder cannot recover that
+overwritten label. Use a multi-label source such as MetaCubeX's `geoip.metadb`
+when you need both geographic and category membership from one database.
 
 ## Trying published databases
 
@@ -91,9 +98,9 @@ In a sample run, `8.8.8.8` decoded as follows (GeoLite2's extra fields omitted):
 
 | Download | `database_type` | Raw record | Shadowquic country decoder |
 | --- | --- | --- | --- |
-| Loyalsoldier Country | `GeoLite2-Country` | `{"country":{"iso_code":"GOOGLE"}}` | `GOOGLE` |
-| GeoLite2 Country | `GeoLite2-Country` | `{"country":{"iso_code":"US"}, ...}` | `US` |
-| MetaCubeX geoip.metadb | `Meta-geoip0` | `["us","google"]` | Decode error: expected map |
+| Loyalsoldier Country | `GeoLite2-Country` | `{"country":{"iso_code":"GOOGLE"}}` | `["GOOGLE"]` |
+| GeoLite2 Country | `GeoLite2-Country` | `{"country":{"iso_code":"US"}, ...}` | `["US"]` |
+| MetaCubeX geoip.metadb | `Meta-geoip0` | `["us","google"]` | `["us","google"]` |
 
 The first two files even share a database type while assigning different labels.
 Check raw records as well as metadata. Published files change over time.

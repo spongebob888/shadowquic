@@ -23,9 +23,11 @@ to redb. No extra Cargo feature is required beyond `router-db` (enabled by defau
 `mmdb` uses `maxminddb::Reader::open_readfile`, `mmap` uses the production
 `MmdbDatabase::find_ip` implementation backed by `Reader::open_mmap`,
 and `redb` uses the production `RedbDatabase::find_ip` implementation with its
-8 MiB page cache. All answer the same question: does this IP's
-`country.iso_code` match the requested country? Both MMDB readers decode a
-`geoip2::Country` record per lookup, without country-only decode optimization.
+8 MiB page cache. All answer the same question: does this IP belong to the
+requested country or category? Both MMDB readers use the shared decoder for
+nested `country.iso_code` maps, root strings, and string arrays. Nested records
+still decode the full `geoip2::Country` structure; strings borrow database
+bytes, and arrays allocate a vector of borrowed strings.
 redb performs its normal
 read transaction, table lookup, and range search per query. Lua dispatch, IP
 string parsing, downloads, and conversion are outside lookup timing.
@@ -42,6 +44,8 @@ For realistic traffic, provide one IP per line with `--ips traffic-ips.txt`.
 Blank lines and `#` comments are allowed. This preserves order and duplicates,
 overrides `--queries`, and ignores `--family`. `--country` is one membership
 list for the entire run; repeat runs for other countries if needed.
+Category labels are also accepted, for example `--country google` with a
+Mihomo MMDB containing `["us", "google"]` records.
 
 The tool copies the supplied MMDB into a private temporary snapshot so its
 mapped bytes cannot be affected by changes to the original file. Copying is

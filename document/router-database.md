@@ -60,11 +60,30 @@ router:
 ```
 
 The `.mmdb` suffix is case insensitive and selects the direct backend only for
-Country databases. It memory-maps the file read-only and performs MMDB lookups
-against `country.iso_code`, including IPv6 aliases present in the source.
+Country databases. It memory-maps the file read-only and accepts nested
+`country.iso_code` records, root strings such as `"cn"`, and root string arrays
+such as `["us", "google"]`. Each array element is a separate membership, so the
+same IP can match both `us` and `google`. This includes IPv6 aliases present in
+the source.
 Use `data/country.redb` to retain the existing converted backend. Other suffixes
 also retain redb behavior for compatibility. Geosite always uses redb.
 Both country backends use the same Lua functions below.
+
+For a Mihomo/MetaCubeX source, keep the local path's `.mmdb` suffix even if the
+download is named `geoip.metadb`:
+
+```yaml
+router:
+  database:
+    - type: country
+      tag: geoip-db
+      url: https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.metadb
+      path: data/geoip.mmdb
+```
+
+For a record containing `["us", "google"]`, both
+`find_ip_v4("geoip-db", "us", "8.8.8.8")` and
+`find_ip_v4("geoip-db", "google", "8.8.8.8")` return true.
 
 | Lua function | Membership query |
 | --- | --- |
@@ -73,7 +92,9 @@ Both country backends use the same Lua functions below.
 | `find_ip_v6(tag, list, ip)` | Country of an IPv6 address string |
 
 The helpers return booleans and perform no DNS resolution. Country lists accept
-ISO codes (such as `US`) only; English country names are not stored. List
+ISO codes (such as `US`) and category labels (such as `google` or `private`)
+present in the source; English country names from MaxMind's `names` fields are
+not imported. Empty labels are ignored. List
 names and domain names are case insensitive; a trailing domain dot is ignored.
 Unknown lists return false. Unknown database tags, unavailable databases, invalid
 IP strings, or a helper used with the wrong database type raise Lua errors.
