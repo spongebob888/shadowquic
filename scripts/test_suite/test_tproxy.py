@@ -48,7 +48,8 @@ result = sp.run(
     docker_args,
     capture_output=True,
     text=True,
-    timeout=120,
+    # This also covers pulling the image and installing Ubuntu packages.
+    timeout=300,
 )
 
 print(result.stdout)
