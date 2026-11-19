@@ -1,6 +1,22 @@
 use crate::error::SError;
 use serde::{Deserialize, Serialize};
 
+pub fn default_timeout() -> u64 {
+    100
+}
+
+pub fn default_max_bytes() -> usize {
+    32768
+}
+
+pub fn default_max_concurrent() -> usize {
+    256
+}
+
+pub fn default_max_buffered_bytes() -> usize {
+    8 * 1024 * 1024
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SniffProtocol {
@@ -62,16 +78,22 @@ pub struct SnifferRule {
 ///     end
 /// ```
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SnifferCfg {
     /// TCP sniffer rules. Empty means no sniffing. Supports HTTP and TLS.
+    #[serde(default)]
     pub tcp: Vec<SnifferRule>,
     /// UDP sniffer rules. Empty means no sniffing. Supports QUIC.
+    #[serde(default)]
     pub udp: Vec<SnifferRule>,
     /// Absolute inspection deadline in milliseconds.
+    #[serde(default = "default_timeout")]
     pub timeout: u64,
+    #[serde(default = "default_max_bytes")]
     pub max_bytes: usize,
+    #[serde(default = "default_max_concurrent")]
     pub max_concurrent: usize,
+    #[serde(default = "default_max_buffered_bytes")]
     pub max_buffered_bytes: usize,
 }
 impl Default for SnifferCfg {
@@ -79,10 +101,10 @@ impl Default for SnifferCfg {
         Self {
             tcp: vec![],
             udp: vec![],
-            timeout: 100,
-            max_bytes: 32768,
-            max_concurrent: 256,
-            max_buffered_bytes: 8 * 1024 * 1024,
+            timeout: default_timeout(),
+            max_bytes: default_max_bytes(),
+            max_concurrent: default_max_concurrent(),
+            max_buffered_bytes: default_max_buffered_bytes(),
         }
     }
 }
