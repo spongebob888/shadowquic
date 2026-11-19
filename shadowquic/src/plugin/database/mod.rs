@@ -26,10 +26,10 @@ use std::{
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 const META: TableDefinition<&str, &str> = TableDefinition::new("metadata");
 const COUNTRY_SCHEMA: &str = "2";
-const GEOSITE_SCHEMA: &str = "3";
+const GEOSITE_SCHEMA: &str = "4";
 
 #[derive(Debug, thiserror::Error)]
-#[error("geosite schema {0} requires rebuilding to schema 3")]
+#[error("geosite schema {0} requires rebuilding to schema {GEOSITE_SCHEMA}")]
 struct GeositeRebuildRequired(u32);
 
 fn schema(kind: RouterDBKind) -> &'static str {

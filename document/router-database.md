@@ -138,9 +138,9 @@ with an omitted or empty `list`.
 
 Each redb stores a format version, the creating Shadowquic version, source URL,
 database type, and SHA-256 of the downloaded source bytes. Schema versions are
-independent: Country uses schema `2`, and Geosite uses schema `3`. Country schema
+independent: Country uses schema `2`, and Geosite uses schema `4`. Country schema
 `1` is unsupported; remove old converted files and restart to download and
-rebuild them. Geosite databases with a numeric schema below `3` are rebuilt
+rebuild them. Geosite databases with a numeric schema below `4` are rebuilt
 automatically: startup queues the configured source download, then the importer
 deletes every regular and multimap table and recreates the selected lists and
 metadata in one transaction. A failed download or import leaves the old tables
@@ -162,22 +162,25 @@ for the query's address family and the greatest start key no larger than the
 query, then checks the inclusive end. Missing tables
 and gaps between ranges return false.
 
-Geosite schema `3` stores each base list in a table named `geosite_<lowercase-name>`,
-including empty lists. Keys are `(SiteMatchType, Vec<u8>)`; domains and
-fallback regex patterns use UTF-8 bytes. Values are `u32` attribute bitmasks.
+Geosite schema `4` stores each base list in a table named `geosite_<lowercase-name>`,
+including empty lists. Keys use the typed `SiteMatchType` encoding: a one-byte
+match-type tag followed by the rule payload. Full, domain, keyword, and fallback
+regex payloads are UTF-8 text. Values are `u32` attribute bitmasks.
 Match types are
 `Full = 0`, `Domain = 1`, `Regex = 2`, `Keyword = 3`, `CompiledRegex = 4`;
 attributes are
 `Ads = 1 << 0`, `NotCn = 1 << 1`, `Cn = 1 << 2`, `Telemetry = 1 << 3`.
 Each rule has one row whose mask combines all of its supported attributes with
 bitwise OR. A zero mask means no supported attributes. `CompiledRegex = 4`
-keys store serialized little-endian sparse DFA bytes; their values store the
-attribute mask directly. Patterns that cannot compile to
-a sparse DFA use the existing `Regex = 2` key with the UTF-8 source pattern.
+keys store the original UTF-8 regex pattern and serialized little-endian sparse
+DFA bytes using redb's native `(&str, &[u8])` tuple encoding. Their values store the
+attribute mask directly. Schema `3` tuple keys are rebuilt into this format.
+Patterns that cannot compile to a sparse DFA use the existing `Regex = 2` key
+with the UTF-8 source pattern.
 Compiled DFAs are decoded directly from keys during lookup, and fallback
 regexes are compiled during lookup; there is no runtime regex cache.
 Unfiltered queries match any
-attribute. Full and domain lookups use the tuple index, while keyword and regex
+attribute. Full and domain lookups use the key index, while keyword and regex
 lookups scan only the corresponding match type in the requested list table.
 
 Direct MMDB files contain no Shadowquic schema or source-URL metadata; changing
