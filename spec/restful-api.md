@@ -265,6 +265,17 @@ Return TCP and UDP byte totals separately. Connection counts follow the lifetime
 `user_stats` entries; summing active scoreboard entries would lose completed
 sessions' traffic.
 
+## Router Database
+Restful api can manipulate custom type router database:
+- list the database table list(remove geosite/country prefix)
+- get all the rules of given list(merge ipv4/ipv6/geosite)
+- delete a rule list(ipv4/ipv6/geosite table)
+- delete certain rules of a given list(table).
+- Add certain rules of a given list(table)
+- Create/Replace a list with given rules.
+
+The rules should all use yaml syntax like config.yaml.
+
 ## Memory usage
 
 Use jemalloc allocator statistics. Return `allocator: "jemalloc"` and the byte
@@ -332,7 +343,7 @@ concurrent-probe rejections, and cancelled probes do not overwrite the cache.
 - Include `Access-Control-Allow-Origin: *` on every response, including errors.
 - Handle `OPTIONS` requests carrying `Origin` and `Access-Control-Request-Method`
   before authentication or route execution. Return an empty `204`, allowing
-  `GET, POST, PUT, OPTIONS` and request headers `Authorization, Content-Type`.
+  `GET, POST, PUT, DELETE, OPTIONS` and request headers `Authorization, Content-Type`.
 - Continue to authenticate actual API requests. Do not enable cookie credentials.
 
 ## Acceptance criteria

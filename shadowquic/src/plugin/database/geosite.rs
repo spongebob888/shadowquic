@@ -278,9 +278,55 @@ pub(super) fn insert_rule(
     list: &str,
     warned_attributes: &mut HashSet<String>,
 ) -> Result<()> {
+    let (value, attributes) = parse_attributes(value, list, warned_attributes)?;
+    let normalized;
+    let dfa_bytes;
+    let key = if kind == "regexp" {
+        let compiled = dense::Builder::new()
+            .configure(dense::Config::new().start_kind(StartKind::Unanchored))
+            .build(value)
+            .ok()
+            .and_then(|dfa| dfa.to_sparse().ok());
+        match compiled {
+            Some(dfa) => {
+                dfa_bytes = dfa.to_bytes_little_endian();
+                SiteMatchType::CompiledRegex(value, &dfa_bytes)
+            }
+            None => {
+                regex::Regex::new(value).map_err(|e| super::RuleError::Invalid(e.to_string()))?;
+                SiteMatchType::Regex(value)
+            }
+        }
+    } else {
+        normalized = value.to_ascii_lowercase();
+        text_key(kind, &normalized)?
+    };
+    let attributes = table
+        .get(key)?
+        .map_or(attributes, |old| old.value() | attributes);
+    table.insert(key, attributes)?;
+    Ok(())
+}
+
+fn text_key<'a>(kind: &str, value: &'a str) -> Result<SiteMatchType<'a>> {
+    match kind {
+        "full" => Ok(SiteMatchType::Full(value)),
+        "domain" => Ok(SiteMatchType::Domain(value)),
+        "keyword" => Ok(SiteMatchType::Keyword(value)),
+        _ => {
+            Err(super::RuleError::Invalid(format!("unsupported geosite rule type: {kind}")).into())
+        }
+    }
+}
+
+fn parse_attributes<'a>(
+    value: &'a str,
+    list: &str,
+    warned_attributes: &mut HashSet<String>,
+) -> Result<(&'a str, u32)> {
     let (value, attribute) = value.split_once(":@").unwrap_or((value, ""));
     if value.is_empty() || value.contains('\0') {
-        return Err("empty or invalid geosite rule".into());
+        return Err(super::RuleError::Invalid("empty or invalid geosite rule".into()).into());
     }
     let mut attributes = 0u32;
     for attribute in attribute.split(',') {
@@ -299,37 +345,81 @@ pub(super) fn insert_rule(
             None => {}
         }
     }
-    let normalized;
-    let dfa_bytes;
-    let key = if kind == "regexp" {
-        let compiled = dense::Builder::new()
-            .configure(dense::Config::new().start_kind(StartKind::Unanchored))
-            .build(value)
-            .ok()
-            .and_then(|dfa| dfa.to_sparse().ok());
-        match compiled {
-            Some(dfa) => {
-                dfa_bytes = dfa.to_bytes_little_endian();
-                SiteMatchType::CompiledRegex(value, &dfa_bytes)
+    Ok((value, attributes))
+}
+
+#[cfg(feature = "restful-api")]
+pub(super) fn remove_rule(
+    table: &mut redb::Table<SiteMatchType<'static>, u32>,
+    kind: &str,
+    rule: &str,
+    list: &str,
+    warned_attributes: &mut HashSet<String>,
+) -> Result<()> {
+    let (value, mask) = parse_attributes(rule, list, warned_attributes)?;
+    let qualified = rule.contains(":@");
+    fn remove(
+        table: &mut redb::Table<SiteMatchType<'static>, u32>,
+        key: SiteMatchType,
+        mask: Option<u32>,
+    ) -> Result<()> {
+        if let Some(mask) = mask {
+            let Some(old) = table.get(key)?.map(|old| old.value()) else {
+                return Ok(());
+            };
+            if old & mask == 0 {
+                return Ok(());
             }
-            None => {
-                regex::Regex::new(value)?;
-                SiteMatchType::Regex(value)
+            if old & !mask != 0 {
+                table.insert(key, old & !mask)?;
+                return Ok(());
             }
         }
-    } else {
-        normalized = value.to_ascii_lowercase();
-        match kind {
-            "full" => SiteMatchType::Full(&normalized),
-            "domain" => SiteMatchType::Domain(&normalized),
-            "keyword" => SiteMatchType::Keyword(&normalized),
-            _ => return Err(format!("unsupported geosite rule type: {kind}").into()),
+        table.remove(key)?;
+        Ok(())
+    }
+    let mask = qualified.then_some(mask);
+    if kind != "regexp" {
+        return remove(table, text_key(kind, &value.to_ascii_lowercase())?, mask);
+    }
+    regex::Regex::new(value).map_err(|e| super::RuleError::Invalid(e.to_string()))?;
+    remove(table, SiteMatchType::Regex(value), mask)?;
+    // Match the saved source even when a different compiler produced the DFA.
+    let mut matches = Vec::new();
+    for entry in table.range(SiteMatchType::CompiledRegex("", &[])..)? {
+        if let SiteMatchType::CompiledRegex(source, bytes) = entry?.0.value()
+            && source == value
+        {
+            matches.push(bytes.to_owned());
         }
-    };
-    // Repeated rules and case-insensitive list aliases retain every attribute.
-    let attributes = table
-        .get(key)?
-        .map_or(attributes, |old| old.value() | attributes);
-    table.insert(key, attributes)?;
+    }
+    for bytes in matches {
+        remove(table, SiteMatchType::CompiledRegex(value, &bytes), mask)?;
+    }
     Ok(())
+}
+
+#[cfg(feature = "restful-api")]
+pub(super) fn format_rule(key: SiteMatchType, mask: u32) -> String {
+    let (kind, value) = match key {
+        SiteMatchType::Full(value) => ("full", value),
+        SiteMatchType::Domain(value) => ("domain", value),
+        SiteMatchType::Keyword(value) => ("keyword", value),
+        SiteMatchType::Regex(value) | SiteMatchType::CompiledRegex(value, _) => ("regexp", value),
+    };
+    let mut rule = format!("{kind}:{value}");
+    let mut separator = ":@";
+    for (attr, name) in [
+        (AttrType::Ads, "ads"),
+        (AttrType::NotCn, "!cn"),
+        (AttrType::Cn, "cn"),
+        (AttrType::Telemetry, "telemetry"),
+    ] {
+        if attr.matches(mask) {
+            rule.push_str(separator);
+            rule.push_str(name);
+            separator = ",@";
+        }
+    }
+    rule
 }

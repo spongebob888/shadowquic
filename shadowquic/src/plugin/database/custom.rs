@@ -57,9 +57,7 @@ pub(super) fn open(cfg: &CustomDbCfg, cache_size: usize) -> Result<Database> {
     let mut names = HashSet::new();
     let mut warned_attributes = HashSet::new();
     for list in &cfg.list {
-        if list.name.trim().is_empty() || list.name.contains(['\0', '@']) {
-            return Err(format!("invalid custom list name {:?}", list.name).into());
-        }
+        validate_name(&list.name)?;
         if !names.insert(list.name.to_ascii_lowercase()) {
             return Err(format!("duplicate custom list {:?}", list.name).into());
         }
@@ -70,6 +68,31 @@ pub(super) fn open(cfg: &CustomDbCfg, cache_size: usize) -> Result<Database> {
         file.persist_noclobber(&cfg.path)?;
     }
     Ok(db)
+}
+
+pub(super) fn validate_name(name: &str) -> Result<()> {
+    if name.trim().is_empty() || name.contains(['\0', '@']) {
+        return Err(super::RuleError::Invalid(format!("invalid custom list name {name:?}")).into());
+    }
+    Ok(())
+}
+
+pub(super) fn split_rule(rule: &str) -> Result<(&str, &str)> {
+    let (kind, value) = rule
+        .split_once(':')
+        .ok_or_else(|| super::RuleError::Invalid(format!("missing rule type: {rule:?}")))?;
+    Ok((kind.trim(), value.trim()))
+}
+
+pub(super) fn network(value: &str) -> Result<IpNet> {
+    let net = if value.contains('/') {
+        value.parse::<IpNet>().ok()
+    } else {
+        value.parse::<IpAddr>().ok().map(IpNet::from)
+    };
+    Ok(net.ok_or_else(|| {
+        super::RuleError::Invalid(format!("invalid IP address or CIDR: {value:?}"))
+    })?)
 }
 
 fn prepare_table<'txn, K: Key + 'static, V: Value + 'static>(
@@ -95,47 +118,45 @@ fn write_list(
     list: &CustomRuleList,
     warned_attributes: &mut HashSet<String>,
 ) -> Result<()> {
-    let mut domains = prepare_table(
+    let domains = prepare_table(
         write,
         existing,
         GeositeTable::new(&geosite::geosite_table_name(&list.name)),
         list.force,
     )?;
-    let mut v4 = prepare_table(
+    let v4 = prepare_table(
         write,
         existing,
         CountryV4Table::new(&country_table_name(&list.name, 4)),
         list.force,
     )?;
-    let mut v6 = prepare_table(
+    let v6 = prepare_table(
         write,
         existing,
         CountryV6Table::new(&country_table_name(&list.name, 6)),
         list.force,
     )?;
+    insert_rules(&list.name, &list.rules, domains, v4, v6, warned_attributes)
+}
+
+pub(super) fn insert_rules(
+    name: &str,
+    rules: &[String],
+    mut domains: Option<Table<geosite::SiteMatchType<'static>, u32>>,
+    mut v4: Option<Table<u32, u32>>,
+    mut v6: Option<Table<u128, u128>>,
+    warned_attributes: &mut HashSet<String>,
+) -> Result<()> {
     if domains.is_none() && v4.is_none() && v6.is_none() {
         return Ok(());
     }
-    for rule in &list.rules {
-        let (kind, value) = rule
-            .split_once(':')
-            .ok_or_else(|| format!("missing rule type in list {:?}: {rule:?}", list.name))?;
-        let value = value.trim();
-        if kind.trim() == "ip" {
+    for rule in rules {
+        let (kind, value) = split_rule(rule)?;
+        if kind == "ip" {
             if v4.is_none() && v6.is_none() {
                 continue;
             }
-            let network: IpNet = if value.contains('/') {
-                value.parse::<IpNet>().ok()
-            } else {
-                value.parse::<IpAddr>().ok().map(IpNet::from)
-            }
-            .ok_or_else(|| {
-                format!(
-                    "invalid IP address or CIDR in list {:?}: {value:?}",
-                    list.name
-                )
-            })?;
+            let network = network(value)?;
             match network {
                 IpNet::V4(net) => {
                     if let Some(table) = &mut v4 {
@@ -157,8 +178,7 @@ fn write_list(
                 }
             }
         } else if let Some(table) = &mut domains {
-            geosite::insert_rule(table, kind.trim(), value, &list.name, warned_attributes)
-                .map_err(|e| format!("invalid rule {rule:?} in list {:?}: {e}", list.name))?;
+            geosite::insert_rule(table, kind, value, name, warned_attributes)?;
         }
     }
     Ok(())

@@ -2,6 +2,19 @@
 //! indexed redb lookups with a bounded page cache.
 mod country;
 mod custom;
+#[cfg(feature = "restful-api")]
+mod edit;
+#[cfg(feature = "restful-api")]
+pub(crate) use edit::ListEdit;
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum RuleError {
+    #[error("{0}")]
+    Invalid(String),
+    #[cfg(feature = "restful-api")]
+    #[error("unknown rule list")]
+    MissingList,
+}
 mod download;
 mod geosite;
 #[cfg(test)]
@@ -456,6 +469,8 @@ struct Slot {
 }
 #[derive(Default)]
 pub(crate) struct Databases {
+    #[cfg(feature = "restful-api")]
+    pub(crate) custom: HashMap<String, Arc<RedbDatabase>>,
     slots: HashMap<String, Arc<Slot>>,
 }
 impl Databases {
@@ -465,7 +480,12 @@ impl Databases {
     ) -> std::result::Result<Arc<Self>, SError> {
         let mut manager = Self::default();
         for cfg in configs {
-            let value = if cfg.kind() == RouterDBKind::Custom || cfg.path().try_exists()? {
+            let value = if cfg.kind() == RouterDBKind::Custom {
+                let db = Arc::new(RedbDatabase::open(cfg).map_err(config_error)?);
+                #[cfg(feature = "restful-api")]
+                manager.custom.insert(cfg.tag().to_owned(), db.clone());
+                Ok(db as Arc<dyn RouterDB>)
+            } else if cfg.path().try_exists()? {
                 match open_database(cfg) {
                     Ok(db) => Ok(db),
                     Err(error) if error.is::<GeositeRebuildRequired>() => {

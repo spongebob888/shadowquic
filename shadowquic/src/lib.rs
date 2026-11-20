@@ -337,6 +337,8 @@ pub struct Manager {
     pub default_outbound: String,
     #[cfg(feature = "restful-api")]
     pub api_config: Option<config::ApiConfig>,
+    #[cfg(all(feature = "router-db", feature = "restful-api"))]
+    pub custom_databases: HashMap<String, Arc<plugin::database::RedbDatabase>>,
     /// Statistics views of the original QUIC clients, before DNS wrapping.
     #[cfg(feature = "restful-api")]
     pub sq_outbounds: HashMap<String, Arc<dyn api::SQStatsTrait>>,
@@ -455,6 +457,8 @@ impl Manager {
             default_outbound: "outbound".into(),
             #[cfg(feature = "restful-api")]
             api_config: None,
+            #[cfg(all(feature = "router-db", feature = "restful-api"))]
+            custom_databases: HashMap::new(),
             #[cfg(feature = "restful-api")]
             sq_outbounds: HashMap::new(),
             #[cfg(feature = "plugin")]
@@ -497,6 +501,8 @@ impl Manager {
                 self.sq_outbounds,
                 self.selectable_outbounds,
                 self.observers,
+                #[cfg(feature = "router-db")]
+                self.custom_databases,
                 #[cfg(feature = "dns-server")]
                 self.resolver_manager
                     .as_ref()

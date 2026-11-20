@@ -35,6 +35,8 @@ use crate::{
     },
 };
 
+#[cfg(feature = "router-db")]
+mod database;
 pub mod logs;
 #[cfg(feature = "jemalloc")]
 mod memory;
@@ -81,6 +83,8 @@ struct ApiOutbound {
 }
 
 pub struct ApiManager {
+    #[cfg(feature = "router-db")]
+    custom_databases: HashMap<String, Arc<crate::plugin::database::RedbDatabase>>,
     secret: Option<String>,
     ui_path: Option<std::path::PathBuf>,
     outbounds: HashMap<String, ApiOutbound>,
@@ -166,11 +170,17 @@ impl ApiManager {
         sq_outbounds: HashMap<String, Arc<dyn SQStatsTrait>>,
         selectable_outbounds: HashMap<String, Arc<dyn Selectable>>,
         observers: HashMap<String, Arc<Observer>>,
+        #[cfg(feature = "router-db")] custom_databases: HashMap<
+            String,
+            Arc<crate::plugin::database::RedbDatabase>,
+        >,
         #[cfg(feature = "dns-server")] dns_cache: Option<Arc<crate::dns::DnsCache>>,
     ) -> Self {
         Self {
             secret: secret.filter(|secret| !secret.is_empty()),
             ui_path: None,
+            #[cfg(feature = "router-db")]
+            custom_databases,
             outbounds: outbounds
                 .into_iter()
                 .map(|(tag, outbound)| {
@@ -254,7 +264,7 @@ impl ApiManager {
             *response.status_mut() = StatusCode::NO_CONTENT;
             response.headers_mut().insert(
                 hyper::header::ACCESS_CONTROL_ALLOW_METHODS,
-                hyper::header::HeaderValue::from_static("GET, POST, PUT, OPTIONS"),
+                hyper::header::HeaderValue::from_static("GET, POST, PUT, DELETE, OPTIONS"),
             );
             response.headers_mut().insert(
                 hyper::header::ACCESS_CONTROL_ALLOW_HEADERS,
@@ -337,6 +347,10 @@ impl ApiManager {
                 ))
             }
         };
+        #[cfg(feature = "router-db")]
+        if path.starts_with("/api/v1/databases/") {
+            return self.database_request(request).await;
+        }
         match path {
             "/api/v1/outbounds" => {
                 require(Method::GET)?;
@@ -412,23 +426,7 @@ impl ApiManager {
                 {
                     return Ok(response(StatusCode::OK, selector.state()));
                 }
-                let content_type = request
-                    .headers()
-                    .get(hyper::header::CONTENT_TYPE)
-                    .and_then(|value| value.to_str().ok())
-                    .unwrap_or("")
-                    .split(';')
-                    .next()
-                    .unwrap_or("")
-                    .trim();
-                if !content_type.eq_ignore_ascii_case("application/json") {
-                    return Err(ApiError::invalid("expected application/json"));
-                }
-                let body = Limited::new(request.into_body(), 16 * 1024)
-                    .collect()
-                    .await
-                    .map_err(ApiError::invalid)?
-                    .to_bytes();
+                let body = json_body(request).await?;
                 if let Some(selector) = selector {
                     let input: SelectionRequest =
                         serde_json::from_slice(&body).map_err(ApiError::invalid)?;
@@ -647,6 +645,26 @@ impl ApiManager {
     }
 }
 
+async fn json_body(request: Request<Incoming>) -> Result<Bytes, ApiError> {
+    let content_type = request
+        .headers()
+        .get(hyper::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim();
+    if !content_type.eq_ignore_ascii_case("application/json") {
+        return Err(ApiError::invalid("expected application/json"));
+    }
+    Ok(Limited::new(request.into_body(), 16 * 1024)
+        .collect()
+        .await
+        .map_err(ApiError::invalid)?
+        .to_bytes())
+}
+
 fn decode_tag(tag: &str) -> Result<String, ApiError> {
     let bytes = tag.as_bytes();
     for (index, byte) in bytes.iter().enumerate() {
@@ -655,7 +673,7 @@ fn decode_tag(tag: &str) -> Result<String, ApiError> {
                 .get(index + 1..index + 3)
                 .is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit))
         {
-            return Err(ApiError::invalid("invalid percent-encoded outbound tag"));
+            return Err(ApiError::invalid("invalid percent-encoded path segment"));
         }
     }
     percent_encoding::percent_decode_str(tag)
