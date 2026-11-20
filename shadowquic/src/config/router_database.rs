@@ -98,26 +98,54 @@ pub struct GeositeDbCfg {
 }
 
 /// Persistent domain and IP lists defined in the router configuration.
+/// ```yaml
+/// router:
+///  database:
+///    - tag: local-rules
+///      type: custom
+///      path: data/custom.redb
+///      list:
+///        - name: direct
+///          rules:
+///            - 'domain:example.org'
+///            - 'keyword: needle:@ads'
+///            - 'regexp: ^service[0-9]+\.example$'
+///            - 'full:host.test'
+///            - 'ip:192.168.8.1/24'
+///            - 'ip:192.0.2.10'
+///            - 'ip:2001:db8::/64'
+///            - 'ip:2001:db8:1::1'
+/// ```
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CustomDbCfg {
     pub tag: String,
     #[serde(default = "default_custom_path")]
     pub path: PathBuf,
+
     pub list: Vec<CustomRuleList>,
     /// redb page-cache budget in bytes. Defaults to 128 KiB. Zero disables caching.
     #[serde(default = "default_custom_cache_size")]
     pub cache_size: usize,
 }
 
-fn default_custom_cache_size() -> usize {
+pub fn default_custom_cache_size() -> usize {
     128 * 1024
 }
 
-fn default_custom_path() -> PathBuf {
+pub fn default_custom_path() -> PathBuf {
     "data/custom.redb".into()
 }
 
+/// support rules:
+///   - 'domain:example.org'
+///   - 'keyword: needle:@ads'
+///   - 'regexp: ^service[0-9]+\.example$'
+///   - 'full:host.test'
+///   - 'ip:192.168.8.1/24'
+///   - 'ip:192.0.2.10'
+///   - 'ip:2001:db8::/64'
+///   - 'ip:2001:db8:1::1'
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct CustomRuleList {
@@ -128,7 +156,7 @@ pub struct CustomRuleList {
     pub rules: Vec<String>,
 }
 
-fn default_force() -> bool {
+pub fn default_force() -> bool {
     true
 }
 
