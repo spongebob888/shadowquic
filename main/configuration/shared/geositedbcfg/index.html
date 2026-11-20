@@ -16,7 +16,7 @@
         <link rel="prev" href="../countrydbcfg/">
       
       
-        <link rel="next" href="../dnsmasqleasecfg/">
+        <link rel="next" href="../customdbcfg/">
       
       
         
@@ -1299,6 +1299,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1817,6 +1821,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#cache-size" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>cache-size</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1826,6 +1841,33 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../customdbcfg/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Custom db
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -1927,6 +1969,33 @@
     
   
   Sniff protocol
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../customrulelist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Custom rule list
 
     
   </span>
@@ -2102,6 +2171,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#cache-size" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>cache-size</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2156,6 +2236,13 @@ Defaults to the v2fly domain-list-community database in YAML format.</p>
 </ul>
 <p>Persistent converted redb file, relative to the working directory.
 Cost about 16m for full geosite db. 1Mb for only cn list.</p>
+<h3 id="cache-size"><code>cache-size</code><a class="headerlink" href="#cache-size" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Type:</strong> <code>usize</code></li>
+<li><strong>Required:</strong> no</li>
+<li><strong>Default:</strong> <code>default_cache_size()</code></li>
+</ul>
+<p>redb page-cache budget in bytes. Defaults to 4 MiB; zero disables caching.</p>
 
 
 

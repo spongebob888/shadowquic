@@ -118,6 +118,9 @@
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/geositedbcfg/</loc>
       </url>
       <url>
+        <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/customdbcfg/</loc>
+      </url>
+      <url>
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/dnsmasqleasecfg/</loc>
       </url>
       <url>
@@ -128,6 +131,9 @@
       </url>
       <url>
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/sniffprotocol/</loc>
+      </url>
+      <url>
+        <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/customrulelist/</loc>
       </url>
       <url>
         <loc>https://spongebob888.github.io/shadowquic/main/api/</loc>
