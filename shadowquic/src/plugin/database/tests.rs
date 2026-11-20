@@ -22,12 +22,14 @@ const YAML: &str = r#"lists:
 "#;
 fn config(dir: &Path, kind: RouterDBKind) -> RouterDatabaseCfg {
     match kind {
+        RouterDBKind::Custom => unreachable!("downloaded database fixture"),
         RouterDBKind::Country => RouterDatabaseCfg::Country(CountryDbCfg {
             tag: "db".into(),
             url: "https://example.test/db".into(),
             path: dir.join("db.redb"),
         }),
         RouterDBKind::Geosite => RouterDatabaseCfg::Geosite(GeositeDbCfg {
+            cache_size: 4 * 1024 * 1024,
             list_include: Vec::new(),
             tag: "db".into(),
             url: "https://example.test/db".into(),
@@ -58,11 +60,25 @@ fn legacy_geosite(cfg: &RouterDatabaseCfg, version: &str) {
             meta.insert(key, value).unwrap();
         }
         write.open_table(RULES).unwrap().insert("old", ()).unwrap();
-        write
-            .open_table(TableDefinition::<(u8, &[u8]), u8>::new("geosite_test"))
-            .unwrap()
-            .insert((1, b"old.example".as_slice()), 3)
-            .unwrap();
+        if version == "3" {
+            // Schema 3 used byte-tuple keys and u32 masks, with no regex source.
+            let mut table = write
+                .open_table(TableDefinition::<(u8, &[u8]), u32>::new("geosite_test"))
+                .unwrap();
+            table.insert((1, b"old.example".as_slice()), 3).unwrap();
+            let dfa = regex_automata::dfa::dense::DFA::new("legacy")
+                .unwrap()
+                .to_sparse()
+                .unwrap()
+                .to_bytes_little_endian();
+            table.insert((4, dfa.as_slice()), 8).unwrap();
+        } else {
+            write
+                .open_table(TableDefinition::<(u8, &[u8]), u8>::new("geosite_test"))
+                .unwrap()
+                .insert((1, b"old.example".as_slice()), 3)
+                .unwrap();
+        }
         write
             .open_multimap_table(redb::MultimapTableDefinition::<u8, u8>::new("old_multimap"))
             .unwrap()
@@ -70,6 +86,37 @@ fn legacy_geosite(cfg: &RouterDatabaseCfg, version: &str) {
             .unwrap();
     }
     write.commit().unwrap();
+}
+
+#[test]
+fn geosite_cache_size_changes_without_invalidating_imported_or_rebuilt_databases() {
+    for legacy in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = config(dir.path(), RouterDBKind::Geosite);
+        let RouterDatabaseCfg::Geosite(site) = &mut cfg else {
+            unreachable!()
+        };
+        site.cache_size = 0;
+        if legacy {
+            legacy_geosite(&cfg, "3");
+        }
+        let source = dir.path().join("source.yml");
+        std::fs::write(&source, YAML).unwrap();
+        let db = RedbDatabase::import(&cfg, &source).unwrap();
+        assert!(db.find_domain("test@ads", "api.tree.example").unwrap());
+        assert!(db.find_domain("test", "rx123.example").unwrap());
+        assert!(!db.find_domain("test", "missing.invalid").unwrap());
+        drop(db);
+
+        // Cache size is a runtime setting, independent of source identity.
+        let RouterDatabaseCfg::Geosite(site) = &mut cfg else {
+            unreachable!()
+        };
+        site.cache_size = 64 * 1024;
+        let db = RedbDatabase::open(&cfg).unwrap();
+        assert!(db.find_domain("test", "exact.example").unwrap());
+        assert!(!db.find_domain("test", "old.example").unwrap());
+    }
 }
 
 fn country_fixture() -> &'static [u8] {
@@ -377,7 +424,7 @@ fn geosite_indexed_and_sequential_rules_and_metadata_survive_reopen() {
     assert!(!db.find_domain("missing", "exact.example").unwrap());
     let read = db.db.begin_read().unwrap();
     let meta = read.open_table(META).unwrap();
-    assert_eq!(meta.get("schema").unwrap().unwrap().value(), "3");
+    assert_eq!(meta.get("schema").unwrap().unwrap().value(), "4");
     assert_eq!(
         meta.get("version").unwrap().unwrap().value(),
         env!("CARGO_PKG_VERSION")
@@ -410,8 +457,81 @@ fn geosite_indexed_and_sequential_rules_and_metadata_survive_reopen() {
     assert!(error.contains("restart Shadowquic to download and rebuild it"));
 }
 #[test]
-fn geosite_schema_three_tables_preserve_attribute_masks_and_isolate_lists() {
-    use super::geosite::GeositeTable;
+fn geosite_schema_four_keys_encode_tags_and_borrow_both_regex_fields() {
+    use super::geosite::{GeositeTable, SiteMatchType};
+    use redb::{ReadableTableMetadata, Value};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("geosite.redb");
+    let keys = [
+        SiteMatchType::Full("exact.example"),
+        SiteMatchType::Domain("tree.example"),
+        SiteMatchType::Regex(r"^\bfallback\.example$"),
+        SiteMatchType::Keyword("例子"),
+        SiteMatchType::CompiledRegex("^例子$", &[0, 255, 128, 0]),
+        // Different source patterns remain distinct even with identical DFAs.
+        SiteMatchType::CompiledRegex("^(?:例子)$", &[0, 255, 128, 0]),
+    ];
+    let encoded = [
+        b"\x00exact.example".to_vec(),
+        b"\x01tree.example".to_vec(),
+        [b"\x02".as_slice(), br"^\bfallback\.example$".as_slice()].concat(),
+        [b"\x03".as_slice(), "例子".as_bytes()].concat(),
+        [
+            vec![4],
+            <(&str, &[u8])>::as_bytes(&("^例子$", b"\x00\xff\x80\x00".as_slice())),
+        ]
+        .concat(),
+        [
+            vec![4],
+            <(&str, &[u8])>::as_bytes(&("^(?:例子)$", b"\x00\xff\x80\x00".as_slice())),
+        ]
+        .concat(),
+    ];
+    for (key, expected) in keys.into_iter().zip(&encoded) {
+        assert_eq!(SiteMatchType::as_bytes(&key), *expected);
+        assert_eq!(SiteMatchType::from_bytes(expected), key);
+    }
+    // Empty payloads also serve as lower bounds for each match-type range.
+    for key in [
+        SiteMatchType::Full(""),
+        SiteMatchType::Domain(""),
+        SiteMatchType::Regex(""),
+        SiteMatchType::Keyword(""),
+        SiteMatchType::CompiledRegex("", &[]),
+    ] {
+        assert_eq!(
+            SiteMatchType::from_bytes(&SiteMatchType::as_bytes(&key)),
+            key
+        );
+    }
+    {
+        let db = Database::create(&path).unwrap();
+        let write = db.begin_write().unwrap();
+        {
+            let mut table = write.open_table(GeositeTable::new("geosite_test")).unwrap();
+            for (index, key) in keys.into_iter().enumerate().rev() {
+                table.insert(key, 1u32 << index).unwrap();
+            }
+        }
+        write.commit().unwrap();
+    }
+    let db = Database::open(&path).unwrap();
+    let read = db.begin_read().unwrap();
+    let table = read.open_table(GeositeTable::new("geosite_test")).unwrap();
+    assert_eq!(table.len().unwrap(), keys.len() as u64);
+    for (index, key) in keys.into_iter().enumerate() {
+        assert_eq!(table.get(key).unwrap().unwrap().value(), 1 << index);
+    }
+    let compiled = table
+        .range(SiteMatchType::CompiledRegex("", &[])..)
+        .unwrap();
+    assert_eq!(compiled.count(), 2);
+}
+
+#[test]
+fn geosite_schema_four_tables_preserve_attribute_masks_sources_and_isolate_lists() {
+    use super::geosite::{GeositeTable, SiteMatchType};
     use redb::ReadableTableMetadata;
     use regex_automata::dfa::Automaton;
 
@@ -497,7 +617,7 @@ fn geosite_schema_three_tables_preserve_attribute_masks_and_isolate_lists() {
     assert_eq!(table.len().unwrap(), 9);
     assert_eq!(
         table
-            .get((0u8, b"exact.example".as_slice()))
+            .get(SiteMatchType::Full("exact.example"))
             .unwrap()
             .unwrap()
             .value(),
@@ -505,14 +625,14 @@ fn geosite_schema_three_tables_preserve_attribute_masks_and_isolate_lists() {
     );
     assert_eq!(
         table
-            .get((0u8, b"unknown.example".as_slice()))
+            .get(SiteMatchType::Full("unknown.example"))
             .unwrap()
             .unwrap()
             .value(),
         0
     );
     let (regex_key, regex_attribute) = table
-        .range((4u8, &b""[..])..(5u8, &b""[..]))
+        .range(SiteMatchType::CompiledRegex("", &[])..)
         .unwrap()
         .next()
         .unwrap()
@@ -520,13 +640,16 @@ fn geosite_schema_three_tables_preserve_attribute_masks_and_isolate_lists() {
     assert_eq!(regex_attribute.value(), 1 | 4 | 8);
     assert_eq!(
         table
-            .get((2u8, br"^\bfallback\.example$".as_slice()))
+            .get(SiteMatchType::Regex(r"^\bfallback\.example$"))
             .unwrap()
             .unwrap()
             .value(),
         2 | 8
     );
-    let (_, dfa_bytes) = regex_key.value();
+    let SiteMatchType::CompiledRegex(source, dfa_bytes) = regex_key.value() else {
+        panic!("expected a compiled regex key");
+    };
+    assert_eq!(source, r"^rx\d+\.example$");
     assert!(dfa_bytes.len() > 16);
     let dfa = super::geosite::deserialize_dfa(dfa_bytes).unwrap();
     assert!(
@@ -585,7 +708,7 @@ fn geosite_unknown_attributes_warn_once_and_keep_known_bits() {
 
 #[test]
 fn geosite_legacy_schemas_recreate_all_tables_with_u32_attribute_masks() {
-    for version in ["0", "1", "2"] {
+    for version in ["0", "1", "2", "3"] {
         let dir = tempfile::tempdir().unwrap();
         let cfg = config(dir.path(), RouterDBKind::Geosite);
         legacy_geosite(&cfg, version);
@@ -609,7 +732,7 @@ fn geosite_legacy_schemas_recreate_all_tables_with_u32_attribute_masks() {
         assert!(read.list_multimap_tables().unwrap().next().is_none());
         {
             let meta = read.open_table(META).unwrap();
-            assert_eq!(meta.get("schema").unwrap().unwrap().value(), "3");
+            assert_eq!(meta.get("schema").unwrap().unwrap().value(), "4");
             assert!(meta.get("legacy-only").unwrap().is_none());
             let digest: String = Sha256::digest(yaml.as_bytes())
                 .iter()
@@ -632,7 +755,7 @@ fn geosite_legacy_schemas_recreate_all_tables_with_u32_attribute_masks() {
 fn geosite_rebuild_reclaims_space_from_legacy_tables() {
     let dir = tempfile::tempdir().unwrap();
     let cfg = config(dir.path(), RouterDBKind::Geosite);
-    legacy_geosite(&cfg, "2");
+    legacy_geosite(&cfg, "3");
     {
         let db = Database::open(cfg.path()).unwrap();
         let write = db.begin_write().unwrap();
@@ -671,7 +794,7 @@ fn geosite_rebuild_reclaims_space_from_legacy_tables() {
 fn failed_geosite_upgrade_preserves_old_tables_and_is_retried_on_restart() {
     let dir = tempfile::tempdir().unwrap();
     let cfg = config(dir.path(), RouterDBKind::Geosite);
-    legacy_geosite(&cfg, "2");
+    legacy_geosite(&cfg, "3");
     let source = dir.path().join("bad.yml");
     std::fs::write(&source, "lists: [{name: test, rules: ['regexp:(']}]").unwrap();
     for _ in 0..2 {
@@ -697,7 +820,7 @@ fn failed_geosite_upgrade_preserves_old_tables_and_is_retried_on_restart() {
                 .unwrap()
                 .unwrap()
                 .value(),
-            "2"
+            "3"
         );
         assert!(
             read.open_table(RULES)
@@ -708,7 +831,7 @@ fn failed_geosite_upgrade_preserves_old_tables_and_is_retried_on_restart() {
         );
         assert_eq!(read.list_multimap_tables().unwrap().count(), 1);
         let old = read
-            .open_table(TableDefinition::<(u8, &[u8]), u8>::new("geosite_test"))
+            .open_table(TableDefinition::<(u8, &[u8]), u32>::new("geosite_test"))
             .unwrap();
         assert_eq!(
             old.get((1, b"old.example".as_slice()))
@@ -721,8 +844,10 @@ fn failed_geosite_upgrade_preserves_old_tables_and_is_retried_on_restart() {
 }
 
 #[test]
-fn geosite_schema_three_requires_byte_tuple_keys_and_u32_values() {
-    for wrong_type in ["missing", "keys", "values"] {
+fn geosite_schema_four_requires_typed_keys_and_u32_values() {
+    use super::geosite::SiteMatchType;
+
+    for wrong_type in ["missing", "keys", "legacy_keys", "values"] {
         let dir = tempfile::tempdir().unwrap();
         let cfg = config(dir.path(), RouterDBKind::Geosite);
         let db = Database::create(cfg.path()).unwrap();
@@ -730,7 +855,7 @@ fn geosite_schema_three_requires_byte_tuple_keys_and_u32_values() {
         {
             let mut meta = write.open_table(META).unwrap();
             for (key, value) in [
-                ("schema", "3"),
+                ("schema", "4"),
                 ("type", "geosite"),
                 ("url", cfg.url()),
                 ("sha256", "test"),
@@ -741,9 +866,13 @@ fn geosite_schema_three_requires_byte_tuple_keys_and_u32_values() {
                 write
                     .open_table(TableDefinition::<&str, ()>::new("geosite_test"))
                     .unwrap();
+            } else if wrong_type == "legacy_keys" {
+                write
+                    .open_table(TableDefinition::<(u8, &[u8]), u32>::new("geosite_test"))
+                    .unwrap();
             } else if wrong_type == "values" {
                 write
-                    .open_table(TableDefinition::<(u8, &[u8]), u8>::new("geosite_test"))
+                    .open_table(TableDefinition::<SiteMatchType, u8>::new("geosite_test"))
                     .unwrap();
             } else {
                 write.open_table(RULES).unwrap();
@@ -1054,8 +1183,8 @@ fn country_ranges_match_boundaries_gaps_and_separate_families() {
 fn incompatible_schema_is_rejected_for_each_database_type() {
     for (kind, stored, expected) in [
         (RouterDBKind::Country, "1", "2"),
-        (RouterDBKind::Geosite, "4", "3"),
-        (RouterDBKind::Geosite, "unknown", "3"),
+        (RouterDBKind::Geosite, "5", "4"),
+        (RouterDBKind::Geosite, "unknown", "4"),
     ] {
         let dir = tempfile::tempdir().unwrap();
         let cfg = config(dir.path(), kind);
@@ -1131,6 +1260,7 @@ fn database_config_rejects_tag_collisions_and_bad_urls() {
         config.router.database = (0..count)
             .map(|i| {
                 RouterDatabaseCfg::Geosite(GeositeDbCfg {
+                    cache_size: 4 * 1024 * 1024,
                     list_include: Vec::new(),
                     tag: tag.into(),
                     url: "https://example.test/db".into(),
@@ -1147,7 +1277,7 @@ fn database_config_rejects_tag_collisions_and_bad_urls() {
 
 #[tokio::test]
 async fn download_uses_tagged_inbound_for_redirects_and_publishes_database() {
-    for version in [None, Some("1"), Some("2")] {
+    for version in [None, Some("1"), Some("2"), Some("3")] {
         let dir = tempfile::tempdir().unwrap();
         let cfg = config(dir.path(), RouterDBKind::Geosite);
         // Use HTTP locally while still asserting that no direct connection is made:
@@ -1429,4 +1559,201 @@ fn geosite_legacy_unfiltered_metadata_remains_compatible() {
     let db = RedbDatabase::open(&cfg).unwrap();
     assert!(db.find_domain("test", "exact.example").unwrap());
     assert!(db.find_domain("other", "other.example").unwrap());
+}
+
+fn custom_config(dir: &Path, lists: &str) -> RouterDatabaseCfg {
+    let mut cfg: crate::config::CustomDbCfg =
+        serde_saphyr::from_str(&format!("tag: local\nlist:\n{lists}")).unwrap();
+    assert_eq!(cfg.path, Path::new("data/custom.redb"));
+    cfg.path = dir.join("rules/custom.redb");
+    RouterDatabaseCfg::Custom(cfg)
+}
+
+#[test]
+fn custom_database_serves_mixed_lists_through_lua_and_stores_compatible_tables() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = custom_config(
+        dir.path(),
+        r#"
+  - name: Direct
+    rules:
+      - 'domain: Example.com'
+      - 'keyword: needle:@ads'
+      - 'full: exact.test'
+      - 'regexp: ^rx[0-9]+\.test$'
+      - 'ip: 192.0.2.65/26'
+      - 'ip:192.0.2.224/27'
+      - 'ip:192.0.2.1/24'
+      - 'ip:192.0.2.17'
+      - 'ip:192.0.3.0'
+      - 'ip:192.0.3.2'
+      - 'ip:2001:db8::42/64'
+      - 'ip:ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'
+  - name: empty
+    rules: []
+"#,
+    );
+    let mut inbounds = HashMap::new();
+    let manager = Databases::build(std::slice::from_ref(&cfg), &mut inbounds).unwrap();
+    assert!(inbounds.is_empty());
+    let lua = mlua::Lua::new();
+    manager.install(&lua).unwrap();
+    lua.load(
+        r#"
+        assert(find_domain('local', 'DIRECT', 'sub.EXAMPLE.com.'))
+        assert(find_domain('local', 'direct@ads', 'myneedle.test'))
+        assert(not find_domain('local', 'direct@ads', 'example.com'))
+        assert(find_domain('local', 'direct', 'exact.test'))
+        assert(not find_domain('local', 'direct', 'sub.exact.test'))
+        assert(find_domain('local', 'direct', 'rx42.test'))
+        assert(find_ip_v4('local', 'direct', '192.0.2.255'))
+        assert(find_ip_v4('local', 'direct', '192.0.3.0'))
+        assert(not find_ip_v4('local', 'direct', '192.0.3.1'))
+        assert(find_ip_v6('local', 'direct', '2001:db8::ffff'))
+        assert(not find_ip_v6('local', 'direct', '2001:db8:0:1::'))
+        assert(find_ip_v6('local', 'direct', 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'))
+        assert(not find_domain('local', 'empty', 'example.com'))
+        assert(not find_ip_v4('local', 'empty', '192.0.2.0'))
+    "#,
+    )
+    .exec()
+    .unwrap();
+    drop(lua);
+    drop(manager);
+
+    let db = Database::open(cfg.path()).unwrap();
+    let read = db.begin_read().unwrap();
+    let meta = read.open_table(META).unwrap();
+    for (key, expected) in [
+        ("type", "custom"),
+        ("country_schema", COUNTRY_SCHEMA),
+        ("geosite_schema", GEOSITE_SCHEMA),
+        ("version", env!("CARGO_PKG_VERSION")),
+    ] {
+        assert_eq!(meta.get(key).unwrap().unwrap().value(), expected);
+    }
+    assert_eq!(read.list_tables().unwrap().count(), 7);
+    for list in ["direct", "empty"] {
+        read.open_table(GeositeTable::new(&geosite::geosite_table_name(list)))
+            .unwrap();
+        read.open_table(CountryV6Table::new(&country_table_name(list, 6)))
+            .unwrap();
+        let v4 = read
+            .open_table(CountryV4Table::new(&country_table_name(list, 4)))
+            .unwrap();
+        let ranges: Vec<_> = v4
+            .iter()
+            .unwrap()
+            .map(|entry| {
+                let (start, end) = entry.unwrap();
+                (
+                    std::net::Ipv4Addr::from(start.value()).to_string(),
+                    std::net::Ipv4Addr::from(end.value()).to_string(),
+                )
+            })
+            .collect();
+        if list == "empty" {
+            assert!(ranges.is_empty());
+        } else {
+            assert_eq!(
+                ranges,
+                [
+                    ("192.0.2.0".into(), "192.0.3.0".into()),
+                    ("192.0.3.2".into(), "192.0.3.2".into())
+                ]
+            );
+        }
+    }
+}
+
+#[test]
+fn custom_database_replaces_forced_lists_and_only_seeds_missing_tables_otherwise() {
+    let dir = tempfile::tempdir().unwrap();
+    let lists = "
+  - name: replace
+    rules: ['domain:old.test', 'ip:192.0.2.1', 'ip:2001:db8::1']
+  - name: keep
+    force: false
+    rules: ['domain:old.test', 'ip:192.0.2.1', 'ip:2001:db8::1']
+";
+    let cfg = custom_config(dir.path(), lists);
+    drop(RedbDatabase::open(&cfg).unwrap());
+    let db = Database::open(cfg.path()).unwrap();
+    let write = db.begin_write().unwrap();
+    write
+        .delete_table(CountryV6Table::new("country_v6_keep"))
+        .unwrap();
+    write
+        .open_table(META)
+        .unwrap()
+        .insert("version", "original")
+        .unwrap();
+    write.commit().unwrap();
+    drop(db);
+
+    let lists = lists
+        .replace("old.test", "new.test")
+        .replace(".1'", ".2'")
+        .replace("::1'", "::2'");
+    let db = RedbDatabase::open(&custom_config(dir.path(), &lists)).unwrap();
+    for (list, replaced) in [("replace", true), ("keep", false)] {
+        assert_eq!(db.find_domain(list, "new.test").unwrap(), replaced);
+        assert_eq!(db.find_domain(list, "old.test").unwrap(), !replaced);
+        assert_eq!(
+            db.find_ip(list, "192.0.2.2".parse().unwrap()).unwrap(),
+            replaced
+        );
+        assert_eq!(
+            db.find_ip(list, "192.0.2.1".parse().unwrap()).unwrap(),
+            !replaced
+        );
+        assert!(db.find_ip(list, "2001:db8::2".parse().unwrap()).unwrap());
+        assert!(!db.find_ip(list, "2001:db8::1".parse().unwrap()).unwrap());
+    }
+    let meta = db.db.begin_read().unwrap().open_table(META).unwrap();
+    assert_eq!(meta.get("version").unwrap().unwrap().value(), "original");
+}
+
+#[test]
+fn custom_database_rolls_back_invalid_updates_and_rejects_incompatible_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let valid = "- name: one\n  rules: ['domain:original.test']\n";
+    let cfg = custom_config(dir.path(), valid);
+    let changed = valid.replace("original", "changed");
+    for extra in [
+        "- name: two\n  rules: ['ip:192.168.8,1/24']",
+        "- name: two\n  rules: ['ip:ff:0e:88/64']",
+        "- name: two\n  rules: ['regexp: (']",
+        "- name: ONE\n  rules: []",
+    ] {
+        let invalid = custom_config(dir.path(), &(changed.clone() + extra));
+        assert!(RedbDatabase::open(&invalid).is_err());
+        assert!(!cfg.path().exists());
+    }
+    drop(RedbDatabase::open(&cfg).unwrap());
+    let invalid = custom_config(dir.path(), &(changed + "- name: two\n  rules: ['ip:bad']"));
+    assert!(RedbDatabase::open(&invalid).is_err());
+    let preserved = custom_config(dir.path(), "- name: one\n  force: false\n  rules: []");
+    let db = RedbDatabase::open(&preserved).unwrap();
+    assert!(db.find_domain("one", "original.test").unwrap());
+    assert!(!db.find_domain("one", "changed.test").unwrap());
+    assert_eq!(
+        db.db.begin_read().unwrap().list_tables().unwrap().count(),
+        4
+    );
+    drop(db);
+    for (key, invalid, original) in [
+        ("type", "country", "custom"),
+        ("country_schema", "99", COUNTRY_SCHEMA),
+        ("geosite_schema", "99", GEOSITE_SCHEMA),
+    ] {
+        for value in [invalid, original] {
+            let raw = Database::open(cfg.path()).unwrap();
+            let write = raw.begin_write().unwrap();
+            write.open_table(META).unwrap().insert(key, value).unwrap();
+            write.commit().unwrap();
+            drop(raw);
+            assert_eq!(RedbDatabase::open(&preserved).is_err(), value == invalid);
+        }
+    }
 }

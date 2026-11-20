@@ -79,6 +79,8 @@ fn manager(
         sq_outbounds,
         HashMap::new(),
         HashMap::new(),
+        #[cfg(feature = "router-db")]
+        HashMap::new(),
         #[cfg(feature = "dns-server")]
         None,
     ))
@@ -196,7 +198,7 @@ async fn cors_preflights_allow_bearer_and_json_without_authentication_or_dispatc
         assert_eq!(response.headers()["access-control-allow-origin"], "*");
         assert_eq!(
             response.headers()["access-control-allow-methods"],
-            "GET, POST, PUT, OPTIONS"
+            "GET, POST, PUT, DELETE, OPTIONS"
         );
         assert_eq!(
             response.headers()["access-control-allow-headers"],
@@ -917,6 +919,8 @@ async fn omitted_or_empty_secret_allows_requests_without_authentication() {
             HashMap::new(),
             HashMap::new(),
             HashMap::new(),
+            #[cfg(feature = "router-db")]
+            HashMap::new(),
             #[cfg(feature = "dns-server")]
             None,
         ));
@@ -1012,6 +1016,8 @@ async fn connections_http_response_preserves_schema_and_string_id_order_for_many
         HashMap::new(),
         HashMap::new(),
         HashMap::from([(inbound.into(), observer.clone())]),
+        #[cfg(feature = "router-db")]
+        HashMap::new(),
         #[cfg(feature = "dns-server")]
         None,
     ));
@@ -1108,6 +1114,8 @@ async fn traffic_sums_named_and_anonymous_users_and_follows_user_counter_changes
         HashMap::new(),
         HashMap::new(),
         HashMap::from([("local".into(), observer.clone())]),
+        #[cfg(feature = "router-db")]
+        HashMap::new(),
         #[cfg(feature = "dns-server")]
         None,
     );
@@ -1211,6 +1219,8 @@ async fn snapshots_report_active_sessions_and_preserve_udp_half_metadata() {
             ("local".into(), observer.clone()),
             ("idle".into(), Arc::new(Observer::new())),
         ]),
+        #[cfg(feature = "router-db")]
+        HashMap::new(),
         #[cfg(feature = "dns-server")]
         None,
     );
@@ -1328,6 +1338,8 @@ async fn connections_report_half_closed_when_only_udp_receiver_remains() {
         HashMap::new(),
         HashMap::new(),
         HashMap::from([("local".into(), observer.clone())]),
+        #[cfg(feature = "router-db")]
+        HashMap::new(),
         #[cfg(feature = "dns-server")]
         None,
     );
@@ -1527,6 +1539,8 @@ async fn connections_use_cached_domains_without_resolving_on_a_miss() {
         HashMap::new(),
         HashMap::new(),
         HashMap::from([("local".into(), observer.clone())]),
+        #[cfg(feature = "router-db")]
+        HashMap::new(),
         Some(cache),
     );
     let (hit, _peer) = tcp_request("192.0.2.7:443".parse::<SocketAddr>().unwrap().into());
@@ -1559,6 +1573,8 @@ async fn connections_sniffer_metadata_follows_receive_half_lifetime() {
         HashMap::new(),
         HashMap::new(),
         HashMap::from([("local".into(), observer.clone())]),
+        #[cfg(feature = "router-db")]
+        HashMap::new(),
         #[cfg(feature = "dns-server")]
         None,
     );
@@ -1808,4 +1824,112 @@ async fn log_websocket_authentication_streaming_and_shutdown() {
     })
     .await
     .unwrap();
+}
+
+#[cfg(feature = "router-db")]
+#[tokio::test]
+async fn custom_database_http_edits_persist_and_update_live_lua_lookups() {
+    use crate::{
+        config::RouterDatabaseCfg,
+        plugin::database::{Databases, RedbDatabase, RouterDB},
+    };
+
+    let temp = tempfile::tempdir().unwrap();
+    let cfg: RouterDatabaseCfg = serde_saphyr::from_str(&format!(
+        "type: custom\ntag: local/db\npath: {}\nlist: []",
+        temp.path().join("local.redb").display()
+    ))
+    .unwrap();
+    let dbs = Databases::build(std::slice::from_ref(&cfg), &mut HashMap::new()).unwrap();
+    let lua = mlua::Lua::new();
+    dbs.install(&lua).unwrap();
+    let mut api = manager(HashMap::new(), HashMap::new());
+    let state = Arc::get_mut(&mut api).unwrap();
+    state.secret = Some("secret".into());
+    state.custom_databases = dbs.custom.clone();
+    let (addr, stop, task) = server(api).await;
+    let lists = "/api/v1/databases/local%2Fdb/lists";
+    let list = format!("{lists}/Demo%20List");
+    let rules = format!("{list}/rules");
+    let auth = ["Bearer secret"];
+    let request = |method, path, body| call_with_authorization(addr, method, path, body, &auth);
+    let initial = json!({"rules":["domain:EXAMPLE.test:@ads,@cn", "regexp:^rx[0-9]+$", "regexp:\\bβ\\b", "ip:192.0.2.0/24", "ip:2001:db8::/126"]}).to_string();
+    assert_eq!(call(addr, "PUT", &list, &initial).await.0, 401);
+    assert_eq!(request("GET", lists, "").await, (200, json!({"lists":[]})));
+    assert_eq!(request("GET", &list, "").await.0, 404);
+    assert_eq!(request("PUT", &list, &initial).await.0, 200);
+    assert_eq!(
+        request("GET", lists, "").await,
+        (200, json!({"lists":["demo list"]}))
+    );
+    let (status, snapshot) = request("GET", &list, "").await;
+    assert_eq!(status, 200);
+    let exported = snapshot["rules"].as_array().unwrap();
+    assert_eq!(exported.len(), 5);
+    for rule in [
+        "domain:example.test:@ads,@cn",
+        "regexp:^rx[0-9]+$",
+        "regexp:\\bβ\\b",
+        "ip:192.0.2.0/24",
+        "ip:2001:db8::/126",
+    ] {
+        assert!(exported.contains(&json!(rule)));
+    }
+
+    let invalid = r#"{"rules":["full:bad.test","ip:bad"]}"#;
+    assert_eq!(request("PUT", &list, invalid).await.0, 400);
+    assert_eq!(request("GET", &list, "").await.1, snapshot);
+    let (a, b) = tokio::join!(
+        request("POST", &rules, r#"{"rules":["full:new.test"]}"#),
+        request("POST", &rules, r#"{"rules":["keyword:needle"]}"#),
+    );
+    assert_eq!((a.0, b.0), (200, 200));
+    assert_eq!(request("DELETE", &rules, r#"{"rules":["domain:example.test:@ads","regexp:^rx[0-9]+$","ip:192.0.2.64/26","ip:2001:db8::1"]}"#).await.0, 200);
+    lua.load(
+        r#"
+        assert(find_domain('local/db','demo list','new.test'))
+        assert(find_domain('local/db','demo list','myneedle.test'))
+        assert(not find_domain('local/db','demo list','rx42'))
+        assert(find_domain('local/db','demo list@cn','example.test'))
+        assert(not find_domain('local/db','demo list@ads','example.test'))
+        assert(find_ip_v4('local/db','demo list','192.0.2.63'))
+        assert(not find_ip_v4('local/db','demo list','192.0.2.64'))
+        assert(find_ip_v4('local/db','demo list','192.0.2.128'))
+        assert(find_ip_v6('local/db','demo list','2001:db8::'))
+        assert(not find_ip_v6('local/db','demo list','2001:db8::1'))
+        assert(find_ip_v6('local/db','demo list','2001:db8::2'))
+    "#,
+    )
+    .exec()
+    .unwrap();
+    let copy = format!("{lists}/copy");
+    let edited = request("GET", &list, "").await.1.to_string();
+    assert_eq!(
+        call_with_authorization(addr, "PUT", &copy, &edited, &auth)
+            .await
+            .0,
+        200
+    );
+    assert_eq!(request("DELETE", &list, "").await.0, 200);
+    assert_eq!(request("GET", lists, "").await.1, json!({"lists":["copy"]}));
+    for method in ["POST", "DELETE"] {
+        assert_eq!(request(method, &rules, r#"{"rules":[]}"#).await.0, 404);
+    }
+    assert!(
+        !lua.load("find_ip_v6('local/db','demo list','2001:db8::')")
+            .eval::<bool>()
+            .unwrap()
+    );
+    stop.send(true).unwrap();
+    task.await.unwrap().unwrap();
+    drop(lua);
+    drop(dbs);
+    let db = RedbDatabase::open(&cfg).unwrap();
+    assert!(db.find_domain("copy", "new.test").unwrap());
+    assert!(db.find_ip("copy", "192.0.2.128".parse().unwrap()).unwrap());
+    assert!(!db.find_ip("copy", "192.0.2.64".parse().unwrap()).unwrap());
+    assert_eq!(
+        db.list_names().unwrap().into_iter().collect::<Vec<_>>(),
+        ["copy"]
+    );
 }

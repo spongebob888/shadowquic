@@ -143,9 +143,9 @@ use std::sync::Arc;
 /// | `reverse_lookup(dns_tag, ip)` | Returns an array of PTR hostname strings and may block router| Inside the returned routing function; requires `dns-server` |
 /// | `lookup_cache(domain)` | Returns an array of cached IP strings, or an empty array on a miss; domain names are case insensitive | Script loading and routing; requires `dns-server` |
 /// | `reverse_lookup_cache(ip)` | Returns the most recently cached hostname from matching A/AAAA or PTR answers, or nil on a miss; invalid IP strings raise a Lua error | Script loading and routing; requires `dns-server` |
-/// | `find_ip_v4(tag, list, ip)` | Returns whether an IPv4 address belongs to a country list in the tagged database | Script loading and routing; requires `router-db` |
-/// | `find_ip_v6(tag, list, ip)` | Returns whether an IPv6 address belongs to a country list in the tagged database | Script loading and routing; requires `router-db` |
-/// | `find_domain(tag, list, domain)` | Returns whether a domain matches a Geosite list in the tagged database | Script loading and routing; requires `router-db` |
+/// | `find_ip_v4(tag, list, ip)` | Returns whether an IPv4 address belongs to a Country or custom list in the tagged database | Script loading and routing; requires `router-db` |
+/// | `find_ip_v6(tag, list, ip)` | Returns whether an IPv6 address belongs to a Country or custom list in the tagged database | Script loading and routing; requires `router-db` |
+/// | `find_domain(tag, list, domain)` | Returns whether a domain matches a Geosite or custom list in the tagged database | Script loading and routing; requires `router-db` |
 ///
 /// DHCP lease files are supported for determine device hostname and mac address(`router-dhcp-lease` feature required).
 /// Cache lookups use the shared DNS cache, ignore expired entries, and perform
@@ -155,7 +155,8 @@ use std::sync::Arc;
 ///
 /// Database membership helpers require `router.database` entries (see
 /// [`super::RouterDatabaseCfg`]). All three helpers return booleans.
-/// Missing databases download through an internal inbound with the database tag.
+/// Custom databases load inline rules at startup. Missing Country and Geosite
+/// databases download through an internal inbound with the database tag.
 /// Route that traffic before calling helpers. Unavailable databases raise Lua
 /// errors; use `pcall` for an explicit fallback while downloading. Existing MMDB
 /// and redb files are reused, including across script reloads.
@@ -242,7 +243,9 @@ impl RouterCfg {
                 ));
             }
             #[cfg(feature = "router-db")]
-            crate::plugin::database::validate_url(db.url())?;
+            if !matches!(db, super::RouterDatabaseCfg::Custom(_)) {
+                crate::plugin::database::validate_url(db.url())?;
+            }
         }
         Ok(())
     }

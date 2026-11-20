@@ -278,6 +278,7 @@ fn run_worker(args: &Args) -> Result<()> {
         None
     };
     let cfg = RouterDatabaseCfg::Geosite(GeositeDbCfg {
+        cache_size: 4 * 1024 * 1024,
         list_include: Vec::new(),
         tag: "benchmark".into(),
         url: "https://benchmark.invalid/geosite.yml".into(),
@@ -351,6 +352,7 @@ fn main() -> Result<()> {
     };
     prepare(&args, dir.path(), &list, &rules)?;
     let cfg = RouterDatabaseCfg::Geosite(GeositeDbCfg {
+        cache_size: 4 * 1024 * 1024,
         list_include: Vec::new(),
         tag: "benchmark".into(),
         url: "https://benchmark.invalid/geosite.yml".into(),

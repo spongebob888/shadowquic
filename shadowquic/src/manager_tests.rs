@@ -175,6 +175,8 @@ async fn check_manager(fail_init: bool, fail_shutdown: bool) {
         default_outbound: "selected".into(),
         #[cfg(feature = "restful-api")]
         api_config: None,
+        #[cfg(all(feature = "router-db", feature = "restful-api"))]
+        custom_databases: HashMap::new(),
         #[cfg(feature = "restful-api")]
         sq_outbounds: HashMap::new(),
         #[cfg(feature = "plugin")]
@@ -649,6 +651,8 @@ async fn manager_preserves_inbound_tags_and_routes_by_preferred_outbound() {
         default_outbound: "out-b".into(),
         #[cfg(feature = "restful-api")]
         api_config: None,
+        #[cfg(all(feature = "router-db", feature = "restful-api"))]
+        custom_databases: HashMap::new(),
         #[cfg(feature = "restful-api")]
         sq_outbounds: HashMap::new(),
         #[cfg(feature = "plugin")]

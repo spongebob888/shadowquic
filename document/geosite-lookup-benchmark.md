@@ -12,9 +12,10 @@ The benchmark compares production `RedbDatabase::find_domain` against a
 precompiled in-memory scan of the selected list's rules. Both use the same
 `full`, `domain`, `keyword`, and `regexp` matching semantics, including list
 attributes. Regexes are compiled once for the in-memory scan. The geosite
-importer stores serialized sparse DFA bytes under the `CompiledRegex` key
-type. Patterns unsupported by DFA compilation use the `Regex` key type and
-retain their source pattern. Lookups deserialize compiled DFAs or compile
+importer stores the original regex pattern and serialized sparse DFA bytes under
+the schema-4 `CompiledRegex` key type. Patterns unsupported by DFA compilation
+use the `Regex` key type and retain their source pattern. Lookups deserialize
+compiled DFAs or compile
 fallback regexes on demand; the runtime does not cache regexes. This compares
 indexed lookups against a linear scan.
 

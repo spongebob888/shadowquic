@@ -1,6 +1,20 @@
 //! Routing membership databases: memory-mapped MMDB country lookups or
 //! indexed redb lookups with a bounded page cache.
 mod country;
+mod custom;
+#[cfg(feature = "restful-api")]
+mod edit;
+#[cfg(feature = "restful-api")]
+pub(crate) use edit::ListEdit;
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum RuleError {
+    #[error("{0}")]
+    Invalid(String),
+    #[cfg(feature = "restful-api")]
+    #[error("unknown rule list")]
+    MissingList,
+}
 mod download;
 mod geosite;
 #[cfg(test)]
@@ -26,18 +40,11 @@ use std::{
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 const META: TableDefinition<&str, &str> = TableDefinition::new("metadata");
 const COUNTRY_SCHEMA: &str = "2";
-const GEOSITE_SCHEMA: &str = "3";
+const GEOSITE_SCHEMA: &str = "4";
 
 #[derive(Debug, thiserror::Error)]
-#[error("geosite schema {0} requires rebuilding to schema 3")]
+#[error("geosite schema {0} requires rebuilding to schema {GEOSITE_SCHEMA}")]
 struct GeositeRebuildRequired(u32);
-
-fn schema(kind: RouterDBKind) -> &'static str {
-    match kind {
-        RouterDBKind::Country => COUNTRY_SCHEMA,
-        RouterDBKind::Geosite => GEOSITE_SCHEMA,
-    }
-}
 
 type CountryV4Table<'a> = TableDefinition<'a, u32, u32>;
 type CountryV6Table<'a> = TableDefinition<'a, u128, u128>;
@@ -140,12 +147,15 @@ pub struct RedbDatabase {
     kind: RouterDBKind,
 }
 
-fn kind_name(kind: RouterDBKind) -> &'static str {
-    match kind {
-        RouterDBKind::Country => "country",
-        RouterDBKind::Geosite => "geosite",
-    }
+fn source_metadata(cfg: &RouterDatabaseCfg) -> Result<[(&'static str, &str); 3]> {
+    let (kind, schema) = match cfg {
+        RouterDatabaseCfg::Country(_) => ("country", COUNTRY_SCHEMA),
+        RouterDatabaseCfg::Geosite(_) => ("geosite", GEOSITE_SCHEMA),
+        RouterDatabaseCfg::Custom(_) => return Err("custom databases use inline rules".into()),
+    };
+    Ok([("schema", schema), ("type", kind), ("url", cfg.url())])
 }
+
 impl RedbDatabase {
     fn legacy_geosite_schema(cfg: &RouterDatabaseCfg, db: &Database) -> Result<Option<u32>> {
         if cfg.kind() != RouterDBKind::Geosite {
@@ -163,10 +173,19 @@ impl RedbDatabase {
             .filter(|version| *version < current_schema))
     }
 
-    /// Open a converted database, checking format and source identity.
+    /// Open a router database, applying configured custom lists on startup.
     pub fn open(cfg: &RouterDatabaseCfg) -> Result<Self> {
+        if let RouterDatabaseCfg::Custom(custom) = cfg {
+            let db = custom::open(custom, cfg.cache_size()).map_err(|e| {
+                format!("custom database {:?} at {:?}: {e}", custom.tag, custom.path)
+            })?;
+            return Ok(Self {
+                db,
+                kind: RouterDBKind::Custom,
+            });
+        }
         let db = Database::builder()
-            .set_cache_size(8 * 1024 * 1024)
+            .set_cache_size(cfg.cache_size())
             .open(cfg.path())?;
         if let Some(version) = Self::legacy_geosite_schema(cfg, &db)? {
             return Err(GeositeRebuildRequired(version).into());
@@ -174,11 +193,7 @@ impl RedbDatabase {
         {
             let read = db.begin_read()?;
             let meta = read.open_table(META)?;
-            for (name, expected) in [
-                ("schema", schema(cfg.kind())),
-                ("type", kind_name(cfg.kind())),
-                ("url", cfg.url()),
-            ] {
+            for (name, expected) in source_metadata(cfg)? {
                 let stored = meta.get(name)?;
                 let stored = stored.as_ref().map(|value| value.value());
                 if stored != Some(expected) {
@@ -209,8 +224,8 @@ impl RedbDatabase {
                     cfg.tag(), cfg.path(), cfg.path(), cfg.url()
                 ).into());
             }
-            match cfg.kind() {
-                RouterDBKind::Geosite => {
+            match cfg {
+                RouterDatabaseCfg::Geosite(_) => {
                     let mut count = 0;
                     for table in read.list_tables()? {
                         if table.name().starts_with("geosite_") {
@@ -222,7 +237,7 @@ impl RedbDatabase {
                         return Err("geosite database contains no list tables".into());
                     }
                 }
-                RouterDBKind::Country => {
+                RouterDatabaseCfg::Country(_) => {
                     let mut count = 0;
                     for table in read.list_tables()? {
                         if table.name().starts_with("country_v4_") {
@@ -237,6 +252,7 @@ impl RedbDatabase {
                         return Err("country database contains no country tables".into());
                     }
                 }
+                RouterDatabaseCfg::Custom(_) => unreachable!(),
             }
         }
         Ok(Self {
@@ -247,6 +263,7 @@ impl RedbDatabase {
 
     /// Import a source atomically, rebuilding tables in a legacy geosite database.
     pub fn import(cfg: &RouterDatabaseCfg, source: &Path) -> Result<Self> {
+        let identity = source_metadata(cfg)?;
         let parent = cfg
             .path()
             .parent()
@@ -255,7 +272,7 @@ impl RedbDatabase {
         std::fs::create_dir_all(parent)?;
         let legacy = if cfg.kind() == RouterDBKind::Geosite && cfg.path().try_exists()? {
             let db = Database::builder()
-                .set_cache_size(8 * 1024 * 1024)
+                .set_cache_size(cfg.cache_size())
                 .open(cfg.path())?;
             if Self::legacy_geosite_schema(cfg, &db)?.is_none() {
                 return Err(std::io::Error::new(
@@ -277,7 +294,7 @@ impl RedbDatabase {
         let mut db = match legacy {
             Some(db) => db,
             None => Database::builder()
-                .set_cache_size(8 * 1024 * 1024)
+                .set_cache_size(cfg.cache_size())
                 .create(temporary.as_ref().unwrap().path())?,
         };
         let write = db.begin_write()?;
@@ -295,6 +312,7 @@ impl RedbDatabase {
                     import_geosite(source, &write, &site.list_include)?
                 }
                 RouterDatabaseCfg::Country(_) => import_country(source, &write)?,
+                RouterDatabaseCfg::Custom(_) => unreachable!(),
             }
             let mut hash = Sha256::new();
             let mut source = std::fs::File::open(source)?;
@@ -316,18 +334,15 @@ impl RedbDatabase {
             if let RouterDatabaseCfg::Geosite(site) = cfg {
                 meta.insert("list", geosite::selection_key(&site.list_include).as_str())?;
             }
-            for (name, value) in [
-                ("schema", schema(cfg.kind())),
+            for (name, value) in identity.into_iter().chain([
                 ("version", env!("CARGO_PKG_VERSION")),
                 ("sha256", digest.as_str()),
-                ("type", kind_name(cfg.kind())),
-                ("url", cfg.url()),
-            ] {
+            ]) {
                 meta.insert(name, value)?;
             }
         }
         write.commit()?;
-        db.compact()?;
+        db.compact(redb::CompactionMode::Maximum)?;
         drop(db);
         if let Some(temporary) = temporary {
             temporary.persist_noclobber(cfg.path())?;
@@ -338,9 +353,9 @@ impl RedbDatabase {
 
 impl RouterDB for RedbDatabase {
     fn find_ip(&self, list: &str, ip: IpAddr) -> Result<bool> {
-        assert_eq!(
+        assert_ne!(
             self.kind,
-            RouterDBKind::Country,
+            RouterDBKind::Geosite,
             "geosite does not support IP lookup"
         );
         let read = self.db.begin_read()?;
@@ -359,40 +374,45 @@ impl RouterDB for RedbDatabase {
         }
     }
     fn find_domain(&self, list: &str, domain: &str) -> Result<bool> {
-        assert_eq!(
+        assert_ne!(
             self.kind,
-            RouterDBKind::Geosite,
+            RouterDBKind::Country,
             "country does not support domain lookup"
         );
         geosite::find_domain(&self.db.begin_read()?, list, domain)
     }
 }
 
-/// Insert a disjoint MMDB range, joining adjacent ranges in either direction.
+/// Insert an inclusive range, merging adjacent and overlapping ranges.
 fn insert_country_range<T>(table: &mut redb::Table<T, T>, mut start: T, mut end: T) -> Result<()>
 where
     T: for<'a> redb::Key<SelfType<'a> = T> + Copy + Ord + Into<u128> + 'static,
 {
     let previous = table
-        .range(..start)?
+        .range(..=start)?
         .next_back()
         .transpose()?
         .map(|(start, end)| (start.value(), end.value()));
     if let Some((previous_start, previous_end)) = previous
-        && previous_end.into().checked_add(1) == Some(start.into())
+        && previous_end.into().saturating_add(1) >= start.into()
     {
         start = previous_start;
+        end = end.max(previous_end);
     }
-    let next = table
-        .range(end..)?
-        .next()
-        .transpose()?
-        .map(|(start, end)| (start.value(), end.value()));
-    if let Some((next_start, next_end)) = next
-        && end.into().checked_add(1) == Some(next_start.into())
-    {
+    loop {
+        let next = table
+            .range((std::ops::Bound::Excluded(start), std::ops::Bound::Unbounded))?
+            .next()
+            .transpose()?
+            .map(|(start, end)| (start.value(), end.value()));
+        let Some((next_start, next_end)) = next else {
+            break;
+        };
+        if next_start.into() > end.into().saturating_add(1) {
+            break;
+        }
         table.remove(next_start)?;
-        end = next_end;
+        end = end.max(next_end);
     }
     table.insert(start, end)?;
     Ok(())
@@ -449,6 +469,8 @@ struct Slot {
 }
 #[derive(Default)]
 pub(crate) struct Databases {
+    #[cfg(feature = "restful-api")]
+    pub(crate) custom: HashMap<String, Arc<RedbDatabase>>,
     slots: HashMap<String, Arc<Slot>>,
 }
 impl Databases {
@@ -458,7 +480,12 @@ impl Databases {
     ) -> std::result::Result<Arc<Self>, SError> {
         let mut manager = Self::default();
         for cfg in configs {
-            let value = if cfg.path().try_exists()? {
+            let value = if cfg.kind() == RouterDBKind::Custom {
+                let db = Arc::new(RedbDatabase::open(cfg).map_err(config_error)?);
+                #[cfg(feature = "restful-api")]
+                manager.custom.insert(cfg.tag().to_owned(), db.clone());
+                Ok(db as Arc<dyn RouterDB>)
+            } else if cfg.path().try_exists()? {
                 match open_database(cfg) {
                     Ok(db) => Ok(db),
                     Err(error) if error.is::<GeositeRebuildRequired>() => {
@@ -499,7 +526,7 @@ impl Databases {
                     } else {
                         RouterDBKind::Country
                     };
-                    if slot.kind != expected {
+                    if slot.kind != RouterDBKind::Custom && slot.kind != expected {
                         return Err(mlua::Error::runtime(format!(
                             "database {tag} does not support {name}"
                         )));

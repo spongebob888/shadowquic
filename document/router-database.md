@@ -12,16 +12,18 @@ Lua routing and the database import, download, and lookup dependencies. For Lua
 routing without database support, build with `--no-default-features` and select
 `plugin` alongside the other features you need.
 
-`router.database` makes Country MMDB and v2fly Geosite lists available to Lua.
-This requires the `plugin` feature. Each entry has four required fields:
+`router.database` makes Country MMDB, v2fly Geosite, and inline custom lists available to Lua.
+This requires the `plugin` feature. The following fields configure router databases.
 
 | Field | Meaning |
 | --- | --- |
 | `tag` | Unique name across databases, inbounds, outbounds, and DNS services |
-| `type` | `country` for Country MMDB, or `geosite` for the plain YAML export |
-| `url` | HTTP(S) download URL |
-| `list` | Optional, geosite only: base domain set names to import, matched case-insensitively. Omitted or `[]` imports all sets in the YAML source |
-| `path` | Persistent database file, relative to the working directory; Country `.mmdb` paths use direct MMDB lookups, other paths use redb |
+| `type` | `country` for Country MMDB, `geosite` for the plain YAML export, or `custom` for inline rules |
+| `url` | HTTP(S) download URL for Country or Geosite |
+| `list-include` | Optional, geosite only: base domain set names to import, matched case-insensitively. Omitted or `[]` imports all sets in the YAML source |
+| `list` | Custom only. Named lists with `name`, `rules`, and optional `force` |
+| `path` | Persistent database file, relative to the working directory; Country `.mmdb` paths use direct MMDB lookups, other paths use redb. Custom defaults to `data/custom.redb` |
+| `cache-size` | Optional redb page-cache budget in bytes. Defaults to `4194304` (4 MiB) for Geosite and `131072` (128 KiB) for custom databases. Set to `0` to disable caching |
 
 ```yaml
 router:
@@ -30,7 +32,8 @@ router:
       type: geosite
       url: https://raw.githubusercontent.com/v2fly/domain-list-community/release/dlc.dat_plain.yml
       path: data/geosite.redb
-      list: [google]
+      cache-size: 4194304
+      list-include: [google]
   src: |
     return function(ctx)
       -- Downloads must route without depending on the database being downloaded.
@@ -66,7 +69,7 @@ such as `["us", "google"]`. Each array element is a separate membership, so the
 same IP can match both `us` and `google`. This includes IPv6 aliases present in
 the source.
 Use `data/country.redb` to retain the existing converted backend. Other suffixes
-also retain redb behavior for compatibility. Geosite always uses redb.
+also retain redb behavior for compatibility. Geosite and custom databases always use redb.
 Both country backends use the same Lua functions below.
 
 For a Mihomo/MetaCubeX source, keep the local path's `.mmdb` suffix even if the
@@ -85,11 +88,53 @@ For a record containing `["us", "google"]`, both
 `find_ip_v4("geoip-db", "us", "8.8.8.8")` and
 `find_ip_v4("geoip-db", "google", "8.8.8.8")` return true.
 
+## Inline custom lists
+
+A custom database is ready when the routing script loads. Each list can mix
+Geosite domain rules with IPv4 and IPv6 addresses and CIDRs.
+
+```yaml
+router:
+  database:
+    - tag: local-rules
+      type: custom
+      path: data/custom.redb
+      list:
+        - name: direct
+          rules:
+            - 'domain:example.org'
+            - 'keyword: needle:@ads'
+            - 'regexp: ^service[0-9]+\.example$'
+            - 'full:host.test'
+            - 'ip:192.168.8.1/24'
+            - 'ip:192.0.2.10'
+            - 'ip:2001:db8::/64'
+            - 'ip:2001:db8:1::1'
+        - name: blocked
+          force: false
+          rules: []
+```
+
+At startup, each configured list creates three redb tables, even for an empty
+list. For `direct`, these are `geosite_direct`, `country_v4_direct`, and
+`country_v6_direct`. List names are case-insensitive and must be unique within
+the database. A bare IP matches one address. A CIDR matches its entire network.
+
+With `force: true` (the default), startup replaces all three tables with the
+configured rules. With `force: false`, existing tables keep their contents and
+missing tables are initialized from the rules. Lists omitted from the
+configuration keep their stored tables. Updates to a custom database commit in
+one transaction. An invalid update fails startup and preserves the previous data.
+The metadata table records the creating Shadowquic version and both the Country
+and Geosite schema versions.
+
+## Lua membership queries
+
 | Lua function | Membership query |
 | --- | --- |
-| `find_domain(tag, list, domain)` | Geosite list, including attribute lists such as `google@ads` |
-| `find_ip_v4(tag, list, ip)` | Country of an IPv4 address string |
-| `find_ip_v6(tag, list, ip)` | Country of an IPv6 address string |
+| `find_domain(tag, list, domain)` | Geosite or custom domain list, including attribute lists such as `google@ads` |
+| `find_ip_v4(tag, list, ip)` | Country or custom list membership for an IPv4 address |
+| `find_ip_v6(tag, list, ip)` | Country or custom list membership for an IPv6 address |
 
 The helpers return booleans and perform no DNS resolution. Country lists accept
 ISO codes (such as `US`) and category labels (such as `google` or `private`)
@@ -103,7 +148,7 @@ Geosite `full` rules match exactly. `domain` rules match the domain and its
 subdomains on label boundaries. Both use redb indexes. `keyword` and `regexp`
 rules are scanned within the requested list. Regular expressions use Rust's
 `regex` syntax and are validated during import. Attributes remain part of the
-base list. Regexes are compiled to DFAs during import and stored in redb values.
+base list. Regexes that compile to sparse DFAs store the compiled bytes alongside the source pattern in redb keys.
 The supported attribute filters are `list@ads`, `list@!cn`, `list@cn`, and
 `list@telemetry`; other attribute filters return false. A source rule can carry
 multiple comma-separated attributes, for example `domain:example.com:@ads,@telemetry`.
@@ -112,7 +157,7 @@ produce a warning once per attribute name per import and are ignored; known
 attributes and base-list membership are retained. Repeated rules merge their
 attribute bits, including across repeated list names.
 
-On startup, an existing MMDB or redb is opened without downloading. When the file is
+For Country and Geosite, an existing MMDB or redb is opened without downloading. When the file is
 missing, an internal inbound with the database tag sends download connections
 through the ordinary router and outbounds. HTTP redirects also pass through the
 router. HTTPS validates certificates using the bundled public root store.
@@ -131,16 +176,21 @@ traffic and any DNS upstream traffic needed by its outbound before these calls.
 Lua script reloads retain the same database handles.
 
 Geosite imports retain all rules and attributes within each selected base set.
-Unknown set names fail the import. Changing `list` requires removing the converted
+Unknown set names fail the import. Changing `list-include` requires removing the converted
 database file and restarting to rebuild it; selection order, case, and duplicates
 do not affect cache compatibility. Existing unfiltered databases remain compatible
-with an omitted or empty `list`.
+with an omitted or empty `list-include`.
 
-Each redb stores a format version, the creating Shadowquic version, source URL,
+`cache-size` applies when Shadowquic creates or opens a custom database and when it opens, imports, or rebuilds a Geosite database.
+Changing it takes effect after restarting and does not require rebuilding the
+converted file. The budget covers redb's page cache; other process allocations
+use additional memory.
+
+Each converted Country or Geosite redb stores a format version, the creating Shadowquic version, source URL,
 database type, and SHA-256 of the downloaded source bytes. Schema versions are
-independent: Country uses schema `2`, and Geosite uses schema `3`. Country schema
+independent: Country uses schema `2`, and Geosite uses schema `4`. Country schema
 `1` is unsupported; remove old converted files and restart to download and
-rebuild them. Geosite databases with a numeric schema below `3` are rebuilt
+rebuild them. Geosite databases with a numeric schema below `4` are rebuilt
 automatically: startup queues the configured source download, then the importer
 deletes every regular and multimap table and recreates the selected lists and
 metadata in one transaction. A failed download or import leaves the old tables
@@ -162,22 +212,25 @@ for the query's address family and the greatest start key no larger than the
 query, then checks the inclusive end. Missing tables
 and gaps between ranges return false.
 
-Geosite schema `3` stores each base list in a table named `geosite_<lowercase-name>`,
-including empty lists. Keys are `(SiteMatchType, Vec<u8>)`; domains and
-fallback regex patterns use UTF-8 bytes. Values are `u32` attribute bitmasks.
+Geosite schema `4` stores each base list in a table named `geosite_<lowercase-name>`,
+including empty lists. Keys use the typed `SiteMatchType` encoding: a one-byte
+match-type tag followed by the rule payload. Full, domain, keyword, and fallback
+regex payloads are UTF-8 text. Values are `u32` attribute bitmasks.
 Match types are
 `Full = 0`, `Domain = 1`, `Regex = 2`, `Keyword = 3`, `CompiledRegex = 4`;
 attributes are
 `Ads = 1 << 0`, `NotCn = 1 << 1`, `Cn = 1 << 2`, `Telemetry = 1 << 3`.
 Each rule has one row whose mask combines all of its supported attributes with
 bitwise OR. A zero mask means no supported attributes. `CompiledRegex = 4`
-keys store serialized little-endian sparse DFA bytes; their values store the
-attribute mask directly. Patterns that cannot compile to
-a sparse DFA use the existing `Regex = 2` key with the UTF-8 source pattern.
+keys store the original UTF-8 regex pattern and serialized little-endian sparse
+DFA bytes using redb's native `(&str, &[u8])` tuple encoding. Their values store the
+attribute mask directly. Schema `3` tuple keys are rebuilt into this format.
+Patterns that cannot compile to a sparse DFA use the existing `Regex = 2` key
+with the UTF-8 source pattern.
 Compiled DFAs are decoded directly from keys during lookup, and fallback
 regexes are compiled during lookup; there is no runtime regex cache.
 Unfiltered queries match any
-attribute. Full and domain lookups use the tuple index, while keyword and regex
+attribute. Full and domain lookups use the key index, while keyword and regex
 lookups scan only the corresponding match type in the requested list table.
 
 Direct MMDB files contain no Shadowquic schema or source-URL metadata; changing
@@ -187,7 +240,7 @@ source's IPv6 alias behavior, while legacy redb conversion continues to skip
 aliased ranges.
 
 Except for the geosite schema upgrade above, incompatible, corrupt, or mismatched
-existing redb files fail startup. There is no automatic refresh: stop
+existing redb files fail startup. To refresh a downloaded database, stop
 Shadowquic and remove the database file to download again. Paths must be distinct
 and writable. To switch an existing redb configuration to direct MMDB, choose a
 new `.mmdb` path; renaming a redb file does not convert it into MMDB.
@@ -195,5 +248,5 @@ Direct MMDB uses a read-only memory mapping instead of copying the entire file
 into a heap buffer. Accessed pages still count toward resident memory (RSS).
 Do not modify or truncate an MMDB while Shadowquic is running: stop Shadowquic
 before updating the file. The mapping stays alive across Lua script reloads.
-redb imports temporarily parse the source; redb lookups retain a bounded 8 MiB
-page cache per database.
+redb imports temporarily parse the source. Geosite uses a configurable page cache
+with a 4 MiB default; converted Country databases use a 4 MiB page cache.

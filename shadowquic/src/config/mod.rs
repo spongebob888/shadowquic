@@ -65,7 +65,9 @@ pub use sniffer::{SniffProtocol, SnifferCfg, SnifferRule};
 mod router;
 mod router_database;
 pub use router::RouterCfg;
-pub use router_database::{CountryDbCfg, GeositeDbCfg, RouterDBKind, RouterDatabaseCfg};
+pub use router_database::{
+    CountryDbCfg, CustomDbCfg, CustomRuleList, GeositeDbCfg, RouterDBKind, RouterDatabaseCfg,
+};
 
 /// Overall configuration of shadowquic.
 ///
@@ -439,6 +441,8 @@ impl Config {
         #[cfg(feature = "router-db")]
         let databases =
             crate::plugin::database::Databases::build(&self.router.database, &mut inbounds)?;
+        #[cfg(all(feature = "router-db", feature = "restful-api"))]
+        let custom_databases = databases.custom.clone();
         #[cfg(feature = "plugin")]
         let router = self
             .router
@@ -572,6 +576,8 @@ impl Config {
             default_outbound,
             #[cfg(feature = "restful-api")]
             api_config: self.restful_api,
+            #[cfg(all(feature = "router-db", feature = "restful-api"))]
+            custom_databases,
             #[cfg(feature = "restful-api")]
             sq_outbounds,
             #[cfg(feature = "plugin")]

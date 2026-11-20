@@ -94,7 +94,7 @@ fall back to `index.html` for client-side navigation.
 CORS is enabled for all origins (`Access-Control-Allow-Origin: *`), including
 on error responses. Browser preflight `OPTIONS` requests with `Origin` and
 `Access-Control-Request-Method` headers return an empty `204` without requiring
-authentication. They allow `GET`, `POST`, `PUT`, and `OPTIONS` with the
+authentication. They allow `GET`, `POST`, `PUT`, `DELETE`, and `OPTIONS` with the
 `Authorization` and `Content-Type` request headers. Actual API requests still
 require the configured bearer token.
 
@@ -140,6 +140,47 @@ Errors have the form `{"error":{"code":"...","message":"..."}}`.
 Invalid requests return `400`, unknown routes or tags `404`, wrong methods
 `405`, overlapping probes on the same outbound `409`, unsupported operations
 `501`, failed probes `502`, and probe timeouts `504`.
+
+## Custom router databases
+
+With `router-db` enabled, use `/api/v1/databases/{tag}/lists` to manage a
+configured `type: custom` database. Percent-encode the database tag and list
+name as individual path segments. List names are case-insensitive.
+
+| Method | Path relative to the lists endpoint | Operation |
+| --- | --- | --- |
+| GET | Collection itself | Return `{"lists":["direct","private"]}` in name order |
+| GET | `/{name}` | Return `{"rules":[...]}` with domain, IPv4, and IPv6 rules |
+| PUT | `/{name}` | Create or replace the entire list |
+| POST | `/{name}/rules` | Add rules to an existing list |
+| DELETE | `/{name}/rules` | Remove the supplied rules from an existing list |
+| DELETE | `/{name}` | Delete the list and all three backing tables |
+
+PUT, POST, and selective DELETE accept a JSON object with a `rules` array
+under the API's 16 KiB request body limit. Each string uses the same syntax as
+a rule in the YAML configuration. For example, to create a list:
+
+```sh
+curl -X PUT -H 'Content-Type: application/json' \
+  -d '{"rules":["domain:example.org:@ads","ip:192.0.2.0/24","ip:2001:db8::1"]}' \
+  http://127.0.0.1:9090/api/v1/databases/local-rules/lists/direct
+```
+
+Successful writes return HTTP 200 with the lowercase list name, for example
+`{"list":"direct"}`. Each request commits atomically and becomes visible to new
+router lookups immediately. Invalid rules return 400 and roll back the request.
+Unknown custom database tags and missing lists return 404, except that PUT can
+create a list. An empty `rules` array on PUT creates an empty list.
+
+Reads return regex source patterns and combined domain attributes. IP ranges
+are returned as equivalent CIDRs and individual addresses. Deleting an IP or
+CIDR subtracts those addresses, including from a larger range. An unqualified
+domain rule removes the matching entry. An attribute-qualified deletion clears
+the requested bits and removes the entry when its last attribute is removed.
+
+Edits persist in redb. At startup the configured `force` policy applies again.
+Use `force: false` to retain API edits to an existing configured list. A list
+still present in the configuration is seeded again if its tables were deleted.
 
 ## Live logs over WebSocket
 

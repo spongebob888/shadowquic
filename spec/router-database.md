@@ -22,8 +22,8 @@ We use redb as underlying database for each router db.
 Each redb should has a version string noting which shadowquic version created it and a sha256 of its downloading source file(Not itself ).
 
 Schema versions are independent: Country uses schema `2`, and Geosite uses
-schema `3`. Country schema `1` is unsupported. A Geosite database with a numeric
-schema below `3` queues a fresh download at startup. On successful import, every
+schema `4`. Country schema `1` is unsupported. A Geosite database with a numeric
+schema below `4` queues a fresh download at startup. On successful import, every
 regular and multimap table, including metadata, is deleted and recreated in one
 transaction. Failed downloads/imports preserve the old tables for a retry on
 restart. Queries remain unavailable until rebuilding finishes. Future schema
@@ -60,33 +60,43 @@ The [published YAML export](https://raw.githubusercontent.com/v2fly/domain-list-
 
 Full search should use indexed based fast searching, domain type searching like a.b.c should search a.b.c/b.c/c one by one.  The keyword/regex type should search one by one.
 
-Each name corresponds to a table. The key is (SiteMatchType, Vec<u8>), and the
+Each name corresponds to a table. The key is `SiteMatchType`, and the
 value is a `u32` bitmask combining zero or more `AttrType` bits.
-enum SiteMatchType {
-    Full,
-    Domain,
-    Regex,
-    Keyword,
-    CompiledRegex,
+
+```rust
+#[repr(u8)]
+enum SiteMatchType<'a> {
+    Full(&'a str) = 0,
+    Domain(&'a str) = 1,
+    Regex(&'a str) = 2,
+    Keyword(&'a str) = 3,
+    CompiledRegex(&'a str, &'a [u8]) = 4,
 }
+#[repr(u32)]
 enum AttrType {
     Ads = 1 << 0,
     NotCn = 1 << 1,
     Cn = 1 << 2,
     Telemetry = 1 << 3,
 }
+```
 
-Schema `3` names each table `geosite_<lowercase-name>`, including empty lists.
-The tuple key uses `(u8, Vec<u8>)` and each value uses `u32`. Domain and
-pattern keys are UTF-8 bytes. Match
-types are encoded in declaration order, starting at zero. Attribute values are
+Schema `4` names each table `geosite_<lowercase-name>`, including empty lists.
+The key uses `SiteMatchType` and each value uses `u32`. The enum tag is stored
+in the first byte, followed by the UTF-8 text for full, domain, regex, and keyword
+rules. A compiled-regex key stores tag `4` followed by redb's native
+`(&str, &[u8])` tuple encoding: the UTF-8 source regex and the serialized
+little-endian sparse DFA bytes.
+Keys are ordered lexicographically by their encoded bytes, keeping each match
+type in a contiguous range. Schema `4` uses its own redb key type identity;
+schema `3` tuple tables require rebuilding. Attribute values are
 `Ads = 1`, `NotCn = 2`, `Cn = 4`, and `Telemetry = 8`, corresponding to source
 attributes `ads`, `!cn`, `cn`, and `telemetry`. A zero mask means no supported
 attributes. Source attributes such as `:@ads,@telemetry` are combined with
 bitwise OR; repeated identical rules also OR their attributes together.
 Unknown attributes log a warning once per normalized name per import and are
 ignored without discarding known bits or base-list membership.
-`CompiledRegex = 4` keys store serialized little-endian sparse DFA bytes; values
+`CompiledRegex = 4` keys store the source regex and serialized little-endian sparse DFA bytes; values
 store the attribute mask.
 Patterns that cannot compile to a sparse DFA use the existing `Regex = 2` key with the UTF-8 source pattern.
 Lookups deserialize compiled DFAs from keys or compile fallback source regexes.
@@ -94,4 +104,33 @@ There is no runtime regex cache.
 A rule with no supported attributes has a zero mask. Unknown attributes cannot
 be queried as filters. Unfiltered lookup accepts any mask; `list@attribute`
 checks that attribute's bit in the stored mask. Full and domain lookups use the
-tuple index, and keyword/regex lookups scan only their match-type range.
+key index, and keyword/regex lookups scan only their match-type range.
+
+### Custom Rule
+syntax like v2ray yaml
+```
+router:
+  database:
+    - tag: custom
+      type: custom
+      list:
+        - name: direct
+	  force: true # If true force update redb of this table to be the same on boot. If false. Only create the table if the table doesn't exit. Default to be true.
+	  rules:
+	    - "domain:xx.com"
+	    - "keyword: baidu"
+	    - "keyword: xioami:@ads"
+	    - "regexp: \\.*"
+	    - "full: www.baidu.com"
+	    - "ip:192.168.8,1/24"
+	    - "ip:102.1.1.1"
+	    - "ip: ffff:ffff::ef"
+	    - "ip: ff:0e:88/64"
+	- name: blocked
+	....
+```
+It should create 3 tables for each rule list for domain,ipv4,ipv6. There format is the same as geosite.redb and
+country.redb. Table names should also be compatible. like "geosite_name", "country_v4_name", "country_v6_name".
+
+It also create a META table contains the META information including country schema and geosite schema version.
+shadowquic version created this db
