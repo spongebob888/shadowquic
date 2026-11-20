@@ -1,13 +1,18 @@
 use super::{ApiError, ApiManager, HttpResponse, decode_tag, json_body, response};
 use crate::plugin::database::{ListEdit, RuleError};
 use hyper::{Method, Request, StatusCode, body::Incoming};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Rules {
     rules: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct Lists<T> {
+    lists: T,
 }
 
 impl ApiManager {
@@ -22,6 +27,7 @@ impl ApiManager {
             .unwrap();
         let parts: Vec<_> = tail.split('/').collect();
         let (tag, list, rules_endpoint) = match parts.as_slice() {
+            [tag, "rules"] if !tag.is_empty() => (*tag, None, true),
             [tag, "lists"] if !tag.is_empty() => (*tag, None, false),
             [tag, "lists", name] if !tag.is_empty() && !name.is_empty() => {
                 (*tag, Some(decode_tag(name)?), false)
@@ -49,7 +55,7 @@ impl ApiManager {
                 )
             })?;
         let edit = match (request.method(), list.is_some(), rules_endpoint) {
-            (&Method::GET, _, false) => None,
+            (&Method::GET, _, false) | (&Method::GET, false, true) => None,
             (&Method::DELETE, true, false) => Some(ListEdit::Delete),
             (&Method::PUT, true, false) | (&Method::POST | &Method::DELETE, true, true) => {
                 let method = request.method().clone();
@@ -70,15 +76,27 @@ impl ApiManager {
             }
         };
         tokio::task::spawn_blocking(move || -> crate::plugin::database::Result<_> {
-            let body = match (list, edit) {
+            Ok(match (list, edit) {
                 (Some(list), Some(edit)) => {
                     db.edit_list(&list, edit)?;
-                    json!({"list": list.to_ascii_lowercase()})
+                    response(StatusCode::OK, json!({"list": list.to_ascii_lowercase()}))
                 }
-                (Some(list), None) => json!({"rules": db.list_rules(&list)?}),
-                (None, _) => json!({"lists": db.list_names()?}),
-            };
-            Ok(response(StatusCode::OK, body))
+                (Some(list), None) => {
+                    response(StatusCode::OK, json!({"rules": db.list_rules(&list)?}))
+                }
+                (None, _) if rules_endpoint => response(
+                    StatusCode::OK,
+                    Lists {
+                        lists: db.all_list_rules()?,
+                    },
+                ),
+                (None, _) => response(
+                    StatusCode::OK,
+                    Lists {
+                        lists: db.list_names()?,
+                    },
+                ),
+            })
         })
         .await
         .map_err(internal)?

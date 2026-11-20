@@ -3,7 +3,7 @@ use super::{
     country_table_name, custom, geosite,
 };
 use ipnet::{IpNet, Ipv4Subnets, Ipv6Subnets};
-use redb::{Key, ReadableDatabase, ReadableTable, Table, TableHandle};
+use redb::{Key, ReadTransaction, ReadableDatabase, ReadableTable, Table, TableHandle};
 use std::{
     collections::{BTreeSet, HashSet},
     ops::{Add, Sub},
@@ -16,57 +16,80 @@ pub(crate) enum ListEdit {
     Delete,
 }
 
-impl RedbDatabase {
-    pub(crate) fn list_names(&self) -> Result<BTreeSet<String>> {
-        let read = self.db.begin_read()?;
-        let mut names = BTreeSet::new();
-        for table in read.list_tables()? {
-            for prefix in ["geosite_", "country_v4_", "country_v6_"] {
-                if let Some(name) = table.name().strip_prefix(prefix) {
-                    names.insert(name.to_string());
-                }
+#[derive(serde::Serialize)]
+pub(crate) struct NamedRules {
+    name: String,
+    rules: Vec<String>,
+}
+
+fn read_list_names(read: &ReadTransaction) -> Result<BTreeSet<String>> {
+    let mut names = BTreeSet::new();
+    for table in read.list_tables()? {
+        for prefix in ["geosite_", "country_v4_", "country_v6_"] {
+            if let Some(name) = table.name().strip_prefix(prefix) {
+                names.insert(name.to_string());
             }
         }
-        Ok(names)
+    }
+    Ok(names)
+}
+
+fn read_list_rules(read: &ReadTransaction, list: &str) -> Result<Vec<String>> {
+    let name = geosite::geosite_table_name(list);
+    let sites = match read.open_table(GeositeTable::new(&name)) {
+        Ok(table) => table,
+        Err(redb::TableError::TableDoesNotExist(_)) => {
+            return Err(RuleError::MissingList.into());
+        }
+        Err(e) => return Err(e.into()),
+    };
+    let mut rules = Vec::new();
+    for entry in sites.iter()? {
+        let (key, mask) = entry?;
+        rules.push(geosite::format_rule(key.value(), mask.value()));
+    }
+    for entry in read
+        .open_table(CountryV4Table::new(&country_table_name(list, 4)))?
+        .iter()?
+    {
+        let (start, end) = entry?;
+        rules.extend(
+            Ipv4Subnets::new(start.value().into(), end.value().into(), 0)
+                .map(|net| ip_rule(net.into())),
+        );
+    }
+    for entry in read
+        .open_table(CountryV6Table::new(&country_table_name(list, 6)))?
+        .iter()?
+    {
+        let (start, end) = entry?;
+        rules.extend(
+            Ipv6Subnets::new(start.value().into(), end.value().into(), 0)
+                .map(|net| ip_rule(net.into())),
+        );
+    }
+    Ok(rules)
+}
+
+impl RedbDatabase {
+    pub(crate) fn list_names(&self) -> Result<BTreeSet<String>> {
+        read_list_names(&self.db.begin_read()?)
     }
 
     pub(crate) fn list_rules(&self, list: &str) -> Result<Vec<String>> {
         custom::validate_name(list)?;
+        read_list_rules(&self.db.begin_read()?, list)
+    }
+
+    pub(crate) fn all_list_rules(&self) -> Result<Vec<NamedRules>> {
         let read = self.db.begin_read()?;
-        let name = geosite::geosite_table_name(list);
-        let sites = match read.open_table(GeositeTable::new(&name)) {
-            Ok(table) => table,
-            Err(redb::TableError::TableDoesNotExist(_)) => {
-                return Err(RuleError::MissingList.into());
-            }
-            Err(e) => return Err(e.into()),
-        };
-        let mut rules = Vec::new();
-        for entry in sites.iter()? {
-            let (key, mask) = entry?;
-            rules.push(geosite::format_rule(key.value(), mask.value()));
-        }
-        for entry in read
-            .open_table(CountryV4Table::new(&country_table_name(list, 4)))?
-            .iter()?
-        {
-            let (start, end) = entry?;
-            rules.extend(
-                Ipv4Subnets::new(start.value().into(), end.value().into(), 0)
-                    .map(|net| ip_rule(net.into())),
-            );
-        }
-        for entry in read
-            .open_table(CountryV6Table::new(&country_table_name(list, 6)))?
-            .iter()?
-        {
-            let (start, end) = entry?;
-            rules.extend(
-                Ipv6Subnets::new(start.value().into(), end.value().into(), 0)
-                    .map(|net| ip_rule(net.into())),
-            );
-        }
-        Ok(rules)
+        read_list_names(&read)?
+            .into_iter()
+            .map(|name| {
+                let rules = read_list_rules(&read, &name)?;
+                Ok(NamedRules { name, rules })
+            })
+            .collect()
     }
 
     pub(crate) fn edit_list(&self, list: &str, edit: ListEdit) -> Result<()> {

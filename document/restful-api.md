@@ -156,6 +156,14 @@ name as individual path segments. List names are case-insensitive.
 | DELETE | `/{name}/rules` | Remove the supplied rules from an existing list |
 | DELETE | `/{name}` | Delete the list and all three backing tables |
 
+Use `GET /api/v1/databases/{tag}/rules` to read every list in the database
+from one snapshot. The response includes empty lists and sorts lists by name.
+Each list uses the same rule strings as the single-list endpoint.
+
+```json
+{"lists":[{"name":"direct","rules":["domain:example.org","ip:192.0.2.0/24"]},{"name":"empty","rules":[]}]}
+```
+
 PUT, POST, and selective DELETE accept a JSON object with a `rules` array
 under the API's 16 KiB request body limit. Each string uses the same syntax as
 a rule in the YAML configuration. For example, to create a list:

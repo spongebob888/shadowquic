@@ -1848,12 +1848,19 @@ async fn custom_database_http_edits_persist_and_update_live_lua_lookups() {
     state.secret = Some("secret".into());
     state.custom_databases = dbs.custom.clone();
     let (addr, stop, task) = server(api).await;
+    let all_rules = "/api/v1/databases/local%2Fdb/rules";
     let lists = "/api/v1/databases/local%2Fdb/lists";
     let list = format!("{lists}/Demo%20List");
     let rules = format!("{list}/rules");
     let auth = ["Bearer secret"];
     let request = |method, path, body| call_with_authorization(addr, method, path, body, &auth);
     let initial = json!({"rules":["domain:EXAMPLE.test:@ads,@cn", "regexp:^rx[0-9]+$", "regexp:\\bβ\\b", "ip:192.0.2.0/24", "ip:2001:db8::/126"]}).to_string();
+    assert_eq!(call(addr, "GET", all_rules, "").await.0, 401);
+    assert_eq!(
+        request("GET", all_rules, "").await,
+        (200, json!({"lists": []}))
+    );
+    assert_eq!(request("DELETE", all_rules, "").await.0, 405);
     assert_eq!(call(addr, "PUT", &list, &initial).await.0, 401);
     assert_eq!(request("GET", lists, "").await, (200, json!({"lists":[]})));
     assert_eq!(request("GET", &list, "").await.0, 404);
@@ -1903,7 +1910,26 @@ async fn custom_database_http_edits_persist_and_update_live_lua_lookups() {
     .exec()
     .unwrap();
     let copy = format!("{lists}/copy");
-    let edited = request("GET", &list, "").await.1.to_string();
+    let current = request("GET", &list, "").await.1;
+    assert_eq!(
+        call_with_authorization(addr, "PUT", &copy, r#"{"rules":[]}"#, &auth)
+            .await
+            .0,
+        200
+    );
+    assert_eq!(
+        request("GET", all_rules, "").await,
+        (
+            200,
+            json!({
+                "lists": [
+                    {"name":"copy", "rules":[]},
+                    {"name":"demo list", "rules":current["rules"]}
+                ]
+            })
+        )
+    );
+    let edited = current.to_string();
     assert_eq!(
         call_with_authorization(addr, "PUT", &copy, &edited, &auth)
             .await

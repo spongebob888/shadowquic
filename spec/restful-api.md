@@ -268,6 +268,7 @@ sessions' traffic.
 ## Router Database
 Restful api can manipulate custom type router database:
 - list the database table list(remove geosite/country prefix)
+- get all lists and their rules in a single snapshot with `GET /api/v1/databases/{tag}/rules`, including empty lists
 - get all the rules of given list(merge ipv4/ipv6/geosite)
 - delete a rule list(ipv4/ipv6/geosite table)
 - delete certain rules of a given list(table).
