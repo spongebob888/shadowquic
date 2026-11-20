@@ -26,7 +26,7 @@ bytes = "1.11.0"
 async-trait = "0.1.89"
 webpki-roots = "1.0.11"
 fast-socks5 = "1.0.0"
-hotpath = { version = "0.31.2", features = ["tokio"] }
+hotpath = { version = "0.32.0", features = ["tokio"] }
 
 [target.'cfg(not(target_has_atomic = "64"))'.dependencies]
 portable-atomic = "1"
