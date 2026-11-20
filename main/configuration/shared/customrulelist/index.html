@@ -2162,6 +2162,17 @@
 
 
 <h1 id="custom-rule-list">Custom rule list<a class="headerlink" href="#custom-rule-list" title="Permanent link">&para;</a></h1>
+<p>support rules:</p>
+<ul>
+<li>'domain:example.org'</li>
+<li>'keyword: needle:@ads'</li>
+<li>'regexp: ^service[0-9]+.example$'</li>
+<li>'full:host.test'</li>
+<li>'ip:192.168.8.1/24'</li>
+<li>'ip:192.0.2.10'</li>
+<li>'ip:2001:db8::/64'</li>
+<li>'ip:2001:db8:1::1'</li>
+</ul>
 <h2 id="fields">Fields<a class="headerlink" href="#fields" title="Permanent link">&para;</a></h2>
 <h3 id="name"><code>name</code><a class="headerlink" href="#name" title="Permanent link">&para;</a></h3>
 <ul>
@@ -2172,7 +2183,7 @@
 <ul>
 <li><strong>Type:</strong> <code>bool</code></li>
 <li><strong>Required:</strong> no</li>
-<li><strong>Default:</strong> <code>default_force()</code></li>
+<li><strong>Default:</strong> <code>true</code></li>
 </ul>
 <p>Replace the list's tables at startup. When false, only seed missing tables.</p>
 <h3 id="rules"><code>rules</code><a class="headerlink" href="#rules" title="Permanent link">&para;</a></h3>
