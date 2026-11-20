@@ -17,6 +17,7 @@ router:
       list-include: [category-ads-all] # Omit or use [] to import all domain sets.
     - tag: local-rules
       type: custom
+      cache-size: 131072 # 128 KiB by default
       list:
         - name: blocked
           rules:

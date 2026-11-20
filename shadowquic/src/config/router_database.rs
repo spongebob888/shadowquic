@@ -105,6 +105,13 @@ pub struct CustomDbCfg {
     #[serde(default = "default_custom_path")]
     pub path: PathBuf,
     pub list: Vec<CustomRuleList>,
+    /// redb page-cache budget in bytes. Defaults to 128 KiB. Zero disables caching.
+    #[serde(default = "default_custom_cache_size")]
+    pub cache_size: usize,
+}
+
+fn default_custom_cache_size() -> usize {
+    128 * 1024
 }
 
 fn default_custom_path() -> PathBuf {
@@ -128,7 +135,8 @@ fn default_force() -> bool {
 impl RouterDatabaseCfg {
     pub(crate) fn cache_size(&self) -> usize {
         match self {
-            Self::Country(_) | Self::Custom(_) => default_cache_size(),
+            Self::Country(_) => default_cache_size(),
+            Self::Custom(cfg) => cfg.cache_size,
             Self::Geosite(cfg) => cfg.cache_size,
         }
     }
@@ -225,6 +233,24 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn custom_cache_size_defaults_and_round_trips_in_bytes() {
+        for (field, expected) in [
+            ("", 128 * 1024),
+            ("cache-size: 0", 0),
+            ("cache-size: 65536", 65536),
+        ] {
+            let cfg: RouterDatabaseCfg =
+                serde_saphyr::from_str(&format!("type: custom\ntag: local\nlist: []\n{field}\n"))
+                    .unwrap();
+            assert_eq!(cfg.cache_size(), expected);
+            let encoded = serde_saphyr::to_string(&cfg).unwrap();
+            assert!(encoded.contains(&format!("cache-size: {expected}")));
+            let decoded: RouterDatabaseCfg = serde_saphyr::from_str(&encoded).unwrap();
+            assert_eq!(decoded.cache_size(), expected);
+        }
     }
 
     #[test]

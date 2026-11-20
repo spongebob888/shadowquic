@@ -23,7 +23,7 @@ This requires the `plugin` feature. The following fields configure router databa
 | `list-include` | Optional, geosite only: base domain set names to import, matched case-insensitively. Omitted or `[]` imports all sets in the YAML source |
 | `list` | Custom only. Named lists with `name`, `rules`, and optional `force` |
 | `path` | Persistent database file, relative to the working directory; Country `.mmdb` paths use direct MMDB lookups, other paths use redb. Custom defaults to `data/custom.redb` |
-| `cache-size` | Optional, geosite only: redb page-cache budget in bytes. Defaults to `4194304` (4 MiB); `0` disables caching |
+| `cache-size` | Optional redb page-cache budget in bytes. Defaults to `4194304` (4 MiB) for Geosite and `131072` (128 KiB) for custom databases. Set to `0` to disable caching |
 
 ```yaml
 router:
@@ -181,7 +181,7 @@ database file and restarting to rebuild it; selection order, case, and duplicate
 do not affect cache compatibility. Existing unfiltered databases remain compatible
 with an omitted or empty `list-include`.
 
-`cache-size` applies when a Geosite database is opened, imported, or rebuilt.
+`cache-size` applies when Shadowquic creates or opens a custom database and when it opens, imports, or rebuilds a Geosite database.
 Changing it takes effect after restarting and does not require rebuilding the
 converted file. The budget covers redb's page cache; other process allocations
 use additional memory.
