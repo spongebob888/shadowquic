@@ -146,10 +146,10 @@ def start_servers():
 
 def start_shadowquic():
     """Start shadowquic under the shadowquic group."""
-    # Run via sg to set gid
     with open(LOG_PATH, "w") as logfile:
         proc = subprocess.Popen(
-            ["sg", SQ_GROUP, "-c", f"{BINARY} -c {CONFIG_PATH}"],
+            [BINARY, "-c", CONFIG_PATH],
+            group=SQ_GROUP,
             stdout=logfile, stderr=subprocess.STDOUT,
         )
     time.sleep(2)

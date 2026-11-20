@@ -38,7 +38,7 @@ docker_args = [
 ]
 docker_args.extend([
     "-v", f"{WORKSPACE}:/app",
-    "ubuntu:22.04",
+    "ubuntu:26.04",
     "bash", "-c",
     "apt-get update -qq && "
     "apt-get install -y -qq python3 socat iproute2 iptables 2>&1 | tail -1 && "
