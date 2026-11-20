@@ -55,6 +55,7 @@ fn default_cache_size() -> usize {
 pub enum RouterDatabaseCfg {
     Country(CountryDbCfg),
     Geosite(GeositeDbCfg),
+    Custom(CustomDbCfg),
 }
 
 /// Country/category IP database sourced from MMDB. Records may contain
@@ -96,10 +97,38 @@ pub struct GeositeDbCfg {
     pub cache_size: usize,
 }
 
+/// Persistent domain and IP lists defined in the router configuration.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct CustomDbCfg {
+    pub tag: String,
+    #[serde(default = "default_custom_path")]
+    pub path: PathBuf,
+    pub list: Vec<CustomRuleList>,
+}
+
+fn default_custom_path() -> PathBuf {
+    "data/custom.redb".into()
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct CustomRuleList {
+    pub name: String,
+    /// Replace the list's tables at startup. When false, only seed missing tables.
+    #[serde(default = "default_force")]
+    pub force: bool,
+    pub rules: Vec<String>,
+}
+
+fn default_force() -> bool {
+    true
+}
+
 impl RouterDatabaseCfg {
     pub(crate) fn cache_size(&self) -> usize {
         match self {
-            Self::Country(_) => default_cache_size(),
+            Self::Country(_) | Self::Custom(_) => default_cache_size(),
             Self::Geosite(cfg) => cfg.cache_size,
         }
     }
@@ -116,13 +145,16 @@ impl RouterDatabaseCfg {
         match self {
             Self::Country(cfg) => &cfg.tag,
             Self::Geosite(cfg) => &cfg.tag,
+            Self::Custom(cfg) => &cfg.tag,
         }
     }
 
+    /// Download source, or an empty string for inline custom databases.
     pub fn url(&self) -> &str {
         match self {
             Self::Country(cfg) => &cfg.url,
             Self::Geosite(cfg) => &cfg.url,
+            Self::Custom(_) => "",
         }
     }
 
@@ -130,6 +162,7 @@ impl RouterDatabaseCfg {
         match self {
             Self::Country(cfg) => &cfg.path,
             Self::Geosite(cfg) => &cfg.path,
+            Self::Custom(cfg) => &cfg.path,
         }
     }
 
@@ -137,6 +170,7 @@ impl RouterDatabaseCfg {
         match self {
             Self::Country(_) => RouterDBKind::Country,
             Self::Geosite(_) => RouterDBKind::Geosite,
+            Self::Custom(_) => RouterDBKind::Custom,
         }
     }
 }
@@ -146,6 +180,7 @@ impl RouterDatabaseCfg {
 pub enum RouterDBKind {
     Country,
     Geosite,
+    Custom,
 }
 
 #[cfg(test)]

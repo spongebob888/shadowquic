@@ -105,3 +105,32 @@ A rule with no supported attributes has a zero mask. Unknown attributes cannot
 be queried as filters. Unfiltered lookup accepts any mask; `list@attribute`
 checks that attribute's bit in the stored mask. Full and domain lookups use the
 key index, and keyword/regex lookups scan only their match-type range.
+
+### Custom Rule
+syntax like v2ray yaml
+```
+router:
+  database:
+    - tag: custom
+      type: custom
+      list:
+        - name: direct
+	  force: true # If true force update redb of this table to be the same on boot. If false. Only create the table if the table doesn't exit. Default to be true.
+	  rules:
+	    - "domain:xx.com"
+	    - "keyword: baidu"
+	    - "keyword: xioami:@ads"
+	    - "regexp: \\.*"
+	    - "full: www.baidu.com"
+	    - "ip:192.168.8,1/24"
+	    - "ip:102.1.1.1"
+	    - "ip: ffff:ffff::ef"
+	    - "ip: ff:0e:88/64"
+	- name: blocked
+	....
+```
+It should create 3 tables for each rule list for domain,ipv4,ipv6. There format is the same as geosite.redb and
+country.redb. Table names should also be compatible. like "geosite_name", "country_v4_name", "country_v6_name".
+
+It also create a META table contains the META information including country schema and geosite schema version.
+shadowquic version created this db

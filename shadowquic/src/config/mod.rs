@@ -65,7 +65,9 @@ pub use sniffer::{SniffProtocol, SnifferCfg, SnifferRule};
 mod router;
 mod router_database;
 pub use router::RouterCfg;
-pub use router_database::{CountryDbCfg, GeositeDbCfg, RouterDBKind, RouterDatabaseCfg};
+pub use router_database::{
+    CountryDbCfg, CustomDbCfg, CustomRuleList, GeositeDbCfg, RouterDBKind, RouterDatabaseCfg,
+};
 
 /// Overall configuration of shadowquic.
 ///

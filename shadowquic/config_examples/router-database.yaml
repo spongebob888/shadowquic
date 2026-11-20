@@ -15,10 +15,21 @@ router:
       path: data/geosite.redb
       cache-size: 4194304 # redb cache bytes; default 4 MiB, 0 disables caching.
       list-include: [category-ads-all] # Omit or use [] to import all domain sets.
+    - tag: local-rules
+      type: custom
+      list:
+        - name: blocked
+          rules:
+            - 'domain:blocked.example'
+            - 'ip:192.0.2.0/24'
+            - 'ip:2001:db8::/64'
   src: |
     return function(ctx)
       if ctx.inbound_tag == "geosite-db" then return "direct" end
+      if ctx.dst_ip_v4 and find_ip_v4("local-rules", "blocked", ctx.dst_ip_v4) then return "block" end
+      if ctx.dst_ip_v6 and find_ip_v6("local-rules", "blocked", ctx.dst_ip_v6) then return "block" end
       if ctx.dst_domain then
+        if find_domain("local-rules", "blocked", ctx.dst_domain) then return "block" end
         local ready, matches = pcall(find_domain, "geosite-db", "category-ads-all", ctx.dst_domain)
         if ready and matches then return "block" end
       end

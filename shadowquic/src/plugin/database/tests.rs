@@ -22,6 +22,7 @@ const YAML: &str = r#"lists:
 "#;
 fn config(dir: &Path, kind: RouterDBKind) -> RouterDatabaseCfg {
     match kind {
+        RouterDBKind::Custom => unreachable!("downloaded database fixture"),
         RouterDBKind::Country => RouterDatabaseCfg::Country(CountryDbCfg {
             tag: "db".into(),
             url: "https://example.test/db".into(),
@@ -1558,4 +1559,201 @@ fn geosite_legacy_unfiltered_metadata_remains_compatible() {
     let db = RedbDatabase::open(&cfg).unwrap();
     assert!(db.find_domain("test", "exact.example").unwrap());
     assert!(db.find_domain("other", "other.example").unwrap());
+}
+
+fn custom_config(dir: &Path, lists: &str) -> RouterDatabaseCfg {
+    let mut cfg: crate::config::CustomDbCfg =
+        serde_saphyr::from_str(&format!("tag: local\nlist:\n{lists}")).unwrap();
+    assert_eq!(cfg.path, Path::new("data/custom.redb"));
+    cfg.path = dir.join("rules/custom.redb");
+    RouterDatabaseCfg::Custom(cfg)
+}
+
+#[test]
+fn custom_database_serves_mixed_lists_through_lua_and_stores_compatible_tables() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = custom_config(
+        dir.path(),
+        r#"
+  - name: Direct
+    rules:
+      - 'domain: Example.com'
+      - 'keyword: needle:@ads'
+      - 'full: exact.test'
+      - 'regexp: ^rx[0-9]+\.test$'
+      - 'ip: 192.0.2.65/26'
+      - 'ip:192.0.2.224/27'
+      - 'ip:192.0.2.1/24'
+      - 'ip:192.0.2.17'
+      - 'ip:192.0.3.0'
+      - 'ip:192.0.3.2'
+      - 'ip:2001:db8::42/64'
+      - 'ip:ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'
+  - name: empty
+    rules: []
+"#,
+    );
+    let mut inbounds = HashMap::new();
+    let manager = Databases::build(std::slice::from_ref(&cfg), &mut inbounds).unwrap();
+    assert!(inbounds.is_empty());
+    let lua = mlua::Lua::new();
+    manager.install(&lua).unwrap();
+    lua.load(
+        r#"
+        assert(find_domain('local', 'DIRECT', 'sub.EXAMPLE.com.'))
+        assert(find_domain('local', 'direct@ads', 'myneedle.test'))
+        assert(not find_domain('local', 'direct@ads', 'example.com'))
+        assert(find_domain('local', 'direct', 'exact.test'))
+        assert(not find_domain('local', 'direct', 'sub.exact.test'))
+        assert(find_domain('local', 'direct', 'rx42.test'))
+        assert(find_ip_v4('local', 'direct', '192.0.2.255'))
+        assert(find_ip_v4('local', 'direct', '192.0.3.0'))
+        assert(not find_ip_v4('local', 'direct', '192.0.3.1'))
+        assert(find_ip_v6('local', 'direct', '2001:db8::ffff'))
+        assert(not find_ip_v6('local', 'direct', '2001:db8:0:1::'))
+        assert(find_ip_v6('local', 'direct', 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'))
+        assert(not find_domain('local', 'empty', 'example.com'))
+        assert(not find_ip_v4('local', 'empty', '192.0.2.0'))
+    "#,
+    )
+    .exec()
+    .unwrap();
+    drop(lua);
+    drop(manager);
+
+    let db = Database::open(cfg.path()).unwrap();
+    let read = db.begin_read().unwrap();
+    let meta = read.open_table(META).unwrap();
+    for (key, expected) in [
+        ("type", "custom"),
+        ("country_schema", COUNTRY_SCHEMA),
+        ("geosite_schema", GEOSITE_SCHEMA),
+        ("version", env!("CARGO_PKG_VERSION")),
+    ] {
+        assert_eq!(meta.get(key).unwrap().unwrap().value(), expected);
+    }
+    assert_eq!(read.list_tables().unwrap().count(), 7);
+    for list in ["direct", "empty"] {
+        read.open_table(GeositeTable::new(&geosite::geosite_table_name(list)))
+            .unwrap();
+        read.open_table(CountryV6Table::new(&country_table_name(list, 6)))
+            .unwrap();
+        let v4 = read
+            .open_table(CountryV4Table::new(&country_table_name(list, 4)))
+            .unwrap();
+        let ranges: Vec<_> = v4
+            .iter()
+            .unwrap()
+            .map(|entry| {
+                let (start, end) = entry.unwrap();
+                (
+                    std::net::Ipv4Addr::from(start.value()).to_string(),
+                    std::net::Ipv4Addr::from(end.value()).to_string(),
+                )
+            })
+            .collect();
+        if list == "empty" {
+            assert!(ranges.is_empty());
+        } else {
+            assert_eq!(
+                ranges,
+                [
+                    ("192.0.2.0".into(), "192.0.3.0".into()),
+                    ("192.0.3.2".into(), "192.0.3.2".into())
+                ]
+            );
+        }
+    }
+}
+
+#[test]
+fn custom_database_replaces_forced_lists_and_only_seeds_missing_tables_otherwise() {
+    let dir = tempfile::tempdir().unwrap();
+    let lists = "
+  - name: replace
+    rules: ['domain:old.test', 'ip:192.0.2.1', 'ip:2001:db8::1']
+  - name: keep
+    force: false
+    rules: ['domain:old.test', 'ip:192.0.2.1', 'ip:2001:db8::1']
+";
+    let cfg = custom_config(dir.path(), lists);
+    drop(RedbDatabase::open(&cfg).unwrap());
+    let db = Database::open(cfg.path()).unwrap();
+    let write = db.begin_write().unwrap();
+    write
+        .delete_table(CountryV6Table::new("country_v6_keep"))
+        .unwrap();
+    write
+        .open_table(META)
+        .unwrap()
+        .insert("version", "original")
+        .unwrap();
+    write.commit().unwrap();
+    drop(db);
+
+    let lists = lists
+        .replace("old.test", "new.test")
+        .replace(".1'", ".2'")
+        .replace("::1'", "::2'");
+    let db = RedbDatabase::open(&custom_config(dir.path(), &lists)).unwrap();
+    for (list, replaced) in [("replace", true), ("keep", false)] {
+        assert_eq!(db.find_domain(list, "new.test").unwrap(), replaced);
+        assert_eq!(db.find_domain(list, "old.test").unwrap(), !replaced);
+        assert_eq!(
+            db.find_ip(list, "192.0.2.2".parse().unwrap()).unwrap(),
+            replaced
+        );
+        assert_eq!(
+            db.find_ip(list, "192.0.2.1".parse().unwrap()).unwrap(),
+            !replaced
+        );
+        assert!(db.find_ip(list, "2001:db8::2".parse().unwrap()).unwrap());
+        assert!(!db.find_ip(list, "2001:db8::1".parse().unwrap()).unwrap());
+    }
+    let meta = db.db.begin_read().unwrap().open_table(META).unwrap();
+    assert_eq!(meta.get("version").unwrap().unwrap().value(), "original");
+}
+
+#[test]
+fn custom_database_rolls_back_invalid_updates_and_rejects_incompatible_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let valid = "- name: one\n  rules: ['domain:original.test']\n";
+    let cfg = custom_config(dir.path(), valid);
+    let changed = valid.replace("original", "changed");
+    for extra in [
+        "- name: two\n  rules: ['ip:192.168.8,1/24']",
+        "- name: two\n  rules: ['ip:ff:0e:88/64']",
+        "- name: two\n  rules: ['regexp: (']",
+        "- name: ONE\n  rules: []",
+    ] {
+        let invalid = custom_config(dir.path(), &(changed.clone() + extra));
+        assert!(RedbDatabase::open(&invalid).is_err());
+        assert!(!cfg.path().exists());
+    }
+    drop(RedbDatabase::open(&cfg).unwrap());
+    let invalid = custom_config(dir.path(), &(changed + "- name: two\n  rules: ['ip:bad']"));
+    assert!(RedbDatabase::open(&invalid).is_err());
+    let preserved = custom_config(dir.path(), "- name: one\n  force: false\n  rules: []");
+    let db = RedbDatabase::open(&preserved).unwrap();
+    assert!(db.find_domain("one", "original.test").unwrap());
+    assert!(!db.find_domain("one", "changed.test").unwrap());
+    assert_eq!(
+        db.db.begin_read().unwrap().list_tables().unwrap().count(),
+        4
+    );
+    drop(db);
+    for (key, invalid, original) in [
+        ("type", "country", "custom"),
+        ("country_schema", "99", COUNTRY_SCHEMA),
+        ("geosite_schema", "99", GEOSITE_SCHEMA),
+    ] {
+        for value in [invalid, original] {
+            let raw = Database::open(cfg.path()).unwrap();
+            let write = raw.begin_write().unwrap();
+            write.open_table(META).unwrap().insert(key, value).unwrap();
+            write.commit().unwrap();
+            drop(raw);
+            assert_eq!(RedbDatabase::open(&preserved).is_err(), value == invalid);
+        }
+    }
 }

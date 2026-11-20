@@ -12,16 +12,17 @@ Lua routing and the database import, download, and lookup dependencies. For Lua
 routing without database support, build with `--no-default-features` and select
 `plugin` alongside the other features you need.
 
-`router.database` makes Country MMDB and v2fly Geosite lists available to Lua.
-This requires the `plugin` feature. Each entry supports these fields:
+`router.database` makes Country MMDB, v2fly Geosite, and inline custom lists available to Lua.
+This requires the `plugin` feature. The following fields configure router databases.
 
 | Field | Meaning |
 | --- | --- |
 | `tag` | Unique name across databases, inbounds, outbounds, and DNS services |
-| `type` | `country` for Country MMDB, or `geosite` for the plain YAML export |
-| `url` | HTTP(S) download URL |
+| `type` | `country` for Country MMDB, `geosite` for the plain YAML export, or `custom` for inline rules |
+| `url` | HTTP(S) download URL for Country or Geosite |
 | `list-include` | Optional, geosite only: base domain set names to import, matched case-insensitively. Omitted or `[]` imports all sets in the YAML source |
-| `path` | Persistent database file, relative to the working directory; Country `.mmdb` paths use direct MMDB lookups, other paths use redb |
+| `list` | Custom only. Named lists with `name`, `rules`, and optional `force` |
+| `path` | Persistent database file, relative to the working directory; Country `.mmdb` paths use direct MMDB lookups, other paths use redb. Custom defaults to `data/custom.redb` |
 | `cache-size` | Optional, geosite only: redb page-cache budget in bytes. Defaults to `4194304` (4 MiB); `0` disables caching |
 
 ```yaml
@@ -68,7 +69,7 @@ such as `["us", "google"]`. Each array element is a separate membership, so the
 same IP can match both `us` and `google`. This includes IPv6 aliases present in
 the source.
 Use `data/country.redb` to retain the existing converted backend. Other suffixes
-also retain redb behavior for compatibility. Geosite always uses redb.
+also retain redb behavior for compatibility. Geosite and custom databases always use redb.
 Both country backends use the same Lua functions below.
 
 For a Mihomo/MetaCubeX source, keep the local path's `.mmdb` suffix even if the
@@ -87,11 +88,53 @@ For a record containing `["us", "google"]`, both
 `find_ip_v4("geoip-db", "us", "8.8.8.8")` and
 `find_ip_v4("geoip-db", "google", "8.8.8.8")` return true.
 
+## Inline custom lists
+
+A custom database is ready when the routing script loads. Each list can mix
+Geosite domain rules with IPv4 and IPv6 addresses and CIDRs.
+
+```yaml
+router:
+  database:
+    - tag: local-rules
+      type: custom
+      path: data/custom.redb
+      list:
+        - name: direct
+          rules:
+            - 'domain:example.org'
+            - 'keyword: needle:@ads'
+            - 'regexp: ^service[0-9]+\.example$'
+            - 'full:host.test'
+            - 'ip:192.168.8.1/24'
+            - 'ip:192.0.2.10'
+            - 'ip:2001:db8::/64'
+            - 'ip:2001:db8:1::1'
+        - name: blocked
+          force: false
+          rules: []
+```
+
+At startup, each configured list creates three redb tables, even for an empty
+list. For `direct`, these are `geosite_direct`, `country_v4_direct`, and
+`country_v6_direct`. List names are case-insensitive and must be unique within
+the database. A bare IP matches one address. A CIDR matches its entire network.
+
+With `force: true` (the default), startup replaces all three tables with the
+configured rules. With `force: false`, existing tables keep their contents and
+missing tables are initialized from the rules. Lists omitted from the
+configuration keep their stored tables. Updates to a custom database commit in
+one transaction. An invalid update fails startup and preserves the previous data.
+The metadata table records the creating Shadowquic version and both the Country
+and Geosite schema versions.
+
+## Lua membership queries
+
 | Lua function | Membership query |
 | --- | --- |
-| `find_domain(tag, list, domain)` | Geosite list, including attribute lists such as `google@ads` |
-| `find_ip_v4(tag, list, ip)` | Country of an IPv4 address string |
-| `find_ip_v6(tag, list, ip)` | Country of an IPv6 address string |
+| `find_domain(tag, list, domain)` | Geosite or custom domain list, including attribute lists such as `google@ads` |
+| `find_ip_v4(tag, list, ip)` | Country or custom list membership for an IPv4 address |
+| `find_ip_v6(tag, list, ip)` | Country or custom list membership for an IPv6 address |
 
 The helpers return booleans and perform no DNS resolution. Country lists accept
 ISO codes (such as `US`) and category labels (such as `google` or `private`)
@@ -105,7 +148,7 @@ Geosite `full` rules match exactly. `domain` rules match the domain and its
 subdomains on label boundaries. Both use redb indexes. `keyword` and `regexp`
 rules are scanned within the requested list. Regular expressions use Rust's
 `regex` syntax and are validated during import. Attributes remain part of the
-base list. Regexes are compiled to DFAs during import and stored in redb values.
+base list. Regexes that compile to sparse DFAs store the compiled bytes alongside the source pattern in redb keys.
 The supported attribute filters are `list@ads`, `list@!cn`, `list@cn`, and
 `list@telemetry`; other attribute filters return false. A source rule can carry
 multiple comma-separated attributes, for example `domain:example.com:@ads,@telemetry`.
@@ -114,7 +157,7 @@ produce a warning once per attribute name per import and are ignored; known
 attributes and base-list membership are retained. Repeated rules merge their
 attribute bits, including across repeated list names.
 
-On startup, an existing MMDB or redb is opened without downloading. When the file is
+For Country and Geosite, an existing MMDB or redb is opened without downloading. When the file is
 missing, an internal inbound with the database tag sends download connections
 through the ordinary router and outbounds. HTTP redirects also pass through the
 router. HTTPS validates certificates using the bundled public root store.
@@ -143,7 +186,7 @@ Changing it takes effect after restarting and does not require rebuilding the
 converted file. The budget covers redb's page cache; other process allocations
 use additional memory.
 
-Each redb stores a format version, the creating Shadowquic version, source URL,
+Each converted Country or Geosite redb stores a format version, the creating Shadowquic version, source URL,
 database type, and SHA-256 of the downloaded source bytes. Schema versions are
 independent: Country uses schema `2`, and Geosite uses schema `4`. Country schema
 `1` is unsupported; remove old converted files and restart to download and
@@ -197,7 +240,7 @@ source's IPv6 alias behavior, while legacy redb conversion continues to skip
 aliased ranges.
 
 Except for the geosite schema upgrade above, incompatible, corrupt, or mismatched
-existing redb files fail startup. There is no automatic refresh: stop
+existing redb files fail startup. To refresh a downloaded database, stop
 Shadowquic and remove the database file to download again. Paths must be distinct
 and writable. To switch an existing redb configuration to direct MMDB, choose a
 new `.mmdb` path; renaming a redb file does not convert it into MMDB.

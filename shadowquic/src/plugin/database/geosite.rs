@@ -265,60 +265,71 @@ pub(super) fn import_geosite(
         let mut table = write.open_table(GeositeTable::new(&name))?;
         for rule in list.rules {
             let (kind, value) = rule.split_once(':').ok_or("geosite rule has no type")?;
-            let (value, attribute) = value.split_once(":@").unwrap_or((value, ""));
-            if value.is_empty() || value.contains('\0') {
-                return Err("empty or invalid geosite rule".into());
-            }
-            let mut attributes = 0u32;
-            for attribute in attribute.split(',') {
-                let attribute = attribute
-                    .trim()
-                    .trim_start_matches('@')
-                    .to_ascii_lowercase();
-                if attribute.is_empty() {
-                    continue;
-                }
-                match AttrType::parse(&attribute) {
-                    Some(attribute) => attributes |= attribute as u32,
-                    None if warned_attributes.insert(attribute.clone()) => {
-                        tracing::warn!(event = "database:unknown_attribute", %attribute, list = %list.name, "ignoring unknown geosite attribute");
-                    }
-                    None => {}
-                }
-            }
-            let normalized;
-            let dfa_bytes;
-            let key = if kind == "regexp" {
-                let compiled = dense::Builder::new()
-                    .configure(dense::Config::new().start_kind(StartKind::Unanchored))
-                    .build(value)
-                    .ok()
-                    .and_then(|dfa| dfa.to_sparse().ok());
-                match compiled {
-                    Some(dfa) => {
-                        dfa_bytes = dfa.to_bytes_little_endian();
-                        SiteMatchType::CompiledRegex(value, &dfa_bytes)
-                    }
-                    None => {
-                        regex::Regex::new(value)?;
-                        SiteMatchType::Regex(value)
-                    }
-                }
-            } else {
-                normalized = value.to_ascii_lowercase();
-                match kind {
-                    "full" => SiteMatchType::Full(&normalized),
-                    "domain" => SiteMatchType::Domain(&normalized),
-                    "keyword" => SiteMatchType::Keyword(&normalized),
-                    _ => return Err(format!("unsupported geosite rule type: {kind}").into()),
-                }
-            };
-            // Repeated rules and case-insensitive list aliases retain every attribute.
-            let attributes = table
-                .get(key)?
-                .map_or(attributes, |old| old.value() | attributes);
-            table.insert(key, attributes)?;
+            insert_rule(&mut table, kind, value, &list.name, &mut warned_attributes)?;
         }
     }
+    Ok(())
+}
+
+pub(super) fn insert_rule(
+    table: &mut redb::Table<SiteMatchType<'static>, u32>,
+    kind: &str,
+    value: &str,
+    list: &str,
+    warned_attributes: &mut HashSet<String>,
+) -> Result<()> {
+    let (value, attribute) = value.split_once(":@").unwrap_or((value, ""));
+    if value.is_empty() || value.contains('\0') {
+        return Err("empty or invalid geosite rule".into());
+    }
+    let mut attributes = 0u32;
+    for attribute in attribute.split(',') {
+        let attribute = attribute
+            .trim()
+            .trim_start_matches('@')
+            .to_ascii_lowercase();
+        if attribute.is_empty() {
+            continue;
+        }
+        match AttrType::parse(&attribute) {
+            Some(attribute) => attributes |= attribute as u32,
+            None if warned_attributes.insert(attribute.clone()) => {
+                tracing::warn!(event = "database:unknown_attribute", %attribute, %list, "ignoring unknown geosite attribute");
+            }
+            None => {}
+        }
+    }
+    let normalized;
+    let dfa_bytes;
+    let key = if kind == "regexp" {
+        let compiled = dense::Builder::new()
+            .configure(dense::Config::new().start_kind(StartKind::Unanchored))
+            .build(value)
+            .ok()
+            .and_then(|dfa| dfa.to_sparse().ok());
+        match compiled {
+            Some(dfa) => {
+                dfa_bytes = dfa.to_bytes_little_endian();
+                SiteMatchType::CompiledRegex(value, &dfa_bytes)
+            }
+            None => {
+                regex::Regex::new(value)?;
+                SiteMatchType::Regex(value)
+            }
+        }
+    } else {
+        normalized = value.to_ascii_lowercase();
+        match kind {
+            "full" => SiteMatchType::Full(&normalized),
+            "domain" => SiteMatchType::Domain(&normalized),
+            "keyword" => SiteMatchType::Keyword(&normalized),
+            _ => return Err(format!("unsupported geosite rule type: {kind}").into()),
+        }
+    };
+    // Repeated rules and case-insensitive list aliases retain every attribute.
+    let attributes = table
+        .get(key)?
+        .map_or(attributes, |old| old.value() | attributes);
+    table.insert(key, attributes)?;
     Ok(())
 }
