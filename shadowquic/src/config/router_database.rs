@@ -76,7 +76,7 @@ pub struct CountryDbCfg {
     pub path: PathBuf,
 }
 
-/// Domain membership database sourced from geosite YAML.
+/// Domain membership database sourced from geosite YAML or binary `geosite.dat`.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct GeositeDbCfg {
@@ -84,6 +84,8 @@ pub struct GeositeDbCfg {
     pub tag: String,
     /// HTTP(S) source URL. Used only when `path` does not exist.
     /// Defaults to the v2fly domain-list-community database in YAML format.
+    /// The binary protobuf `geosite.dat` is also accepted; the format is detected
+    /// from the downloaded contents.
     #[serde(default = "default_geosite_url")]
     pub url: String,
     /// Base domain sets to import, matched case insensitively. Empty imports all sets.
