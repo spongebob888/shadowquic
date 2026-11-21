@@ -457,6 +457,70 @@ fn geosite_indexed_and_sequential_rules_and_metadata_survive_reopen() {
     assert!(error.contains("restart Shadowquic to download and rebuild it"));
 }
 #[test]
+fn geosite_dat_imports_like_plain_yaml() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = config(dir.path(), RouterDBKind::Geosite);
+    let RouterDatabaseCfg::Geosite(site) = &mut cfg else {
+        unreachable!()
+    };
+    site.list_include = vec!["test".into()];
+    let source = dir.path().join("geosite.dat");
+    std::fs::write(
+        &source,
+        super::geosite::dat::encode(&[
+            (
+                "TEST",
+                &[
+                    (3, "exact.example", &[]),
+                    (2, "tree.example", &["ads"]),
+                    (0, "needle", &[]),
+                    (1, r"^rx[0-9]+\.example$", &[]),
+                ],
+            ),
+            ("OTHER", &[(3, "other.example", &[])]),
+        ]),
+    )
+    .unwrap();
+    let db = RedbDatabase::import(&cfg, &source).unwrap();
+    for domain in [
+        "exact.example",
+        "a.tree.example",
+        "hasneedle.test",
+        "rx123.example",
+    ] {
+        assert!(db.find_domain("test", domain).unwrap(), "{domain}");
+    }
+    assert!(db.find_domain("test@ads", "tree.example").unwrap());
+    assert!(!db.find_domain("test@ads", "exact.example").unwrap());
+    assert!(!db.find_domain("other", "other.example").unwrap());
+    drop(db);
+    assert!(
+        RedbDatabase::open(&cfg)
+            .unwrap()
+            .find_domain("test", "exact.example")
+            .unwrap()
+    );
+
+    let missing = dir.path().join("missing.redb");
+    let RouterDatabaseCfg::Geosite(site) = &mut cfg else {
+        unreachable!()
+    };
+    site.path = missing;
+    site.list_include = vec!["absent".into()];
+    let error = RedbDatabase::import(&cfg, &source).err().unwrap();
+    assert!(error.to_string().contains("geosite list not found: absent"));
+
+    let garbage = dir.path().join("garbage.dat");
+    std::fs::write(&garbage, [0xff, 0xff]).unwrap();
+    let RouterDatabaseCfg::Geosite(site) = &mut cfg else {
+        unreachable!()
+    };
+    site.list_include.clear();
+    let error = RedbDatabase::import(&cfg, &garbage).err().unwrap();
+    assert!(error.to_string().contains("invalid geosite.dat"), "{error}");
+}
+
+#[test]
 fn geosite_schema_four_keys_encode_tags_and_borrow_both_regex_fields() {
     use super::geosite::{GeositeTable, SiteMatchType};
     use redb::{ReadableTableMetadata, Value};
@@ -1345,7 +1409,7 @@ async fn download_uses_tagged_inbound_for_redirects_and_publishes_database() {
 }
 
 #[test]
-#[ignore = "requires ROUTER_GEOSITE_SOURCE pointing to the published YAML export"]
+#[ignore = "requires ROUTER_GEOSITE_SOURCE pointing to the published YAML export or dlc.dat"]
 fn published_geosite_import() {
     let source = std::env::var_os("ROUTER_GEOSITE_SOURCE").expect("set ROUTER_GEOSITE_SOURCE");
     let dir = tempfile::tempdir().unwrap();
