@@ -21,6 +21,7 @@ use tokio::{
         Mutex, RwLock, SetOnce,
         watch::{Receiver, Sender, channel},
     },
+    task::JoinSet,
 };
 use tracing::{Instrument, Level, debug, error, event, info, trace};
 
@@ -58,6 +59,7 @@ pub struct SQConnInner<T: QuicConnection> {
     pub(crate) stats_refresh: Mutex<()>,
     /// Instant the connection established.
     pub birth_time: Instant,
+    pub bg_tasks: Arc<JoinSet<()>>,
 }
 
 impl<T: QuicConnection> SQConn<T> {
@@ -73,6 +75,7 @@ impl<T: QuicConnection> SQConn<T> {
             stats: Default::default(),
             stats_refresh: Default::default(),
             birth_time: Instant::now(),
+            bg_tasks: Default::default(),
         }))
     }
 }

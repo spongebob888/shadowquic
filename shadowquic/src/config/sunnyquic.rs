@@ -3,11 +3,12 @@ use std::{net::SocketAddr, path::PathBuf};
 use serde::Deserialize;
 
 use crate::config::{
-    AuthUser, BrutalParams, CipherSuitePreference, CongestionControl, HasCipherSuitePreference,
-    SocketOpt, default_alpn, default_congestion_control, default_gso, default_half_close_timeout,
-    default_inbound_max_streams, default_initial_mtu, default_keep_alive_interval, default_min_mtu,
-    default_mtu_discovery, default_outbound_max_streams, default_over_stream,
-    default_store_flush_interval, default_stream_receive_window, default_zero_rtt,
+    AuthUser, BrutalParams, CipherSuitePreference, CongestionControl, DurationMs,
+    HasCipherSuitePreference, SocketOpt, default_alpn, default_congestion_control, default_gso,
+    default_half_close_timeout, default_inbound_max_streams, default_initial_mtu,
+    default_keep_alive_interval, default_min_mtu, default_mtu_discovery,
+    default_outbound_max_streams, default_over_stream, default_store_flush_interval,
+    default_stream_receive_window, default_zero_rtt,
 };
 
 pub(crate) fn default_multipath_num() -> u32 {
@@ -275,7 +276,7 @@ pub struct SunnyQuicClientCfg {
     /// 0 means disable keep alive, should be smaller than 30_000(idle time).
     /// Disabled by default.
     #[serde(default = "default_keep_alive_interval")]
-    pub keep_alive_interval: u32,
+    pub keep_alive_interval: DurationMs,
     /// Enable QUIC Generic Segmentation Offload (GSO).
     /// Controls [`quinn::TransportConfig::enable_segmentation_offload`]. When supported, GSO reduces
     /// CPU usage for bulk sends; unsupported environments may see transient startup packet loss.

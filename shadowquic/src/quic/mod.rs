@@ -1,4 +1,7 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    net::{SocketAddr, UdpSocket},
+    sync::Arc,
+};
 
 use crate::{Stoppable, error::SResult, msgs::squic::ConnStats, utils::socket_opt::SocketFactory};
 use async_trait::async_trait;
@@ -32,6 +35,9 @@ pub trait QuicClient: Send + Sync {
     where
         Self: Sized;
     async fn connect(&self, addr: SocketAddr, server_name: &str) -> Result<Self::C, QuicErrorRepr>;
+    fn rebind(&self, _socket: UdpSocket) -> std::io::Result<()> {
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
 }
 #[async_trait]
 pub trait QuicServer: Send + Sync {

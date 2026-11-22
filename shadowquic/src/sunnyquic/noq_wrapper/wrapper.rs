@@ -388,8 +388,9 @@ pub fn gen_client_cfg(cfg: &SunnyQuicClientCfg) -> noq::ClientConfig {
         tp_cfg.send_window(window);
     }
     tp_cfg.datagram_receive_buffer_size(Some(MAX_DATAGRAM_WINDOW as usize));
-    tp_cfg.keep_alive_interval(if cfg.keep_alive_interval > 0 {
-        Some(Duration::from_millis(cfg.keep_alive_interval as u64))
+    let interval: u64 = cfg.keep_alive_interval.clone().into();
+    tp_cfg.keep_alive_interval(if interval > 0 {
+        Some(Duration::from_millis(interval))
     } else {
         None
     });

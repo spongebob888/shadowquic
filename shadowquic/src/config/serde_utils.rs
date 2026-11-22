@@ -1,8 +1,8 @@
-use std::fmt;
+use std::{fmt, ops::Deref};
 
 use serde::{
     Deserialize, Deserializer,
-    de::{self, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor},
+    de::{self, DeserializeSeed, Error as _, IntoDeserializer, MapAccess, SeqAccess, Visitor},
 };
 
 pub(super) fn deserialize_inbounds<'de, D: Deserializer<'de>>(
@@ -197,4 +197,126 @@ where
     }
 
     deserializer.deserialize_any(BpsVisitor)
+}
+
+/// A whole-number duration. Bare values and `ms` use milliseconds, and `s` uses seconds.
+/// `LB` is the inclusive minimum in milliseconds and the default value.
+#[derive(Clone, Debug)]
+pub struct DurationMs<const LB: u64 = 0>(u64);
+
+impl<const LB: u64> From<u64> for DurationMs<{ LB }> {
+    fn from(value: u64) -> Self {
+        DurationMs(value)
+    }
+}
+impl<const LB: u64> From<DurationMs<{ LB }>> for u64 {
+    fn from(val: DurationMs<{ LB }>) -> Self {
+        val.0
+    }
+}
+impl<const LB: u64> Deref for DurationMs<LB> {
+    type Target = u64;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<const LB: u64> Default for DurationMs<LB> {
+    fn default() -> Self {
+        Self(LB)
+    }
+}
+
+impl<'de, const LB: u64> Deserialize<'de> for DurationMs<LB> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(
+            untagged,
+            expecting = "a whole-number duration such as 12345, 50ms, or 50s"
+        )]
+        enum Input {
+            Milliseconds(u64),
+            Text(String),
+        }
+
+        let ms = match Input::deserialize(deserializer)? {
+            Input::Milliseconds(ms) => ms,
+            Input::Text(text) => {
+                let (number, scale) = if let Some(ms) = text.strip_suffix("ms") {
+                    (ms, 1)
+                } else if let Some(seconds) = text.strip_suffix('s') {
+                    (seconds, 1000)
+                } else {
+                    (text.as_str(), 1)
+                };
+                let value = number.parse::<u64>().map_err(|_| {
+                    D::Error::custom(format!(
+                        "invalid duration {text:?}, expected 12345, 50ms, or 50s"
+                    ))
+                })?;
+                value.checked_mul(scale).ok_or_else(|| {
+                    D::Error::custom(format!("duration {text:?} exceeds u64 milliseconds"))
+                })?
+            }
+        };
+        if ms < LB {
+            return Err(D::Error::custom(format!(
+                "duration {ms}ms is below the minimum of {LB}ms"
+            )));
+        }
+        Ok(Self(ms))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DurationMs;
+
+    #[test]
+    fn duration_ms_enforces_inclusive_lower_bound_in_milliseconds() {
+        type Bounded = DurationMs<2000>;
+        assert_eq!(*Bounded::default(), 2000);
+        for value in ["1999", "1999ms", "1s"] {
+            let error = serde_saphyr::from_str::<Bounded>(value).unwrap_err();
+            assert!(error.to_string().contains("minimum of 2000ms"), "{error}");
+        }
+        for (value, expected) in [("2000", 2000), ("2000ms", 2000), ("2s", 2000), ("3s", 3000)] {
+            assert_eq!(*serde_saphyr::from_str::<Bounded>(value).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn duration_ms_accepts_bare_values_and_unit_suffixes() {
+        for (value, expected) in [
+            ("12345", 12345),
+            ("50ms", 50),
+            ("50s", 50000),
+            ("'50s'", 50000),
+        ] {
+            assert_eq!(
+                *serde_saphyr::from_str::<DurationMs>(value).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn duration_ms_rejects_invalid_values() {
+        for value in [
+            "-1",
+            "1.5",
+            "18446744073709551616",
+            "18446744073709552s",
+            "-1ms",
+            "1.5s",
+            "50m",
+            "invalid",
+        ] {
+            assert!(
+                serde_saphyr::from_str::<DurationMs>(value).is_err(),
+                "{value}"
+            );
+        }
+    }
 }
