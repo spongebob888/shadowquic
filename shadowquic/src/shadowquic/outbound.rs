@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use std::sync::Arc;
+use std::{ops::Deref, sync::Arc, time::Duration};
 use tokio::sync::{Mutex, OnceCell, SetOnce};
 use tracing::{Instrument, instrument};
 
@@ -7,19 +7,12 @@ use super::quinn_wrapper::EndClient;
 use tracing::{error, info};
 
 use crate::{
-    Outbound,
-    config::{AuthUser, ShadowQuicClientCfg},
-    dns::ResolverManager,
-    error::SError,
-    msgs::squic::{SQExtError, UserStats},
-    quic::QuicClient,
-    squic::{inbound::UserManager, outbound},
-    utils::socket_opt::{SocketFactory, UdpSocketFactory},
+    Outbound, config::{AuthUser, ShadowQuicClientCfg}, dns::ResolverManager, error::SError, msgs::squic::{SQExtError, UserStats}, quic::QuicClient, squic::{inbound::UserManager, outbound::{self, SQClientConn}}, utils::socket_opt::{SocketFactory, UdpSocketFactory},
 };
 
 use crate::squic::{SQConn, handle_udp_packet_recv};
 
-pub type ShadowQuicConn = SQConn<<EndClient as QuicClient>::C>;
+pub type ShadowQuicConn = SQClientConn<<EndClient as QuicClient>::C>;
 
 pub struct ShadowQuicClient {
     pub quic_conn: Mutex<Option<ShadowQuicConn>>,
@@ -63,10 +56,11 @@ impl ShadowQuicClient {
         let addr =
             crate::dns::resolve_destination(&*self.addr_resolver, &self.config.addr.parse()?, None)
                 .await?;
-        let conn = self
+        let end = self
             .quic_end
             .get_or_try_init(|| self.init_endpoint())
-            .await?
+            .await?.clone();
+        let conn = end
             .connect(addr, &self.config.server_name)
             .await?;
 
@@ -74,8 +68,10 @@ impl ShadowQuicClient {
             conn,
             SetOnce::new_with(Some(Ok(self.config.username.clone()))),
         );
+        
         let conn_clone = conn.clone();
-        tokio::spawn(
+        let mut task = tokio::task::JoinSet::new();
+        task.spawn(
             async move {
                 let _ = handle_udp_packet_recv(conn_clone).await.map_err(|x| {
                     error!(
@@ -83,10 +79,29 @@ impl ShadowQuicClient {
                         "handle udp packet recv error: {}", x
                     )
                 });
+                Ok(())
             }
             .in_current_span(),
         );
-        Ok(conn)
+        let port_hopping = &self.config.port_hopping;
+        let conn_clone = conn.clone();
+        if port_hopping.enable {
+            let lb = *port_hopping.interval.deref();
+            let ub = port_hopping.interval_jitter.deref() + *port_hopping.interval;
+            let socket_factory = self.socket_factory.clone();
+
+            task.spawn(async move {
+                loop {
+                    let interval_ms = rand::random_range(lb..ub+1);
+                    tokio::time::sleep(Duration::from_millis(interval_ms)).await;
+                    end.rebind(socket_factory.create_socket().await?.into());
+                    tracing::trace!(event="shadowquic:rebind","shadowquic rebind")
+                }
+                Ok(())
+            }.in_current_span());
+
+        }
+        Ok(SQClientConn { sq_conn: conn, bg_task: task.into() })
     }
     #[hotpath::measure(impl_type = "ShadowQuicClient")]
     async fn prepare_conn(&self) -> Result<ShadowQuicConn, SError> {
@@ -201,7 +216,7 @@ impl Outbound for ShadowQuicClient {
             .map_err(std::io::Error::from)??;
 
         let over_stream = self.config.over_stream;
-        outbound::handle_request(req, conn, over_stream, self.config.half_close_timeout).await?;
+        outbound::handle_request(req, conn.sq_conn, over_stream, self.config.half_close_timeout).await?;
         Ok(())
     }
 }

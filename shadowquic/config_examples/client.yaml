@@ -16,6 +16,10 @@ outbounds:
     zero-rtt: true
     gso: true # Enable Quinn Generic Segmentation Offload (GSO)
     over-stream: false  # true for udp over stream, false for udp over datagram
+    # port-hopping:
+    #   enable: false
+    #   interval: 50s
+    #   interval-jitter: 30s  # Bare integers also use milliseconds.
 # Build with --features plugin to enable request routing. Use either inline
 # source or a file path, not both.
 # router:

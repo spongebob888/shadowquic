@@ -4,7 +4,7 @@ use tokio::sync::Mutex;
 use crate::{
     msgs::squic::ConnStats,
     quic::QuicConnection,
-    squic::{SQConn, SQConnStats},
+    squic::{outbound::SQClientConn, SQConn,SQConnStats},
 };
 
 use super::{ErrorBody, millis};
@@ -17,6 +17,7 @@ pub trait SQStatsTrait: Send + Sync {
 #[async_trait::async_trait]
 impl SQStatsTrait for crate::shadowquic::outbound::ShadowQuicClient {
     async fn get_sq_stats(&self) -> Option<SQConnStats> {
+
         cached_stats(&self.quic_conn).await
     }
 }
@@ -30,7 +31,7 @@ impl SQStatsTrait for crate::sunnyquic::outbound::SunnyQuicClient {
 
 /// A busy connection cache may be reconnecting; never wait for network setup here.
 pub(crate) async fn cached_stats<C: QuicConnection>(
-    cache: &Mutex<Option<SQConn<C>>>,
+    cache: &Mutex<Option<SQClientConn<C>>>,
 ) -> Option<SQConnStats> {
     let conn = cache.try_lock().ok()?.as_ref()?.clone();
     if conn.close_reason().is_some() {

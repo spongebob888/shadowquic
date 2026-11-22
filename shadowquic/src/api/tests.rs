@@ -976,7 +976,7 @@ async fn disconnecting_api_client_cancels_probe_without_overwriting_cache() {
 
 #[tokio::test]
 async fn cached_quality_reads_do_not_wait_for_a_reconnecting_quic_outbound() {
-    let cache = Mutex::<Option<crate::squic::SQConn<crate::shadowquic::Connection>>>::new(None);
+    let cache = Mutex::<Option<crate::shadowquic::outbound::ShadowQuicConn>>::new(None);
     let _connecting = cache.lock().await;
     assert!(
         tokio::time::timeout(Duration::from_millis(100), quality::cached_stats(&cache))

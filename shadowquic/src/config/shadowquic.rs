@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
 
-use super::deserialize_bps;
+use super::{DurationMs, deserialize_bps};
 use crate::config::{
     AuthUser, CipherSuitePreference, CongestionControl, HasCipherSuitePreference, SocketOpt,
     default_alpn, default_blackhole_detection, default_blackhole_threshold,
@@ -10,8 +10,8 @@ use crate::config::{
     default_brutal_min_ack_rate, default_brutal_min_sample_count, default_brutal_min_window,
     default_congestion_control, default_gso, default_half_close_timeout,
     default_inbound_max_streams, default_initial_mtu, default_keep_alive_interval, default_min_mtu,
-    default_mtu_discovery, default_outbound_max_streams, default_over_stream,
-    default_store_flush_interval, default_stream_receive_window, default_zero_rtt,
+    default_mtu_discovery, default_outbound_max_streams, default_over_stream,default_port_hopping_enable,
+    default_store_flush_interval, default_stream_receive_window, default_zero_rtt,default_port_hopping_interval,default_port_hopping_jitter
 };
 
 pub fn default_rate_limit() -> u64 {
@@ -229,6 +229,7 @@ impl Default for ShadowQuicClientCfg {
             cipher_suite_preference: None,
             socket_opt: Default::default(),
             protect_path: Default::default(),
+            port_hopping: Default::default(),
         }
     }
 }
@@ -259,7 +260,7 @@ impl Default for BrutalParams {
 }
 
 /// Shadowquic outbound configuration
-///   
+///
 /// example:
 /// ```yaml
 /// tag: proxy
@@ -404,6 +405,24 @@ pub struct ShadowQuicClientCfg {
     /// Socket options like bind interface and fwmark
     #[serde(flatten)]
     pub socket_opt: SocketOpt,
+    #[serde(default)]
+    pub port_hopping: PortHoppingCfg,
+}
+
+/// Port Hopping interval is random sampled from interval [interval,interval + interval_jitter]
+/// The port is randomly chosen.
+#[derive(Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct PortHoppingCfg {
+    #[serde(default="default_port_hopping_enable")]
+    pub enable: bool,
+    /// The port hopping interval
+    #[serde(default = "default_port_hopping_interval")]
+    pub interval: DurationMs<1000>,
+    /// Nonzero value makes port hopping nonperiodic and harder
+    /// to be detected.
+    #[serde(default = "default_port_hopping_jitter")]
+    pub interval_jitter: DurationMs,
 }
 
 impl HasCipherSuitePreference for ShadowQuicClientCfg {
@@ -421,6 +440,18 @@ mod tests {
     const CLIENT: &str = "tag: client\naddr: localhost:443\nusername: user\npassword: pass\nserver-name: localhost\n";
     const SERVER: &str =
         "tag: server\nbind-addr: 127.0.0.1:443\nusers: []\njls-upstream:\n  addr: localhost:443\n";
+
+    #[test]
+    fn port_hopping_deserializes_millisecond_intervals() {
+        let yaml = format!(
+            "{CLIENT}port-hopping:\n  enable: true\n  interval: {}\n  interval-jitter: 0\n",
+            u64::MAX
+        );
+        let client: ShadowQuicClientCfg = serde_saphyr::from_str(&yaml).unwrap();
+        assert!(client.port_hopping.enable);
+        assert_eq!(*client.port_hopping.interval, u64::MAX);
+        assert_eq!(*client.port_hopping.interval_jitter, 0);
+    }
 
     #[test]
     fn blackhole_threshold_defaults_and_parses_on_client_and_server() {

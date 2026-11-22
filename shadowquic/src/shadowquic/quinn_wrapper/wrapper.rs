@@ -258,6 +258,9 @@ impl QuicClient for EndClient {
             zero_rtt: cfg.zero_rtt,
         })
     }
+    fn rebind(&self, socket: UdpSocket) -> std::io::Result<()>{
+        self.inner.rebind(socket)
+    }
 
     type C = Connection;
 }

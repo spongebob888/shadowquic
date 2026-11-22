@@ -1186,6 +1186,17 @@ impl Default for DirectOutCfg {
     }
 }
 
+pub fn default_port_hopping_interval() -> DurationMs<1000> {
+    120_000.into()
+}
+
+pub fn default_port_hopping_jitter() -> DurationMs {
+    30_000.into()
+}
+
+pub fn default_port_hopping_enable() -> bool {
+    false
+}
 /// Outbound that discards every request.
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]

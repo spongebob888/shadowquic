@@ -1,7 +1,10 @@
 use bytes::Bytes;
+use std::ops::Deref;
 use std::sync::Arc;
+
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
+use tokio::task::JoinSet;
 
 use tokio::io::AsyncReadExt;
 use tracing::Instrument;
@@ -21,6 +24,19 @@ use crate::{
 };
 
 use super::{SQConn, SQConnStats, inbound::Unsplit};
+
+#[derive(Clone)]
+pub struct SQClientConn<C: QuicConnection> {
+    pub sq_conn: SQConn<C>,
+    pub bg_task: Arc<JoinSet<SResult<()>>>,
+}
+impl<T: QuicConnection> Deref for SQClientConn<T> {
+    type Target = SQConn<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.sq_conn
+    }
+}
 
 /// Handling a proxy request and starting proxy task with given squic connection
 #[hotpath::measure]
