@@ -7,6 +7,8 @@ use regex_automata::{
 use serde::Deserialize;
 use std::{borrow::Cow, cmp::Ordering, collections::HashSet, path::Path};
 
+pub(super) mod v2ray_dat;
+
 // Schema 4 uses tagged rule keys and retains the source of compiled regexes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -216,6 +218,23 @@ struct SiteList {
     rules: Vec<String>,
 }
 
+/// Parse the plain YAML export, falling back to the binary `geosite.dat`.
+fn parse_source(source: &[u8]) -> Result<Geosite> {
+    let yaml = match std::str::from_utf8(source) {
+        Ok(text) => match serde_saphyr::from_str::<Geosite>(text) {
+            Ok(data) => return Ok(data),
+            Err(error) => Some(error),
+        },
+        Err(_) => None,
+    };
+    v2ray_dat::decode(source).map_err(|dat| match yaml {
+        Some(yaml) => {
+            format!("geosite source is neither YAML ({yaml}) nor geosite.dat ({dat})").into()
+        }
+        None => format!("invalid geosite.dat: {dat}").into(),
+    })
+}
+
 pub(super) fn selection_key(selected: &[String]) -> String {
     let mut names: Vec<_> = selected
         .iter()
@@ -231,8 +250,7 @@ pub(super) fn import_geosite(
     write: &redb::WriteTransaction,
     selected: &[String],
 ) -> Result<()> {
-    let source = std::fs::read_to_string(source)?;
-    let data: Geosite = serde_saphyr::from_str(&source)?;
+    let data = parse_source(&std::fs::read(source)?)?;
     if data.lists.is_empty() {
         return Err("geosite contains no lists".into());
     }

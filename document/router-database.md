@@ -18,9 +18,9 @@ This requires the `plugin` feature. The following fields configure router databa
 | Field | Meaning |
 | --- | --- |
 | `tag` | Unique name across databases, inbounds, outbounds, and DNS services |
-| `type` | `country` for Country MMDB, `geosite` for the plain YAML export, or `custom` for inline rules |
+| `type` | `country` for Country MMDB, `geosite` for the plain YAML export or binary `geosite.dat`, or `custom` for inline rules |
 | `url` | HTTP(S) download URL for Country or Geosite |
-| `list-include` | Optional, geosite only: base domain set names to import, matched case-insensitively. Omitted or `[]` imports all sets in the YAML source |
+| `list-include` | Optional, geosite only: base domain set names to import, matched case-insensitively. Omitted or `[]` imports all sets in the source |
 | `list` | Custom only. Named lists with `name`, `rules`, and optional `force` |
 | `path` | Persistent database file, relative to the working directory; Country `.mmdb` paths use direct MMDB lookups, other paths use redb. Custom defaults to `data/custom.redb` |
 | `cache-size` | Optional redb page-cache budget in bytes. Defaults to `4194304` (4 MiB) for Geosite and `131072` (128 KiB) for custom databases. Set to `0` to disable caching |
@@ -48,6 +48,12 @@ router:
       return "direct"
     end
 ```
+
+Geosite sources may be the plain YAML export (`dlc.dat_plain.yml`) or the binary
+protobuf `geosite.dat` used by V2Ray, Xray, and Mihomo, such as
+`https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat`.
+The format is detected from the file contents, not the URL, and both import into
+the same redb schema. `geosite.dat` list names such as `CN` match case-insensitively.
 
 Configure the `direct` and `proxy` outbounds referenced by your script. A Country
 entry uses `type: country`, a URL serving an uncompressed Country MMDB, and a
