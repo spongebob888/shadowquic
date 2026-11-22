@@ -35,7 +35,9 @@ pub trait QuicClient: Send + Sync {
     where
         Self: Sized;
     async fn connect(&self, addr: SocketAddr, server_name: &str) -> Result<Self::C, QuicErrorRepr>;
-    fn rebind(&self, socket: UdpSocket) -> std::io::Result<()>;
+    fn rebind(&self, _socket: UdpSocket) -> std::io::Result<()> {
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
 }
 #[async_trait]
 pub trait QuicServer: Send + Sync {
