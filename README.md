@@ -33,7 +33,7 @@ For customized GitHub Actions builds, see the [custom build guide](document/cust
 - Prompt: 
 ```
 Read https://spongebob888.github.io/shadowquic/main/configuration/  
-Give a config of client and server. For clients it shoud bypass china local traffic and with api enabled. The router script should be intergrated with config file
+Give a config of client and server. For clients it should bypass China local traffic with api enabled. The router script should be intergrated with config file
 ```
 ### Client
 ```bash
