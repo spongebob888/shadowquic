@@ -406,6 +406,14 @@ pub struct ShadowQuicClientCfg {
     /// Socket options like bind interface and fwmark
     #[serde(flatten)]
     pub socket_opt: SocketOpt,
+    /// Change client outgoing port randomly.
+    ///
+    /// ```yaml
+    /// port-hopping:
+    ///   enable: false
+    ///   interval: 50s
+    ///   interval-jitter: 30s # port change randomly in `[50s, 80s]`
+    /// ```
     #[serde(default)]
     pub port_hopping: PortHoppingCfg,
 }
