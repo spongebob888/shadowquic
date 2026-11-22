@@ -103,7 +103,13 @@
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/socketopt/</loc>
       </url>
       <url>
+        <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/durationms/</loc>
+      </url>
+      <url>
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/ciphersuitepreference/</loc>
+      </url>
+      <url>
+        <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/porthoppingcfg/</loc>
       </url>
       <url>
         <loc>https://spongebob888.github.io/shadowquic/main/configuration/shared/dnsstrategy/</loc>
