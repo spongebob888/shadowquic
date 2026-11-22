@@ -7,7 +7,7 @@ use regex_automata::{
 use serde::Deserialize;
 use std::{borrow::Cow, cmp::Ordering, collections::HashSet, path::Path};
 
-pub(super) mod dat;
+pub(super) mod v2ray_dat;
 
 // Schema 4 uses tagged rule keys and retains the source of compiled regexes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,7 +227,7 @@ fn parse_source(source: &[u8]) -> Result<Geosite> {
         },
         Err(_) => None,
     };
-    dat::decode(source).map_err(|dat| match yaml {
+    v2ray_dat::decode(source).map_err(|dat| match yaml {
         Some(yaml) => {
             format!("geosite source is neither YAML ({yaml}) nor geosite.dat ({dat})").into()
         }

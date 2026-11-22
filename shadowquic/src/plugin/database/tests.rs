@@ -467,7 +467,7 @@ fn geosite_dat_imports_like_plain_yaml() {
     let source = dir.path().join("geosite.dat");
     std::fs::write(
         &source,
-        super::geosite::dat::encode(&[
+        super::geosite::v2ray_dat::encode(&[
             (
                 "TEST",
                 &[
