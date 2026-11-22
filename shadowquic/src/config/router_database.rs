@@ -9,7 +9,7 @@ pub fn default_geosite_url() -> String {
         .into()
 }
 
-fn default_cache_size() -> usize {
+pub fn default_cache_size() -> usize {
     4 * 1024 * 1024
 }
 /// A routing database stored as a country MMDB or an indexed redb file.

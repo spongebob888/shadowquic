@@ -147,6 +147,29 @@ class DurationDocsTests(unittest.TestCase):
         self.assertNotIn("## Fields", rendered)
 
 
+class GeositeDocsTests(unittest.TestCase):
+    def test_geosite_url_default_is_rendered_from_wrapped_expression(self):
+        filename = "shadowquic/src/config/router_database.rs"
+        config = Item(dict(
+            id=0, name="GeositeDbCfg", span=dict(filename=filename),
+            inner={"struct": {"kind": {"plain": {"fields": [1]}}}},
+        ))
+        url = Item(dict(
+            id=1, name="url", span=dict(filename=filename),
+            inner={"struct_field": {"resolved_path": {"path": "String"}}},
+        ))
+        ctx = RenderContext(
+            index={item.id: item for item in (config, url)}, page_for_type={}, pages_dir_for={},
+            default_values=collect_default_fn_values(REPO_ROOT),
+            src_attrs=parse_source_attrs(REPO_ROOT),
+        )
+        rendered = emit_struct_page(config, Path("configuration/shared/geositedbcfg.md"), "Geosite DB", ctx)
+        self.assertIn(
+            "- **Default:** `https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat_plain.yml`",
+            rendered,
+        )
+
+
 class RestApiDocsTests(unittest.TestCase):
     def test_dashboard_defaults_are_rendered_from_public_helpers(self):
         filename = "shadowquic/src/config/mod.rs"

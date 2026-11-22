@@ -320,10 +320,14 @@ def apply_rename_all(name: str, rule: str | None) -> str:
 # ----------------------------------------------------------------------------
 
 
+_OWNED_STRING_EXPR = r'"([^"\\\n]*)"\s*\.(?:into|to_owned|to_string)\(\)'
+
 # Matches:  pub fn name() -> T { expr }   and   pub(crate) fn name() -> T { expr }
 # and any other `pub(...)` visibility modifier.
 _DEFAULT_BODY_RE = re.compile(
-    r"pub(?:\s*\([^)]*\))?\s+fn\s+(\w+)\s*\(\s*\)\s*->\s*[^\{]+\{\s*([^\n]+?)\s*\}",
+    r"pub(?:\s*\([^)]*\))?\s+fn\s+(\w+)\s*\(\s*\)\s*->\s*[^\{]+\{\s*"
+    rf"(?P<expr>{_OWNED_STRING_EXPR}|[^\n]+?)"
+    r"\s*\}",
     re.MULTILINE,
 )
 
@@ -361,14 +365,14 @@ def collect_enum_variant_tags(
 def collect_default_fn_values(repo_root: Path) -> dict[str, str]:
     """Scan configuration sources for `pub fn default_xxx() -> T { expr }` bodies.
 
-    Only matches single-line function bodies; anything more complex falls back
-    to displaying the function name in the rendered docs.
+    Accepts single-line expressions and string conversions split across lines.
+    More complex bodies fall back to the function name in the rendered docs.
     """
     out: dict[str, str] = {}
     for path in config_sources(repo_root):
         text = path.read_text()
         for m in _DEFAULT_BODY_RE.finditer(text):
-            out[m.group(1)] = m.group(2).rstrip(";").strip()
+            out[m.group(1)] = m.group("expr").rstrip(";").strip()
     return out
 
 
@@ -524,7 +528,7 @@ class RenderContext:
 
 _ENUM_VARIANT_EXPR_RE = re.compile(r"^([A-Z][A-Za-z0-9_]*)::([A-Z][A-Za-z0-9_]*)$")
 _PARSED_STRING_EXPR_RE = re.compile(r'^"([^"\\]*)"\.parse\(\)\.unwrap\(\)$')
-_OWNED_STRING_EXPR_RE = re.compile(r'^"([^"\\]*)"\.(?:into|to_owned|to_string)\(\)$')
+_OWNED_STRING_EXPR_RE = re.compile(_OWNED_STRING_EXPR)
 _INTEGER_INTO_EXPR_RE = re.compile(r"^([0-9][0-9_]*)\.into\(\)$")
 
 
