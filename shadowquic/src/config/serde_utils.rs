@@ -247,6 +247,8 @@ impl<'de, const LB: u64> Deserialize<'de> for DurationMs<LB> {
                     (ms, 1)
                 } else if let Some(seconds) = text.strip_suffix('s') {
                     (seconds, 1000)
+                } else if let Some(min) = text.strip_suffix("min") {
+                    (min, 60_1000)
                 } else {
                     (text.as_str(), 1)
                 };
