@@ -204,12 +204,16 @@ where
 #[derive(Clone, Debug)]
 pub struct DurationMs<const LB: u64 = 0>(u64);
 
-impl<const LB:u64> From<u64> for DurationMs<{ LB }> {
+impl<const LB: u64> From<u64> for DurationMs<{ LB }> {
     fn from(value: u64) -> Self {
         DurationMs(value)
     }
 }
-
+impl<const LB: u64> From<DurationMs<{ LB }>> for u64 {
+    fn from(val: DurationMs<{ LB }>) -> Self {
+        val.0
+    }
+}
 impl<const LB: u64> Deref for DurationMs<LB> {
     type Target = u64;
 

@@ -4,7 +4,7 @@ use tokio::sync::Mutex;
 use crate::{
     msgs::squic::ConnStats,
     quic::QuicConnection,
-    squic::{outbound::SQClientConn, SQConn,SQConnStats},
+    squic::{SQConnStats, outbound::SQClientConn},
 };
 
 use super::{ErrorBody, millis};
@@ -17,7 +17,6 @@ pub trait SQStatsTrait: Send + Sync {
 #[async_trait::async_trait]
 impl SQStatsTrait for crate::shadowquic::outbound::ShadowQuicClient {
     async fn get_sq_stats(&self) -> Option<SQConnStats> {
-
         cached_stats(&self.quic_conn).await
     }
 }

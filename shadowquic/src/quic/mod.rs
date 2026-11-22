@@ -1,4 +1,7 @@
-use std::{net::{SocketAddr, UdpSocket}, sync::Arc};
+use std::{
+    net::{SocketAddr, UdpSocket},
+    sync::Arc,
+};
 
 use crate::{Stoppable, error::SResult, msgs::squic::ConnStats, utils::socket_opt::SocketFactory};
 use async_trait::async_trait;

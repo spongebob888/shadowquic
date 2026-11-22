@@ -1022,8 +1022,8 @@ pub fn default_over_stream() -> bool {
 pub fn default_alpn() -> Vec<String> {
     vec!["h3".into()]
 }
-pub fn default_keep_alive_interval() -> u32 {
-    0
+pub fn default_keep_alive_interval() -> DurationMs {
+    0.into()
 }
 
 /// Default user-store flush interval in seconds

@@ -7,7 +7,19 @@ use super::EndClient;
 use tracing::{error, info};
 
 use crate::{
-    Outbound, config::{AuthUser, SunnyQuicClientCfg}, dns::ResolverManager, error::SError, msgs::squic::{SQExtError, UserStats}, quic::{QuicClient, QuicConnection}, squic::{auth_sunny, inbound::UserManager, outbound::{self, SQClientConn}}, sunnyquic::gen_sunny_user_hash, utils::socket_opt::{SocketFactory, UdpSocketFactory},
+    Outbound,
+    config::{AuthUser, SunnyQuicClientCfg},
+    dns::ResolverManager,
+    error::SError,
+    msgs::squic::{SQExtError, UserStats},
+    quic::{QuicClient, QuicConnection},
+    squic::{
+        auth_sunny,
+        inbound::UserManager,
+        outbound::{self, SQClientConn},
+    },
+    sunnyquic::gen_sunny_user_hash,
+    utils::socket_opt::{SocketFactory, UdpSocketFactory},
 };
 
 use crate::squic::{SQConn, handle_udp_packet_recv};
@@ -90,7 +102,10 @@ impl SunnyQuicClient {
             }
             .in_current_span(),
         );
-        Ok(SQClientConn { sq_conn: conn, bg_task: Default::default() })
+        Ok(SQClientConn {
+            sq_conn: conn,
+            bg_task: Default::default(),
+        })
     }
     async fn prepare_conn(&self) -> Result<SunnyQuicConn, SError> {
         // Serialize cache refreshes so concurrent requests reuse one connection.
@@ -204,7 +219,13 @@ impl Outbound for SunnyQuicClient {
             .map_err(std::io::Error::from)??;
 
         let over_stream = self.config.over_stream;
-        outbound::handle_request(req, conn.sq_conn, over_stream, self.config.half_close_timeout).await?;
+        outbound::handle_request(
+            req,
+            conn.sq_conn,
+            over_stream,
+            self.config.half_close_timeout,
+        )
+        .await?;
         Ok(())
     }
 }

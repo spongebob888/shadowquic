@@ -7,7 +7,17 @@ use super::quinn_wrapper::EndClient;
 use tracing::{error, info};
 
 use crate::{
-    Outbound, config::{AuthUser, ShadowQuicClientCfg}, dns::ResolverManager, error::SError, msgs::squic::{SQExtError, UserStats}, quic::QuicClient, squic::{inbound::UserManager, outbound::{self, SQClientConn}}, utils::socket_opt::{SocketFactory, UdpSocketFactory},
+    Outbound,
+    config::{AuthUser, ShadowQuicClientCfg},
+    dns::ResolverManager,
+    error::SError,
+    msgs::squic::{SQExtError, UserStats},
+    quic::QuicClient,
+    squic::{
+        inbound::UserManager,
+        outbound::{self, SQClientConn},
+    },
+    utils::socket_opt::{SocketFactory, UdpSocketFactory},
 };
 
 use crate::squic::{SQConn, handle_udp_packet_recv};
@@ -59,16 +69,15 @@ impl ShadowQuicClient {
         let end = self
             .quic_end
             .get_or_try_init(|| self.init_endpoint())
-            .await?.clone();
-        let conn = end
-            .connect(addr, &self.config.server_name)
-            .await?;
+            .await?
+            .clone();
+        let conn = end.connect(addr, &self.config.server_name).await?;
 
         let conn = SQConn::new(
             conn,
             SetOnce::new_with(Some(Ok(self.config.username.clone()))),
         );
-        
+
         let conn_clone = conn.clone();
         let mut task = tokio::task::JoinSet::new();
         task.spawn(
@@ -84,24 +93,28 @@ impl ShadowQuicClient {
             .in_current_span(),
         );
         let port_hopping = &self.config.port_hopping;
-        let conn_clone = conn.clone();
+        let _conn_clone = conn.clone();
         if port_hopping.enable {
             let lb = *port_hopping.interval.deref();
             let ub = port_hopping.interval_jitter.deref() + *port_hopping.interval;
             let socket_factory = self.socket_factory.clone();
 
-            task.spawn(async move {
-                loop {
-                    let interval_ms = rand::random_range(lb..ub+1);
-                    tokio::time::sleep(Duration::from_millis(interval_ms)).await;
-                    end.rebind(socket_factory.create_socket().await?.into());
-                    tracing::trace!(event="shadowquic:rebind","shadowquic rebind")
+            task.spawn(
+                async move {
+                    loop {
+                        let interval_ms = rand::random_range(lb..ub + 1);
+                        tokio::time::sleep(Duration::from_millis(interval_ms)).await;
+                        end.rebind(socket_factory.create_socket().await?.into())?;
+                        tracing::trace!(event = "shadowquic:rebind", "shadowquic rebind")
+                    }
                 }
-                Ok(())
-            }.in_current_span());
-
+                .in_current_span(),
+            );
         }
-        Ok(SQClientConn { sq_conn: conn, bg_task: task.into() })
+        Ok(SQClientConn {
+            sq_conn: conn,
+            bg_task: task.into(),
+        })
     }
     #[hotpath::measure(impl_type = "ShadowQuicClient")]
     async fn prepare_conn(&self) -> Result<ShadowQuicConn, SError> {
@@ -216,7 +229,13 @@ impl Outbound for ShadowQuicClient {
             .map_err(std::io::Error::from)??;
 
         let over_stream = self.config.over_stream;
-        outbound::handle_request(req, conn.sq_conn, over_stream, self.config.half_close_timeout).await?;
+        outbound::handle_request(
+            req,
+            conn.sq_conn,
+            over_stream,
+            self.config.half_close_timeout,
+        )
+        .await?;
         Ok(())
     }
 }

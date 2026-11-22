@@ -10,8 +10,9 @@ use crate::config::{
     default_brutal_min_ack_rate, default_brutal_min_sample_count, default_brutal_min_window,
     default_congestion_control, default_gso, default_half_close_timeout,
     default_inbound_max_streams, default_initial_mtu, default_keep_alive_interval, default_min_mtu,
-    default_mtu_discovery, default_outbound_max_streams, default_over_stream,default_port_hopping_enable,
-    default_store_flush_interval, default_stream_receive_window, default_zero_rtt,default_port_hopping_interval,default_port_hopping_jitter
+    default_mtu_discovery, default_outbound_max_streams, default_over_stream,
+    default_port_hopping_enable, default_port_hopping_interval, default_port_hopping_jitter,
+    default_store_flush_interval, default_stream_receive_window, default_zero_rtt,
 };
 
 pub fn default_rate_limit() -> u64 {
@@ -323,7 +324,7 @@ pub struct ShadowQuicClientCfg {
     /// 0 means disable keep alive, should be smaller than 30_000(idle time).
     /// Disabled by default.
     #[serde(default = "default_keep_alive_interval")]
-    pub keep_alive_interval: u32,
+    pub keep_alive_interval: DurationMs,
 
     /// Enable QUIC Generic Segmentation Offload (GSO).
     /// Controls [`quinn::TransportConfig::enable_segmentation_offload`]. When supported, GSO reduces
@@ -414,7 +415,7 @@ pub struct ShadowQuicClientCfg {
 #[derive(Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PortHoppingCfg {
-    #[serde(default="default_port_hopping_enable")]
+    #[serde(default = "default_port_hopping_enable")]
     pub enable: bool,
     /// The port hopping interval
     #[serde(default = "default_port_hopping_interval")]
