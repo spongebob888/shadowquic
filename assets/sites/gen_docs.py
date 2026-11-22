@@ -194,6 +194,13 @@ class Item:
         return self.raw.get("inner") or {}
 
     @property
+    def named_struct_fields(self) -> list[int] | None:
+        kind = self.inner.get("struct", {}).get("kind")
+        if isinstance(kind, dict) and "plain" in kind:
+            return kind["plain"]["fields"]
+        return None
+
+    @property
     def is_config(self) -> bool:
         return self.filename.startswith(CONFIG_SRC_PREFIX) or self.filename == DNS_CONFIG_SRC
 
@@ -518,13 +525,14 @@ class RenderContext:
 _ENUM_VARIANT_EXPR_RE = re.compile(r"^([A-Z][A-Za-z0-9_]*)::([A-Z][A-Za-z0-9_]*)$")
 _PARSED_STRING_EXPR_RE = re.compile(r'^"([^"\\]*)"\.parse\(\)\.unwrap\(\)$')
 _OWNED_STRING_EXPR_RE = re.compile(r'^"([^"\\]*)"\.(?:into|to_owned|to_string)\(\)$')
+_INTEGER_INTO_EXPR_RE = re.compile(r"^([0-9][0-9_]*)\.into\(\)$")
 
 
 def render_default_value(expr: str, ctx: RenderContext) -> str:
     """Pretty-print a default expression for display in the YAML schema.
 
     Unwrap Some defaults, rewrite enum constructors into their serde tags, and
-    render parsed string literals as their value (for example, a CIDR).
+    render converted literals as their value (for example, a CIDR or duration).
     Other expressions are unchanged.
     """
     if not expr:
@@ -536,6 +544,9 @@ def render_default_value(expr: str, ctx: RenderContext) -> str:
               or _OWNED_STRING_EXPR_RE.fullmatch(expr.strip()))
     if parsed:
         return parsed.group(1)
+    integer = _INTEGER_INTO_EXPR_RE.fullmatch(expr.strip())
+    if integer:
+        return integer.group(1).replace("_", "")
     m = _ENUM_VARIANT_EXPR_RE.match(expr.strip())
     if m:
         key = f"{m.group(1)}::{m.group(2)}"
@@ -708,7 +719,6 @@ def emit_struct_page(
     extra_intro: str = "",
 ) -> str:
     """Return the markdown body for a struct page."""
-    serde = parse_container_serde(attrs_for_container(item, ctx.src_attrs))
     body: list[str] = []
     body.append(f"# {title}\n")
     if extra_intro:
@@ -718,20 +728,22 @@ def emit_struct_page(
     if docs_md:
         body.append(docs_md.rstrip() + "\n")
 
-    body.append("## Fields\n")
-    _emit_struct_fields(item, serde, ctx, body, page_path, depth=0)
+    if item.named_struct_fields is not None:
+        serde = parse_container_serde(attrs_for_container(item, ctx.src_attrs))
+        body.append("## Fields\n")
+        _emit_struct_fields(item, serde, ctx, body, page_path, depth=0)
     return "\n".join(body) + "\n"
 
 
 def _resolve_struct_target(ty: dict | None, ctx: RenderContext) -> Item | None:
-    """If `ty` is a resolved_path to a config struct, return that struct."""
+    """Resolve a config struct with named fields for serde flattening."""
     if not isinstance(ty, dict) or "resolved_path" not in ty:
         return None
     tid = ty["resolved_path"].get("id")
     if tid is None:
         return None
     target = ctx.index.get(str(tid))
-    if target is None or not target.is_config or "struct" not in target.inner:
+    if target is None or not target.is_config or target.named_struct_fields is None:
         return None
     return target
 
@@ -755,8 +767,7 @@ def _emit_struct_fields(
         return
     inlined_from = inlined_from or []
 
-    fields = item.inner["struct"]["kind"]["plain"]["fields"]
-    for fid in fields:
+    for fid in item.named_struct_fields or []:
         f = ctx.index.get(str(fid))
         if f is None:
             continue
@@ -925,7 +936,7 @@ def discover_config_types(index: dict[str, Item], roots: list[str]) -> list[Item
             continue
         out.append(item)
         if "struct" in item.inner:
-            for fid in item.inner["struct"]["kind"]["plain"]["fields"]:
+            for fid in item.named_struct_fields or []:
                 f = index.get(str(fid))
                 if f is None:
                     continue
