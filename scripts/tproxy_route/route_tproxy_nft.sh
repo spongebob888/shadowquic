@@ -18,7 +18,7 @@ ip -6 route replace local ::/0 dev lo table 106
 nft delete table inet shadowquic 2>/dev/null || true
 
 nft -f - <<EOF
-flush ruleset
+destroy table inet shadowqui
 
 table inet shadowquic {
         chain prerouting {
@@ -43,6 +43,7 @@ table inet shadowquic {
                 meta l4proto tcp ip6 daddr fd00::/8 return
                 ip6 daddr fd00::/8 udp dport != 53 return
                 meta mark 0x000000ff return
+                ct direction reply return
                 meta l4proto { tcp, udp } meta mark set 0x00000001 accept
         }
 }
