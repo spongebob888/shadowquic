@@ -2276,7 +2276,7 @@
 <ul>
 <li><strong>Type:</strong> <code>string</code></li>
 <li><strong>Required:</strong> no</li>
-<li><strong>Default:</strong> <code>default_geosite_url()</code></li>
+<li><strong>Default:</strong> <code>https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat_plain.yml</code></li>
 </ul>
 <p>HTTP(S) source URL. Used only when <code>path</code> does not exist.
 Defaults to the v2fly domain-list-community database in YAML format.
@@ -2300,7 +2300,7 @@ Cost about 16m for full geosite db. 1Mb for only cn list.</p>
 <ul>
 <li><strong>Type:</strong> <code>usize</code></li>
 <li><strong>Required:</strong> no</li>
-<li><strong>Default:</strong> <code>default_cache_size()</code></li>
+<li><strong>Default:</strong> <code>4 * 1024 * 1024</code></li>
 </ul>
 <p>redb page-cache budget in bytes. Defaults to 4 MiB; zero disables caching.</p>
 
