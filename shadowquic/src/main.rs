@@ -1,4 +1,4 @@
-use std::{io::IsTerminal, path::PathBuf, sync::Arc};
+use std::{io::IsTerminal, path::PathBuf, process::ExitCode, sync::Arc};
 
 use clap::{Parser, Subcommand};
 use shadowquic::{
@@ -8,7 +8,7 @@ use shadowquic::{
     squic::inbound::UserManager,
     sunnyquic::outbound::SunnyQuicClient,
 };
-use tracing::{Level, info};
+use tracing::{Level, error, info};
 use tracing_subscriber::{
     Layer, fmt::time::LocalTime, layer::SubscriberExt, util::SubscriberInitExt,
 };
@@ -99,28 +99,43 @@ enum ApiCommand {
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 8)]
-async fn main() {
+async fn main() -> ExitCode {
     // No-op unless built with `--features hotpath`. The guard API is used
     // instead of #[hotpath::main] because this binary declares a manual
     // #[global_allocator] (CountingAllocator wrapping jemalloc).
     let _hotpath = hotpath::HotpathGuardBuilder::new("shadowquic").build();
     hotpath::tokio_runtime!();
     let cli = Cli::parse();
-    let content = std::fs::read_to_string(cli.config).expect("can't open config yaml file");
+    let content = match std::fs::read_to_string(&cli.config) {
+        Ok(content) => content,
+        Err(error) => {
+            eprintln!(
+                "failed to read config file {}: {error}",
+                cli.config.display()
+            );
+            return ExitCode::FAILURE;
+        }
+    };
     let cfg: Config = match serde_saphyr::from_str(&content) {
         Ok(cfg) => cfg,
-        Err(e) => {
-            eprintln!("failed to parse config file: {e}");
-            std::process::exit(1);
+        Err(error) => {
+            eprintln!(
+                "failed to parse config file {}: {error}",
+                cli.config.display()
+            );
+            return ExitCode::FAILURE;
         }
     };
     match cli.command.unwrap_or(Command::Run) {
         Command::Run => {
             setup_log(cfg.log_level.clone());
-            let manager = cfg
-                .build_manager()
-                .await
-                .expect("creating inbound/outbound failed");
+            let manager = match cfg.build_manager().await {
+                Ok(manager) => manager,
+                Err(error) => {
+                    error!(event = "application:startup_failed", %error, "failed to set up shadowquic");
+                    return ExitCode::FAILURE;
+                }
+            };
 
             info!(
                 event = "application:started",
@@ -133,7 +148,10 @@ async fn main() {
                     "current working directory: {:?}", x
                 )
             });
-            manager.run().await.expect("shadowquic stopped");
+            if let Err(error) = manager.run().await {
+                error!(event = "application:run_failed", %error, "shadowquic stopped");
+                return ExitCode::FAILURE;
+            }
         }
         Command::Api { outbound, command } => {
             let result = match select_api_outbound(cfg, outbound.as_deref()) {
@@ -142,10 +160,11 @@ async fn main() {
             };
             if let Err(error) = result {
                 eprintln!("{error}");
-                std::process::exit(1);
+                return ExitCode::FAILURE;
             }
         }
     }
+    ExitCode::SUCCESS
 }
 
 fn select_api_outbound(cfg: Config, tag: Option<&str>) -> Result<OutboundCfg, String> {
