@@ -2206,7 +2206,7 @@
 
 
 <h1 id="geosite-db">Geosite db<a class="headerlink" href="#geosite-db" title="Permanent link">&para;</a></h1>
-<p>Domain membership database sourced from geosite YAML.</p>
+<p>Domain membership database sourced from geosite YAML or binary <code>geosite.dat</code>.</p>
 <h2 id="fields">Fields<a class="headerlink" href="#fields" title="Permanent link">&para;</a></h2>
 <h3 id="tag"><code>tag</code><a class="headerlink" href="#tag" title="Permanent link">&para;</a></h3>
 <ul>
@@ -2221,7 +2221,9 @@
 <li><strong>Default:</strong> <code>default_geosite_url()</code></li>
 </ul>
 <p>HTTP(S) source URL. Used only when <code>path</code> does not exist.
-Defaults to the v2fly domain-list-community database in YAML format.</p>
+Defaults to the v2fly domain-list-community database in YAML format.
+The binary protobuf <code>geosite.dat</code> is also accepted; the format is detected
+from the downloaded contents.</p>
 <h3 id="list-include"><code>list-include</code><a class="headerlink" href="#list-include" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Type:</strong> list of <code>string</code></li>
