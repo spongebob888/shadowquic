@@ -1,4 +1,6 @@
-//! Decoder for v2fly `geosite.dat`, a protobuf `GeoSiteList`:
+//! Decoders for the v2ray/xray binary `geosite.dat` and `geoip.dat` files.
+//!
+//! `geosite.dat` is a protobuf `GeoSiteList`:
 //!
 //! ```proto
 //! message Domain {
@@ -14,8 +16,17 @@
 //!
 //! Rules are converted to the same `kind:value:@attr,@attr` text as the plain
 //! YAML export, so both sources share one import path.
-use super::{Geosite, SiteList};
-use crate::plugin::database::Result;
+//!
+//! `geoip.dat` is a protobuf `GeoIPList`:
+//!
+//! ```proto
+//! message CIDR { bytes ip = 1; uint32 prefix = 2; }
+//! message GeoIP { string country_code = 1; repeated CIDR cidr = 2; bool reverse_match = 3; }
+//! message GeoIPList { repeated GeoIP entry = 1; }
+//! ```
+use super::Result;
+use super::geosite::{Geosite, SiteList};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 const VARINT: u8 = 0;
 const I64: u8 = 1;
@@ -168,7 +179,7 @@ fn site(buf: &[u8]) -> Result<SiteList> {
 }
 
 /// Decode a complete `GeoSiteList`. Unknown fields are skipped.
-pub(super) fn decode(buf: &[u8]) -> Result<Geosite> {
+pub(super) fn decode_geosite(buf: &[u8]) -> Result<Geosite> {
     let mut reader = Reader::new(buf);
     let mut lists = Vec::new();
     while let Some((field, wire)) = reader.field()? {
@@ -181,6 +192,101 @@ pub(super) fn decode(buf: &[u8]) -> Result<Geosite> {
         }
     }
     Ok(Geosite { lists })
+}
+
+/// One `GeoIP` entry: a label and its networks as inclusive address ranges.
+pub(super) struct GeoIp {
+    pub(super) code: String,
+    pub(super) ranges: Vec<(IpAddr, IpAddr)>,
+}
+
+fn cidr(buf: &[u8]) -> Result<(IpAddr, IpAddr)> {
+    let mut reader = Reader::new(buf);
+    let mut ip: &[u8] = &[];
+    let mut prefix = 0u64;
+    while let Some((field, wire)) = reader.field()? {
+        match field {
+            1 => {
+                expect(wire, LEN)?;
+                ip = reader.bytes()?;
+            }
+            2 => {
+                expect(wire, VARINT)?;
+                prefix = reader.varint()?;
+            }
+            _ => reader.skip(wire)?,
+        }
+    }
+    let range = match ip.len() {
+        4 => {
+            if prefix > 32 {
+                return Err(format!("invalid IPv4 prefix /{prefix}").into());
+            }
+            let bits = u32::from_be_bytes(ip.try_into()?);
+            let host = u32::MAX.checked_shr(prefix as u32).unwrap_or(0);
+            (
+                IpAddr::V4(Ipv4Addr::from(bits & !host)),
+                IpAddr::V4(Ipv4Addr::from(bits | host)),
+            )
+        }
+        16 => {
+            if prefix > 128 {
+                return Err(format!("invalid IPv6 prefix /{prefix}").into());
+            }
+            let bits = u128::from_be_bytes(ip.try_into()?);
+            let host = u128::MAX.checked_shr(prefix as u32).unwrap_or(0);
+            (
+                IpAddr::V6(Ipv6Addr::from(bits & !host)),
+                IpAddr::V6(Ipv6Addr::from(bits | host)),
+            )
+        }
+        len => return Err(format!("invalid geoip.dat address length {len}").into()),
+    };
+    Ok(range)
+}
+
+fn geoip(buf: &[u8]) -> Result<Option<GeoIp>> {
+    let mut reader = Reader::new(buf);
+    let mut code = String::new();
+    let mut ranges = Vec::new();
+    let mut reverse = false;
+    while let Some((field, wire)) = reader.field()? {
+        match field {
+            1 => code = reader.string(wire)?.to_owned(),
+            2 => {
+                expect(wire, LEN)?;
+                ranges.push(cidr(reader.bytes()?)?);
+            }
+            3 => {
+                expect(wire, VARINT)?;
+                reverse = reader.varint()? != 0;
+            }
+            _ => reader.skip(wire)?,
+        }
+    }
+    if reverse {
+        // Inverted lists match everything outside their networks, which
+        // range tables cannot express. Published files do not use them.
+        tracing::warn!(event = "database:geoip_reverse_skipped", code = %code, "skipping reverse-match geoip.dat entry");
+        return Ok(None);
+    }
+    Ok(Some(GeoIp { code, ranges }))
+}
+
+/// Decode a complete `GeoIPList`. Unknown fields are skipped.
+pub(super) fn decode_geoip(buf: &[u8]) -> Result<Vec<GeoIp>> {
+    let mut reader = Reader::new(buf);
+    let mut entries = Vec::new();
+    while let Some((field, wire)) = reader.field()? {
+        match field {
+            1 => {
+                expect(wire, LEN)?;
+                entries.extend(geoip(reader.bytes()?)?);
+            }
+            _ => reader.skip(wire)?,
+        }
+    }
+    Ok(entries)
 }
 
 /// A test domain: `(type, value, [attribute])`.
@@ -225,6 +331,44 @@ pub(crate) fn encode(lists: &[(&str, &[TestDomain])]) -> Vec<u8> {
     out
 }
 
+/// A test geoip entry: `(code, [(address bytes, prefix)], reverse_match)`.
+#[cfg(test)]
+pub(crate) type TestGeoIp<'a> = (&'a str, &'a [(&'a [u8], u64)], bool);
+
+/// Encode a `GeoIPList` for tests.
+#[cfg(test)]
+pub(crate) fn encode_geoip(entries: &[TestGeoIp]) -> Vec<u8> {
+    fn varint(out: &mut Vec<u8>, mut value: u64) {
+        while value >= 0x80 {
+            out.push(value as u8 | 0x80);
+            value >>= 7;
+        }
+        out.push(value as u8);
+    }
+    fn bytes(out: &mut Vec<u8>, field: u64, value: &[u8]) {
+        varint(out, field << 3 | u64::from(LEN));
+        varint(out, value.len() as u64);
+        out.extend_from_slice(value);
+    }
+    let mut out = Vec::new();
+    for (code, cidrs, reverse) in entries {
+        let mut entry = Vec::new();
+        bytes(&mut entry, 1, code.as_bytes());
+        for (ip, prefix) in *cidrs {
+            let mut cidr = Vec::new();
+            bytes(&mut cidr, 1, ip);
+            varint(&mut cidr, 2 << 3 | u64::from(VARINT));
+            varint(&mut cidr, *prefix);
+            bytes(&mut entry, 2, &cidr);
+        }
+        if *reverse {
+            entry.extend_from_slice(&[3 << 3 | VARINT, 1]);
+        }
+        bytes(&mut out, 1, &entry);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,7 +389,7 @@ mod tests {
         buf.extend_from_slice(&[3 << 3 | I64, 0, 0, 0, 0, 0, 0, 0, 0]);
         buf.extend_from_slice(&[4 << 3 | LEN, 1, b'x']);
         buf.extend_from_slice(&[5 << 3 | I32, 0, 0, 0, 0]);
-        let data = decode(&buf).unwrap();
+        let data = decode_geosite(&buf).unwrap();
         assert_eq!(data.lists.len(), 1);
         assert_eq!(data.lists[0].name, "CN");
         assert_eq!(
@@ -269,9 +413,49 @@ mod tests {
             &[1 << 3 | 7][..],
             &[1 << 3 | VARINT, 1][..],
         ] {
-            assert!(decode(invalid).is_err(), "{invalid:?}");
+            assert!(decode_geosite(invalid).is_err(), "{invalid:?}");
         }
         let unknown_type = encode(&[("CN", &[(9, "x", &[])])]);
-        assert!(decode(&unknown_type).is_err());
+        assert!(decode_geosite(&unknown_type).is_err());
+    }
+
+    #[test]
+    fn decodes_geoip_ranges_and_skips_reverse_entries() {
+        let buf = encode_geoip(&[
+            (
+                "CN",
+                &[
+                    (&[1, 0, 1, 7][..], 24),
+                    (&[10, 0, 0, 0][..], 8),
+                    (&[0, 0, 0, 0][..], 0),
+                    (
+                        &[0x24, 0x0e, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1][..],
+                        32,
+                    ),
+                ],
+                false,
+            ),
+            ("REVERSED", &[(&[1, 1, 1, 1][..], 32)], true),
+        ]);
+        let entries = decode_geoip(&buf).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].code, "CN");
+        let parse = |a: &str, b: &str| (a.parse().unwrap(), b.parse().unwrap());
+        assert_eq!(
+            entries[0].ranges,
+            [
+                parse("1.0.1.0", "1.0.1.255"),
+                parse("10.0.0.0", "10.255.255.255"),
+                parse("0.0.0.0", "255.255.255.255"),
+                parse("240e::", "240e:0:ffff:ffff:ffff:ffff:ffff:ffff"),
+            ]
+        );
+        for invalid in [
+            encode_geoip(&[("CN", &[(&[1, 2, 3][..], 8)], false)]),
+            encode_geoip(&[("CN", &[(&[1, 2, 3, 4][..], 33)], false)]),
+            encode_geoip(&[("CN", &[(&[0; 16][..], 129)], false)]),
+        ] {
+            assert!(decode_geoip(&invalid).is_err());
+        }
     }
 }

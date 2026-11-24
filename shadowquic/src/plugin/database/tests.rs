@@ -467,7 +467,7 @@ fn geosite_dat_imports_like_plain_yaml() {
     let source = dir.path().join("geosite.dat");
     std::fs::write(
         &source,
-        super::geosite::v2ray_dat::encode(&[
+        super::v2ray_dat::encode(&[
             (
                 "TEST",
                 &[
@@ -1418,6 +1418,24 @@ fn published_geosite_import() {
     assert!(db.find_domain("google", "www.google.com").unwrap());
 }
 
+#[test]
+#[ignore = "requires ROUTER_GEOIP_DAT pointing to a published geoip.dat"]
+fn published_geoip_dat_import() {
+    let source = std::env::var_os("ROUTER_GEOIP_DAT").expect("set ROUTER_GEOIP_DAT");
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = country_config(dir.path(), "geoip.redb");
+    let db = RedbDatabase::import(&cfg, Path::new(&source)).unwrap();
+    assert!(
+        db.find_ip("cn", "114.114.114.114".parse().unwrap())
+            .unwrap()
+    );
+    assert!(
+        db.find_ip("private", "192.168.1.1".parse().unwrap())
+            .unwrap()
+    );
+    assert!(!db.find_ip("cn", "8.8.8.8".parse().unwrap()).unwrap());
+}
+
 #[tokio::test]
 async fn manager_routes_database_download_to_lua_selected_outbound() {
     struct ServeDatabase;
@@ -1820,4 +1838,76 @@ fn custom_database_rolls_back_invalid_updates_and_rejects_incompatible_metadata(
             assert_eq!(RedbDatabase::open(&preserved).is_err(), value == invalid);
         }
     }
+}
+
+#[test]
+fn geoip_dat_source_builds_country_redb() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("geoip.dat");
+    let fc00: &[u8] = &[0xfc, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    std::fs::write(
+        &source,
+        super::v2ray_dat::encode_geoip(&[
+            (
+                "CN",
+                &[(&[1, 0, 2, 0][..], 23), (&[1, 0, 1, 0][..], 24)],
+                false,
+            ),
+            ("PRIVATE", &[(&[192, 168, 0, 0][..], 16), (fc00, 7)], false),
+            ("REVERSED", &[(&[8, 8, 8, 8][..], 32)], true),
+        ]),
+    )
+    .unwrap();
+    let cfg = country_config(dir.path(), "country.redb");
+    let db = RedbDatabase::import(&cfg, &source).unwrap();
+    drop(db);
+    let db = RedbDatabase::open(&cfg).unwrap();
+    for (list, ip, expected) in [
+        ("cn", "1.0.1.9", true),
+        ("CN", "1.0.3.255", true),
+        ("cn", "1.0.4.0", false),
+        ("cn", "1.0.0.255", false),
+        ("private", "192.168.3.4", true),
+        ("private", "fd00::1", true),
+        ("cn", "fd00::1", false),
+        ("reversed", "8.8.8.8", false),
+    ] {
+        assert_eq!(
+            db.find_ip(list, ip.parse().unwrap()).unwrap(),
+            expected,
+            "{list} {ip}"
+        );
+    }
+    // Adjacent CN networks merge into one range.
+    let read = db.db.begin_read().unwrap();
+    let table = read
+        .open_table(CountryV4Table::new(&country_table_name("cn", 4)))
+        .unwrap();
+    assert_eq!(redb::ReadableTableMetadata::len(&table).unwrap(), 1);
+
+    // A geoip.dat cannot back a direct-MMDB path.
+    let mmdb = country_config(dir.path(), "country.mmdb");
+    let error = import_database(&mmdb, &source).err().unwrap().to_string();
+    assert!(
+        error.contains("use a path without the .mmdb suffix"),
+        "{error}"
+    );
+    assert!(!mmdb.path().exists());
+}
+
+#[test]
+fn country_source_that_is_neither_mmdb_nor_geoip_dat_is_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("garbage");
+    std::fs::write(&source, [0x0a, 0x80]).unwrap();
+    let cfg = country_config(dir.path(), "country.redb");
+    let error = RedbDatabase::import(&cfg, &source)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        error.contains("neither an MMDB") && error.contains("geoip.dat"),
+        "{error}"
+    );
+    assert!(!cfg.path().exists());
 }

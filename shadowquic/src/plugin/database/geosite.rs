@@ -7,8 +7,6 @@ use regex_automata::{
 use serde::Deserialize;
 use std::{borrow::Cow, cmp::Ordering, collections::HashSet, path::Path};
 
-pub(super) mod v2ray_dat;
-
 // Schema 4 uses tagged rule keys and retains the source of compiled regexes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -208,14 +206,14 @@ pub(super) fn find_domain(read: &redb::ReadTransaction, list: &str, domain: &str
 }
 
 #[derive(Deserialize)]
-struct Geosite {
-    lists: Vec<SiteList>,
+pub(super) struct Geosite {
+    pub(super) lists: Vec<SiteList>,
 }
 
 #[derive(Deserialize)]
-struct SiteList {
-    name: String,
-    rules: Vec<String>,
+pub(super) struct SiteList {
+    pub(super) name: String,
+    pub(super) rules: Vec<String>,
 }
 
 /// Parse the plain YAML export, falling back to the binary `geosite.dat`.
@@ -227,7 +225,7 @@ fn parse_source(source: &[u8]) -> Result<Geosite> {
         },
         Err(_) => None,
     };
-    v2ray_dat::decode(source).map_err(|dat| match yaml {
+    super::v2ray_dat::decode_geosite(source).map_err(|dat| match yaml {
         Some(yaml) => {
             format!("geosite source is neither YAML ({yaml}) nor geosite.dat ({dat})").into()
         }

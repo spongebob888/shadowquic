@@ -19,6 +19,7 @@ mod download;
 mod geosite;
 #[cfg(test)]
 mod tests;
+mod v2ray_dat;
 
 use crate::{
     Inbound,
@@ -137,7 +138,19 @@ fn import_database(cfg: &RouterDatabaseCfg, source: &Path) -> Result<Arc<dyn Rou
     std::io::copy(&mut std::fs::File::open(source)?, &mut temporary)?;
     // SAFETY: writing is complete. Publishing renames/links this same file;
     // it does not change its bytes. The router never modifies published MMDBs.
-    let db = unsafe { MmdbDatabase::open(temporary.path())? };
+    let db = match unsafe { MmdbDatabase::open(temporary.path()) } {
+        Ok(db) => db,
+        Err(error) => {
+            let bytes = std::fs::read(source)?;
+            if v2ray_dat::decode_geoip(&bytes).is_ok_and(|entries| !entries.is_empty()) {
+                return Err(format!(
+                    "{error}; the source is a geoip.dat, which is converted to redb: use a path without the .mmdb suffix"
+                )
+                .into());
+            }
+            return Err(error);
+        }
+    };
     temporary.persist_noclobber(cfg.path())?;
     Ok(Arc::new(db))
 }
@@ -418,8 +431,59 @@ where
     Ok(())
 }
 
+/// Import a country source: an MMDB, or a v2ray/xray `geoip.dat`.
 fn import_country(source: &Path, write: &redb::WriteTransaction) -> Result<()> {
-    let reader = maxminddb::Reader::open_readfile(source)?;
+    let bytes = std::fs::read(source)?;
+    let mmdb = match maxminddb::Reader::from_source(bytes.as_slice()) {
+        Ok(reader) => return import_country_mmdb(&reader, write),
+        Err(error) => error,
+    };
+    let entries = v2ray_dat::decode_geoip(&bytes).map_err(|dat| {
+        format!("country source is neither an MMDB ({mmdb}) nor a geoip.dat ({dat})")
+    })?;
+    import_country_dat(entries, write)
+}
+
+fn import_country_dat(
+    entries: Vec<v2ray_dat::GeoIp>,
+    write: &redb::WriteTransaction,
+) -> Result<()> {
+    let mut count = 0;
+    for mut entry in entries {
+        if entry.code.is_empty() {
+            continue;
+        }
+        // Sorted inserts merge into the previous range instead of scanning.
+        entry.ranges.sort_unstable();
+        let mut v4 = write.open_table(CountryV4Table::new(&country_table_name(&entry.code, 4)))?;
+        let mut v6 = write.open_table(CountryV6Table::new(&country_table_name(&entry.code, 6)))?;
+        for (start, end) in entry.ranges {
+            match (start, end) {
+                (IpAddr::V4(start), IpAddr::V4(end)) => insert_country_range(
+                    &mut v4,
+                    u32::from_be_bytes(start.octets()),
+                    u32::from_be_bytes(end.octets()),
+                )?,
+                (IpAddr::V6(start), IpAddr::V6(end)) => insert_country_range(
+                    &mut v6,
+                    u128::from_be_bytes(start.octets()),
+                    u128::from_be_bytes(end.octets()),
+                )?,
+                _ => unreachable!("CIDR endpoints have the same address family"),
+            }
+            count += 1;
+        }
+    }
+    if count == 0 {
+        return Err("geoip.dat contains no networks".into());
+    }
+    Ok(())
+}
+
+fn import_country_mmdb(
+    reader: &maxminddb::Reader<&[u8]>,
+    write: &redb::WriteTransaction,
+) -> Result<()> {
     let mut count = 0;
     for entry in reader.networks(Default::default())? {
         let entry = entry?;
