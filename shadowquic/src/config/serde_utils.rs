@@ -199,7 +199,8 @@ where
     deserializer.deserialize_any(BpsVisitor)
 }
 
-/// A whole-number duration. Bare values and `ms` use milliseconds, and `s` uses seconds.
+/// A whole-number duration. Bare values and `ms` use milliseconds, `s` uses seconds,
+/// and `min` uses minutes.
 /// `LB` is the inclusive minimum in milliseconds and the default value.
 #[derive(Clone, Debug)]
 pub struct DurationMs<const LB: u64 = 0>(u64);
@@ -233,7 +234,7 @@ impl<'de, const LB: u64> Deserialize<'de> for DurationMs<LB> {
         #[derive(Deserialize)]
         #[serde(
             untagged,
-            expecting = "a whole-number duration such as 12345, 50ms, or 50s"
+            expecting = "a whole-number duration such as 12345, 50ms, 50s, or 50min"
         )]
         enum Input {
             Milliseconds(u64),
@@ -248,13 +249,13 @@ impl<'de, const LB: u64> Deserialize<'de> for DurationMs<LB> {
                 } else if let Some(seconds) = text.strip_suffix('s') {
                     (seconds, 1000)
                 } else if let Some(min) = text.strip_suffix("min") {
-                    (min, 60_1000)
+                    (min, 60_000)
                 } else {
                     (text.as_str(), 1)
                 };
                 let value = number.parse::<u64>().map_err(|_| {
                     D::Error::custom(format!(
-                        "invalid duration {text:?}, expected 12345, 50ms, or 50s"
+                        "invalid duration {text:?}, expected 12345, 50ms, 50s, or 50min"
                     ))
                 })?;
                 value.checked_mul(scale).ok_or_else(|| {
@@ -295,6 +296,11 @@ mod tests {
             ("50ms", 50),
             ("50s", 50000),
             ("'50s'", 50000),
+            ("0min", 0),
+            ("1min", 60_000),
+            ("50min", 3_000_000),
+            ("'50min'", 3_000_000),
+            ("307445734561825min", 18_446_744_073_709_500_000),
         ] {
             assert_eq!(
                 *serde_saphyr::from_str::<DurationMs>(value).unwrap(),
@@ -304,14 +310,25 @@ mod tests {
     }
 
     #[test]
+    fn duration_ms_enforces_lower_bound_for_minutes() {
+        type Bounded = DurationMs<60_000>;
+        assert!(serde_saphyr::from_str::<Bounded>("0min").is_err());
+        assert_eq!(*serde_saphyr::from_str::<Bounded>("1min").unwrap(), 60_000);
+        assert_eq!(*serde_saphyr::from_str::<Bounded>("2min").unwrap(), 120_000);
+    }
+
+    #[test]
     fn duration_ms_rejects_invalid_values() {
         for value in [
             "-1",
             "1.5",
             "18446744073709551616",
             "18446744073709552s",
+            "307445734561826min",
             "-1ms",
+            "-1min",
             "1.5s",
+            "1.5min",
             "50m",
             "invalid",
         ] {
