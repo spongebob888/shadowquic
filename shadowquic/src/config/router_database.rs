@@ -58,20 +58,23 @@ pub enum RouterDatabaseCfg {
     Custom(CustomDbCfg),
 }
 
-/// Country/category IP database sourced from MMDB. Records may contain
-/// `country.iso_code`, a single string, or an array of string labels.
+/// Country/category IP database sourced from MMDB or binary `geoip.dat`.
+/// MMDB records may contain `country.iso_code`, a single string, or an array
+/// of string labels.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CountryDbCfg {
     /// Unique tag, also used as the inbound tag of download connections.
     pub tag: String,
     /// HTTP(S) source URL. Used only when `path` does not exist.
-    /// Defaults to the MaxMind GeoLite2 Country database
-    /// MMDB format.
+    /// Defaults to the MaxMind GeoLite2 Country database in MMDB format.
+    /// The V2Ray/Xray protobuf `geoip.dat` is also accepted; the format is
+    /// detected from the contents, and it is always converted to redb.
     #[serde(default = "default_country_url")]
     pub url: String,
     /// Persistent file, relative to the working directory. A `.mmdb` suffix
     /// selects direct MMDB lookups; other suffixes retain redb conversion.
+    /// A `geoip.dat` source requires a non-`.mmdb` path.
     /// Cost about 3mb for mmdb file. Redb format not recommended for country database, as it is slower and larger.
     pub path: PathBuf,
 }

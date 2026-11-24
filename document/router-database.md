@@ -12,13 +12,13 @@ Lua routing and the database import, download, and lookup dependencies. For Lua
 routing without database support, build with `--no-default-features` and select
 `plugin` alongside the other features you need.
 
-`router.database` makes Country MMDB, v2fly Geosite, and inline custom lists available to Lua.
+`router.database` makes Country (MMDB or `geoip.dat`), v2fly Geosite, and inline custom lists available to Lua.
 This requires the `plugin` feature. The following fields configure router databases.
 
 | Field | Meaning |
 | --- | --- |
 | `tag` | Unique name across databases, inbounds, outbounds, and DNS services |
-| `type` | `country` for Country MMDB, `geosite` for the plain YAML export or binary `geosite.dat`, or `custom` for inline rules |
+| `type` | `country` for Country MMDB or binary `geoip.dat`, `geosite` for the plain YAML export or binary `geosite.dat`, or `custom` for inline rules |
 | `url` | HTTP(S) download URL for Country or Geosite |
 | `list-include` | Optional, geosite only: base domain set names to import, matched case-insensitively. Omitted or `[]` imports all sets in the source |
 | `list` | Custom only. Named lists with `name`, `rules`, and optional `force` |
@@ -93,6 +93,24 @@ router:
 For a record containing `["us", "google"]`, both
 `find_ip_v4("geoip-db", "us", "8.8.8.8")` and
 `find_ip_v4("geoip-db", "google", "8.8.8.8")` return true.
+
+Country sources may also be the binary protobuf `geoip.dat` used by V2Ray and
+Xray, such as Loyalsoldier's or MetaCubeX's `geoip.dat`. The format is detected
+from the file contents, not the URL. A `geoip.dat` is always converted to redb,
+so use a path without the `.mmdb` suffix:
+
+```yaml
+router:
+  database:
+    - type: country
+      tag: geoip-db
+      url: https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat
+      path: data/geoip.redb
+```
+
+Each `geoip.dat` entry name, such as `CN` or `PRIVATE`, becomes a list matched
+case-insensitively. Entries with `reverse_match` set are skipped with a warning,
+since they cannot be stored as ranges; published files do not use them.
 
 ## Inline custom lists
 
