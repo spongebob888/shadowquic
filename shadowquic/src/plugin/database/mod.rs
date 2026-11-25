@@ -142,7 +142,10 @@ fn import_database(cfg: &RouterDatabaseCfg, source: &Path) -> Result<Arc<dyn Rou
         Ok(db) => db,
         Err(error) => {
             let bytes = std::fs::read(source)?;
-            if v2ray_dat::decode_geoip(&bytes).is_ok_and(|entries| !entries.is_empty()) {
+            if matches!(
+                v2ray_dat::decode_geoip(&bytes).try_fold(false, |_, entry| entry.map(|_| true)),
+                Ok(true)
+            ) {
                 return Err(format!(
                     "{error}; the source is a geoip.dat, which is converted to redb: use a path without the .mmdb suffix"
                 )
@@ -438,18 +441,21 @@ fn import_country(source: &Path, write: &redb::WriteTransaction) -> Result<()> {
         Ok(reader) => return import_country_mmdb(&reader, write),
         Err(error) => error,
     };
-    let entries = v2ray_dat::decode_geoip(&bytes).map_err(|dat| {
-        format!("country source is neither an MMDB ({mmdb}) nor a geoip.dat ({dat})")
-    })?;
+    let entries = v2ray_dat::decode_geoip(&bytes).map(|entry| {
+        entry.map_err(|dat| {
+            format!("country source is neither an MMDB ({mmdb}) nor a geoip.dat ({dat})").into()
+        })
+    });
     import_country_dat(entries, write)
 }
 
 fn import_country_dat(
-    entries: Vec<v2ray_dat::GeoIp>,
+    entries: impl Iterator<Item = Result<v2ray_dat::GeoIp>>,
     write: &redb::WriteTransaction,
 ) -> Result<()> {
     let mut count = 0;
-    for mut entry in entries {
+    for entry in entries {
+        let mut entry = entry?;
         if entry.code.is_empty() {
             continue;
         }

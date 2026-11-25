@@ -1899,7 +1899,9 @@ fn geoip_dat_source_builds_country_redb() {
 fn country_source_that_is_neither_mmdb_nor_geoip_dat_is_rejected() {
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("garbage");
-    std::fs::write(&source, [0x0a, 0x80]).unwrap();
+    let mut data = super::v2ray_dat::encode_geoip(&[("CN", &[(&[1, 0, 1, 0], 24)], false)]);
+    data.extend_from_slice(&[0x0a, 0x80]); // Truncated entry after a valid network.
+    std::fs::write(&source, data).unwrap();
     let cfg = country_config(dir.path(), "country.redb");
     let error = RedbDatabase::import(&cfg, &source)
         .err()

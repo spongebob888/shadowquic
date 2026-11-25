@@ -273,20 +273,30 @@ fn geoip(buf: &[u8]) -> Result<Option<GeoIp>> {
     Ok(Some(GeoIp { code, ranges }))
 }
 
-/// Decode a complete `GeoIPList`. Unknown fields are skipped.
-pub(super) fn decode_geoip(buf: &[u8]) -> Result<Vec<GeoIp>> {
+/// Yield one GeoIP entry at a time, stopping at the first decoding error.
+pub(super) fn decode_geoip(buf: &[u8]) -> impl Iterator<Item = Result<GeoIp>> {
     let mut reader = Reader::new(buf);
-    let mut entries = Vec::new();
+    std::iter::from_fn(move || {
+        let entry = next_geoip(&mut reader);
+        if entry.is_err() {
+            reader.buf = &[];
+        }
+        entry.transpose()
+    })
+}
+
+fn next_geoip(reader: &mut Reader<'_>) -> Result<Option<GeoIp>> {
     while let Some((field, wire)) = reader.field()? {
-        match field {
-            1 => {
-                expect(wire, LEN)?;
-                entries.extend(geoip(reader.bytes()?)?);
+        if field == 1 {
+            expect(wire, LEN)?;
+            if let Some(entry) = geoip(reader.bytes()?)? {
+                return Ok(Some(entry));
             }
-            _ => reader.skip(wire)?,
+        } else {
+            reader.skip(wire)?;
         }
     }
-    Ok(entries)
+    Ok(None)
 }
 
 /// A test domain: `(type, value, [attribute])`.
@@ -437,12 +447,13 @@ mod tests {
             ),
             ("REVERSED", &[(&[1, 1, 1, 1][..], 32)], true),
         ]);
-        let entries = decode_geoip(&buf).unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].code, "CN");
+        let mut entries = decode_geoip(&buf);
+        let entry = entries.next().unwrap().unwrap();
+        assert!(entries.next().is_none());
+        assert_eq!(entry.code, "CN");
         let parse = |a: &str, b: &str| (a.parse().unwrap(), b.parse().unwrap());
         assert_eq!(
-            entries[0].ranges,
+            entry.ranges,
             [
                 parse("1.0.1.0", "1.0.1.255"),
                 parse("10.0.0.0", "10.255.255.255"),
@@ -455,7 +466,19 @@ mod tests {
             encode_geoip(&[("CN", &[(&[1, 2, 3, 4][..], 33)], false)]),
             encode_geoip(&[("CN", &[(&[0; 16][..], 129)], false)]),
         ] {
-            assert!(decode_geoip(&invalid).is_err());
+            assert!(decode_geoip(&invalid).next().unwrap().is_err());
         }
+    }
+
+    #[test]
+    fn geoip_yields_valid_entries_before_a_decode_error() {
+        let mut buf = encode_geoip(&[("CN", &[], false)]);
+        buf.push(0); // Invalid field number.
+        buf.extend(encode_geoip(&[("US", &[], false)]));
+
+        let mut entries = decode_geoip(&buf);
+        assert_eq!(entries.next().unwrap().unwrap().code, "CN");
+        assert!(entries.next().unwrap().is_err());
+        assert!(entries.next().is_none());
     }
 }
