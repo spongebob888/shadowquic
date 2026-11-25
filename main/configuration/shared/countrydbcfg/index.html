@@ -2220,8 +2220,9 @@
 
 
 <h1 id="country-db">Country db<a class="headerlink" href="#country-db" title="Permanent link">&para;</a></h1>
-<p>Country/category IP database sourced from MMDB. Records may contain
-<code>country.iso_code</code>, a single string, or an array of string labels.</p>
+<p>Country/category IP database sourced from MMDB or binary <code>geoip.dat</code>.
+MMDB records may contain <code>country.iso_code</code>, a single string, or an array
+of string labels.</p>
 <h2 id="fields">Fields<a class="headerlink" href="#fields" title="Permanent link">&para;</a></h2>
 <h3 id="tag"><code>tag</code><a class="headerlink" href="#tag" title="Permanent link">&para;</a></h3>
 <ul>
@@ -2236,8 +2237,9 @@
 <li><strong>Default:</strong> <code>https://git.io/GeoLite2-Country.mmdb</code></li>
 </ul>
 <p>HTTP(S) source URL. Used only when <code>path</code> does not exist.
-Defaults to the MaxMind GeoLite2 Country database
-MMDB format.</p>
+Defaults to the MaxMind GeoLite2 Country database in MMDB format.
+The V2Ray/Xray protobuf <code>geoip.dat</code> is also accepted; the format is
+detected from the contents, and it is always converted to redb.</p>
 <h3 id="path"><code>path</code><a class="headerlink" href="#path" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Type:</strong> <code>path</code></li>
@@ -2245,6 +2247,7 @@ MMDB format.</p>
 </ul>
 <p>Persistent file, relative to the working directory. A <code>.mmdb</code> suffix
 selects direct MMDB lookups; other suffixes retain redb conversion.
+A <code>geoip.dat</code> source requires a non-<code>.mmdb</code> path.
 Cost about 3mb for mmdb file. Redb format not recommended for country database, as it is slower and larger.</p>
 
 
