@@ -15,6 +15,7 @@ pub(crate) enum RuleError {
     #[error("unknown rule list")]
     MissingList,
 }
+mod dat_reader;
 mod download;
 mod geosite;
 #[cfg(test)]
@@ -32,7 +33,7 @@ use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition, TableHand
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
-    io::Read,
+    io::{BufReader, Read},
     net::IpAddr,
     path::Path,
     sync::{Arc, RwLock},
@@ -141,11 +142,7 @@ fn import_database(cfg: &RouterDatabaseCfg, source: &Path) -> Result<Arc<dyn Rou
     let db = match unsafe { MmdbDatabase::open(temporary.path()) } {
         Ok(db) => db,
         Err(error) => {
-            let bytes = std::fs::read(source)?;
-            if matches!(
-                v2ray_dat::decode_geoip(&bytes).try_fold(false, |_, entry| entry.map(|_| true)),
-                Ok(true)
-            ) {
+            if matches!(validate_geoip(source), Ok(true)) {
                 return Err(format!(
                     "{error}; the source is a geoip.dat, which is converted to redb: use a path without the .mmdb suffix"
                 )
@@ -434,37 +431,76 @@ where
     Ok(())
 }
 
-/// Import a country source: an MMDB, or a v2ray/xray `geoip.dat`.
-fn import_country(source: &Path, write: &redb::WriteTransaction) -> Result<()> {
-    let bytes = std::fs::read(source)?;
-    let mmdb = match maxminddb::Reader::from_source(bytes.as_slice()) {
-        Ok(reader) => return import_country_mmdb(&reader, write),
-        Err(error) => error,
-    };
-    let entries = v2ray_dat::decode_geoip(&bytes).map(|entry| {
-        entry.map_err(|dat| {
-            format!("country source is neither an MMDB ({mmdb}) nor a geoip.dat ({dat})").into()
-        })
-    });
-    import_country_dat(entries, write)
+// Probe with a fixed buffer so format detection never copies a GeoIP DAT file
+// into memory. Keep an overlap to recognize markers crossing read boundaries.
+fn has_mmdb_metadata(source: &Path) -> Result<bool> {
+    const MARKER: &[u8] = b"\xab\xcd\xefMaxMind.com";
+    let mut file = std::fs::File::open(source)?;
+    let mut buffer = [0; 65536];
+    let mut overlap = 0;
+    loop {
+        let len = match file.read(&mut buffer[overlap..]) {
+            Ok(0) => return Ok(false),
+            Ok(len) => overlap + len,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if buffer[..len]
+            .windows(MARKER.len())
+            .any(|window| window == MARKER)
+        {
+            return Ok(true);
+        }
+        overlap = len.min(MARKER.len() - 1);
+        buffer.copy_within(len - overlap..len, 0);
+    }
 }
 
-fn import_country_dat(
-    entries: impl Iterator<Item = Result<v2ray_dat::GeoIp>>,
-    write: &redb::WriteTransaction,
-) -> Result<()> {
+fn validate_geoip(source: &Path) -> Result<bool> {
+    let mut entries = dat_reader::DatReader::new(BufReader::new(std::fs::File::open(source)?))?;
+    let mut found = false;
+    while let Some(entry) = entries.next_entry()? {
+        for range in entry.ranges {
+            range?;
+        }
+        found |= !entry.reverse;
+    }
+    Ok(found)
+}
+
+/// Import a country source: an MMDB, or a v2ray/xray `geoip.dat`.
+fn import_country(source: &Path, write: &redb::WriteTransaction) -> Result<()> {
+    let mmdb_error = if has_mmdb_metadata(source)? {
+        match maxminddb::Reader::open_readfile(source) {
+            Ok(reader) => return import_country_mmdb(&reader, write),
+            Err(error) => error.to_string(),
+        }
+    } else {
+        "could not find MaxMind DB metadata in file".to_owned()
+    };
+    import_country_dat(source, write).map_err(|dat| {
+        format!("country source is neither an MMDB ({mmdb_error}) nor a geoip.dat ({dat})").into()
+    })
+}
+
+fn import_country_dat(source: &Path, write: &redb::WriteTransaction) -> Result<()> {
+    let mut entries = dat_reader::DatReader::new(BufReader::new(std::fs::File::open(source)?))?;
     let mut count = 0;
-    for entry in entries {
-        let mut entry = entry?;
-        if entry.code.is_empty() {
+    while let Some(entry) = entries.next_entry()? {
+        if entry.reverse {
+            tracing::warn!(event = "database:geoip_reverse_skipped", code = %entry.code, "skipping reverse-match geoip.dat entry");
+        }
+        if entry.reverse || entry.code.is_empty() {
+            // Preserve validation even for entries that do not create tables.
+            for range in entry.ranges {
+                range?;
+            }
             continue;
         }
-        // Sorted inserts merge into the previous range instead of scanning.
-        entry.ranges.sort_unstable();
         let mut v4 = write.open_table(CountryV4Table::new(&country_table_name(&entry.code, 4)))?;
         let mut v6 = write.open_table(CountryV6Table::new(&country_table_name(&entry.code, 6)))?;
-        for (start, end) in entry.ranges {
-            match (start, end) {
+        for range in entry.ranges {
+            match range? {
                 (IpAddr::V4(start), IpAddr::V4(end)) => insert_country_range(
                     &mut v4,
                     u32::from_be_bytes(start.octets()),
@@ -486,8 +522,8 @@ fn import_country_dat(
     Ok(())
 }
 
-fn import_country_mmdb(
-    reader: &maxminddb::Reader<&[u8]>,
+fn import_country_mmdb<S: AsRef<[u8]>>(
+    reader: &maxminddb::Reader<S>,
     write: &redb::WriteTransaction,
 ) -> Result<()> {
     let mut count = 0;

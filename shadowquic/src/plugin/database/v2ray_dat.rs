@@ -1,4 +1,4 @@
-//! Decoders for the v2ray/xray binary `geosite.dat` and `geoip.dat` files.
+//! Decoder for the v2ray/xray binary `geosite.dat` file.
 //!
 //! `geosite.dat` is a protobuf `GeoSiteList`:
 //!
@@ -16,17 +16,9 @@
 //!
 //! Rules are converted to the same `kind:value:@attr,@attr` text as the plain
 //! YAML export, so both sources share one import path.
-//!
-//! `geoip.dat` is a protobuf `GeoIPList`:
-//!
-//! ```proto
-//! message CIDR { bytes ip = 1; uint32 prefix = 2; }
-//! message GeoIP { string country_code = 1; repeated CIDR cidr = 2; bool reverse_match = 3; }
-//! message GeoIPList { repeated GeoIP entry = 1; }
-//! ```
 use super::Result;
+#[cfg(test)]
 use super::geosite::{Geosite, SiteList};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 const VARINT: u8 = 0;
 const I64: u8 = 1;
@@ -125,7 +117,7 @@ fn attribute(buf: &[u8]) -> Result<Option<&str>> {
     Ok(key.filter(|key| !key.is_empty()))
 }
 
-fn domain(buf: &[u8]) -> Result<String> {
+pub(super) fn domain(buf: &[u8]) -> Result<String> {
     let mut reader = Reader::new(buf);
     let mut kind = 0;
     let mut value = "";
@@ -161,142 +153,17 @@ fn domain(buf: &[u8]) -> Result<String> {
     Ok(rule)
 }
 
-fn site(buf: &[u8]) -> Result<SiteList> {
-    let mut reader = Reader::new(buf);
-    let mut name = String::new();
-    let mut rules = Vec::new();
-    while let Some((field, wire)) = reader.field()? {
-        match field {
-            1 => name = reader.string(wire)?.to_owned(),
-            2 => {
-                expect(wire, LEN)?;
-                rules.push(domain(reader.bytes()?)?);
-            }
-            _ => reader.skip(wire)?,
-        }
-    }
-    Ok(SiteList { name, rules })
-}
-
-/// Decode a complete `GeoSiteList`. Unknown fields are skipped.
-pub(super) fn decode_geosite(buf: &[u8]) -> Result<Geosite> {
-    let mut reader = Reader::new(buf);
+#[cfg(test)]
+fn decode_geosite(buf: &[u8]) -> Result<Geosite> {
+    let mut reader = super::dat_reader::DatReader::new(std::io::Cursor::new(buf))?;
     let mut lists = Vec::new();
-    while let Some((field, wire)) = reader.field()? {
-        match field {
-            1 => {
-                expect(wire, LEN)?;
-                lists.push(site(reader.bytes()?)?);
-            }
-            _ => reader.skip(wire)?,
-        }
+    while let Some((name, rules)) = reader.next_site()? {
+        lists.push(SiteList {
+            name,
+            rules: rules.collect::<Result<_>>()?,
+        });
     }
     Ok(Geosite { lists })
-}
-
-/// One `GeoIP` entry: a label and its networks as inclusive address ranges.
-pub(super) struct GeoIp {
-    pub(super) code: String,
-    pub(super) ranges: Vec<(IpAddr, IpAddr)>,
-}
-
-fn cidr(buf: &[u8]) -> Result<(IpAddr, IpAddr)> {
-    let mut reader = Reader::new(buf);
-    let mut ip: &[u8] = &[];
-    let mut prefix = 0u64;
-    while let Some((field, wire)) = reader.field()? {
-        match field {
-            1 => {
-                expect(wire, LEN)?;
-                ip = reader.bytes()?;
-            }
-            2 => {
-                expect(wire, VARINT)?;
-                prefix = reader.varint()?;
-            }
-            _ => reader.skip(wire)?,
-        }
-    }
-    let range = match ip.len() {
-        4 => {
-            if prefix > 32 {
-                return Err(format!("invalid IPv4 prefix /{prefix}").into());
-            }
-            let bits = u32::from_be_bytes(ip.try_into()?);
-            let host = u32::MAX.checked_shr(prefix as u32).unwrap_or(0);
-            (
-                IpAddr::V4(Ipv4Addr::from(bits & !host)),
-                IpAddr::V4(Ipv4Addr::from(bits | host)),
-            )
-        }
-        16 => {
-            if prefix > 128 {
-                return Err(format!("invalid IPv6 prefix /{prefix}").into());
-            }
-            let bits = u128::from_be_bytes(ip.try_into()?);
-            let host = u128::MAX.checked_shr(prefix as u32).unwrap_or(0);
-            (
-                IpAddr::V6(Ipv6Addr::from(bits & !host)),
-                IpAddr::V6(Ipv6Addr::from(bits | host)),
-            )
-        }
-        len => return Err(format!("invalid geoip.dat address length {len}").into()),
-    };
-    Ok(range)
-}
-
-fn geoip(buf: &[u8]) -> Result<Option<GeoIp>> {
-    let mut reader = Reader::new(buf);
-    let mut code = String::new();
-    let mut ranges = Vec::new();
-    let mut reverse = false;
-    while let Some((field, wire)) = reader.field()? {
-        match field {
-            1 => code = reader.string(wire)?.to_owned(),
-            2 => {
-                expect(wire, LEN)?;
-                ranges.push(cidr(reader.bytes()?)?);
-            }
-            3 => {
-                expect(wire, VARINT)?;
-                reverse = reader.varint()? != 0;
-            }
-            _ => reader.skip(wire)?,
-        }
-    }
-    if reverse {
-        // Inverted lists match everything outside their networks, which
-        // range tables cannot express. Published files do not use them.
-        tracing::warn!(event = "database:geoip_reverse_skipped", code = %code, "skipping reverse-match geoip.dat entry");
-        return Ok(None);
-    }
-    Ok(Some(GeoIp { code, ranges }))
-}
-
-/// Yield one GeoIP entry at a time, stopping at the first decoding error.
-pub(super) fn decode_geoip(buf: &[u8]) -> impl Iterator<Item = Result<GeoIp>> {
-    let mut reader = Reader::new(buf);
-    std::iter::from_fn(move || {
-        let entry = next_geoip(&mut reader);
-        if entry.is_err() {
-            reader.buf = &[];
-        }
-        entry.transpose()
-    })
-}
-
-fn next_geoip(reader: &mut Reader<'_>) -> Result<Option<GeoIp>> {
-    while let Some((field, wire)) = reader.field()? {
-        if field == 1 {
-            expect(wire, LEN)?;
-            if let Some(entry) = geoip(reader.bytes()?)? {
-                return Ok(Some(entry));
-            }
-        } else {
-            reader.skip(wire)?;
-        }
-    }
-    Ok(None)
 }
 
 /// A test domain: `(type, value, [attribute])`.
@@ -414,6 +281,23 @@ mod tests {
     }
 
     #[test]
+    fn streams_rules_before_the_list_name_and_reports_late_errors() {
+        // The first domain is valid, the second has an unknown type. Field
+        // three is an optional length-delimited resource hash in GeoSite.
+        let entry = [
+            0x12, 3, 0x12, 1, b'x', 0x12, 2, 0x08, 9, 0x1a, 1, 7, 0x0a, 2, b'C', b'N',
+        ];
+        let data = [vec![0x0a, entry.len() as u8], entry.to_vec()].concat();
+        let mut reader =
+            super::super::dat_reader::DatReader::new(std::io::Cursor::new(data)).unwrap();
+        let (name, mut rules) = reader.next_site().unwrap().unwrap();
+        assert_eq!(name, "CN");
+        assert_eq!(rules.next().unwrap().unwrap(), "keyword:x");
+        assert!(rules.next().unwrap().is_err());
+        assert!(rules.next().is_none());
+    }
+
+    #[test]
     fn rejects_malformed_input() {
         let valid = encode(&[("CN", &[(3, "exact.example", &[])])]);
         for invalid in [
@@ -427,58 +311,5 @@ mod tests {
         }
         let unknown_type = encode(&[("CN", &[(9, "x", &[])])]);
         assert!(decode_geosite(&unknown_type).is_err());
-    }
-
-    #[test]
-    fn decodes_geoip_ranges_and_skips_reverse_entries() {
-        let buf = encode_geoip(&[
-            (
-                "CN",
-                &[
-                    (&[1, 0, 1, 7][..], 24),
-                    (&[10, 0, 0, 0][..], 8),
-                    (&[0, 0, 0, 0][..], 0),
-                    (
-                        &[0x24, 0x0e, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1][..],
-                        32,
-                    ),
-                ],
-                false,
-            ),
-            ("REVERSED", &[(&[1, 1, 1, 1][..], 32)], true),
-        ]);
-        let mut entries = decode_geoip(&buf);
-        let entry = entries.next().unwrap().unwrap();
-        assert!(entries.next().is_none());
-        assert_eq!(entry.code, "CN");
-        let parse = |a: &str, b: &str| (a.parse().unwrap(), b.parse().unwrap());
-        assert_eq!(
-            entry.ranges,
-            [
-                parse("1.0.1.0", "1.0.1.255"),
-                parse("10.0.0.0", "10.255.255.255"),
-                parse("0.0.0.0", "255.255.255.255"),
-                parse("240e::", "240e:0:ffff:ffff:ffff:ffff:ffff:ffff"),
-            ]
-        );
-        for invalid in [
-            encode_geoip(&[("CN", &[(&[1, 2, 3][..], 8)], false)]),
-            encode_geoip(&[("CN", &[(&[1, 2, 3, 4][..], 33)], false)]),
-            encode_geoip(&[("CN", &[(&[0; 16][..], 129)], false)]),
-        ] {
-            assert!(decode_geoip(&invalid).next().unwrap().is_err());
-        }
-    }
-
-    #[test]
-    fn geoip_yields_valid_entries_before_a_decode_error() {
-        let mut buf = encode_geoip(&[("CN", &[], false)]);
-        buf.push(0); // Invalid field number.
-        buf.extend(encode_geoip(&[("US", &[], false)]));
-
-        let mut entries = decode_geoip(&buf);
-        assert_eq!(entries.next().unwrap().unwrap().code, "CN");
-        assert!(entries.next().unwrap().is_err());
-        assert!(entries.next().is_none());
     }
 }

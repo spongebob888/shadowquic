@@ -272,5 +272,10 @@ Direct MMDB uses a read-only memory mapping instead of copying the entire file
 into a heap buffer. Accessed pages still count toward resident memory (RSS).
 Do not modify or truncate an MMDB while Shadowquic is running: stop Shadowquic
 before updating the file. The mapping stays alive across Lua script reloads.
-redb imports temporarily parse the source. Geosite uses a configurable page cache
-with a 4 MiB default; converted Country databases use a 4 MiB page cache.
+GeoIP DAT imports use buffered file reads and insert CIDRs as they are decoded.
+Each entry is scanned for metadata before its CIDRs are decoded, allowing fields
+in any order. Binary Geosite imports likewise read each list name, then decode and insert
+one domain rule at a time. Plain YAML Geosite imports still deserialize the
+complete document.
+Geosite uses a configurable page cache with a 4 MiB default; converted Country
+databases use a 4 MiB page cache.
