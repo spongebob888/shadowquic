@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use std::{ops::Deref, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tokio::sync::{Mutex, OnceCell, SetOnce};
 use tracing::{Instrument, instrument};
 
@@ -23,6 +23,13 @@ use crate::{
 use crate::squic::{SQConn, handle_udp_packet_recv};
 
 pub type ShadowQuicConn = SQClientConn<<EndClient as QuicClient>::C>;
+
+/// Samples a port hopping interval in milliseconds uniformly from
+/// `[interval, interval + jitter]`. The upper bound saturates so a large
+/// `interval` or `jitter` can never overflow.
+fn port_hopping_interval(interval: u64, jitter: u64) -> u64 {
+    rand::random_range(interval..=interval.saturating_add(jitter))
+}
 
 pub struct ShadowQuicClient {
     pub quic_conn: Mutex<Option<ShadowQuicConn>>,
@@ -95,14 +102,14 @@ impl ShadowQuicClient {
         let port_hopping = &self.config.port_hopping;
         let _conn_clone = conn.clone();
         if port_hopping.enable {
-            let lb = *port_hopping.interval.deref();
-            let ub = port_hopping.interval_jitter.deref() + *port_hopping.interval;
+            let interval = *port_hopping.interval;
+            let jitter = *port_hopping.interval_jitter;
             let socket_factory = self.socket_factory.clone();
 
             task.spawn(
                 async move {
                     loop {
-                        let interval_ms = rand::random_range(lb..ub + 1);
+                        let interval_ms = port_hopping_interval(interval, jitter);
                         tokio::time::sleep(Duration::from_millis(interval_ms)).await;
                         end.rebind(socket_factory.create_socket().await?.into())?;
                         tracing::trace!(event = "shadowquic:rebind", "shadowquic rebind")
@@ -237,5 +244,30 @@ impl Outbound for ShadowQuicClient {
         )
         .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::port_hopping_interval;
+
+    #[test]
+    fn port_hopping_interval_samples_within_jitter_range() {
+        for _ in 0..1000 {
+            let ms = port_hopping_interval(1000, 500);
+            assert!((1000..=1500).contains(&ms), "sampled {ms} out of range");
+        }
+    }
+
+    #[test]
+    fn port_hopping_interval_without_jitter_is_fixed() {
+        assert_eq!(port_hopping_interval(1000, 0), 1000);
+    }
+
+    #[test]
+    fn port_hopping_interval_saturates_instead_of_overflowing() {
+        assert_eq!(port_hopping_interval(u64::MAX, 0), u64::MAX);
+        assert_eq!(port_hopping_interval(u64::MAX, u64::MAX), u64::MAX);
+        assert!(port_hopping_interval(u64::MAX - 10, u64::MAX) >= u64::MAX - 10);
     }
 }
