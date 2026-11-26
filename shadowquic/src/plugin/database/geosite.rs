@@ -5,6 +5,7 @@ use regex_automata::{
     dfa::{Automaton, StartKind, dense, sparse},
 };
 use serde::Deserialize;
+use std::io::{BufRead, BufReader};
 use std::{borrow::Cow, cmp::Ordering, collections::HashSet, path::Path};
 
 // Schema 4 uses tagged rule keys and retains the source of compiled regexes.
@@ -216,23 +217,6 @@ pub(super) struct SiteList {
     pub(super) rules: Vec<String>,
 }
 
-/// Parse the plain YAML export, falling back to the binary `geosite.dat`.
-fn parse_source(source: &[u8]) -> Result<Geosite> {
-    let yaml = match std::str::from_utf8(source) {
-        Ok(text) => match serde_saphyr::from_str::<Geosite>(text) {
-            Ok(data) => return Ok(data),
-            Err(error) => Some(error),
-        },
-        Err(_) => None,
-    };
-    super::v2ray_dat::decode_geosite(source).map_err(|dat| match yaml {
-        Some(yaml) => {
-            format!("geosite source is neither YAML ({yaml}) nor geosite.dat ({dat})").into()
-        }
-        None => format!("invalid geosite.dat: {dat}").into(),
-    })
-}
-
 pub(super) fn selection_key(selected: &[String]) -> String {
     let mut names: Vec<_> = selected
         .iter()
@@ -248,41 +232,68 @@ pub(super) fn import_geosite(
     write: &redb::WriteTransaction,
     selected: &[String],
 ) -> Result<()> {
-    let data = parse_source(&std::fs::read(source)?)?;
-    if data.lists.is_empty() {
-        return Err("geosite contains no lists".into());
-    }
+    let mut remaining = HashSet::new();
     for name in selected {
         if name.is_empty() || name.contains(['\0', '@']) {
             return Err(format!("invalid geosite list name: {name:?}").into());
         }
-        if !data
-            .lists
-            .iter()
-            .any(|list| list.name.eq_ignore_ascii_case(name))
-        {
-            return Err(format!("geosite list not found: {name}").into());
-        }
+        remaining.insert(name.to_ascii_lowercase());
     }
     let mut warned_attributes = HashSet::new();
-    for list in data.lists {
-        if !selected.is_empty()
-            && !selected
-                .iter()
-                .any(|name| list.name.eq_ignore_ascii_case(name))
-        {
-            continue;
+    let mut seen = false;
+    let mut import = |name: &str, rules: &mut dyn Iterator<Item = Result<String>>| -> Result<()> {
+        seen = true;
+        if !selected.is_empty() && !selected.iter().any(|item| item.eq_ignore_ascii_case(name)) {
+            for rule in rules {
+                rule?;
+            }
+            return Ok(());
         }
-        if list.name.is_empty() || list.name.contains(['\0', '@']) {
+        remaining.remove(&name.to_ascii_lowercase());
+        if name.is_empty() || name.contains(['\0', '@']) {
             return Err("invalid geosite list name".into());
         }
-        let name = geosite_table_name(&list.name);
-        // Preserve empty lists too, and merge repeated names case insensitively.
-        let mut table = write.open_table(GeositeTable::new(&name))?;
-        for rule in list.rules {
+        let mut table = write.open_table(GeositeTable::new(&geosite_table_name(name)))?;
+        for rule in rules {
+            let rule = rule?;
             let (kind, value) = rule.split_once(':').ok_or("geosite rule has no type")?;
-            insert_rule(&mut table, kind, value, &list.name, &mut warned_attributes)?;
+            insert_rule(&mut table, kind, value, name, &mut warned_attributes)?;
         }
+        Ok(())
+    };
+    let mut file = BufReader::new(std::fs::File::open(source)?);
+    // YAML cannot contain these control bytes. Published DAT files contain
+    // protobuf field keys in this range within the first buffer.
+    let binary = file
+        .fill_buf()?
+        .iter()
+        .any(|b| matches!(b, 0..=8 | 11 | 12 | 14..=31));
+    let yaml = if binary {
+        None
+    } else {
+        serde_saphyr::from_reader::<_, Geosite>(&mut file).ok()
+    };
+    if let Some(data) = yaml {
+        for list in data.lists {
+            import(&list.name, &mut list.rules.into_iter().map(Ok))?;
+        }
+    } else {
+        let mut reader = super::dat_reader::DatReader::new(file)?;
+        let invalid = |error| -> Box<dyn std::error::Error + Send + Sync> {
+            format!("invalid geosite.dat: {error}").into()
+        };
+        while let Some((name, rules)) = reader.next_site().map_err(invalid)? {
+            import(&name, &mut rules.map(|rule| rule.map_err(invalid)))?;
+        }
+    }
+    if !seen {
+        return Err("geosite contains no lists".into());
+    }
+    if let Some(name) = selected
+        .iter()
+        .find(|name| remaining.contains(&name.to_ascii_lowercase()))
+    {
+        return Err(format!("geosite list not found: {name}").into());
     }
     Ok(())
 }

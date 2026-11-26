@@ -1913,3 +1913,46 @@ fn country_source_that_is_neither_mmdb_nor_geoip_dat_is_rejected() {
     );
     assert!(!cfg.path().exists());
 }
+
+#[test]
+fn geoip_stream_rejects_late_invalid_cidrs_without_publishing() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("geoip.dat");
+    let cfg = country_config(dir.path(), "country.redb");
+    for code in ["CN", ""] {
+        for reverse in [false, true] {
+            std::fs::write(
+                &source,
+                super::v2ray_dat::encode_geoip(&[
+                    ("VALID", &[(&[10, 0, 0, 0], 8)], false),
+                    (code, &[(&[1, 2, 3, 4], 32), (&[5, 6, 7, 8], 33)], reverse),
+                ]),
+            )
+            .unwrap();
+            let error = RedbDatabase::import(&cfg, &source).err().unwrap();
+            assert!(error.to_string().contains("invalid IPv4 prefix"));
+            assert!(!cfg.path().exists());
+        }
+    }
+    // Retrying with corrected data successfully publishes the database.
+    std::fs::write(
+        &source,
+        super::v2ray_dat::encode_geoip(&[("CN", &[(&[1, 2, 3, 4], 32)], false)]),
+    )
+    .unwrap();
+    let db = RedbDatabase::import(&cfg, &source).unwrap();
+    assert!(db.find_ip("cn", "1.2.3.4".parse().unwrap()).unwrap());
+}
+
+#[test]
+fn mmdb_format_probe_handles_marker_across_buffer_boundaries() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source");
+    let mut bytes = vec![0; 65536 - 5];
+    bytes.extend_from_slice(b"\xab\xcd\xefMaxMind.com");
+    std::fs::write(&source, &bytes).unwrap();
+    assert!(has_mmdb_metadata(&source).unwrap());
+    bytes.pop();
+    std::fs::write(&source, &bytes).unwrap();
+    assert!(!has_mmdb_metadata(&source).unwrap());
+}
