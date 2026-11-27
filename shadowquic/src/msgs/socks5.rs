@@ -125,6 +125,14 @@ pub struct SocksAddr {
     pub port: u16,
 }
 impl SocksAddr {
+    /// Whether the address can be encoded: a name over 255 bytes cannot.
+    pub(crate) fn is_encodable(&self) -> bool {
+        match &self.addr {
+            AddrOrDomain::Domain(name) => name.contents.len() == name.len as usize,
+            AddrOrDomain::V4(_) | AddrOrDomain::V6(_) => true,
+        }
+    }
+
     /// Normalize IP literals, including IPv4-mapped IPv6, without resolving domains.
     pub(crate) fn canonicalize_ip(&mut self) {
         let ip = match &self.addr {

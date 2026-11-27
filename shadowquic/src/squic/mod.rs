@@ -41,6 +41,8 @@ pub mod outbound;
 
 #[cfg(test)]
 mod udp_recv_tests;
+#[cfg(all(test, feature = "shadowquic-quinn"))]
+mod udp_send_tests;
 
 /// SQuic connection, it is shared by shadowquic and sunnyquic and is a wrapper of quic connection.
 /// It contains a connection object and two ID store for managing UDP sockets.
@@ -489,6 +491,16 @@ pub async fn handle_udp_send<C: QuicConnection>(
     let mut trace_seq = 0_u64;
     loop {
         let (bytes, dst) = down_stream.recv_from().await?;
+        if !dst.is_encodable() {
+            // Only this datagram is lost: the association carries other
+            // destinations too. A name restored from fake-ip is not limited
+            // to the 255 bytes the wire format can state.
+            debug!(
+                event = "squic:datagram_dropped",
+                "udp datagram dropped: its destination name is too long"
+            );
+            continue;
+        }
         let should_trace = tracing::enabled!(target: "shadowquic::squic::udp", Level::TRACE) && {
             let n = trace_seq;
             trace_seq = trace_seq.wrapping_add(1);
