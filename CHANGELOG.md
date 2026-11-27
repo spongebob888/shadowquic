@@ -5,6 +5,58 @@ Git tags and commits; dates are the dates of the tagged commits. Routine version
 bumps, formatting, and dependency updates are omitted unless they affect behavior.
 Version links compare each release with the preceding tag.
 
+## [0.4.14](https://github.com/spongebob888/shadowquic/compare/v0.4.13...v0.4.14) - 2026-11-26
+
+### Added
+
+- Optional UDP source port hopping for ShadowQUIC clients using Quinn, with a
+  configurable interval and jitter.
+- Binary `geoip.dat` imports for Country databases and binary `geosite.dat`
+  imports for Geosite databases. Shadowquic detects the format from the file
+  contents and imports the rules into redb.
+- A link to the configuration documentation in the README's Usage section.
+
+### Changed
+
+- Stream binary GeoIP CIDRs and Geosite domain rules into redb to reduce import
+  memory use.
+- Accept whole-number durations with `ms`, `s`, or `min` suffixes for port
+  hopping and for ShadowQUIC and SunnyQUIC client keepalive intervals. Bare
+  numbers are interpreted as milliseconds.
+
+### Fixed
+
+- Saturate the upper bound of port hopping intervals when adding jitter would
+  overflow.
+- Report configuration and runtime errors from the CLI with a failure exit
+  status. Include the configuration file path in read and parse errors.
+- Keep the nftables TPROXY script from flushing the entire ruleset and exempt
+  locally generated reply traffic from TPROXY marking.
+
+## [0.4.13](https://github.com/spongebob888/shadowquic/compare/v0.4.12...v0.4.13) - 2026-11-20
+
+### Added
+
+- Persistent custom router databases for named lists of domain rules, IPv4 and
+  IPv6 addresses, and CIDR ranges. Lists can be initialized from YAML and queried
+  from Lua.
+- REST API endpoints to list and edit custom rule lists and read all lists in a
+  single snapshot.
+- Support for Mihomo/MetaCubeX MMDB records containing a country label or an
+  array of labels in direct Country database lookups.
+- Configurable redb page-cache budgets for Geosite and custom databases.
+
+### Changed
+
+- Upgrade Geosite storage to schema 4, retaining the original regex patterns.
+  Older Geosite databases are automatically rebuilt from their configured source.
+- Install the tracking global allocator in the CLI. Applications embedding the
+  library can choose their own allocator.
+
+### Fixed
+
+- Include request IDs in TUN TCP and UDP session logs.
+
 ## [0.4.12](https://github.com/spongebob888/shadowquic/compare/v0.4.11...v0.4.12) - 2026-11-16
 
 ### Added
