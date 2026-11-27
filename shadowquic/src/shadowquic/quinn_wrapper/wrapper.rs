@@ -448,48 +448,59 @@ impl QuicServer for EndServer {
         Ok(())
     }
     async fn accept(&self) -> Result<Self::C, QuicErrorRepr> {
-        match self.deref().accept().await {
-            Some(conn) => {
-                let conn = conn.accept()?;
-                let connection = if self.zero_rtt.load(Relaxed) {
-                    match conn.into_0rtt() {
-                        Ok(conn) => {
-                            let conn_clone = conn.clone();
-                            tokio::spawn(
-                                async move {
-                                    if let Err(error) = conn_clone.authenticated().await {
-                                        debug!(event = "quic:zero_rtt_handshake_failed", %error, "0-RTT handshake failed");
-                                        return;
-                                    }
-                                    debug!(event = "quic:zero_rtt_handshake_completed", "0-RTT handshake completed");
-                                    if conn_clone.is_jls() == Some(false) {
-                                        error!(event = "jls:jls_authentication_failed", "JLS hijacked or wrong pwd/iv");
-                                        conn_clone.close(0u8.into(), b"");
-                                    }
-                                }
-                                .in_current_span(),
-                            );
-                            conn
-                        }
-                        Err(conn) => conn.await?,
-                    }
-                } else {
-                    conn.await?
-                };
-                if connection.is_jls() == Some(false) {
-                    error!(
-                        event = "jls:jls_authentication_failed",
-                        "JLS hijacked or wrong pwd/iv"
-                    );
-                    connection.close(0u8.into(), b"");
-                    return Err(QuicErrorRepr::JlsAuthFailed);
-                }
-                Ok(connection)
-            }
+        match self.next_incoming().await {
+            Some(incoming) => self.handshake(incoming.accept()?).await,
             None => {
                 panic!("Quic endpoint closed");
             }
         }
+    }
+}
+
+impl EndServer {
+    /// Waits for the next connection attempt without driving its handshake, so
+    /// the caller can run [`EndServer::handshake`] off its accept loop. Returns
+    /// `None` once the endpoint is closed.
+    pub async fn next_incoming(&self) -> Option<quinn::Incoming> {
+        self.deref().accept().await
+    }
+
+    /// Drives an accepted connection attempt through its handshake and the JLS check.
+    pub async fn handshake(&self, conn: quinn::Connecting) -> Result<Connection, QuicErrorRepr> {
+        let connection = if self.zero_rtt.load(Relaxed) {
+            match conn.into_0rtt() {
+                Ok(conn) => {
+                    let conn_clone = conn.clone();
+                    tokio::spawn(
+                        async move {
+                            if let Err(error) = conn_clone.authenticated().await {
+                                debug!(event = "quic:zero_rtt_handshake_failed", %error, "0-RTT handshake failed");
+                                return;
+                            }
+                            debug!(event = "quic:zero_rtt_handshake_completed", "0-RTT handshake completed");
+                            if conn_clone.is_jls() == Some(false) {
+                                error!(event = "jls:jls_authentication_failed", "JLS hijacked or wrong pwd/iv");
+                                conn_clone.close(0u8.into(), b"");
+                            }
+                        }
+                        .in_current_span(),
+                    );
+                    conn
+                }
+                Err(conn) => conn.await?,
+            }
+        } else {
+            conn.await?
+        };
+        if connection.is_jls() == Some(false) {
+            error!(
+                event = "jls:jls_authentication_failed",
+                "JLS hijacked or wrong pwd/iv"
+            );
+            connection.close(0u8.into(), b"");
+            return Err(QuicErrorRepr::JlsAuthFailed);
+        }
+        Ok(connection)
     }
 }
 

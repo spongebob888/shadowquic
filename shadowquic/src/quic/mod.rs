@@ -16,6 +16,11 @@ pub const MAX_STREAM_WINDOW: u64 = MAX_WINDOW_BASE;
 pub const MAX_SEND_WINDOW: u64 = MAX_WINDOW_BASE * 8;
 pub const MAX_DATAGRAM_WINDOW: u64 = MAX_WINDOW_BASE * 2;
 
+/// Handshakes a QUIC server drives at once. Past this, its accept loop waits
+/// for one to end: a handshake that never completes holds its task until the
+/// QUIC timeout, so without a bound a flood of them takes unbounded memory.
+pub(crate) const MAX_HANDSHAKES_IN_PROGRESS: usize = 1024;
+
 // #[cfg(feature = "gm-quic")]
 // mod gm_quic_wrapper;
 // #[cfg(feature = "gm-quic")]
