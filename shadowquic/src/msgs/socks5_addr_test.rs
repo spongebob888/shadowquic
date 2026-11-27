@@ -94,6 +94,27 @@ async fn test_socksaddr_domain_encode_decode() {
     assert_eq!(addr, decoded);
 }
 
+#[tokio::test]
+async fn overlong_domain_is_refused_not_truncated() {
+    let name = "a".repeat(300);
+    let mut wire = Vec::new();
+    let addr = SocksAddr::from_domain(name, 443);
+    assert!(
+        addr.encode(&mut wire).await.is_err(),
+        "a 300 byte name went out as {} bytes",
+        wire.len()
+    );
+
+    let longest = "b".repeat(255);
+    let mut wire = Vec::new();
+    SocksAddr::from_domain(longest.clone(), 443)
+        .encode(&mut wire)
+        .await
+        .unwrap();
+    let decoded = SocksAddr::decode(&mut &wire[..]).await.unwrap();
+    assert_eq!(decoded, SocksAddr::from_domain(longest, 443));
+}
+
 use crate::error::SError;
 use crate::msgs::{SDecode, SEncode};
 use shadowquic_macros::{SDecode, SEncode};
