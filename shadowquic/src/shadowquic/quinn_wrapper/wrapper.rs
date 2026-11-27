@@ -466,10 +466,28 @@ impl EndServer {
     }
 
     /// Drives an accepted connection attempt through its handshake and the JLS check.
-    pub async fn handshake(&self, conn: quinn::Connecting) -> Result<Connection, QuicErrorRepr> {
+    pub async fn handshake(
+        &self,
+        mut conn: quinn::Connecting,
+    ) -> Result<Connection, QuicErrorRepr> {
         let connection = if self.zero_rtt.load(Relaxed) {
+            // A ClientHello may span several Initial packets. Until all of it has
+            // arrived the JLS result and the user are unknown, so wait for it
+            // before handing out the 0-RTT connection. With ALPN configured,
+            // QUIC makes the client agree on a protocol, and the handshake data
+            // that carries it is ready as soon as the ClientHello is complete.
+            if !self.crypto.load().alpn_protocols.is_empty() {
+                conn.handshake_data().await?;
+            }
             match conn.into_0rtt() {
                 Ok(conn) => {
+                    // Without ALPN, and with no server name sent either, the
+                    // handshake data is ready only at the end of the handshake.
+                    // The JLS result is known once the ClientHello is complete;
+                    // only a ClientHello still incomplete waits for the end.
+                    if conn.is_jls().is_none() {
+                        conn.authenticated().await?;
+                    }
                     let conn_clone = conn.clone();
                     tokio::spawn(
                         async move {

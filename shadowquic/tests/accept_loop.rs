@@ -30,7 +30,7 @@ async fn black_hole() -> SocketAddr {
     addr
 }
 
-async fn server() -> (SocketAddr, ShadowQuicServer) {
+async fn server(zero_rtt: bool) -> (SocketAddr, ShadowQuicServer) {
     let server_addr = unused_udp_addr();
     let server = ShadowQuicServer::new(ShadowQuicServerCfg {
         bind_addr: server_addr,
@@ -43,7 +43,7 @@ async fn server() -> (SocketAddr, ShadowQuicServer) {
             ..Default::default()
         },
         alpn: vec!["h3".into()],
-        zero_rtt: false,
+        zero_rtt,
         initial_mtu: default_initial_mtu(),
         congestion_control: CongestionControl::Bbr,
         ..Default::default()
@@ -94,9 +94,8 @@ async fn first_packet_only_relay(server: SocketAddr) -> SocketAddr {
 
 /// A handshake whose ClientHello never completes (its second packet is lost)
 /// must not block the accept loop until the handshake times out.
-#[tokio::test]
-async fn stalled_handshake_does_not_block_valid_client() {
-    let (server_addr, _server) = server().await;
+async fn stalled_handshake(server_zero_rtt: bool) {
+    let (server_addr, _server) = server(server_zero_rtt).await;
 
     // ClientHello larger than one Initial packet.
     let mut alpn: Vec<String> = (0..6).map(|i| format!("{i}").repeat(250)).collect();
@@ -116,4 +115,16 @@ async fn stalled_handshake_does_not_block_valid_client() {
         .expect("valid client should connect");
     assert_eq!(conn.authed.wait().await.as_ref().unwrap(), "user");
     stalled.abort();
+}
+
+#[tokio::test]
+async fn stalled_handshake_does_not_block_valid_client() {
+    stalled_handshake(false).await;
+}
+
+/// With 0-RTT the server waits for the whole ClientHello: that wait must not
+/// block the accept loop either.
+#[tokio::test]
+async fn stalled_handshake_does_not_block_valid_client_zero_rtt() {
+    stalled_handshake(true).await;
 }
