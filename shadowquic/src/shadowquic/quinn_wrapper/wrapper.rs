@@ -21,7 +21,7 @@ use quinn::{
     ClientConfig, MtuDiscoveryConfig, SendDatagramError, TransportConfig, VarInt,
     congestion::{BbrConfig, CubicConfig, NewRenoConfig},
 };
-use socket2::{Domain, Protocol, Socket, Type};
+use socket2::{Domain, Protocol, SockRef, Socket, Type};
 use tracing::{debug, error, info, trace, warn};
 
 use quinn::rustls::ServerConfig as RustlsServerConfig;
@@ -43,6 +43,7 @@ use crate::{
     msgs::squic::ConnStats,
     quic::{
         AuthedConn, MAX_DATAGRAM_WINDOW, QuicClient, QuicConnection, QuicErrorRepr, QuicServer,
+        Reach,
     },
     utils::socket_opt::{SocketFactory, UdpSocketFactory},
 };
@@ -60,6 +61,7 @@ pub struct EndServer {
 pub struct EndClient {
     inner: quinn::Endpoint,
     zero_rtt: bool,
+    reach: Reach,
 }
 
 impl Deref for EndServer {
@@ -187,7 +189,7 @@ impl QuicClient for EndClient {
         .await
     }
     async fn connect(&self, addr: SocketAddr, server_name: &str) -> Result<Self::C, QuicErrorRepr> {
-        let conn = self.inner.connect(addr, server_name)?;
+        let conn = self.inner.connect(self.reach.form_of(addr), server_name)?;
         let conn = if self.zero_rtt {
             match conn.into_0rtt() {
                 Ok(x) => {
@@ -246,19 +248,35 @@ impl QuicClient for EndClient {
     ) -> SResult<Self> {
         let runtime =
             quinn::default_runtime().ok_or_else(|| io::Error::other("no async runtime found"))?;
+        let socket = socket_factory.create_socket().await?;
+        let reach = Reach::of(&socket);
         let end = quinn::Endpoint::new(
             quinn::EndpointConfig::default(),
             None,
-            std::net::UdpSocket::from(socket_factory.create_socket().await?),
+            std::net::UdpSocket::from(socket),
             runtime,
         )?;
         end.set_default_client_config(gen_client_cfg(cfg));
         Ok(EndClient {
             inner: end,
             zero_rtt: cfg.zero_rtt,
+            reach,
         })
     }
+
+    fn can_reach(&self, addr: &SocketAddr) -> bool {
+        self.reach.reaches(addr)
+    }
+
     fn rebind(&self, socket: UdpSocket) -> std::io::Result<()> {
+        // The connections of this endpoint go to addresses that `reach`
+        // reaches; a socket of another address family would cut them off.
+        if Reach::of(&SockRef::from(&socket)) != self.reach {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "socket of another address family",
+            ));
+        }
         self.inner.rebind(socket)
     }
 

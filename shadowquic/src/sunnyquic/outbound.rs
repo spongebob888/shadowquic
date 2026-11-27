@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use std::sync::Arc;
-use tokio::sync::{Mutex, OnceCell, SetOnce};
+use tokio::sync::{Mutex, SetOnce};
 use tracing::{Instrument, instrument};
 
 use super::EndClient;
@@ -12,7 +12,7 @@ use crate::{
     dns::ResolverManager,
     error::SError,
     msgs::squic::{SQExtError, UserStats},
-    quic::{QuicClient, QuicConnection},
+    quic::{ClientEndpoint, QuicClient, QuicConnection},
     squic::{
         auth_sunny,
         inbound::UserManager,
@@ -29,7 +29,7 @@ pub type SunnyQuicConn = SQClientConn<<EndClient as QuicClient>::C>;
 pub struct SunnyQuicClient {
     pub quic_conn: Mutex<Option<SunnyQuicConn>>,
     pub config: SunnyQuicClientCfg,
-    pub quic_end: OnceCell<EndClient>,
+    pub quic_end: ClientEndpoint<EndClient>,
     pub addr_resolver: Arc<dyn crate::dns::DnsService>,
     pub socket_factory: Arc<dyn SocketFactory>,
 }
@@ -47,7 +47,7 @@ impl SunnyQuicClient {
             .unwrap_or_else(|| panic!("dns resolver not found: {}", tag));
         Self {
             quic_conn: Mutex::new(None),
-            quic_end: OnceCell::new(),
+            quic_end: ClientEndpoint::new(),
             socket_factory: Arc::new(UdpSocketFactory {
                 addr: cfg.addr.clone(),
                 interface: cfg.socket_opt.bind_interface.clone(),
@@ -65,14 +65,12 @@ impl SunnyQuicClient {
     }
 
     pub async fn get_conn(&self) -> Result<SunnyQuicConn, SError> {
-        let addr =
-            crate::dns::resolve_destination(&*self.addr_resolver, &self.config.addr.parse()?, None)
-                .await?;
-        let end = self
+        let addrs =
+            crate::dns::resolve_all(&*self.addr_resolver, &self.config.addr.parse()?).await?;
+        let (_, conn) = self
             .quic_end
-            .get_or_try_init(|| self.init_endpoint())
+            .connect(&addrs, &self.config.server_name, || self.init_endpoint())
             .await?;
-        let conn = QuicClient::connect(end, addr, &self.config.server_name).await?;
 
         let conn = SQConn::new(conn, SetOnce::new());
 
