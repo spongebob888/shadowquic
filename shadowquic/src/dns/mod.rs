@@ -18,6 +18,19 @@ pub(crate) async fn resolve_destination(
     dst: &crate::msgs::socks5::SocksAddr,
     strategy: Option<&crate::config::DnsStrategy>,
 ) -> Result<std::net::SocketAddr, crate::error::SError> {
+    let mut addresses = resolve_all(resolver, dst).await?.into_iter();
+    let address = match strategy {
+        Some(strategy) => apply_dns_strategy(addresses, strategy),
+        None => addresses.next(),
+    };
+    address.ok_or_else(|| crate::error::SError::DomainResolveFailed(dst.to_string()))
+}
+
+/// Every address of `dst`, in the resolver's order.
+pub(crate) async fn resolve_all(
+    resolver: &dyn DnsService,
+    dst: &crate::msgs::socks5::SocksAddr,
+) -> Result<Vec<std::net::SocketAddr>, crate::error::SError> {
     use crate::{error::SError, msgs::socks5::AddrOrDomain};
     use std::net::{IpAddr, SocketAddr};
     let ips = match &dst.addr {
@@ -32,12 +45,13 @@ pub(crate) async fn resolve_destination(
                 .await?
         }
     };
-    let mut addresses = ips.into_iter().map(|ip| SocketAddr::new(ip, dst.port));
-    let address = match strategy {
-        Some(strategy) => apply_dns_strategy(addresses, strategy),
-        None => addresses.next(),
-    };
-    address.ok_or_else(|| SError::DomainResolveFailed(dst.to_string()))
+    if ips.is_empty() {
+        return Err(SError::DomainResolveFailed(dst.to_string()));
+    }
+    Ok(ips
+        .into_iter()
+        .map(|ip| SocketAddr::new(ip, dst.port))
+        .collect())
 }
 
 pub(crate) fn apply_dns_strategy<It>(mut ip_list: It, strategy: &DnsStrategy) -> Option<SocketAddr>

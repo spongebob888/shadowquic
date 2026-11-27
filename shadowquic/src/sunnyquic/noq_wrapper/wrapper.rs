@@ -36,7 +36,7 @@ use crate::{
         maybe_warn_cipher_suite_on_weak_arch, normalize_cipher_suite_preference,
     },
     error::{SError, SResult},
-    quic::{MAX_DATAGRAM_WINDOW, QuicClient, QuicConnection, QuicErrorRepr, QuicServer},
+    quic::{MAX_DATAGRAM_WINDOW, QuicClient, QuicConnection, QuicErrorRepr, QuicServer, Reach},
     sunnyquic::dynamic_cert::DynamicCertResolver,
     utils::socket_opt::SocketFactory,
 };
@@ -47,6 +47,7 @@ pub type Connection = noq::Connection;
 pub struct EndClient {
     inner: noq::Endpoint,
     cfg: Arc<SunnyQuicClientCfg>,
+    reach: Reach,
 }
 
 #[derive(Clone)]
@@ -177,7 +178,7 @@ impl QuicClient for EndClient {
         .await
     }
     async fn connect(&self, addr: SocketAddr, server_name: &str) -> Result<Self::C, QuicErrorRepr> {
-        let conn = self.inner.connect(addr, server_name)?;
+        let conn = self.inner.connect(self.reach.form_of(addr), server_name)?;
         let mut accepted_0rtt = None;
         let conn = if self.cfg.zero_rtt {
             match conn.into_0rtt() {
@@ -232,6 +233,7 @@ impl QuicClient for EndClient {
         socket_factory: Arc<dyn SocketFactory>,
     ) -> SResult<Self> {
         let socket = socket_factory.create_socket().await.map_err(SError::Io)?;
+        let reach = Reach::of(&socket);
         let runtime =
             noq::default_runtime().ok_or_else(|| io::Error::other("no async runtime found"))?;
         let end = noq::Endpoint::new(
@@ -244,7 +246,12 @@ impl QuicClient for EndClient {
         Ok(EndClient {
             inner: end,
             cfg: Arc::new(cfg.to_owned()),
+            reach,
         })
+    }
+
+    fn can_reach(&self, addr: &SocketAddr) -> bool {
+        self.reach.reaches(addr)
     }
 
     type C = Connection;

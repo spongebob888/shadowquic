@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use std::{sync::Arc, time::Duration};
-use tokio::sync::{Mutex, OnceCell, SetOnce};
+use std::{io, sync::Arc, time::Duration};
+use tokio::sync::{Mutex, SetOnce};
 use tracing::{Instrument, instrument};
 
 use super::quinn_wrapper::EndClient;
@@ -12,7 +12,7 @@ use crate::{
     dns::ResolverManager,
     error::SError,
     msgs::squic::{SQExtError, UserStats},
-    quic::QuicClient,
+    quic::{ClientEndpoint, QuicClient},
     squic::{
         inbound::UserManager,
         outbound::{self, SQClientConn},
@@ -34,7 +34,7 @@ fn port_hopping_interval(interval: u64, jitter: u64) -> u64 {
 pub struct ShadowQuicClient {
     pub quic_conn: Mutex<Option<ShadowQuicConn>>,
     pub config: ShadowQuicClientCfg,
-    pub quic_end: OnceCell<EndClient>,
+    pub quic_end: ClientEndpoint<EndClient>,
     pub addr_resolver: Arc<dyn crate::dns::DnsService>,
     pub socket_factory: Arc<dyn SocketFactory>,
 }
@@ -52,7 +52,7 @@ impl ShadowQuicClient {
             .unwrap_or_else(|| panic!("dns resolver not found: {}", tag));
         Self {
             quic_conn: Mutex::new(None),
-            quic_end: OnceCell::new(),
+            quic_end: ClientEndpoint::new(),
             socket_factory: Arc::new(UdpSocketFactory {
                 addr: cfg.addr.clone(),
                 interface: cfg.socket_opt.bind_interface.clone(),
@@ -70,15 +70,12 @@ impl ShadowQuicClient {
     }
 
     pub async fn get_conn(&self) -> Result<ShadowQuicConn, SError> {
-        let addr =
-            crate::dns::resolve_destination(&*self.addr_resolver, &self.config.addr.parse()?, None)
-                .await?;
-        let end = self
+        let addrs =
+            crate::dns::resolve_all(&*self.addr_resolver, &self.config.addr.parse()?).await?;
+        let (end, conn) = self
             .quic_end
-            .get_or_try_init(|| self.init_endpoint())
-            .await?
-            .clone();
-        let conn = end.connect(addr, &self.config.server_name).await?;
+            .connect(&addrs, &self.config.server_name, || self.init_endpoint())
+            .await?;
 
         let conn = SQConn::new(
             conn,
@@ -111,8 +108,21 @@ impl ShadowQuicClient {
                     loop {
                         let interval_ms = port_hopping_interval(interval, jitter);
                         tokio::time::sleep(Duration::from_millis(interval_ms)).await;
-                        end.rebind(socket_factory.create_socket().await?.into())?;
-                        tracing::trace!(event = "shadowquic:rebind", "shadowquic rebind")
+                        match end.rebind(socket_factory.create_socket().await?.into()) {
+                            Ok(()) => {
+                                tracing::trace!(event = "shadowquic:rebind", "shadowquic rebind")
+                            }
+                            // The server name resolved to the other address
+                            // family first: keep the socket until a later hop.
+                            Err(error) if error.kind() == io::ErrorKind::InvalidInput => {
+                                tracing::debug!(
+                                    event = "shadowquic:rebind_skipped",
+                                    "shadowquic rebind skipped: {}",
+                                    error
+                                )
+                            }
+                            Err(error) => return Err(SError::Io(error)),
+                        }
                     }
                 }
                 .in_current_span(),
