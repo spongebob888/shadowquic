@@ -309,6 +309,64 @@ impl Inbound for SunnyQuicServer {
         let users = self.users.clone();
         let user_manager = self.user_manager.clone();
         let tag = self.user_manager.config.read().await.tag.clone();
+        // Each handshake runs in its own task: a handshake that fails or
+        // stalls must not delay the connections queued behind it.
+        #[cfg(feature = "sunnyquic-noq")]
+        let fut = async move {
+            let handshakes = Arc::new(tokio::sync::Semaphore::new(
+                crate::quic::MAX_HANDSHAKES_IN_PROGRESS,
+            ));
+            while let Some(incoming) = endpoint.next_incoming().await {
+                let Ok(handshake_slot) = handshakes.clone().acquire_owned().await else {
+                    break;
+                };
+                let endpoint = endpoint.clone();
+                let request_sender = request_sender.clone();
+                let users = users.clone();
+                let user_manager = user_manager.clone();
+                let span = tracing::info_span!("inbound",
+                    tag = %tag,
+                    src = tracing::field::Empty,
+                    user = tracing::field::Empty,
+                    id = tracing::field::Empty,
+                );
+                tokio::spawn(
+                    async move {
+                        let handshake = endpoint.handshake(incoming).await;
+                        drop(handshake_slot);
+                        let conn = match handshake {
+                            Ok(conn) => conn,
+                            Err(e) => {
+                                // Anyone can make handshakes fail, so this line
+                                // is rate limited.
+                                static LIMIT: crate::utils::log::LogRateLimit =
+                                    crate::utils::log::LogRateLimit::new();
+                                if let Some(held_back) = LIMIT.allow() {
+                                    error!(
+                                        event = "sunnyquic:connection_accept_failed",
+                                        held_back, "Error accepting quic connection: {}", e
+                                    );
+                                }
+                                return;
+                            }
+                        };
+                        // The users as they are once the handshake is done:
+                        // it can take long, and a user may be removed meanwhile.
+                        let user_hash = users.load_full();
+                        let _ =
+                            Self::handle_incoming(conn, request_sender, user_hash, user_manager)
+                                .await
+                                .map_err(|x| error!(event = "proxy:connection_failed", "{}", x));
+                    }
+                    .instrument(span),
+                );
+            }
+            error!(
+                event = "sunnyquic:quic_endpoint_closed",
+                "quic endpoint closed, no more connections are accepted"
+            );
+        };
+        #[cfg(not(feature = "sunnyquic-noq"))]
         let fut = async move {
             loop {
                 match QuicServer::accept(&endpoint).await {

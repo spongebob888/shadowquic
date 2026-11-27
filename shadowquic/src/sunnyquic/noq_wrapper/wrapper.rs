@@ -464,38 +464,50 @@ impl QuicServer for EndServer {
     }
 
     async fn accept(&self) -> Result<Self::C, QuicErrorRepr> {
-        match self.deref().accept().await {
-            Some(conn) => {
-                let conn = conn.accept()?;
-                let cfg = self.cfg.load_full();
-                let connection = if cfg.zero_rtt {
-                    match conn.into_0rtt() {
-                        Ok((conn, accepted)) => {
-                            let _conn_clone = conn.clone();
-                            tokio::spawn(
-                                async move {
-                                    let accepted = accepted.await;
-                                    debug!(
-                                        event = "quic:zero_rtt_result",
-                                        accepted = %accepted,
-                                        "zero rtt accept result",
-                                    );
-                                }
-                                .in_current_span(),
-                            );
-                            conn
-                        }
-                        Err(conn) => conn.await?,
-                    }
-                } else {
-                    conn.await?
-                };
-                Ok(connection)
-            }
+        match self.next_incoming().await {
+            Some(incoming) => self.handshake(incoming).await,
             None => {
                 panic!("Quic endpoint closed");
             }
         }
+    }
+}
+
+impl EndServer {
+    /// Waits for the next connection attempt without driving its handshake, so
+    /// the caller can run [`EndServer::handshake`] off its accept loop. Returns
+    /// `None` once the endpoint is closed.
+    pub async fn next_incoming(&self) -> Option<noq::Incoming> {
+        self.deref().accept().await
+    }
+
+    /// Drives one connection attempt through its handshake.
+    pub async fn handshake(&self, incoming: noq::Incoming) -> Result<Connection, QuicErrorRepr> {
+        let conn = incoming.accept()?;
+        let cfg = self.cfg.load_full();
+        let connection = if cfg.zero_rtt {
+            match conn.into_0rtt() {
+                Ok((conn, accepted)) => {
+                    let _conn_clone = conn.clone();
+                    tokio::spawn(
+                        async move {
+                            let accepted = accepted.await;
+                            debug!(
+                                event = "quic:zero_rtt_result",
+                                accepted = %accepted,
+                                "zero rtt accept result",
+                            );
+                        }
+                        .in_current_span(),
+                    );
+                    conn
+                }
+                Err(conn) => conn.await?,
+            }
+        } else {
+            conn.await?
+        };
+        Ok(connection)
     }
 }
 

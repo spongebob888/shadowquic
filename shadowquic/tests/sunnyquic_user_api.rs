@@ -287,3 +287,121 @@ async fn assert_rejected_or_timeout(username: &str, password: &str) {
         "{username} should be rejected or time out"
     );
 }
+
+/// Forwards datagrams between one client and the server. From the server's
+/// first reply on, the client's datagrams are held back until `release`
+/// fires, which leaves the handshake waiting on the server's side.
+#[cfg(feature = "sunnyquic-noq")]
+async fn spawn_holding_relay(
+    server: std::net::SocketAddr,
+) -> (
+    std::net::SocketAddr,
+    tokio::sync::oneshot::Receiver<()>,
+    tokio::sync::oneshot::Sender<()>,
+) {
+    let front = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let back = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    back.connect(server).await.unwrap();
+    let addr = front.local_addr().unwrap();
+    let (holding_tx, holding_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, mut release_rx) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(async move {
+        let (mut from_client, mut from_server) = ([0u8; 2048], [0u8; 2048]);
+        let mut client = None;
+        let mut holding_tx = Some(holding_tx);
+        let mut released = false;
+        let mut held: Vec<Vec<u8>> = Vec::new();
+        loop {
+            tokio::select! {
+                Ok((n, from)) = front.recv_from(&mut from_client) => {
+                    client = Some(from);
+                    if holding_tx.is_none() && !released {
+                        held.push(from_client[..n].to_vec());
+                    } else {
+                        let _ = back.send(&from_client[..n]).await;
+                    }
+                }
+                Ok(n) = back.recv(&mut from_server) => {
+                    if let Some(holding) = holding_tx.take() {
+                        let _ = holding.send(());
+                    }
+                    if let Some(client) = client {
+                        let _ = front.send_to(&from_server[..n], client).await;
+                    }
+                }
+                _ = &mut release_rx, if !released => {
+                    released = true;
+                    for datagram in held.drain(..) {
+                        let _ = back.send(&datagram).await;
+                    }
+                }
+            }
+        }
+    });
+    (addr, holding_rx, release_tx)
+}
+
+/// A handshake can take long. A user removed while theirs is under way must
+/// not be authenticated by a list of users taken when the handshake began.
+#[cfg(feature = "sunnyquic-noq")]
+#[tokio::test]
+async fn user_removed_during_its_handshake_is_not_authenticated() {
+    let server_addr = std::net::UdpSocket::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let server = SunnyQuicServer::new(SunnyQuicServerCfg {
+        bind_addr: server_addr,
+        users: vec![
+            AuthUser {
+                username: "admin".into(),
+                password: "admin-pass".into(),
+            },
+            AuthUser {
+                username: "alice".into(),
+                password: "alice-pass".into(),
+            },
+        ],
+        alpn: vec!["h3".into()],
+        zero_rtt: false,
+        gso: false,
+        initial_mtu: default_initial_mtu(),
+        congestion_control: CongestionControl::Bbr,
+        server_name: "localhost".into(),
+        cert_path: "../assets/certs/localhost.crt".into(),
+        key_path: "../assets/certs/localhost.key".into(),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    server.init().await.expect("server init failed");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let admin = client_at(&server_addr.to_string(), "admin", "admin-pass");
+    assert_users(&admin, &["admin", "alice"]).await;
+
+    let (relay_addr, holding, release) = spawn_holding_relay(server_addr).await;
+    let alice = tokio::spawn(async move {
+        let client = client_at(&relay_addr.to_string(), "alice", "alice-pass");
+        let conn = client.get_conn().await.ok()?;
+        tokio::time::timeout(Duration::from_secs(2), get_peer_conn_stats(&conn))
+            .await
+            .ok()?
+            .ok()
+    });
+    tokio::time::timeout(Duration::from_secs(5), holding)
+        .await
+        .expect("the server should answer the handshake")
+        .unwrap();
+    assert_eq!(admin.remove_user("alice").await, Ok(()));
+    release.send(()).unwrap();
+
+    let response = tokio::time::timeout(Duration::from_secs(10), alice)
+        .await
+        .expect("alice's attempt should end")
+        .unwrap();
+    assert!(
+        !matches!(response, Some(Ok(_)) | Some(Err(SQExtError::NotAvailable))),
+        "a removed user was authenticated"
+    );
+}
