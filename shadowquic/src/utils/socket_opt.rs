@@ -7,6 +7,14 @@ use crate::{config::Interface, msgs::socks5::SocksAddr};
 #[async_trait::async_trait]
 pub trait SocketFactory: Send + Sync {
     async fn create_socket(&self) -> std::io::Result<socket2::Socket>;
+
+    /// Create an additional socket for a SunnyQUIC path with its own local binding.
+    async fn create_bound_udp_socket(&self, _local: SocketAddr, _peer: &str) -> io::Result<Socket> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "socket factory does not support per-path UDP binds",
+        ))
+    }
 }
 pub struct UdpSocketFactory {
     pub addr: String,
@@ -19,44 +27,40 @@ pub struct UdpSocketFactory {
 #[async_trait::async_trait]
 impl SocketFactory for UdpSocketFactory {
     async fn create_socket(&self) -> std::io::Result<socket2::Socket> {
-        let socks_addr = self.addr.parse::<SocksAddr>().map_err(io::Error::other)?;
-        let addr = match socks_addr.addr {
-            crate::msgs::socks5::AddrOrDomain::Domain(domain) => {
-                let domain_str = std::str::from_utf8(&domain.contents)
-                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Invalid domain"))?;
-                let ips = self
-                    .resolver
-                    .resolve(domain_str)
+        self.bind_udp_socket(None, &self.addr).await
+    }
+
+    async fn create_bound_udp_socket(&self, local: SocketAddr, peer: &str) -> io::Result<Socket> {
+        self.bind_udp_socket(Some(local), peer).await
+    }
+}
+
+impl UdpSocketFactory {
+    async fn bind_udp_socket(&self, local: Option<SocketAddr>, peer: &str) -> io::Result<Socket> {
+        // A dedicated bind already determines the family. Only device policy
+        // needs to look up the peer to recognize the loopback exception.
+        let destination = if local.is_none() || matches!(self.interface, Some(Interface::Device(_)))
+        {
+            let peer = peer.parse::<SocksAddr>().map_err(io::Error::other)?;
+            Some(
+                crate::dns::resolve_destination(self.resolver.as_ref(), &peer, None)
                     .await
-                    .map_err(io::Error::other)?;
-                if ips.is_empty() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::NotFound,
-                        "No IPs found for domain",
-                    ));
-                }
-                SocketAddr::new(ips[0], socks_addr.port)
-            }
-            crate::msgs::socks5::AddrOrDomain::V4(ipv4) => SocketAddr::new(
-                std::net::IpAddr::V4(std::net::Ipv4Addr::from(ipv4)),
-                socks_addr.port,
-            ),
-            crate::msgs::socks5::AddrOrDomain::V6(ipv6) => SocketAddr::new(
-                std::net::IpAddr::V6(std::net::Ipv6Addr::from(ipv6)),
-                socks_addr.port,
-            ),
+                    .map_err(io::Error::other)?,
+            )
+        } else {
+            None
         };
-        let socket = if let Some(Interface::Address(bind_addr)) = self.interface {
-            let domain = if bind_addr.ip().is_ipv4() {
-                Domain::IPV4
-            } else {
-                Domain::IPV6
-            };
+        let configured_bind = match self.interface {
+            Some(Interface::Address(addr)) => Some(addr),
+            _ => None,
+        };
+        let socket = if let Some(bind_addr) = local.or(configured_bind) {
+            let domain = Domain::for_address(bind_addr);
             let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
             socket.bind(&bind_addr.into())?;
             socket
         } else {
-            let ipv6 = addr.is_ipv6();
+            let ipv6 = destination.is_some_and(|addr| addr.is_ipv6());
             let try_create_dual_stack = || {
                 let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
                 socket.set_only_v6(false)?;
@@ -93,11 +97,11 @@ impl SocketFactory for UdpSocketFactory {
         }
 
         if let Some(Interface::Device(ref device_name)) = self.interface {
-            if addr.ip().is_loopback() {
+            if destination.is_some_and(|addr| addr.ip().is_loopback()) {
                 tracing::trace!(
                     event = "connectivity:interface_binding_skipped",
                     "skipping bind_device for udp socket to loopback destination {}",
-                    addr
+                    peer
                 );
             } else {
                 crate::utils::platform::bind_device(&socket, device_name)?;

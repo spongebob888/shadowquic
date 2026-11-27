@@ -72,3 +72,26 @@ kernel profiling. Samples exclude kernel CPU time; record process user/system
 time and UDP socket drops separately when diagnosing network overhead.
 
 Measured results and bottleneck attribution: [2026-11-09 UDP DATAGRAM investigation](results/udp-overdatagram-2026-11-09.md).
+
+### SunnyQUIC multipath experiment
+
+Run `cargo run --locked -p perf --release --bin sunnyquic_multipath` from the
+repository root. The client binds two UDP sockets and the server listens on two
+OS-assigned loopback ports through one endpoint. Each path uses its own client
+socket and server port. The experiment waits for path validation, then
+sends light traffic (32 writes of 512 bytes spaced 10 ms apart) and bulk
+traffic (64 MiB without a deliberate pause) in each direction on one proxied
+TCP stream. The receiver checks every payload byte.
+
+Compare the `stream_frames` counts between paths within the same transfer.
+These are client-side counter deltas for frames sent during upload or received
+during download. They exclude ACKs, path validation and keepalives, and can
+include retransmissions. The `udp_bytes` column includes QUIC overhead and
+control traffic. The two paths share a loopback interface, so the experiment
+measures path selection without measuring the bandwidth of independent links.
+
+In five earlier runs using two loopback relays with noq 1.1.1 and BBR3
+(the default `bbr` setting), all 32 light-load STREAM frames used path 0
+in each direction. Both paths carried
+bulk data in every run. Path 1 accounted for 24.7–35.6% of upload STREAM
+frames and 17.5–30.4% of download STREAM frames.

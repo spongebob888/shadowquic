@@ -43,6 +43,10 @@ pub struct SunnyQuicServerCfg {
     pub default_outbound: Option<String>,
     /// Binding address. e.g. `0.0.0.0:443`, `[::1]:443`
     pub bind_addr: SocketAddr,
+    /// Additional UDP listeners on the same noq endpoint.
+    #[cfg(feature = "sunnyquic-noq")]
+    #[serde(default)]
+    pub extra_bind_addrs: Vec<SocketAddr>,
     /// Users for client authentication
     pub users: Vec<AuthUser>,
     /// Server name of the certificates
@@ -142,6 +146,8 @@ impl Default for SunnyQuicServerCfg {
             tag: String::new(),
             default_outbound: None,
             bind_addr: "127.0.0.1:443".parse().unwrap(),
+            #[cfg(feature = "sunnyquic-noq")]
+            extra_bind_addrs: Vec::new(),
             users: Default::default(),
             alpn: Default::default(),
             zero_rtt: Default::default(),
@@ -232,8 +238,8 @@ pub struct SunnyQuicClientCfg {
     pub addr: String,
     /// Additional paths for multipath quic
     /// IPV4 or IPv6 path are all fine.
-    /// Right now only one path is used to sending data, the rest paths are backup paths.
-    /// See https://github.com/n0-computer/quinn/issues/389 for more details.
+    /// The noq backend opens extra paths as available. Once validated, they
+    /// can carry stream data alongside the initial path when it is busy.
     ///
     /// It's recommended to use IPV4 and IPV6 path together for dual stack network.
     /// ```yaml
@@ -351,4 +357,27 @@ impl HasCipherSuitePreference for SunnyQuicClientCfg {
     }
 }
 
-type QuicPath = String;
+/// A remote address on the primary socket, or a path with a dedicated local socket.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(untagged, rename_all_fields = "kebab-case", deny_unknown_fields)]
+pub enum QuicPath {
+    Remote(String),
+    #[cfg(feature = "sunnyquic-noq")]
+    Bound {
+        bind_addr: SocketAddr,
+        /// Defaults to the address actually used to establish the connection.
+        addr: Option<String>,
+    },
+}
+
+impl From<String> for QuicPath {
+    fn from(addr: String) -> Self {
+        Self::Remote(addr)
+    }
+}
+
+impl From<&str> for QuicPath {
+    fn from(addr: &str) -> Self {
+        Self::Remote(addr.to_owned())
+    }
+}

@@ -74,3 +74,32 @@ The threshold only applies when `mtu-discovery` is enabled (the default).
 `blackhole-detection` controls whether detection resets the discovered MTU to
 `min-mtu`. With that setting disabled (the default), detection keeps the current
 MTU and still starts the cooldown before another MTU discovery run.
+
+## SunnyQUIC multipath sockets
+
+With the `sunnyquic-noq` backend, a server can listen on several UDP ports
+for one QUIC connection. Add the other listeners to the SunnyQUIC inbound:
+
+```yaml
+bind-addr: "0.0.0.0:1443"
+extra-bind-addrs: ["0.0.0.0:8443"]
+```
+
+The client can use a different local socket for each extra path:
+
+```yaml
+addr: "server.example:1443"
+extra-paths:
+  - bind-addr: "0.0.0.0:0"
+  - bind-addr: "0.0.0.0:50001"
+    addr: "server.example:8443"
+```
+
+The first entry binds an OS-assigned local port and connects to the same
+resolved server address as the initial path. The second fixes the local port
+and targets a different server port. A plain address string in `extra-paths`
+continues to use the primary client socket. Each explicit `bind-addr` needs
+an available local address and port. The extra sockets inherit the outbound
+firewall mark, device binding (if configured), and Android socket protection.
+Multipath must be negotiated for extra paths to carry data. Each validated
+extra path opens as available.

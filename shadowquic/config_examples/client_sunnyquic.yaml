@@ -6,6 +6,10 @@ outbounds:
   - tag: sunnyquic-outbound
     type: sunnyquic
     addr: "127.0.0.1:1443"
+    # Optional noq path on a dedicated local UDP socket.
+    # extra-paths:
+    #   - bind-addr: "127.0.0.1:0"
+    #     addr: "127.0.0.1:8443"  # omit to use the primary server address
     username: "87654321"
     password: "12345678"
     server-name: "cloudflare.com" # must be the same as server certificate
