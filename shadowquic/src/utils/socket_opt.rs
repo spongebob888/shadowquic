@@ -19,6 +19,18 @@ pub struct UdpSocketFactory {
 #[async_trait::async_trait]
 impl SocketFactory for UdpSocketFactory {
     async fn create_socket(&self) -> std::io::Result<socket2::Socket> {
+        self.create_socket_with(crate::utils::platform::bind_device)
+            .await
+    }
+}
+impl UdpSocketFactory {
+    /// [`SocketFactory::create_socket`] with the call that binds a socket to an
+    /// [`Interface::Device`] passed in, so that a test can refuse the binding the way
+    /// a device without IPv6 does.
+    async fn create_socket_with(
+        &self,
+        bind_device: impl Fn(&Socket, &str) -> io::Result<()> + Send + Sync,
+    ) -> std::io::Result<socket2::Socket> {
         let socks_addr = self.addr.parse::<SocksAddr>().map_err(io::Error::other)?;
         let addr = match socks_addr.addr {
             crate::msgs::socks5::AddrOrDomain::Domain(domain) => {
@@ -46,7 +58,7 @@ impl SocketFactory for UdpSocketFactory {
                 socks_addr.port,
             ),
         };
-        let socket = if let Some(Interface::Address(bind_addr)) = self.interface {
+        let (mut socket, dual_stack) = if let Some(Interface::Address(bind_addr)) = self.interface {
             let domain = if bind_addr.ip().is_ipv4() {
                 Domain::IPV4
             } else {
@@ -54,9 +66,8 @@ impl SocketFactory for UdpSocketFactory {
             };
             let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
             socket.bind(&bind_addr.into())?;
-            socket
+            (socket, false)
         } else {
-            let ipv6 = addr.is_ipv6();
             let try_create_dual_stack = || {
                 let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
                 socket.set_only_v6(false)?;
@@ -71,26 +82,12 @@ impl SocketFactory for UdpSocketFactory {
                     event = "connectivity:socket_created",
                     "dual stack udp socket created"
                 );
-                socket
-            } else if ipv6 {
-                let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
-                let bind_addr: SocketAddr = "[::]:0".parse().unwrap();
-                socket.bind(&bind_addr.into())?;
-                socket
+                (socket, true)
             } else {
-                let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
-                let bind_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
-                socket.bind(&bind_addr.into())?;
-                socket
+                (single_family_udp_socket(addr.is_ipv6())?, false)
             }
         };
-        socket.set_nonblocking(true)?;
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        {
-            if let Some(fw_mark) = self.fw_mark {
-                socket.set_mark(fw_mark)?;
-            }
-        }
+        self.prepare_socket(&socket)?;
 
         if let Some(Interface::Device(ref device_name)) = self.interface {
             if addr.ip().is_loopback() {
@@ -100,7 +97,26 @@ impl SocketFactory for UdpSocketFactory {
                     addr
                 );
             } else {
-                crate::utils::platform::bind_device(&socket, device_name)?;
+                match bind_device(&socket, device_name) {
+                    Ok(()) => {}
+                    // Windows refuses the IPv6 interface option on a device without IPv6
+                    // (the protocol switched off on the adapter, error 10022), and a
+                    // socket for both families needs it even for an IPv4 destination.
+                    // A socket of the destination's family alone can still be bound.
+                    Err(error) if dual_stack => {
+                        tracing::warn!(
+                            event = "connectivity:interface_binding_retried",
+                            "udp socket for IPv4 and IPv6 not bound to device {}: {}; using one for {} only",
+                            device_name,
+                            error,
+                            if addr.is_ipv6() { "IPv6" } else { "IPv4" }
+                        );
+                        socket = single_family_udp_socket(addr.is_ipv6())?;
+                        self.prepare_socket(&socket)?;
+                        bind_device(&socket, device_name)?;
+                    }
+                    Err(error) => return Err(error),
+                }
                 tracing::debug!(
                     event = "connectivity:interface_bound",
                     "udp socket bound to device {}",
@@ -137,6 +153,30 @@ impl SocketFactory for UdpSocketFactory {
 
         Ok(socket)
     }
+
+    /// What every socket of this factory gets before it is bound to a device.
+    fn prepare_socket(&self, socket: &Socket) -> io::Result<()> {
+        socket.set_nonblocking(true)?;
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        {
+            if let Some(fw_mark) = self.fw_mark {
+                socket.set_mark(fw_mark)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A UDP socket for one address family, bound to its unspecified address.
+fn single_family_udp_socket(ipv6: bool) -> io::Result<Socket> {
+    let (domain, bind_addr): (Domain, SocketAddr) = if ipv6 {
+        (Domain::IPV6, "[::]:0".parse().unwrap())
+    } else {
+        (Domain::IPV4, "0.0.0.0:0".parse().unwrap())
+    };
+    let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
+    socket.bind(&bind_addr.into())?;
+    Ok(socket)
 }
 
 pub struct TcpSocketFactory {
@@ -1020,5 +1060,74 @@ mod tests {
             tokio_socket.connect(target),
         )
         .await;
+    }
+
+    /// The family a socket was made for: IPv4, or IPv6 with or without IPv4.
+    fn family(socket: &Socket) -> &'static str {
+        if socket.local_addr().unwrap().as_socket().unwrap().is_ipv4() {
+            "v4"
+        } else if socket.only_v6().unwrap() {
+            "v6"
+        } else {
+            "both"
+        }
+    }
+
+    /// Whether this host can make a socket for both families: an IPv4-only
+    /// kernel cannot, and the factory then starts with an IPv4 socket.
+    fn host_has_dual_stack() -> bool {
+        let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP));
+        socket
+            .and_then(|socket| {
+                socket.set_only_v6(false)?;
+                socket.bind(&"[::]:0".parse::<SocketAddr>().unwrap().into())
+            })
+            .is_ok()
+    }
+
+    fn device_bound_factory() -> UdpSocketFactory {
+        UdpSocketFactory {
+            addr: "192.0.2.1:443".to_string(),
+            interface: Some(Interface::Device("test-device".to_string())),
+            fw_mark: None,
+            protect_path: None,
+            try_dual_stack: true,
+            resolver: test_resolver(),
+        }
+    }
+
+    /// Windows refuses the IPv6 interface option on an adapter with IPv6 switched off
+    /// (error 10022); an IPv4 server must still be reachable through it.
+    #[tokio::test]
+    async fn a_device_without_ipv6_gets_an_ipv4_socket_for_an_ipv4_server() {
+        let attempts = std::sync::Mutex::new(Vec::new());
+        let socket = device_bound_factory()
+            .create_socket_with(|socket, _| {
+                attempts.lock().unwrap().push(family(socket));
+                match family(socket) {
+                    "v4" => Ok(()),
+                    _ => Err(io::Error::new(io::ErrorKind::InvalidInput, "no IPv6")),
+                }
+            })
+            .await
+            .expect("an IPv4 socket can be bound to the device");
+        assert_eq!(family(&socket), "v4");
+        let expected: &[&str] = if host_has_dual_stack() {
+            &["both", "v4"]
+        } else {
+            &["v4"]
+        };
+        assert_eq!(*attempts.lock().unwrap(), expected);
+    }
+
+    /// A device that takes both families keeps the socket for both.
+    #[tokio::test]
+    async fn a_device_that_takes_both_families_keeps_the_socket_for_both() {
+        let socket = device_bound_factory()
+            .create_socket_with(|_, _| Ok(()))
+            .await
+            .expect("the device takes the socket");
+        let expected = if host_has_dual_stack() { "both" } else { "v4" };
+        assert_eq!(family(&socket), expected);
     }
 }
