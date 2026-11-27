@@ -340,66 +340,33 @@ mod tests {
         result
     }
 
-    /// Returns the adapter GUID name of the interface whose IP matches the local
-    /// routing IP.  Uses `GetAdaptersInfo` from the Windows IP-Helper API; the
-    /// returned GUID string is accepted by `if_nametoindex` on Windows.
+    /// Gets the alias and index of the interface Windows would use for an IPv4 destination.
     #[cfg(target_os = "windows")]
-    fn get_default_interface_name() -> Option<String> {
-        use windows::Win32::NetworkManagement::IpHelper::{
-            GetAdaptersInfo, IP_ADAPTER_INFO, IP_ADDR_STRING,
+    fn get_default_interface_alias() -> Option<(String, u32)> {
+        use windows::Win32::Foundation::ERROR_SUCCESS;
+        use windows::Win32::NetworkManagement::{
+            IpHelper::{
+                ConvertInterfaceIndexToLuid, ConvertInterfaceLuidToAlias, GetBestInterface,
+            },
+            Ndis::{IF_MAX_STRING_SIZE, NET_LUID_LH},
         };
-        let local_ip = get_local_ip()?;
-        let local_ipv4_str = match local_ip {
-            std::net::IpAddr::V4(v4) => v4.to_string(),
-            _ => return None,
-        };
-        let mut size: u32 = 16384;
-        let mut buf = vec![0u8; size as usize];
-        // First attempt; if the buffer is too small the function updates `size`
-        // and we retry once with the grown buffer.
-        let rc =
-            unsafe { GetAdaptersInfo(Some(buf.as_mut_ptr() as *mut IP_ADAPTER_INFO), &mut size) };
-        if rc != 0 {
-            buf.resize(size as usize, 0);
-            let rc2 = unsafe {
-                GetAdaptersInfo(Some(buf.as_mut_ptr() as *mut IP_ADAPTER_INFO), &mut size)
-            };
-            if rc2 != 0 {
-                return None;
-            }
+
+        let mut index = 0;
+        if unsafe { GetBestInterface(u32::from_ne_bytes([1, 1, 1, 1]), &mut index) } != 0 {
+            return None;
         }
-        let mut adapter = buf.as_ptr() as *const IP_ADAPTER_INFO;
-        while !adapter.is_null() {
-            let a = unsafe { &*adapter };
-            // Walk the singly-linked IP-address list for this adapter.
-            let mut ip_node: *const IP_ADDR_STRING = &a.IpAddressList as *const _;
-            while !ip_node.is_null() {
-                let node = unsafe { &*ip_node };
-                let str_bytes = &node.IpAddress.String;
-                let null_pos = str_bytes
-                    .iter()
-                    .position(|&b| b == 0)
-                    .unwrap_or(str_bytes.len());
-                let str_u8 = unsafe {
-                    std::slice::from_raw_parts(str_bytes.as_ptr() as *const u8, null_pos)
-                };
-                let ip_str = std::str::from_utf8(str_u8).unwrap_or("");
-                if ip_str == local_ipv4_str.as_str() {
-                    let name_bytes = &a.AdapterName;
-                    let null_pos = name_bytes
-                        .iter()
-                        .position(|&b| b == 0)
-                        .unwrap_or(name_bytes.len());
-                    let name_u8 = unsafe {
-                        std::slice::from_raw_parts(name_bytes.as_ptr() as *const u8, null_pos)
-                    };
-                    return std::str::from_utf8(name_u8).ok().map(str::to_string);
-                }
-                ip_node = unsafe { (*ip_node).Next };
-            }
-            adapter = unsafe { (*adapter).Next };
-        }
-        None
+        let mut luid = NET_LUID_LH::default();
+        assert_eq!(
+            unsafe { ConvertInterfaceIndexToLuid(index, &mut luid) },
+            ERROR_SUCCESS
+        );
+        let mut alias = [0u16; IF_MAX_STRING_SIZE as usize + 1];
+        assert_eq!(
+            unsafe { ConvertInterfaceLuidToAlias(&luid, &mut alias) },
+            ERROR_SUCCESS
+        );
+        let end = alias.iter().position(|&ch| ch == 0).unwrap();
+        Some((String::from_utf16(&alias[..end]).unwrap(), index))
     }
 
     #[tokio::test]
@@ -939,86 +906,45 @@ mod tests {
         .await;
     }
 
-    /// Windows: bind UDP socket to the default network device (adapter GUID) and
-    /// send a DNS query to 1.1.1.1:53.  Uses `IP_UNICAST_IF` via `bind_device`.
-    /// Accepts an OS-level error when the process lacks the required privilege.
     #[tokio::test]
     #[cfg(target_os = "windows")]
-    async fn test_udp_socket_factory_bind_device() {
-        let iface = match get_default_interface_name() {
-            Some(name) => name,
-            None => return, // skip: no default interface found
+    async fn test_dual_stack_udp_factory_binds_ipv4_by_adapter_alias() {
+        let Some((alias, index)) = get_default_interface_alias() else {
+            return;
         };
 
         let factory = UdpSocketFactory {
             addr: "1.1.1.1:53".to_string(),
-            interface: Some(Interface::Device(iface.clone())),
+            interface: Some(Interface::Device(alias)),
             fw_mark: None,
             protect_path: None,
-            try_dual_stack: false,
+            try_dual_stack: true,
             resolver: test_resolver(),
         };
 
-        let socket = match factory.create_socket().await {
-            Ok(s) => s,
-            Err(e) => {
-                assert!(
-                    e.raw_os_error().is_some(),
-                    "unexpected error binding to device {iface}: {e}"
-                );
-                return;
-            }
-        };
-
-        let std_socket: std::net::UdpSocket = socket.into();
-        let tokio_socket = tokio::net::UdpSocket::from_std(std_socket).unwrap();
-
-        let dns_query: &[u8] = &[
-            0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, b'o',
-            b'n', b'e', 0x03, b'o', b'n', b'e', 0x03, b'o', b'n', b'e', 0x03, b'o', b'n', b'e',
-            0x00, 0x00, 0x01, 0x00, 0x01,
-        ];
-        let _ = tokio_socket.send_to(dns_query, "1.1.1.1:53").await;
+        let socket = factory.create_socket().await.unwrap();
+        assert_eq!(
+            socket.multicast_if_v4().unwrap().octets(),
+            index.to_be_bytes()
+        );
     }
 
-    /// Windows: bind TCP socket to the default network device (adapter GUID) and
-    /// attempt a connection to 1.1.1.1:80.  Accepts an OS-level error when the
-    /// process lacks the required privilege.
     #[tokio::test]
     #[cfg(target_os = "windows")]
-    async fn test_tcp_socket_factory_bind_device() {
-        let iface = match get_default_interface_name() {
-            Some(name) => name,
-            None => return, // skip: no default interface found
+    async fn test_tcp_socket_factory_binds_by_adapter_alias() {
+        let Some((alias, _)) = get_default_interface_alias() else {
+            return;
         };
 
         let factory = TcpSocketFactory {
             keep_alive: false,
             addr: "1.1.1.1:80".to_string(),
-            interface: Some(Interface::Device(iface.clone())),
+            interface: Some(Interface::Device(alias)),
             fw_mark: None,
             protect_path: None,
             resolver: test_resolver(),
         };
 
-        let socket = match factory.create_socket().await {
-            Ok(s) => s,
-            Err(e) => {
-                assert!(
-                    e.raw_os_error().is_some(),
-                    "unexpected error binding to device {iface}: {e}"
-                );
-                return;
-            }
-        };
-
-        let std_stream: std::net::TcpStream = socket.into();
-        let tokio_socket = tokio::net::TcpSocket::from_std_stream(std_stream);
-        let target: std::net::SocketAddr = "1.1.1.1:80".parse().unwrap();
-        let _ = tokio::time::timeout(
-            tokio::time::Duration::from_secs(5),
-            tokio_socket.connect(target),
-        )
-        .await;
+        factory.create_socket().await.unwrap();
     }
 }
