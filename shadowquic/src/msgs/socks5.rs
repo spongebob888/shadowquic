@@ -80,6 +80,11 @@ impl From<Vec<u8>> for VarVec {
 #[async_trait::async_trait]
 impl SEncode for VarVec {
     async fn encode<T: AsyncWrite + Unpin + Send>(&self, s: &mut T) -> Result<(), SError> {
+        // The length byte must describe what follows it: a longer content
+        // (a name over 255 bytes) would otherwise go out cut short.
+        if self.contents.len() != self.len as usize {
+            return Err(SError::ProtocolViolation);
+        }
         let buf = vec![self.len];
         s.write_all(&buf).await?;
         s.write_all(&self.contents[0..self.len as usize]).await?;
@@ -120,6 +125,14 @@ pub struct SocksAddr {
     pub port: u16,
 }
 impl SocksAddr {
+    /// Whether the address can be encoded: a name over 255 bytes cannot.
+    pub(crate) fn is_encodable(&self) -> bool {
+        match &self.addr {
+            AddrOrDomain::Domain(name) => name.contents.len() == name.len as usize,
+            AddrOrDomain::V4(_) | AddrOrDomain::V6(_) => true,
+        }
+    }
+
     /// Normalize IP literals, including IPv4-mapped IPv6, without resolving domains.
     pub(crate) fn canonicalize_ip(&mut self) {
         let ip = match &self.addr {
