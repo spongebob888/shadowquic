@@ -1,7 +1,10 @@
 use crate::msgs::socks5::SOCKS5_ADDR_TYPE_DOMAIN_NAME;
 
-use super::socks5::{AddrOrDomain, SOCKS5_ADDR_TYPE_IPV4, SOCKS5_ADDR_TYPE_IPV6, SocksAddr};
+use super::socks5::{
+    AddrOrDomain, SOCKS5_ADDR_TYPE_IPV4, SOCKS5_ADDR_TYPE_IPV6, SocksAddr, VarVec,
+};
 use std::io::Cursor;
+use std::net::ToSocketAddrs;
 
 #[tokio::test]
 async fn test_socksaddr_ipv4_encode_decode() {
@@ -92,6 +95,17 @@ async fn test_socksaddr_domain_encode_decode() {
         panic!("Decoded address is not a domain");
     }
     assert_eq!(addr, decoded);
+}
+
+#[test]
+fn test_socksaddr_non_utf8_domain_formats_and_fails_to_resolve() {
+    let addr = SocksAddr {
+        addr: AddrOrDomain::Domain(VarVec::from(vec![b'a', 0xff, b'b'])),
+        port: 80,
+    };
+    assert_eq!(addr.to_string(), "a\u{fffd}b:80");
+    let error = addr.to_socket_addrs().unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
 }
 
 use crate::error::SError;

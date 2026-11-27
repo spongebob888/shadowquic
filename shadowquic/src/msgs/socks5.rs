@@ -186,11 +186,11 @@ impl fmt::Display for AddrOrDomain {
         match &self {
             AddrOrDomain::V4(x) => write!(f, "{}", IpAddr::from(*x))?,
             AddrOrDomain::V6(x) => write!(f, "{}", IpAddr::from(*x))?,
-            AddrOrDomain::Domain(var_vec) => write!(
-                f,
-                "{}",
-                String::from_utf8(var_vec.contents.clone()).map_err(|_| fmt::Error)?
-            )?,
+            // The bytes come from the network. Formatting must not fail: a
+            // `fmt::Error` panics in `to_string()` and in log formatting.
+            AddrOrDomain::Domain(var_vec) => {
+                write!(f, "{}", String::from_utf8_lossy(&var_vec.contents))?
+            }
         }
         Ok(())
     }
@@ -216,7 +216,12 @@ impl ToSocketAddrs for SocksAddr {
     fn to_socket_addrs(&self) -> std::io::Result<vec::IntoIter<SocketAddr>> {
         match &self.addr {
             AddrOrDomain::Domain(x) => (
-                std::str::from_utf8(&x.contents).expect("Domain Name is not UTF8"),
+                std::str::from_utf8(&x.contents).map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "domain name is not valid UTF-8",
+                    )
+                })?,
                 self.port,
             )
                 .to_socket_addrs(),
