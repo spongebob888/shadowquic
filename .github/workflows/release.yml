@@ -324,18 +324,21 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Merge binaries
-        uses: actions/upload-artifact/merge@v7
-        with:
-          name: binaries
-          pattern: '*'
-          retention-days: 1
-
       - name: Download binaries
         uses: actions/download-artifact@v8
         with:
-          name: binaries
+          pattern: ${{ env.PACKAGE }}-*
           path: ./packages
+          merge-multiple: true
+
+      - name: Upload combined binaries
+        uses: actions/upload-artifact@v7
+        with:
+          name: binaries
+          path: ./packages/*
+          retention-days: 1
+          if-no-files-found: error
+          overwrite: true
 
       - name: Clean git tag & release
         if: startsWith(github.ref, 'refs/heads/dev')
