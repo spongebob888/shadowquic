@@ -5,6 +5,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use crate::error::SError;
 
 #[cfg(test)]
+mod decode_bounds_test;
+#[cfg(test)]
 mod socks5_addr_test;
 
 pub mod socks5;
@@ -127,7 +129,11 @@ impl<E: SEncode + Send + Sync> SEncode for Vec<E> {
 impl<E: SDecode + Send + Sync> SDecode for Vec<E> {
     async fn decode<T: AsyncRead + Unpin + Send>(s: &mut T) -> Result<Self, SError> {
         let len = u32::decode(s).await?;
-        let mut data = Vec::with_capacity(len as usize);
+        // The peer chose `len`: reserve little for it, the rest grows as the
+        // elements really arrive.
+        const RESERVE_LIMIT_BYTES: usize = 64 * 1024;
+        let reserve = RESERVE_LIMIT_BYTES / std::mem::size_of::<E>().max(1);
+        let mut data = Vec::with_capacity(reserve.min(len as usize));
         for _ in 0..len {
             data.push(E::decode(s).await?);
         }
