@@ -210,12 +210,13 @@ impl SocksClient {
             event = "socks:udp_association_established",
             "socks udp association established"
         );
+        // The server chose this address: one that does not resolve fails the
+        // association, not the process.
         let peer_addr = rep
             .bind_addr
-            .to_socket_addrs()
-            .expect("socks server return a unresolvable address")
+            .to_socket_addrs()?
             .next()
-            .expect("socks server return a unresolvable address");
+            .ok_or_else(|| SError::DomainResolveFailed(rep.bind_addr.to_string()))?;
 
         let udp_socket_factory = UdpSocketFactory {
             addr: peer_addr.to_string(),
@@ -277,5 +278,77 @@ impl SocksClient {
         tokio::try_join!(fut1, fut2, fut3)?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::msgs::socks5::AddrOrDomain;
+    use bytes::Bytes;
+    use tokio::{io::AsyncWriteExt, net::TcpListener, sync::mpsc};
+
+    /// The SOCKS server names the relay of a UDP association, so the name may
+    /// be anything: one that does not resolve must fail the association.
+    #[tokio::test]
+    async fn an_unresolvable_relay_address_fails_the_association() {
+        let server = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server_addr = server.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut tcp, _) = server.accept().await.unwrap();
+            AuthReq::decode(&mut tcp).await.unwrap();
+            tcp.write_all(&[SOCKS5_VERSION, SOCKS5_AUTH_METHOD_NONE])
+                .await
+                .unwrap();
+            CmdReq::decode(&mut tcp).await.unwrap();
+            let reply = CmdReply {
+                version: SOCKS5_VERSION,
+                rep: SOCKS5_REPLY_SUCCEEDED,
+                rsv: SOCKS5_RESERVE,
+                // Not UTF-8.
+                bind_addr: SocksAddr {
+                    addr: AddrOrDomain::Domain(VarVec::from(vec![b'a', 0xff])),
+                    port: 1,
+                },
+            };
+            reply.encode(&mut tcp).await.unwrap();
+            let mut rest = Vec::new();
+            let _ = tcp.read_to_end(&mut rest).await;
+        });
+
+        let client = SocksClient::new(
+            SocksClientCfg {
+                half_close_timeout: crate::config::default_half_close_timeout(),
+                #[cfg(feature = "dns-server")]
+                dns: None,
+                #[cfg(feature = "dns-server")]
+                addr_resolver: None,
+                tag: "socks".into(),
+                addr: server_addr.to_string(),
+                username: None,
+                password: None,
+                socket_opt: Default::default(),
+            },
+            Arc::new(ResolverManager::new()),
+        );
+        let (_to_proxy, from_app) = mpsc::channel::<(Bytes, SocksAddr)>(1);
+        let (to_app, _from_proxy) = mpsc::channel::<(Bytes, SocksAddr)>(1);
+        let unspecified: SocksAddr = "0.0.0.0:0".parse().unwrap();
+        let session = UdpSession {
+            recv: Box::new(from_app) as crate::AnyUdpRecv,
+            send: Arc::new(to_app) as crate::AnyUdpSend,
+            stream: None,
+            bind_addr: unspecified.clone(),
+            dst: unspecified,
+            src_addr: None,
+            user_context: Default::default(),
+        };
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            client.handle_udp(session),
+        )
+        .await
+        .expect("the association ends");
+        assert!(result.is_err());
     }
 }
