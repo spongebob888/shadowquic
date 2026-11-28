@@ -2,6 +2,8 @@ inbounds:
   - tag: sunnyquic-inbound
     type: sunnyquic
     bind-addr: "0.0.0.0:1443"
+    # Optional additional UDP ports on the same noq endpoint.
+    # extra-bind-addrs: ["0.0.0.0:8443"]
     users:
         - username: "87654321"
           password: "12345678"

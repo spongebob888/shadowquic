@@ -1,13 +1,16 @@
 use std::{
     io,
-    net::{SocketAddr, ToSocketAddrs},
+    net::{IpAddr, SocketAddr},
     ops::Deref,
     sync::Arc,
     time::Duration,
 };
 use tracing::Instrument;
 
-use super::brutal::BrutalConfig;
+use super::{
+    brutal::BrutalConfig,
+    multi_socket::{MultiSocket, socket_alias},
+};
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -32,7 +35,7 @@ use noq::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 
 use crate::{
     config::{
-        CipherSuitePreference, CongestionControl, SunnyQuicClientCfg, SunnyQuicServerCfg,
+        CipherSuitePreference, CongestionControl, QuicPath, SunnyQuicClientCfg, SunnyQuicServerCfg,
         maybe_warn_cipher_suite_on_weak_arch, normalize_cipher_suite_preference,
     },
     error::{SError, SResult},
@@ -46,7 +49,47 @@ pub type Connection = noq::Connection;
 #[derive(Clone)]
 pub struct EndClient {
     inner: noq::Endpoint,
-    cfg: Arc<SunnyQuicClientCfg>,
+    zero_rtt: bool,
+    paths: Arc<[ExtraPath]>,
+    primary_family: SocketFamily,
+}
+
+#[derive(Clone)]
+struct ExtraPath {
+    remote: Option<String>,
+    local_alias: Option<IpAddr>,
+    family: SocketFamily,
+}
+
+#[derive(Clone, Copy)]
+enum SocketFamily {
+    V4,
+    V6,
+    Dual,
+}
+
+impl SocketFamily {
+    fn of(socket: &socket2::Socket) -> io::Result<Self> {
+        let addr = socket
+            .local_addr()?
+            .as_socket()
+            .ok_or_else(|| io::Error::other("expected an IP socket"))?;
+        Ok(if addr.ip().to_canonical().is_ipv4() {
+            Self::V4
+        } else if addr.ip().is_unspecified() && !socket.only_v6()? {
+            Self::Dual
+        } else {
+            Self::V6
+        })
+    }
+
+    fn supports(self, addr: SocketAddr) -> bool {
+        match self {
+            Self::V4 => addr.ip().to_canonical().is_ipv4(),
+            Self::V6 => addr.ip().to_canonical().is_ipv6(),
+            Self::Dual => true,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -54,6 +97,14 @@ pub struct EndServer {
     inner: noq::Endpoint,
     cfg: Arc<ArcSwap<SunnyQuicServerCfg>>,
     crypto: Arc<ArcSwap<RustlsServerConfig>>,
+    bound_addrs: Arc<[SocketAddr]>,
+}
+
+impl EndServer {
+    /// Actual UDP listening addresses, including ports assigned by the OS.
+    pub fn bound_addrs(&self) -> &[SocketAddr] {
+        &self.bound_addrs
+    }
 }
 
 impl Deref for EndServer {
@@ -177,9 +228,14 @@ impl QuicClient for EndClient {
         .await
     }
     async fn connect(&self, addr: SocketAddr, server_name: &str) -> Result<Self::C, QuicErrorRepr> {
+        if !self.primary_family.supports(addr) {
+            return Err(QuicErrorRepr::QuicConnect(format!(
+                "primary UDP socket cannot reach address family of {addr}"
+            )));
+        }
         let conn = self.inner.connect(addr, server_name)?;
         let mut accepted_0rtt = None;
-        let conn = if self.cfg.zero_rtt {
+        let conn = if self.zero_rtt {
             match conn.into_0rtt() {
                 Ok((x, accepted)) => {
                     let _conn_clone = x.clone();
@@ -221,7 +277,7 @@ impl QuicClient for EndClient {
             x
         };
         tokio::spawn(
-            add_extra_path(conn.clone(), self.cfg.extra_paths.clone(), accepted_0rtt)
+            add_extra_paths(conn.clone(), addr, self.paths.clone(), accepted_0rtt)
                 .in_current_span(),
         );
         Ok(conn)
@@ -231,53 +287,111 @@ impl QuicClient for EndClient {
         cfg: &Self::SC,
         socket_factory: Arc<dyn SocketFactory>,
     ) -> SResult<Self> {
-        let socket = socket_factory.create_socket().await.map_err(SError::Io)?;
-        let runtime =
-            noq::default_runtime().ok_or_else(|| io::Error::other("no async runtime found"))?;
-        let end = noq::Endpoint::new(
-            noq::EndpointConfig::default(),
-            None,
-            UdpSocket::from(socket),
-            runtime,
-        )?;
+        let primary = socket_factory.create_socket().await?;
+        let primary_family = SocketFamily::of(&primary)?;
+        let mut sockets = vec![UdpSocket::from(primary)];
+        let multiple_sockets = cfg
+            .extra_paths
+            .iter()
+            .any(|p| matches!(p, QuicPath::Bound { .. }));
+        let mut paths = Vec::with_capacity(cfg.extra_paths.len());
+        for path in &cfg.extra_paths {
+            let path = match path {
+                QuicPath::Remote(remote) => ExtraPath {
+                    remote: Some(remote.clone()),
+                    local_alias: multiple_sockets.then(|| socket_alias(0)),
+                    family: primary_family,
+                },
+                QuicPath::Bound { addr, bind_addr } => {
+                    let local_alias = socket_alias(sockets.len());
+                    let socket = socket_factory
+                        .create_bound_udp_socket(*bind_addr, addr.as_deref().unwrap_or(&cfg.addr))
+                        .await?;
+                    let family = SocketFamily::of(&socket)?;
+                    sockets.push(socket.into());
+                    ExtraPath {
+                        remote: addr.clone(),
+                        local_alias: Some(local_alias),
+                        family,
+                    }
+                }
+            };
+            paths.push(path);
+        }
+        let end = endpoint_with_sockets(sockets, None)?;
         end.set_default_client_config(gen_client_cfg(cfg));
         Ok(EndClient {
             inner: end,
-            cfg: Arc::new(cfg.to_owned()),
+            paths: paths.into(),
+            primary_family,
+            zero_rtt: cfg.zero_rtt,
         })
     }
 
     type C = Connection;
 }
 
-async fn add_extra_path(
+fn endpoint_with_sockets(
+    mut sockets: Vec<UdpSocket>,
+    config: Option<noq::ServerConfig>,
+) -> io::Result<noq::Endpoint> {
+    let runtime =
+        noq::default_runtime().ok_or_else(|| io::Error::other("no async runtime found"))?;
+    if sockets.len() == 1 {
+        return noq::Endpoint::new(Default::default(), config, sockets.pop().unwrap(), runtime);
+    }
+    let socket = MultiSocket::new(sockets, runtime.as_ref())?;
+    noq::Endpoint::new_with_abstract_socket(Default::default(), config, Box::new(socket), runtime)
+}
+
+async fn add_extra_paths(
     conn: Connection,
-    extra_paths: Vec<String>,
-    mut accepted_0rtt: Option<tokio::sync::oneshot::Receiver<()>>,
-) -> Result<(), QuicErrorRepr> {
-    for path in extra_paths {
-        let mut addrs_iter = path.to_socket_addrs().map_err(|e| {
-            QuicErrorRepr::QuicConnect(format!("invalid multipath address {}: {}", path, e))
-        })?;
-        let path_addr = addrs_iter.next().ok_or_else(|| {
-            QuicErrorRepr::QuicConnect(format!("no valid socket address found for {}", path))
-        })?;
-        // We must wait for server hello before knowning whether multipath is enabled
-        if let Some(x) = &mut accepted_0rtt {
-            let _ = x.await;
-        }
-        if !conn.is_multipath_enabled() {
-            warn!(
-                event = "quic:multipath_unavailable",
-                "multipath not enabled in quic connection, can't add path {}", path
-            );
-            break;
-        }
+    primary: SocketAddr,
+    extra_paths: Arc<[ExtraPath]>,
+    accepted_0rtt: Option<tokio::sync::oneshot::Receiver<()>>,
+) {
+    if extra_paths.is_empty() {
+        return;
+    }
+    if let Some(accepted) = accepted_0rtt {
+        let _ = accepted.await;
+    }
+    if !conn.is_multipath_enabled() {
+        warn!(
+            event = "quic:multipath_unavailable",
+            "peer did not negotiate multipath"
+        );
+        return;
+    }
+
+    for extra in extra_paths.iter().cloned() {
         let conn = conn.clone();
-        let path = path.clone();
         let fut = async move {
+            let remote = if let Some(name) = &extra.remote {
+                match tokio::net::lookup_host(name).await {
+                    Ok(mut addrs) => addrs.find(|addr| extra.family.supports(*addr)),
+                    Err(err) => {
+                        warn!(event = "quic:path_add_failed", %name, %err, "resolving extra path failed");
+                        return;
+                    }
+                }
+            } else {
+                extra.family.supports(primary).then_some(primary)
+            };
+            let Some(path) = remote else {
+                warn!(event = "quic:path_add_failed", remote = ?extra.remote, "no compatible address for extra path");
+                return;
+            };
+            if path == primary
+                && extra
+                    .local_alias
+                    .is_none_or(|alias| alias == socket_alias(0))
+            {
+                return;
+            }
+            let tuple = noq::FourTuple::new(path, extra.local_alias);
             for ii in 0..5 {
-                let to_open = conn.open_path_ensure(path_addr, Default::default()).await;
+                let to_open = conn.open_path_ensure(tuple, Default::default()).await;
                 match to_open {
                     Ok(p) => {
                         debug!(
@@ -307,7 +421,6 @@ async fn add_extra_path(
         };
         tokio::spawn(fut.in_current_span());
     }
-    Ok(())
 }
 
 fn to_rustls_cipher_suite(suite: &CipherSuitePreference) -> rustls::SupportedCipherSuite {
@@ -446,9 +559,32 @@ impl QuicServer for EndServer {
         let mut crypto = gen_server_crypto(cfg)?;
         let config = gen_server_config(cfg, &mut crypto);
 
-        let endpoint = noq::Endpoint::server(config, cfg.bind_addr)?;
+        let (endpoint, bound_addrs) = if cfg.extra_bind_addrs.is_empty() {
+            let endpoint = noq::Endpoint::server(config, cfg.bind_addr)?;
+            let addr = endpoint.local_addr()?;
+            (endpoint, vec![addr])
+        } else {
+            let mut sockets = Vec::new();
+            let mut addrs = Vec::new();
+            for addr in std::iter::once(&cfg.bind_addr).chain(&cfg.extra_bind_addrs) {
+                let socket = socket2::Socket::new(
+                    socket2::Domain::for_address(*addr),
+                    socket2::Type::DGRAM,
+                    Some(socket2::Protocol::UDP),
+                )?;
+                if addr.is_ipv6() {
+                    let _ = socket.set_only_v6(false);
+                }
+                socket.bind(&(*addr).into())?;
+                let socket = UdpSocket::from(socket);
+                addrs.push(socket.local_addr()?);
+                sockets.push(socket);
+            }
+            (endpoint_with_sockets(sockets, Some(config))?, addrs)
+        };
         Ok(EndServer {
             inner: endpoint,
+            bound_addrs: bound_addrs.into(),
             cfg: Arc::new(ArcSwap::new(Arc::new(cfg.to_owned()))),
             crypto: Arc::new(ArcSwap::new(crypto.into())),
         })
