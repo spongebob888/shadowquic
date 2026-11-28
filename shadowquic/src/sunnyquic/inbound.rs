@@ -14,7 +14,7 @@ use crate::{
     error::SError,
     msgs::squic::{SQExtError, SunnyCredential, UserStats},
     observe::Observer,
-    quic::QuicConnection,
+    quic::{QuicConnection, QuicErrorRepr},
     squic::inbound::{SQServerConn, SunnyQuicUsers, UserManager},
     sunnyquic::EndServer,
     utils::{dual_socket::ToCanonical, user_store},
@@ -331,12 +331,12 @@ impl Inbound for SunnyQuicServer {
                             .instrument(span),
                         );
                     }
+                    Err(QuicErrorRepr::QuicEndpointClosed) => break,
                     Err(e) => {
                         error!(
                             event = "sunnyquic:connection_accept_failed",
                             "Error accepting quic connection: {}", e
                         );
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 }
             }

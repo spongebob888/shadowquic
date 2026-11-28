@@ -103,4 +103,7 @@ pub enum QuicErrorRepr {
     QuicSendDatagramError(String),
     #[error("JLS Authentication failed")]
     JlsAuthFailed,
+
+    #[error("Quic Endpoint Closed")]
+    QuicEndpointClosed,
 }

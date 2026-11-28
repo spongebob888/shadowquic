@@ -24,6 +24,10 @@ use rustls::{
     pki_types::{CertificateDer, pem::PemObject},
 };
 use std::net::UdpSocket;
+use tokio::{
+    sync::{Mutex, mpsc},
+    task::JoinSet,
+};
 use tracing::{debug, trace, warn};
 
 use rustls::ServerConfig as RustlsServerConfig;
@@ -43,6 +47,8 @@ use crate::{
 
 pub type Connection = noq::Connection;
 
+const ACCEPT_QUEUE_CAPACITY: usize = 256;
+
 #[derive(Clone)]
 pub struct EndClient {
     inner: noq::Endpoint,
@@ -54,6 +60,8 @@ pub struct EndServer {
     inner: noq::Endpoint,
     cfg: Arc<ArcSwap<SunnyQuicServerCfg>>,
     crypto: Arc<ArcSwap<RustlsServerConfig>>,
+    accepted: Arc<Mutex<mpsc::Receiver<Result<Connection, QuicErrorRepr>>>>,
+    _accept_task: Arc<JoinSet<()>>,
 }
 
 impl Deref for EndServer {
@@ -447,10 +455,33 @@ impl QuicServer for EndServer {
         let config = gen_server_config(cfg, &mut crypto);
 
         let endpoint = noq::Endpoint::server(config, cfg.bind_addr)?;
+        let cfg = Arc::new(ArcSwap::from_pointee(cfg.clone()));
+        let (sender, receiver) = mpsc::channel(ACCEPT_QUEUE_CAPACITY);
+        let accept_endpoint = endpoint.clone();
+        let accept_cfg = cfg.clone();
+        let mut accept_task = JoinSet::new();
+        accept_task.spawn(
+            async move {
+                let mut handshakes = JoinSet::new();
+                while let Some(incoming) = accept_endpoint.accept().await
+                    && let Ok(permit) = sender.clone().reserve_owned().await
+                {
+                    while handshakes.try_join_next().is_some() {}
+                    let zero_rtt = accept_cfg.load().zero_rtt;
+                    handshakes.spawn(async move {
+                        permit.send(accept_incoming(incoming, zero_rtt).await);
+                    });
+                }
+            }
+            .in_current_span(),
+        );
+
         Ok(EndServer {
             inner: endpoint,
-            cfg: Arc::new(ArcSwap::new(Arc::new(cfg.to_owned()))),
+            cfg,
             crypto: Arc::new(ArcSwap::new(crypto.into())),
+            accepted: Arc::new(Mutex::new(receiver)),
+            _accept_task: Arc::new(accept_task),
         })
     }
 
@@ -464,39 +495,42 @@ impl QuicServer for EndServer {
     }
 
     async fn accept(&self) -> Result<Self::C, QuicErrorRepr> {
-        match self.deref().accept().await {
-            Some(conn) => {
-                let conn = conn.accept()?;
-                let cfg = self.cfg.load_full();
-                let connection = if cfg.zero_rtt {
-                    match conn.into_0rtt() {
-                        Ok((conn, accepted)) => {
-                            let _conn_clone = conn.clone();
-                            tokio::spawn(
-                                async move {
-                                    let accepted = accepted.await;
-                                    debug!(
-                                        event = "quic:zero_rtt_result",
-                                        accepted = %accepted,
-                                        "zero rtt accept result",
-                                    );
-                                }
-                                .in_current_span(),
-                            );
-                            conn
-                        }
-                        Err(conn) => conn.await?,
-                    }
-                } else {
-                    conn.await?
-                };
-                Ok(connection)
-            }
-            None => {
-                panic!("Quic endpoint closed");
-            }
-        }
+        self.accepted
+            .lock()
+            .await
+            .recv()
+            .await
+            .ok_or(QuicErrorRepr::QuicEndpointClosed)?
     }
+}
+
+async fn accept_incoming(
+    incoming: noq::Incoming,
+    zero_rtt: bool,
+) -> Result<Connection, QuicErrorRepr> {
+    let conn = incoming.accept()?;
+    let connection = if zero_rtt {
+        match conn.into_0rtt() {
+            Ok((conn, accepted)) => {
+                tokio::spawn(
+                    async move {
+                        let accepted = accepted.await;
+                        debug!(
+                            event = "quic:zero_rtt_result",
+                            accepted = %accepted,
+                            "zero rtt accept result",
+                        );
+                    }
+                    .in_current_span(),
+                );
+                conn
+            }
+            Err(conn) => conn.await?,
+        }
+    } else {
+        conn.await?
+    };
+    Ok(connection)
 }
 
 fn gen_server_crypto(cfg: &SunnyQuicServerCfg) -> SResult<RustlsServerConfig> {

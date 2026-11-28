@@ -13,7 +13,7 @@ use crate::{
     error::SError,
     msgs::squic::{SQExtError, UserStats},
     observe::Observer,
-    quic::{AuthedConn, QuicConnection},
+    quic::{AuthedConn, QuicConnection, QuicErrorRepr::QuicEndpointClosed},
     squic::inbound::{SQServerConn, UserManager},
     utils::{dual_socket::ToCanonical, user_store},
 };
@@ -312,12 +312,12 @@ impl Inbound for ShadowQuicServer {
                             .instrument(span),
                         );
                     }
+                    Err(QuicEndpointClosed) => break,
                     Err(e) => {
                         error!(
                             event = "shadowquic:quic_connection_accept_failed",
                             "Error accepting quic connection: {}", e
                         );
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 }
             }
