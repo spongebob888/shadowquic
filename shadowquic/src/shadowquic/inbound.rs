@@ -8,14 +8,20 @@ use tokio::sync::{
 use tracing::{Instrument, error};
 
 use crate::{
-    Inbound, ProxyRequest, config::{AuthUser, ShadowQuicServerCfg}, error::SError, msgs::squic::{SQExtError, UserStats}, observe::Observer, quic::{AuthedConn, QuicConnection, QuicErrorRepr::QuicEndpointClosed}, squic::inbound::{SQServerConn, UserManager}, utils::{dual_socket::ToCanonical, user_store},
+    Inbound, ProxyRequest,
+    config::{AuthUser, ShadowQuicServerCfg},
+    error::SError,
+    msgs::squic::{SQExtError, UserStats},
+    observe::Observer,
+    quic::{AuthedConn, QuicConnection, QuicErrorRepr::QuicEndpointClosed},
+    squic::inbound::{SQServerConn, UserManager},
+    utils::{dual_socket::ToCanonical, user_store},
 };
 
 use crate::squic::SQConn;
 
 use super::quinn_wrapper::EndServer;
 use crate::quic::QuicServer;
-const ACCEPT_QUEUE_CAPACITY: usize = 256;
 pub struct ShadowQuicServer {
     pub endpoint: EndServer,
     user_manager: Arc<ShadowQuicUserManager>,

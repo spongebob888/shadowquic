@@ -463,7 +463,9 @@ impl QuicServer for EndServer {
         accept_task.spawn(
             async move {
                 let mut handshakes = JoinSet::new();
-                while let Some(incoming) = accept_endpoint.accept().await && let Ok(permit) = sender.clone().reserve_owned().await {
+                while let Some(incoming) = accept_endpoint.accept().await
+                    && let Ok(permit) = sender.clone().reserve_owned().await
+                {
                     while handshakes.try_join_next().is_some() {}
                     let zero_rtt = accept_cfg.load().zero_rtt;
                     handshakes.spawn(async move {

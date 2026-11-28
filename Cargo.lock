@@ -2859,9 +2859,9 @@ dependencies = [
 
 [[package]]
 name = "quinn-jls"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea00596eb53fa6f29899b0e48014ff4804bcfeda4aae5a228df25b9b64e315cf"
+checksum = "7a65162de32887d0e7152cb17aaba5caec84f3fd48a9575a84ffdaed122e6790"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2879,9 +2879,9 @@ dependencies = [
 
 [[package]]
 name = "quinn-proto-jls"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "383da615650985c5b656c7a9b6642bf74c27003e02f9aaac917ce8e81eb791e4"
+checksum = "17f7de872e60b6f7f9a2805d7ee93792dfa70e76de95257e2200a0f6ebb0858c"
 dependencies = [
  "aws-lc-rs",
  "bytes",
@@ -3189,9 +3189,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-jls"
-version = "1.3.7"
+version = "1.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7b8b5e6fb5b6c65cc8b198609185aa0668d80df151ee4928cf978413bec0bed"
+checksum = "297de704c8ad4a98aa332b7c965e1140fa60b80960eae1ad78ec8450e2d80ae7"
 dependencies = [
  "aes-gcm",
  "aws-lc-rs",

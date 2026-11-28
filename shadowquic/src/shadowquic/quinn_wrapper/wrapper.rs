@@ -43,11 +43,11 @@ use crate::{
         CipherSuitePreference, CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg,
         maybe_warn_cipher_suite_on_weak_arch, normalize_cipher_suite_preference,
     },
-    error::{SError, SResult},
+    error::SResult,
     msgs::squic::ConnStats,
     quic::{
         AuthedConn, MAX_DATAGRAM_WINDOW, QuicClient, QuicConnection,
-        QuicErrorRepr::{self, QuicEndpointClosed, QuicIoError},
+        QuicErrorRepr::{self, QuicEndpointClosed},
         QuicServer,
     },
     utils::socket_opt::{SocketFactory, UdpSocketFactory},
@@ -450,11 +450,13 @@ impl QuicServer for EndServer {
         bg_tasks.spawn(
             async move {
                 let mut tasks = tokio::task::JoinSet::new();
-                while let Some(conn) = ep_clone.accept().await && let Ok(permit) = sd.clone().reserve_owned().await {
+                while let Some(conn) = ep_clone.accept().await
+                    && let Ok(permit) = sd.clone().reserve_owned().await
+                {
                     let zero_rtt = zero_rtt_clone.load(Relaxed);
                     while tasks.try_join_next().is_some() {}
                     tasks.spawn(async move {
-                        let conn =  accept_handshaked(conn, zero_rtt).await;
+                        let conn = accept_handshaked(conn, zero_rtt).await;
 
                         permit.send(conn);
                     });
@@ -466,9 +468,9 @@ impl QuicServer for EndServer {
         Ok(EndServer {
             crypto: Arc::new(ArcSwap::new(crypto.into())),
             inner: endpoint,
-            zero_rtt: zero_rtt,
+            zero_rtt,
             _bg_tasks: (bg_tasks).into(),
-            conn_recv: Arc::new(Mutex::new(rv.into())),
+            conn_recv: Arc::new(Mutex::new(rv)),
         })
     }
     async fn update_config(&self, cfg: &Self::SC) -> SResult<()> {
@@ -494,14 +496,14 @@ async fn accept_handshaked(
     conn: quinn::Incoming,
     zero_rtt: bool,
 ) -> Result<Connection, QuicErrorRepr> {
-            let mut conn = conn.accept()?;
-            let _ = conn.handshake_data().await?;
-            let connection = if zero_rtt {
-                match conn.into_0rtt() {
-                    Ok(conn) => {
-                        let conn_clone = conn.clone();
+    let mut conn = conn.accept()?;
+    let _ = conn.handshake_data().await?;
+    let connection = if zero_rtt {
+        match conn.into_0rtt() {
+            Ok(conn) => {
+                let conn_clone = conn.clone();
 
-                        tokio::spawn(
+                tokio::spawn(
                                 async move {
                                     if let Err(error) = conn_clone.authenticated().await {
                                         debug!(event = "quic:zero_rtt_handshake_failed", %error, "0-RTT handshake failed");
@@ -515,21 +517,21 @@ async fn accept_handshaked(
                                 }
                                 .in_current_span(),
                             );
-                        conn
-                    }
-                    Err(conn) => conn.await?,
-                }
-            } else {
-                conn.await?
-            };
-            if connection.is_jls() == Some(false) {
-                error!(
-                    event = "jls:jls_authentication_failed",
-                    "JLS hijacked or wrong pwd/iv"
-                );
-                return Err(QuicErrorRepr::JlsAuthFailed);
+                conn
             }
-            Ok(connection)
+            Err(conn) => conn.await?,
+        }
+    } else {
+        conn.await?
+    };
+    if connection.is_jls() == Some(false) {
+        error!(
+            event = "jls:jls_authentication_failed",
+            "JLS hijacked or wrong pwd/iv"
+        );
+        return Err(QuicErrorRepr::JlsAuthFailed);
+    }
+    Ok(connection)
 }
 
 fn gen_server_config(
