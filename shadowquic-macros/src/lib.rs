@@ -432,15 +432,24 @@ fn impl_struct_decode(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenSt
     let body = if has_size_tag {
         quote! {
             use tokio::io::AsyncReadExt;
-            let len = u32::decode(s).await? as usize;
-            let mut buf = vec![0u8; len];
-            s.read_exact(&mut buf).await?;
+            let len = u32::decode(s).await?;
+            // The peer chose `len`: decode the fields as their bytes arrive
+            // instead of allocating `len` bytes up front.
+            let mut payload = (&mut *s).take(len as u64);
             const COMPAT_PADDING_LIMIT: usize = 1024;
-            let mut reader = (&buf[..]).chain(tokio::io::repeat(0).take(COMPAT_PADDING_LIMIT as u64));
-            let s = &mut reader;
-            Ok(Self {
-                #builder_struct_fields_def
-            })
+            let decoded = {
+                let mut reader = (&mut payload).chain(tokio::io::repeat(0).take(COMPAT_PADDING_LIMIT as u64));
+                let s = &mut reader;
+                Self {
+                    #builder_struct_fields_def
+                }
+            };
+            // Skip the bytes of fields this version does not know.
+            tokio::io::copy(&mut payload, &mut tokio::io::sink()).await?;
+            if payload.limit() != 0 {
+                return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof).into());
+            }
+            Ok(decoded)
         }
     } else {
         quote! {
