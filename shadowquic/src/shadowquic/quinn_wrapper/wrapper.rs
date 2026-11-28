@@ -8,6 +8,10 @@ use std::{
     },
     time::Duration,
 };
+use tokio::{
+    sync::{Mutex, mpsc::Receiver},
+    task::JoinSet,
+};
 use tracing::Instrument;
 
 use super::brutal::BrutalConfig;
@@ -39,14 +43,16 @@ use crate::{
         CipherSuitePreference, CongestionControl, ShadowQuicClientCfg, ShadowQuicServerCfg,
         maybe_warn_cipher_suite_on_weak_arch, normalize_cipher_suite_preference,
     },
-    error::SResult,
+    error::{SError, SResult},
     msgs::squic::ConnStats,
     quic::{
-        AuthedConn, MAX_DATAGRAM_WINDOW, QuicClient, QuicConnection, QuicErrorRepr, QuicServer,
+        AuthedConn, MAX_DATAGRAM_WINDOW, QuicClient, QuicConnection,
+        QuicErrorRepr::{self, QuicEndpointClosed, QuicIoError},
+        QuicServer,
     },
     utils::socket_opt::{SocketFactory, UdpSocketFactory},
 };
-
+const ACCEPT_QUEUE_CAPACITY: usize = 256;
 pub type Connection = quinn::Connection;
 
 #[derive(Clone)]
@@ -54,6 +60,8 @@ pub struct EndServer {
     inner: quinn::Endpoint,
     crypto: Arc<ArcSwap<RustlsServerConfig>>, // Include zero-rtt session ticket
     zero_rtt: Arc<AtomicBool>,
+    conn_recv: Arc<Mutex<Receiver<Result<Connection, QuicErrorRepr>>>>,
+    _bg_tasks: Arc<JoinSet<()>>,
 }
 
 #[derive(Clone)]
@@ -433,10 +441,34 @@ impl QuicServer for EndServer {
             socket,
             quinn::default_runtime().expect("no runtime found for quinn"),
         )?;
+
+        let (sd, rv) = tokio::sync::mpsc::channel(ACCEPT_QUEUE_CAPACITY);
+        let mut bg_tasks = tokio::task::JoinSet::new();
+        let ep_clone = endpoint.clone();
+        let zero_rtt = Arc::new(AtomicBool::new(cfg.zero_rtt));
+        let zero_rtt_clone = zero_rtt.clone();
+        bg_tasks.spawn(
+            async move {
+                let mut tasks = tokio::task::JoinSet::new();
+                while let Some(conn) = ep_clone.accept().await && let Ok(permit) = sd.clone().reserve_owned().await {
+                    let zero_rtt = zero_rtt_clone.load(Relaxed);
+                    while tasks.try_join_next().is_some() {}
+                    tasks.spawn(async move {
+                        let conn =  accept_handshaked(conn, zero_rtt).await;
+
+                        permit.send(conn);
+                    });
+                }
+            }
+            .in_current_span(),
+        );
+
         Ok(EndServer {
             crypto: Arc::new(ArcSwap::new(crypto.into())),
             inner: endpoint,
-            zero_rtt: Arc::new(AtomicBool::new(cfg.zero_rtt)),
+            zero_rtt: zero_rtt,
+            _bg_tasks: (bg_tasks).into(),
+            conn_recv: Arc::new(Mutex::new(rv.into())),
         })
     }
     async fn update_config(&self, cfg: &Self::SC) -> SResult<()> {
@@ -448,78 +480,56 @@ impl QuicServer for EndServer {
         Ok(())
     }
     async fn accept(&self) -> Result<Self::C, QuicErrorRepr> {
-        match self.next_incoming().await {
-            Some(incoming) => self.handshake(incoming.accept()?).await,
-            None => {
-                panic!("Quic endpoint closed");
-            }
-        }
+        self.conn_recv
+            .lock()
+            .await
+            .recv()
+            .await
+            .ok_or(QuicEndpointClosed)
+            .and_then(|x| x)
     }
 }
 
-impl EndServer {
-    /// Waits for the next connection attempt without driving its handshake, so
-    /// the caller can run [`EndServer::handshake`] off its accept loop. Returns
-    /// `None` once the endpoint is closed.
-    pub async fn next_incoming(&self) -> Option<quinn::Incoming> {
-        self.deref().accept().await
-    }
+async fn accept_handshaked(
+    conn: quinn::Incoming,
+    zero_rtt: bool,
+) -> Result<Connection, QuicErrorRepr> {
+            let mut conn = conn.accept()?;
+            let _ = conn.handshake_data().await?;
+            let connection = if zero_rtt {
+                match conn.into_0rtt() {
+                    Ok(conn) => {
+                        let conn_clone = conn.clone();
 
-    /// Drives an accepted connection attempt through its handshake and the JLS check.
-    pub async fn handshake(
-        &self,
-        mut conn: quinn::Connecting,
-    ) -> Result<Connection, QuicErrorRepr> {
-        let connection = if self.zero_rtt.load(Relaxed) {
-            // A ClientHello may span several Initial packets. Until all of it has
-            // arrived the JLS result and the user are unknown, so wait for it
-            // before handing out the 0-RTT connection. With ALPN configured,
-            // QUIC makes the client agree on a protocol, and the handshake data
-            // that carries it is ready as soon as the ClientHello is complete.
-            if !self.crypto.load().alpn_protocols.is_empty() {
-                conn.handshake_data().await?;
-            }
-            match conn.into_0rtt() {
-                Ok(conn) => {
-                    // Without ALPN, and with no server name sent either, the
-                    // handshake data is ready only at the end of the handshake.
-                    // The JLS result is known once the ClientHello is complete;
-                    // only a ClientHello still incomplete waits for the end.
-                    if conn.is_jls().is_none() {
-                        conn.authenticated().await?;
+                        tokio::spawn(
+                                async move {
+                                    if let Err(error) = conn_clone.authenticated().await {
+                                        debug!(event = "quic:zero_rtt_handshake_failed", %error, "0-RTT handshake failed");
+                                        return;
+                                    }
+                                    debug!(event = "quic:zero_rtt_handshake_completed", "0-RTT handshake completed");
+                                    if conn_clone.is_jls() == Some(false) {
+                                        error!(event = "jls:jls_authentication_failed", "JLS hijacked or wrong pwd/iv");
+                                        conn_clone.close(0u8.into(), b"");
+                                    }
+                                }
+                                .in_current_span(),
+                            );
+                        conn
                     }
-                    let conn_clone = conn.clone();
-                    tokio::spawn(
-                        async move {
-                            if let Err(error) = conn_clone.authenticated().await {
-                                debug!(event = "quic:zero_rtt_handshake_failed", %error, "0-RTT handshake failed");
-                                return;
-                            }
-                            debug!(event = "quic:zero_rtt_handshake_completed", "0-RTT handshake completed");
-                            if conn_clone.is_jls() == Some(false) {
-                                error!(event = "jls:jls_authentication_failed", "JLS hijacked or wrong pwd/iv");
-                                conn_clone.close(0u8.into(), b"");
-                            }
-                        }
-                        .in_current_span(),
-                    );
-                    conn
+                    Err(conn) => conn.await?,
                 }
-                Err(conn) => conn.await?,
+            } else {
+                conn.await?
+            };
+            if connection.is_jls() == Some(false) {
+                error!(
+                    event = "jls:jls_authentication_failed",
+                    "JLS hijacked or wrong pwd/iv"
+                );
+                return Err(QuicErrorRepr::JlsAuthFailed);
             }
-        } else {
-            conn.await?
-        };
-        if connection.is_jls() == Some(false) {
-            error!(
-                event = "jls:jls_authentication_failed",
-                "JLS hijacked or wrong pwd/iv"
-            );
-            connection.close(0u8.into(), b"");
-            return Err(QuicErrorRepr::JlsAuthFailed);
-        }
-        Ok(connection)
-    }
+            Ok(connection)
 }
 
 fn gen_server_config(

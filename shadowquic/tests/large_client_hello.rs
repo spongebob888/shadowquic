@@ -247,14 +247,10 @@ async fn zero_rtt_without_alpn_or_server_name_is_handed_out_before_the_handshake
     .unwrap();
     let client = tokio::spawn(async move { client.connect(relay, "127.0.0.1").await.map(|_| ()) });
 
-    let incoming = server.next_incoming().await.unwrap();
-    let conn = tokio::time::timeout(
-        Duration::from_secs(2),
-        server.handshake(incoming.accept().unwrap()),
-    )
-    .await
-    .expect("the connection waits for the end of the handshake")
-    .expect("the ClientHello is valid");
+    let conn = tokio::time::timeout(Duration::from_secs(2), QuicServer::accept(&server))
+        .await
+        .expect("the connection waits for the end of the handshake")
+        .expect("the ClientHello is valid");
     assert_eq!(conn.is_jls(), Some(true));
     client.abort();
 }

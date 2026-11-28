@@ -11,3 +11,4 @@ _site
 !.agents/skills/
 .agents/skills/*
 !.agents/skills/deploy-shadowquic-musl/
+/data

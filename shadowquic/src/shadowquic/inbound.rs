@@ -2,26 +2,20 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use tokio::sync::{
-    RwLock, Semaphore, SetOnce,
+    RwLock, SetOnce,
     mpsc::{Receiver, Sender, channel},
 };
 use tracing::{Instrument, error};
 
 use crate::{
-    Inbound, ProxyRequest,
-    config::{AuthUser, ShadowQuicServerCfg},
-    error::SError,
-    msgs::squic::{SQExtError, UserStats},
-    observe::Observer,
-    quic::{AuthedConn, MAX_HANDSHAKES_IN_PROGRESS, QuicConnection},
-    squic::inbound::{SQServerConn, UserManager},
-    utils::{dual_socket::ToCanonical, user_store},
+    Inbound, ProxyRequest, config::{AuthUser, ShadowQuicServerCfg}, error::SError, msgs::squic::{SQExtError, UserStats}, observe::Observer, quic::{AuthedConn, QuicConnection, QuicErrorRepr::QuicEndpointClosed}, squic::inbound::{SQServerConn, UserManager}, utils::{dual_socket::ToCanonical, user_store},
 };
 
 use crate::squic::SQConn;
 
 use super::quinn_wrapper::EndServer;
 use crate::quic::QuicServer;
+const ACCEPT_QUEUE_CAPACITY: usize = 256;
 pub struct ShadowQuicServer {
     pub endpoint: EndServer,
     user_manager: Arc<ShadowQuicUserManager>,
@@ -292,67 +286,35 @@ impl Inbound for ShadowQuicServer {
         let user_manager = self.user_manager.clone();
         let tag = self.user_manager.config.read().await.tag.clone();
         let fut = async move {
-            // Each handshake runs in its own task: a handshake that fails or
-            // stalls must not delay the connections queued behind it.
-            let handshakes = Arc::new(Semaphore::new(MAX_HANDSHAKES_IN_PROGRESS));
-            while let Some(incoming) = endpoint.next_incoming().await {
-                let Ok(handshake_slot) = handshakes.clone().acquire_owned().await else {
-                    break;
-                };
-                // A ClientHello that fails the JLS check is forwarded to the
-                // camouflage site right here, one forward per attempt. The pause
-                // after a failure bounds how fast a client can open them.
-                let conn = match incoming.accept() {
-                    Ok(conn) => conn,
+            loop {
+                match QuicServer::accept(&endpoint).await {
+                    Ok(conn) => {
+                        let request_sender = request_sender.clone();
+                        let user_manager = user_manager.clone();
+                        let span = tracing::info_span!("inbound",
+                            tag = %tag,
+                            src = tracing::field::Empty,
+                            user = tracing::field::Empty,
+                            id = tracing::field::Empty,
+                        );
+                        tokio::spawn(
+                            async move {
+                                Self::handle_incoming(conn, request_sender, user_manager)
+                                    .await
+                                    .map_err(|x| error!(event = "proxy:connection_failed", "{}", x))
+                            }
+                            .instrument(span),
+                        );
+                    }
+                    Err(QuicEndpointClosed) => break,
                     Err(e) => {
                         error!(
                             event = "shadowquic:quic_connection_accept_failed",
                             "Error accepting quic connection: {}", e
                         );
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                        continue;
                     }
-                };
-                let endpoint = endpoint.clone();
-                let request_sender = request_sender.clone();
-                let user_manager = user_manager.clone();
-                let span = tracing::info_span!("inbound",
-                    tag = %tag,
-                    src = tracing::field::Empty,
-                    user = tracing::field::Empty,
-                    id = tracing::field::Empty,
-                );
-                tokio::spawn(
-                    async move {
-                        let handshake = endpoint.handshake(conn).await;
-                        drop(handshake_slot);
-                        let conn = match handshake {
-                            Ok(conn) => conn,
-                            Err(e) => {
-                                // Anyone can make handshakes fail, so this line
-                                // is rate limited.
-                                static LIMIT: crate::utils::log::LogRateLimit =
-                                    crate::utils::log::LogRateLimit::new();
-                                if let Some(held_back) = LIMIT.allow() {
-                                    error!(
-                                        event = "shadowquic:quic_connection_accept_failed",
-                                        held_back, "Error accepting quic connection: {}", e
-                                    );
-                                }
-                                return;
-                            }
-                        };
-                        let _ = Self::handle_incoming(conn, request_sender, user_manager)
-                            .await
-                            .map_err(|x| error!(event = "proxy:connection_failed", "{}", x));
-                    }
-                    .instrument(span),
-                );
+                }
             }
-            error!(
-                event = "shadowquic:quic_endpoint_closed",
-                "quic endpoint closed, no more connections are accepted"
-            );
         };
         tokio::spawn(fut.in_current_span());
         self.spawn_store_flush().await;
